@@ -45,12 +45,8 @@ jobs:
       # report that it finished loading.
       - name: Launch the app and require a loaded window
         working-directory: apps/desktop
-        shell: pwsh
-        timeout-minutes: 3
-        run: |
-          $output = bun x electron dist/main/main.cjs --smoke 2>&1 | Out-String
-          Write-Host $output
-          if ($output -notmatch 'SMOKE_OK') { throw 'the window never finished loading' }
+        timeout-minutes: 4
+        run: node scripts/launch-check.mjs
 
       - name: Package the Windows installer
         working-directory: apps/desktop
