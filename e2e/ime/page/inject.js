@@ -1,7 +1,7 @@
 // inject.js: wrap the esbuild bundle into a single self-contained editor.html
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from "node:fs";
 
-const bundle = readFileSync(new URL('./editor.bundle.js', import.meta.url), 'utf8');
+const bundle = readFileSync(new URL("./editor.bundle.js", import.meta.url), "utf8");
 const html = `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -22,5 +22,5 @@ ${bundle}
 </script>
 </body>
 </html>`;
-writeFileSync(new URL('./editor.html', import.meta.url), html);
-console.log('editor.html written,', html.length, 'bytes');
+writeFileSync(new URL("./editor.html", import.meta.url), html);
+console.log("editor.html written,", html.length, "bytes");
