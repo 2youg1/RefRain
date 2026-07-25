@@ -1,13 +1,32 @@
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { registerHandlers } from "./ipc.ts";
+
+/**
+ * Where this bundle actually sits at runtime.
+ *
+ * `__dirname` cannot be trusted here: the bundler inlines the build machine's
+ * source path as a string literal, so a packaged app looks for its preload next
+ * to a directory that exists only on the machine that built it. `app.getAppPath`
+ * is Electron's own answer and is correct inside an asar archive too.
+ */
+const bundleDir = (): string => {
+  const main = require.main?.filename;
+  return main ? dirname(main) : join(app.getAppPath(), "dist", "main");
+};
 
 /**
  * Windowing and packaging only (SPEC 5.2 rule 4). Business logic lives in
  * packages/core and packages/agent, so this shell stays replaceable.
  */
 
-const isDev = !app.isPackaged;
+/**
+ * The renderer comes from the dev server only when one is expected. `isPackaged`
+ * is the wrong signal: running the built bundle under a plain `electron` binary
+ * reports false, so CI's launch check went looking for a dev server that was
+ * never started. An explicit flag says what is actually meant.
+ */
+const useDevServer = process.env.RECENSION_DEV === "1";
 
 const createWindow = (): BrowserWindow => {
   const window = new BrowserWindow({
@@ -19,7 +38,7 @@ const createWindow = (): BrowserWindow => {
     titleBarStyle: "hiddenInset",
     show: false,
     webPreferences: {
-      preload: join(__dirname, "preload.cjs"),
+      preload: join(bundleDir(), "preload.cjs"),
       // The renderer holds no privilege. Every capability arrives through the
       // preload bridge, which exposes named channels and nothing else.
       nodeIntegration: false,
@@ -42,8 +61,8 @@ const createWindow = (): BrowserWindow => {
     if (!url.startsWith("file://") && !url.startsWith("http://localhost:")) event.preventDefault();
   });
 
-  if (isDev) window.loadURL("http://localhost:5173");
-  else window.loadFile(join(__dirname, "../renderer/index.html"));
+  if (useDevServer) window.loadURL("http://localhost:5173");
+  else window.loadFile(join(bundleDir(), "..", "renderer", "index.html"));
 
   return window;
 };
