@@ -10,6 +10,13 @@
         "typescript": "7.0.2",
       },
     },
+    "packages/agent": {
+      "name": "@recension/agent",
+      "version": "0.0.0",
+      "dependencies": {
+        "@recension/core": "workspace:*",
+      },
+    },
     "packages/core": {
       "name": "@recension/core",
       "version": "0.0.0",
@@ -33,6 +40,8 @@
     "@biomejs/cli-win32-arm64": ["@biomejs/cli-win32-arm64@2.5.5", "", { "os": "win32", "cpu": "arm64" }, "sha512-7BryINPuYypLUAH3o/o5ZdgomJ4zn3EDR0ChZJst7n32S6ZhKbgHXuYydLu+YAnx59ehGFR0z/MG6qnzQi3Yyw=="],
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.5.5", "", { "os": "win32", "cpu": "x64" }, "sha512-bIBFo+n6MIxdNcVFy5CrurbKiZQiUciK3bt8+O9I4wjFZNTfXLpi+giq47522eXqW5NBc9ulx7dR1SlZKi2J5g=="],
+
+    "@recension/agent": ["@recension/agent@workspace:packages/agent"],
 
     "@recension/core": ["@recension/core@workspace:packages/core"],
 
