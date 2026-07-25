@@ -1,0 +1,9 @@
+{
+  "name": "recension",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "proto:decision": "bun prototypes/decision-model/drive.ts",
+    "proto:decision:tui": "bun prototypes/decision-model/tui.ts"
+  }
+}
