@@ -2,8 +2,22 @@
   "name": "recension",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
-    "proto:decision": "bun prototypes/decision-model/drive.ts",
-    "proto:decision:tui": "bun prototypes/decision-model/tui.ts"
+    "check": "tsc --noEmit",
+    "fmt": "biome check --write .",
+    "fmt:check": "biome check .",
+    "test": "bun test",
+    "gate": "bun run fmt:check && bun run check && bun test",
+    "verify:gate": "bun scripts/verify-gate.ts",
+    "verify:no-network": "bun scripts/verify-no-network.ts"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.5",
+    "@types/bun": "latest",
+    "typescript": "7.0.2"
   }
 }

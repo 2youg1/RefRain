@@ -1,0 +1,64 @@
+name: gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      # --frozen-lockfile: CI must fail on an out-of-date lockfile rather than
+      # silently resolving different versions than the author tested against.
+      - run: bun install --frozen-lockfile
+
+      # Each gate runs unpiped. Piping to head/tee would mask the exit code:
+      # `tsc --noEmit | head` exits 0 even with type errors.
+      - name: format and lint
+        run: bun run fmt:check
+
+      - name: typecheck
+        run: bun run check
+
+      - name: test
+        run: bun test
+
+  # The gate must be provably capable of failing. A misconfigured tsconfig or a
+  # piped command turns `check` into a no-op that reports success forever.
+  gate-bites:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: typecheck rejects ill-typed code
+        run: bun run verify:gate
+
+  invariants:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+
+      # SPEC 1.3: the app process makes no outbound network requests.
+      # Caught in CI because a stray import is invisible in review.
+      - name: no network in core
+        run: bun run verify:no-network

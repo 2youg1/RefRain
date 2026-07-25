@@ -6,6 +6,7 @@
 
 ## Changelog
 
+- 2026-07-26 v0.1.1 — M0 landed. Toolchain findings recorded in §4.3; prototype absorbed into `core`; Q1 closed.
 - 2026-07-26 v0.1.0 — First draft: form, domain language, module boundaries, Verdict Ledger protocol, harness tiers, M0 gates.
 
 ---
@@ -175,6 +176,14 @@ Bun's core is already Rust (64.6% of the repository, with 21.4% C++). File I/O, 
 Our own code carries domain logic — transaction semantics, three-way mapping, protocol contracts. Its bottleneck is correctness and changeability, not throughput. Its readers are contributors writing harness adapters, and that ecosystem is almost entirely TypeScript.
 
 The door stays open under one condition: if an M0 performance gate fails on a specific operation, lower **that one function** into a native module. Do not rewrite a layer.
+
+### 4.3 Toolchain findings, measured
+
+M0 required proving the TypeScript 7 chain rather than assuming it. Three findings changed the build:
+
+1. **The binary is `tsc`, not `tsgo`.** `tsgo` was the name under `@typescript/native-preview`; 7.0.2 ships the native compiler as `tsc`. `node_modules/typescript/lib/tsc.js` is a thin Node shim that `execve`s the native executable.
+2. **Piping a gate destroys its exit code.** `tsc --noEmit | head` exits 0 with type errors present. CI runs every gate unpiped, and `scripts/verify-gate.ts` feeds the typechecker code that must be rejected — a gate that cannot fail is worse than no gate.
+3. **`allowImportingTsExtensions` is mandatory.** Bun executes `.ts` directly, so imports carry the extension; without this flag TS 7 rejects every internal import.
 
 ---
 
@@ -470,6 +479,8 @@ TypeScript 7 is new enough that build-tool compatibility must be proven, not ass
 
 Accept: `bun run fmt:check`, `bun run check`, `bun test` all green; the IME gate runs on Windows and produces a report.
 
+Status: gates green (§4.3 records what the chain actually required). The IME gate project has not landed in the repository yet.
+
 ### M1 · `core`
 
 Domain types (§2), text engine, Revision Store, Result Artifact codec, Verdict Ledger — all without DOM.
@@ -500,7 +511,7 @@ Accept: the tier table is re-verified in a real environment; a clean machine pas
 
 | # | Question | Status |
 |---|---|---|
-| Q1 | Product and repository name | Open |
+| Q1 | Product and repository name | Closed — `recension`, chosen 2026-07-26 |
 | Q2 | May a human and an agent edit the same file concurrently? (Leaning: the file is read-only to the human while an agent works on it) | Open |
 | Q3 | UI for cross-session multi-agent dialogue orchestration | Needs design |
 | Q4 | Does the Verdict Ledger's retrieval interface ship in v1? | Open |
