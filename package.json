@@ -7,13 +7,14 @@
     "apps/*"
   ],
   "scripts": {
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && bun run check:svelte",
     "fmt": "biome check --write .",
     "fmt:check": "biome check .",
     "test": "bun test",
     "gate": "bun run fmt:check && bun run check && bun test",
     "verify:gate": "bun scripts/verify-gate.ts",
-    "verify:no-network": "bun scripts/verify-no-network.ts"
+    "verify:no-network": "bun scripts/verify-no-network.ts",
+    "check:svelte": "cd apps/desktop && bun scripts/check-svelte.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.5",

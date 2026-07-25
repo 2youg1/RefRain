@@ -34,7 +34,6 @@ describe("command adapter", () => {
     // real harness: what matters is that the app hands over the two paths.
     const adapter = new CommandAdapter({
       id: "command",
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: adapter placeholders
       template: ["sh", "-c", 'printf \'%s\' "$REPLY" > "{result}" && test -f "{request}"'],
       env: {
         REPLY:

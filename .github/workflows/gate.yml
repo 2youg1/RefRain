@@ -36,6 +36,16 @@ jobs:
       - name: test
         run: bun test
 
+      # The desktop build is part of the gate: a renderer that no longer
+      # compiles must not reach a release branch.
+      - name: build the desktop app
+        working-directory: apps/desktop
+        run: ./make.sh
+
+      - name: build-shape checks
+        working-directory: apps/desktop
+        run: bun test test/smoke.test.ts
+
   # The gate must be provably capable of failing. A misconfigured tsconfig or a
   # piped command turns `check` into a no-op that reports success forever.
   gate-bites:

@@ -1,0 +1,28 @@
+appId: studio.luciole.recension
+productName: Recension
+copyright: Recension contributors
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - package.json
+
+# The app never fetches anything, so there is no updater and no telemetry
+# endpoint to configure. Absence here is the feature.
+publish: null
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: Recension-${version}-windows-x64-Setup.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+  artifactName: Recension-${version}-windows-x64-Setup.${ext}
