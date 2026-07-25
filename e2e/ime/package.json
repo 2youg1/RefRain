@@ -1,0 +1,18 @@
+{
+  "name": "ime-acceptance-test",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Windows IME (TSF) acceptance test: same ProseMirror page across Electron 42.7.1 / 43.2.0 / 44.0.0-alpha / WebView2",
+  "type": "module",
+  "scripts": {
+    "build:page": "esbuild page/editor.js --bundle --format=iife --outfile=page/editor.bundle.js && node page/inject.js"
+  },
+  "dependencies": {
+    "esbuild": "^0.28.1",
+    "prosemirror-history": "^1.5.0",
+    "prosemirror-model": "^1.25.11",
+    "prosemirror-schema-basic": "^1.2.4",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-view": "^1.42.2"
+  }
+}

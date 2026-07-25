@@ -1,0 +1,66 @@
+name: ime-gate
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'e2e/ime/**'
+      - '.github/workflows/ime-gate.yml'
+  pull_request:
+    paths:
+      - 'e2e/ime/**'
+      - '.github/workflows/ime-gate.yml'
+
+jobs:
+  ime:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Ensure MS Pinyin (zh-Hans-CN) is available
+        shell: pwsh
+        run: |
+          $list = Get-WinUserLanguageList
+          if (-not ($list | Where-Object LanguageTag -eq 'zh-Hans-CN')) {
+            $list.Add('zh-Hans-CN')
+            Set-WinUserLanguageList $list -Force
+          }
+          $tips = (Get-WinUserLanguageList | Where-Object LanguageTag -eq 'zh-Hans-CN').InputMethodTips
+          if (-not ($tips -match 'FA550B04-5AD7-411F-A5AC-CA038EC515D7')) {
+            Install-Language zh-Hans-CN
+            $list = Get-WinUserLanguageList
+            if (-not ($list | Where-Object LanguageTag -eq 'zh-Hans-CN')) { $list.Add('zh-Hans-CN') }
+            Set-WinUserLanguageList $list -Force
+          }
+          Get-WinUserLanguageList | ForEach-Object { "$($_.LanguageTag): $($_.InputMethodTips -join ', ')" }
+
+      - name: Prepare harness
+        shell: pwsh
+        run: e2e/ime/scripts/prepare.ps1
+
+      - name: Run acceptance in all shells
+        shell: pwsh
+        run: |
+          $failed = @()
+          foreach ($s in 'e42', 'e43', 'e44', 'wv2') {
+            powershell -NoProfile -ExecutionPolicy Bypass -File e2e/ime/driver/drive.ps1 -Shell $s
+            if ($LASTEXITCODE -ne 0) { $failed += $s }
+          }
+          node e2e/ime/driver/analyze.js
+          if ($failed.Count) { throw "driver failed for: $($failed -join ', ')" }
+
+      - name: Assert acceptance criteria
+        shell: pwsh
+        run: node e2e/ime/driver/assert.js
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ime-results
+          path: e2e/ime/results/
+          retention-days: 30
