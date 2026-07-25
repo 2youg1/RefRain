@@ -187,6 +187,7 @@ M0 required proving the TypeScript 7 chain rather than assuming it. Three findin
 4. **`svelte-check` 4.7.3 crashes under TS 7**, reaching for `useCaseSensitiveFileNames` on an internal API that no longer exists. `apps/desktop/scripts/check-svelte.ts` compiles every component with Svelte's own compiler instead, which is the authority on its syntax anyway.
 5. **Biome lints only a Svelte file's `<script>` block**, so template references read as unused variables. Biome formats `.svelte`; the compiler check owns its linting.
 6. **Electron loads CommonJS**, so `main` and `preload` are bundled to `.cjs` — under `"type": "module"` a `.js` CJS bundle fails at launch, which no unit test reaches. `apps/desktop/test/smoke.test.ts` asserts the build shape, and CI launches the real binary with `--smoke` and requires the window to report a finished load.
+7. **`core` runs in two runtimes with disjoint SQLite builtins.** Bun 1.3 ships `bun:sqlite` and lacks `node:sqlite`; Electron's Node ships the reverse. A direct import of either passes every test in one runtime and throws at launch in the other — which is how `bun:sqlite` reached a release build and failed the launch gate. `packages/core/src/sqlite.ts` selects at runtime, `packages/core/test/runtime.test.ts` forbids a top-level `bun:` import anywhere in `core`, and `make.sh` exercises the Node branch with a real round trip.
 
 ---
 
