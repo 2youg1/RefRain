@@ -55,11 +55,28 @@ app.whenReady().then(() => {
   // CI launches the packaged binary with --smoke: the window must actually
   // finish loading, then the process exits. A build that emits files but
   // cannot open a window is not a deliverable, and only a real launch says so.
-  if (process.argv.includes("--smoke"))
+  //
+  // The failure path needs its own exit. Without the deadline a window that
+  // never loads hangs the job until the runner kills it, which reports as a
+  // timeout rather than as the launch failure it is.
+  if (process.argv.includes("--smoke")) {
+    const deadline = setTimeout(() => {
+      console.error("SMOKE_FAIL window did not finish loading within 30s");
+      app.exit(1);
+    }, 30_000);
+
     window.webContents.once("did-finish-load", () => {
+      clearTimeout(deadline);
       console.log("SMOKE_OK window loaded");
       setTimeout(() => app.exit(0), 500);
     });
+
+    window.webContents.once("did-fail-load", (_e, code, description) => {
+      clearTimeout(deadline);
+      console.error(`SMOKE_FAIL ${code} ${description}`);
+      app.exit(1);
+    });
+  }
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
