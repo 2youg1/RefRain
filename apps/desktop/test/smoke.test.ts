@@ -6,14 +6,21 @@ const here = new URL(".", import.meta.url).pathname;
 const dist = join(here, "..", "dist");
 
 /**
+ * These read build output, so they run after `make.sh` rather than in the
+ * default suite. `bun run gate` builds first; a bare `bun test` skips them
+ * instead of failing on an absent dist/.
+ */
+const built = existsSync(join(dist, "main", "main.cjs"));
+const whenBuilt = built ? describe : describe.skip;
+
+/**
  * Build-shape checks. A packaged Electron app fails at launch for reasons no
  * unit test reaches: a CJS bundle under `"type": "module"`, an absolute asset
  * path that breaks under `file://`, a preload that resolves to nothing. Each of
  * those has one assertion here.
  */
-describe("packaged build", () => {
+whenBuilt("packaged build", () => {
   test("main and preload are emitted as CommonJS under .cjs", () => {
-    expect(existsSync(join(dist, "main", "main.cjs"))).toBe(true);
     expect(existsSync(join(dist, "main", "preload.cjs"))).toBe(true);
   });
 
