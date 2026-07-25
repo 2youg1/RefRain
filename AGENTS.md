@@ -55,6 +55,8 @@ Most test effort belongs in `packages/core`. Adapters use contract tests against
 
 **Green assertions are not correctness.** Changing UI requires looking at rendered pixels. Changing a protocol requires a real round trip. Bumping Electron requires the `e2e/ime` gate.
 
+The `e2e/ime` gate (Windows + MS Pinyin, four shells, real `SendInput` typing) runs in CI as the `ime-gate` workflow. Locally: `e2e/ime/scripts/prepare.ps1` once, then `e2e/ime/driver/drive.ps1 -Shell e43`, then `node e2e/ime/driver/analyze.js` and `node e2e/ime/driver/assert.js`. It seizes the real mouse and keyboard while running.
+
 ## Pull requests
 
 Four parts, none optional: **problem** (symptom and repro), **approach** (trade-offs and what you rejected), **implementation** (a dense diff), **evidence** (all three gates).
