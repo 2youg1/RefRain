@@ -57,6 +57,14 @@ whenBuilt("packaged build", () => {
     expect(bundle).not.toMatch(/\bXMLHttpRequest\b/);
   });
 
+  test("no build-machine path is baked into the bundle", () => {
+    const main = readFileSync(join(dist, "main", "main.cjs"), "utf8");
+
+    // A bundler that inlines __dirname as a literal produces an app that looks
+    // for its own files next to a directory only the build machine has.
+    expect(main).not.toMatch(/["'](\/home\/|\/Users\/|[A-Z]:\\\\)[^"']*src[/\\]main["']/);
+  });
+
   test("the renderer holds no privilege", () => {
     const main = readFileSync(join(dist, "main", "main.cjs"), "utf8");
 
