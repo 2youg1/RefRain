@@ -46,6 +46,7 @@ jobs:
       - name: Launch the app and require a loaded window
         working-directory: apps/desktop
         shell: pwsh
+        timeout-minutes: 3
         run: |
           $output = bun x electron dist/main/main.cjs --smoke 2>&1 | Out-String
           Write-Host $output
