@@ -26,6 +26,7 @@ export interface ManifestEntry {
  */
 export class AgentHost {
   private readonly agents = new Map<string, Agent>();
+  private readonly extraAdapters: HarnessAdapter[] = [];
   private readonly queue: ReviewTask[] = [];
   private readonly dispatched: Run[] = [];
   private readonly comments = new Map<string, AgentComment[]>();
@@ -39,6 +40,12 @@ export class AgentHost {
 
   register(agent: Agent): this {
     this.agents.set(agent.id, agent);
+    return this;
+  }
+
+  /** Adapters arrive as the author configures harnesses, not only at construction. */
+  addAdapter(adapter: HarnessAdapter): this {
+    this.extraAdapters.push(adapter);
     return this;
   }
 
@@ -81,7 +88,9 @@ export class AgentHost {
       const agent = this.agents.get(task.agentId);
       if (!agent) throw new Error(`no agent registered for task ${task.id}`);
 
-      const adapter = this.adapters.find((a) => a.id === agent.binding.harness);
+      const adapter = [...this.extraAdapters, ...this.adapters].find(
+        (a) => a.id === agent.binding.harness,
+      );
       if (!adapter) throw new Error(`no adapter for harness ${agent.binding.harness}`);
 
       const id = `run${++this.sequence}`;

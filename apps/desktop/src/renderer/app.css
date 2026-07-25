@@ -1,0 +1,176 @@
+/*
+ * A workbench for prose, so the surface reads like paper rather than a
+ * dashboard: warm neutrals, one accent reserved for the human's decision, and
+ * type sized for reading a manuscript rather than scanning a table.
+ */
+
+@font-face {
+  font-family: "system-serif";
+  src:
+    local("Source Han Serif SC"), local("Noto Serif CJK SC"), local("Songti SC"), local("SimSun");
+  font-display: swap;
+}
+
+:root {
+  --paper: #faf9f7;
+  --paper-raised: #ffffff;
+  --rule: #e6e2db;
+  --rule-strong: #d3cec4;
+  --ink: #1c1a17;
+  --ink-soft: #57534e;
+  --ink-faint: #8b857c;
+
+  /* One accent, spent only on the author's own decisions. */
+  --seal: #9a3412;
+  --seal-soft: #fef3ec;
+  --accepted: #3f6212;
+  --accepted-soft: #f2f7e9;
+  --refused: #9f1239;
+  --refused-soft: #fdf2f5;
+
+  --serif: "system-serif", "Songti SC", "Source Han Serif SC", Georgia, serif;
+  --sans: "Inter", -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --mono: "SF Mono", "Cascadia Code", "Consolas", monospace;
+
+  --shadow-raised: 0 1px 2px rgb(28 26 23 / 0.04), 0 4px 12px rgb(28 26 23 / 0.06);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+#app {
+  height: 100vh;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+/* The composition surface. Measure and leading come first; nothing decorates. */
+.manuscript {
+  font-family: var(--serif);
+  font-size: 17px;
+  line-height: 2;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  max-width: 34em;
+  margin: 0 auto;
+  padding: 4rem 0 40vh;
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  caret-color: var(--seal);
+}
+
+.manuscript::selection,
+.manuscript ::selection {
+  background: var(--seal-soft);
+}
+
+/* A slice under judgment. Removal and addition read as one gesture. */
+.slice {
+  display: block;
+  padding: 0.5rem 0.75rem;
+  border-left: 2px solid transparent;
+  font-family: var(--serif);
+  line-height: 1.9;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+.slice.same {
+  color: var(--ink-faint);
+}
+
+.slice.del {
+  border-left-color: var(--refused);
+  background: var(--refused-soft);
+  text-decoration: line-through;
+  text-decoration-color: rgb(159 18 57 / 0.4);
+}
+
+.slice.ins {
+  border-left-color: var(--accepted);
+  background: var(--accepted-soft);
+}
+
+.slice.judged-accept {
+  border-left-width: 3px;
+  border-left-color: var(--accepted);
+}
+
+.slice.judged-reject {
+  opacity: 0.45;
+}
+
+.slice.judged-accept-modified {
+  border-left-width: 3px;
+  border-left-color: var(--seal);
+  background: var(--seal-soft);
+}
+
+.label {
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.rule {
+  height: 1px;
+  background: var(--rule);
+  border: none;
+}
+
+input,
+textarea {
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper-raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  padding: 0.5rem 0.65rem;
+  width: 100%;
+  outline: none;
+}
+
+input:focus,
+textarea:focus {
+  border-color: var(--seal);
+  box-shadow: 0 0 0 3px var(--seal-soft);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--rule-strong);
+  border: 3px solid var(--paper);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}

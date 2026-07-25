@@ -34,6 +34,10 @@
     {
       "includes": ["**/*.test.ts"],
       "linter": { "rules": { "style": { "noNonNullAssertion": "off" } } }
+    },
+    {
+      "includes": ["**/*.svelte"],
+      "linter": { "enabled": false }
     }
   ]
 }

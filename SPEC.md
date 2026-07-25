@@ -184,6 +184,9 @@ M0 required proving the TypeScript 7 chain rather than assuming it. Three findin
 1. **The binary is `tsc`, not `tsgo`.** `tsgo` was the name under `@typescript/native-preview`; 7.0.2 ships the native compiler as `tsc`. `node_modules/typescript/lib/tsc.js` is a thin Node shim that `execve`s the native executable.
 2. **Piping a gate destroys its exit code.** `tsc --noEmit | head` exits 0 with type errors present. CI runs every gate unpiped, and `scripts/verify-gate.ts` feeds the typechecker code that must be rejected — a gate that cannot fail is worse than no gate.
 3. **`allowImportingTsExtensions` is mandatory.** Bun executes `.ts` directly, so imports carry the extension; without this flag TS 7 rejects every internal import.
+4. **`svelte-check` 4.7.3 crashes under TS 7**, reaching for `useCaseSensitiveFileNames` on an internal API that no longer exists. `apps/desktop/scripts/check-svelte.ts` compiles every component with Svelte's own compiler instead, which is the authority on its syntax anyway.
+5. **Biome lints only a Svelte file's `<script>` block**, so template references read as unused variables. Biome formats `.svelte`; the compiler check owns its linting.
+6. **Electron loads CommonJS**, so `main` and `preload` are bundled to `.cjs` — under `"type": "module"` a `.js` CJS bundle fails at launch, which no unit test reaches. `apps/desktop/test/smoke.test.ts` asserts the build shape, and CI launches the real binary with `--smoke` and requires the window to report a finished load.
 
 ---
 
