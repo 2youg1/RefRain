@@ -47,14 +47,14 @@ jobs:
         working-directory: apps/desktop
         shell: pwsh
         run: |
-          $output = & ./node_modules/.bin/electron.cmd dist/main/main.cjs --smoke 2>&1 | Out-String
+          $output = bun x electron dist/main/main.cjs --smoke 2>&1 | Out-String
           Write-Host $output
           if ($output -notmatch 'SMOKE_OK') { throw 'the window never finished loading' }
 
       - name: Package the Windows installer
         working-directory: apps/desktop
         shell: bash
-        run: ./node_modules/.bin/electron-builder --win --publish never
+        run: bun x electron-builder --win --publish never
 
       - name: Verify the installer exists and is not a stub
         working-directory: apps/desktop
