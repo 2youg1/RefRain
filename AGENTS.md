@@ -8,11 +8,20 @@ A local writing workbench. Every edit an agent proposes is a reviewable object; 
 
 ```bash
 bun install
+bun run native     # cargo build + copy the platform binary into packages/fs
 bun run dev
 bun run check      # tsc --noEmit
 bun run fmt        # biome, writes
 bun test
 ```
+
+`bun run native` needs a Rust toolchain and a system C compiler. On a machine
+without `cc`, `source scripts/native-env.sh` first — it points cargo at Zig,
+which ships a complete C toolchain in one relocatable tarball. CI needs none of
+this; GitHub's runners already carry MSVC, clang, and gcc.
+
+The file layer is a build artefact, so `packages/fs/test/boundary.test.ts`
+skips when the binary is absent and says so rather than reporting green.
 
 ## Before you edit
 
@@ -27,8 +36,10 @@ Violating any of these is a bug, not a style preference.
 1. **No network.** The app process makes no outbound requests. No API keys, no telemetry, no auto-update. Model calls happen only inside the user's own harness.
 2. **Only a Text Action mutates the manuscript.** Agent output becomes an immutable Proposal; a human click merges it. No auto-accept, no background merge, no YOLO mode.
 3. **No billing math.** Never display prices or cost estimates. Report token counts exactly as the harness reports them, tagged `actual` / `estimated` / `unknown`. When unavailable, show unknown.
-4. **Source Backup is never written to.**
-5. **`packages/core` has no DOM and near-zero dependencies.** `packages/agent` is the only surface touching a harness; protocol drift stops there. `apps/desktop` holds windowing and packaging only.
+4. **Source Backup is never written to.** Every mutating call in `packages/fs` passes through `Guard::admit`, which refuses it along with any path outside a workspace root. `bun run verify:trash-only` fails the build if a route around the guard appears.
+
+4b. **Delete goes to the system trash.** There is no permanent delete at any layer — not in Rust, not across N-API, not as an IPC channel. When the trash is unavailable the operation fails and the file stays; falling back to `remove_file` would turn an inconvenience into the one loss this application promises never to cause.
+5. **`packages/core` has no DOM and near-zero dependencies.** `packages/agent` is the only surface touching a harness; protocol drift stops there. `packages/fs` is the only surface holding a platform binary; native and OS-specific risk stops there. `apps/desktop` holds windowing and packaging only.
 6. **The editor core is framework-free.** The manuscript is a `contenteditable` holding paragraph elements, driven directly rather than through Svelte's reactivity — no framework code sits on the IME path. ProseMirror goes underneath in v0.2, under the same rule.
 
 ## Style
@@ -51,7 +62,7 @@ Three gates, all green or the PR does not land:
 bun run fmt:check && bun run check && bun test
 ```
 
-Most test effort belongs in `packages/core`. Adapters use contract tests against a real session and run (SPEC §6.5).
+Most test effort belongs in `packages/core`. Adapters use contract tests against a real session and run (SPEC §6.5). The native file layer has its own suite — `cd packages/fs && cargo test` — which runs against the real filesystem of whichever platform it is on, because a Windows path rule and a macOS trash binding cannot be tested any other way.
 
 **Green assertions are not correctness.** Changing UI requires looking at rendered pixels. Changing a protocol requires a real round trip. Bumping Electron requires the `e2e/ime` gate.
 
