@@ -12,7 +12,7 @@
  */
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { binaryName, type Workspace as WorkspaceType } from "../src/index.ts";
@@ -147,7 +147,9 @@ it("moves a file and reports where it landed", () => {
   const from = join(ROOT, "chapter-2.md");
   const to = join(ROOT, "part-one", "chapter-2.md");
 
-  expect(realpathSync(workspace.move(from, to))).toBe(realpathSync(to));
+  const moved = workspace.move(from, to);
+
+  expect(readFileSync(moved, "utf8")).toBe("second\n");
   expect(existsSync(to)).toBe(true);
   expect(existsSync(from)).toBe(false);
 

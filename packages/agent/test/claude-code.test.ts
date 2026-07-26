@@ -266,6 +266,7 @@ describe("Claude Code adapter", () => {
     expect(request).toContain("s1");
     expect(request).toContain("声音很熟。");
     expect(request).toContain("agent-result");
+    await adapter.awaitCompletion(run!).catch(() => undefined);
   });
 
   test("the argv denies every tool it does not name", async () => {
