@@ -7,13 +7,15 @@ interface Props {
   root: string | null;
   chapter: string | null;
   selection: string;
+  /** The whole blocks the selection touches, with their real core ids. */
+  scope: { ids: string[]; text: string };
   runs: RunView[];
   t: (key: Key) => string;
   onDispatched: () => void;
   onCollect: (runId: string) => void;
 }
 
-const { root, chapter, selection, runs, t, onDispatched, onCollect }: Props = $props();
+const { root, chapter, selection, scope, runs, t, onDispatched, onCollect }: Props = $props();
 
 let agents = $state<AgentView[]>([]);
 let manifest = $state<ManifestEntryView[]>([]);
@@ -26,7 +28,7 @@ const ready = $derived(
     chapter !== null &&
     chosen !== null &&
     prompt.trim().length > 0 &&
-    selection.trim().length > 0,
+    scope.ids.length > 0,
 );
 
 $effect(() => {
@@ -43,16 +45,21 @@ $effect(() => {
 });
 
 const enqueue = async (): Promise<void> => {
-  if (!root || !chapter || !chosen) return;
-  const target = selection.trim();
+  if (!root || !chapter || !chosen || scope.ids.length === 0) return;
 
+  // Real block ids and whole-block text, so the Decision Batch can find the
+  // scope and its baseline can match. A fabricated `${chapter}:sel` id made
+  // every merge from this panel fail with stale-baseline.
+  //
+  // randomUUID, not Date.now(): two tasks queued in the same millisecond
+  // collided, and the second silently replaced the first.
   await api().enqueue(root, {
-    id: `t${Date.now()}`,
+    id: crypto.randomUUID(),
     agentId: chosen,
     baseline: `${chapter}@current`,
     prompt: prompt.trim(),
     contextScope: [],
-    editScopes: [{ id: `s${Date.now()}`, blockIds: [`${chapter}:sel`], text: target }],
+    editScopes: [{ id: crypto.randomUUID(), blockIds: scope.ids, text: scope.text }],
   });
 
   manifest = await api().manifest(root);
