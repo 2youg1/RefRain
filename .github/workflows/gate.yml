@@ -127,6 +127,12 @@ jobs:
         working-directory: apps/desktop
         run: ./make.sh
 
+      # The main process is bundled for Node; a Bun global there is a crash no
+      # test can see, because bun test runs under Bun. This shipped once.
+      - name: the main process names no Bun global
+        working-directory: apps/desktop
+        run: bun scripts/verify-no-bun.ts
+
       - name: build-shape checks
         working-directory: apps/desktop
         run: bun test test/smoke.test.ts

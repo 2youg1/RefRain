@@ -93,6 +93,13 @@ jobs:
         shell: bash
         run: ./make.sh
 
+      # A release must not ship a main process that names a Bun global: it is
+      # bundled for Node, so the reference is a crash on the user's machine
+      # that no test under Bun can reach.
+      - name: The main process names no Bun global
+        working-directory: apps/desktop
+        run: bun scripts/verify-no-bun.ts
+
       - name: Build-shape checks
         working-directory: apps/desktop
         run: bun test test/smoke.test.ts
