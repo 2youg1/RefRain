@@ -136,8 +136,8 @@ export const dict = {
   "set.page": { zh: "书页", en: "Page" },
   "set.canvas": { zh: "画布", en: "Canvas" },
   "set.layoutHint": {
-    zh: "书页：一次一章，像一本书。画布：每篇一个窗口，可自由排布。",
-    en: "Page: one chapter at a time, like a book. Canvas: a window per piece, arranged freely.",
+    zh: "书页：一次一章，像一本书。画布式排布还没做，标点的那一项即是。",
+    en: "Page: one chapter at a time, like a book. The canvas layout is not built yet — the dotted option is it.",
   },
   "set.icon": { zh: "万能按钮图标", en: "Key button icon" },
   "set.iconPick": { zh: "选一张图片", en: "Choose a picture" },
