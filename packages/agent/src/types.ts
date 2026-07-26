@@ -1,4 +1,4 @@
-import type { BlockId, RevisionId } from "@refrain/core";
+import type { BlockId, Persona, PersonaCarry, RevisionId } from "@refrain/core";
 
 /** Harness capability tier (SPEC 6.1). Missing capability degrades and is labeled. */
 export type Tier = "L0" | "L1" | "L2";
@@ -28,10 +28,23 @@ export interface RuntimeBinding {
   readonly reasoningEffort: string;
 }
 
+/**
+ * A collaborator: one session, one immutable runtime binding, and the standing
+ * identity the author wrote for it.
+ *
+ * Identity is what separates two agents on the same harness and the same
+ * model. A line editor and a structural reader can share every runtime
+ * setting and still be different collaborators, because the brief they work
+ * under differs — which is why `persona` sits beside `binding` rather than
+ * inside it, and why it stays editable while the binding never is.
+ */
 export interface Agent {
   readonly id: string;
   readonly name: string;
   readonly binding: RuntimeBinding;
+  readonly persona?: Persona;
+  /** Whether the brief travels every round, only the first, or never. */
+  readonly personaCarry?: PersonaCarry;
 }
 
 /** A manuscript slot a run may replace, carrying the text at the baseline Revision. */

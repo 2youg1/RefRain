@@ -40,6 +40,50 @@ export class FileChannelAdapter implements HarnessAdapter {
 }
 
 /**
+ * The reply contract, stated in the request itself.
+ *
+ * Measured against a parser with six shapes an agent might plausibly produce,
+ * five failed: bare prose, a fenced code block, a polite preamble, a missing
+ * version attribute, and a guessed element name. The first three are default
+ * behaviour for most harnesses. Every one of those failures costs a full round
+ * of tokens and tells the agent nothing about what went wrong, so the contract
+ * travels with the request rather than living in a repository the agent has
+ * never read.
+ *
+ * Spelled out rather than summarised: an agent cannot infer that prose outside
+ * the root element is rejected, and it is exactly the kind of thing a model
+ * adds to be helpful.
+ */
+const CONTRACT = `Reply with one <agent-result> element and nothing else — no
+preamble, no closing remark, no code fence. Text outside the element is
+rejected and the run fails.
+
+<agent-result version="1">
+  <replacement scope="SCOPE-ID">the rewritten text</replacement>
+  <comments>
+    <comment target="SCOPE-ID">an observation that changes nothing</comment>
+  </comments>
+  <memo topic="optional label">what you want to still know next time</memo>
+</agent-result>
+
+Rules:
+- Use the scope ids marked in "# Before" above, exactly as written.
+- One <replacement> per scope at most. Repeating a scope fails the run.
+- An empty <replacement> deletes that scope's text.
+- Every <comment> goes inside <comments>, and uses target= rather than scope=.
+- Omit <replacement> entirely to propose no change; comments alone are valid
+  and are how you raise a doubt without editing.
+- You are writing a proposal, not the manuscript. A human reads every change
+  and decides. Nothing you write reaches the text without that decision.
+
+About <memo>: write it for whoever works on this next — possibly you after a
+compaction, possibly a different agent. Record what you learned that is not
+already visible in the text: the author's standing preferences, decisions
+already settled, traps you found. Skip anything a reader could see by opening
+the manuscript. It is optional, it is read by a human before it is reused, and
+it is the only thing you carry across a lost context.`;
+
+/**
  * The app generates Before and Request; the agent fills only Agent reply.
  * Keeping the first two sections app-authored is what makes the artifact's
  * provenance checkable rather than merely claimed.
@@ -53,8 +97,12 @@ export const scaffold = (task: ReviewTask): string =>
     "",
     task.prompt,
     "",
+    "# Reply format",
+    "",
+    CONTRACT,
+    "",
     "# Agent reply",
     "",
-    '<!-- Replace this comment with a single <agent-result version="1"> element. -->',
+    "<!-- Your <agent-result> element replaces this comment. -->",
     "",
   ].join("\n");

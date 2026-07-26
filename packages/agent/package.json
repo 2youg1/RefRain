@@ -8,5 +8,6 @@
   },
   "dependencies": {
     "@refrain/core": "workspace:*"
-  }
+  },
+  "license": "GPL-3.0-only"
 }

@@ -2,7 +2,15 @@
   "$schema": "https://biomejs.dev/schemas/2.5.5/schema.json",
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": {
-    "includes": ["**", "!**/dist", "!**/node_modules", "!**/*.min.js", "!e2e/ime", "!**/bun.lock"]
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/node_modules",
+      "!**/*.min.js",
+      "!e2e/ime",
+      "!docs",
+      "!**/bun.lock"
+    ]
   },
   "formatter": {
     "enabled": true,

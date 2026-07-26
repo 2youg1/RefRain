@@ -49,6 +49,26 @@ describe("command adapter", () => {
     expect((await host.collect(run!.id))[0]).toMatchObject({ after: "剑没有松。" });
   });
 
+  test.failing("the host observes command completion without an adapter-specific call", async () => {
+    const adapter = new CommandAdapter({
+      id: "command",
+      template: ["sh", "-c", 'printf \'%s\' "$REPLY" > "{result}"'],
+      env: {
+        REPLY:
+          '# Agent reply\n\n<agent-result version="1"><replacement scope="s1"><![CDATA[剑没有松。]]></replacement></agent-result>',
+      },
+    });
+    const host = new AgentHost(root, [adapter]);
+    host.register(agent).enqueue(task);
+
+    const [run] = await host.send();
+    for (let attempt = 0; attempt < 100 && run?.state === "dispatched"; attempt++)
+      await Bun.sleep(5);
+
+    expect(run?.state).toBe("completed");
+    expect((await host.collect(run!.id))[0]).toMatchObject({ after: "剑没有松。" });
+  });
+
   test("a failing command marks the run failed rather than silently dropping it", async () => {
     const adapter = new CommandAdapter({ id: "command", template: ["sh", "-c", "exit 3"] });
     const host = new AgentHost(root, [adapter]);
@@ -60,6 +80,24 @@ describe("command adapter", () => {
     expect(run!.state).toBe("failed");
   });
 
+  test.failing("a timed-out harness is killed and reaches failed", async () => {
+    const adapter = new CommandAdapter({
+      id: "command",
+      template: ["sh", "-c", "sleep 5"],
+      timeoutMs: 30,
+    });
+    const host = new AgentHost(root, [adapter]);
+    host.register(agent).enqueue(task);
+
+    const started = performance.now();
+    const [run] = await host.send();
+    for (let attempt = 0; attempt < 100 && run?.state === "dispatched"; attempt++)
+      await Bun.sleep(5);
+
+    expect(run?.state).toBe("failed");
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
   test("cancellation reaches a terminal state", async () => {
     const adapter = new CommandAdapter({ id: "command", template: ["sh", "-c", "sleep 30"] });
     const host = new AgentHost(root, [adapter]);
@@ -69,6 +107,36 @@ describe("command adapter", () => {
     await adapter.cancel(run!);
 
     expect(run!.state).toBe("cancelled");
+  });
+
+  test.failing("cancelling after completion cannot rewrite the terminal state", async () => {
+    const adapter = new CommandAdapter({
+      id: "command",
+      template: ["sh", "-c", 'printf \'%s\' "$REPLY" > "{result}"'],
+      env: { REPLY: '# Agent reply\n\n<agent-result version="1"><memo>done</memo></agent-result>' },
+    });
+    const host = new AgentHost(root, [adapter]);
+    host.register(agent).enqueue(task);
+    const [run] = await host.send();
+    for (let attempt = 0; attempt < 100 && run?.state === "dispatched"; attempt++)
+      await Bun.sleep(5);
+
+    expect(run?.state).toBe("completed");
+    await adapter.cancel(run!);
+    expect(run?.state).toBe("completed");
+  });
+
+  test.failing("a command that cannot launch returns its task to the pending queue", async () => {
+    const adapter = new CommandAdapter({
+      id: "command",
+      template: ["refrain-command-does-not-exist"],
+    });
+    const host = new AgentHost(root, [adapter]);
+    host.register(agent).enqueue(task);
+
+    expect(host.send()).rejects.toThrow();
+    expect(host.pending().map((entry) => entry.id)).toEqual(["t1"]);
+    expect(host.runs()).toEqual([]);
   });
 
   test("a harness that reports no usage says unknown", () => {
