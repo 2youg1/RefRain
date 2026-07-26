@@ -7,3 +7,10 @@ e2e/ime/results/
 e2e/ime/page/editor.html
 e2e/ime/page/editor.bundle.js
 e2e/ime/shells/wv2/wv2pkg/
+
+# The native layer's build output and the platform binary it produces. Each
+# machine builds its own; CI publishes them as release artefacts.
+packages/fs/target/
+packages/fs/*.node
+apps/desktop/release/
+apps/desktop/build/icon.png

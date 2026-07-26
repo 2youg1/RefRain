@@ -1,6 +1,9 @@
 {
   "name": "@refrain/desktop",
-  "version": "0.1.2",
+  "version": "0.1.3",
+  "description": "A local writing workbench where every agent edit is a reviewable proposal",
+  "author": "RefRain contributors",
+  "homepage": "https://github.com/kaile9/refrain",
   "private": true,
   "type": "module",
   "main": "dist/main/main.cjs",
@@ -18,5 +21,6 @@
     "electron-builder": "26.15.3",
     "svelte": "5.56.8",
     "vite": "8.1.5"
-  }
+  },
+  "license": "GPL-3.0-only"
 }

@@ -12,14 +12,98 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  BUN_VERSION: 1.3.14
+  # Pinned so a toolchain release cannot change what the gate measured. Raising
+  # it is a commit with its own evidence, not a silent Monday morning failure.
+  RUST_VERSION: "1.97.1"
+
 jobs:
+  # The native file layer is built and tested first, on every platform it ships
+  # to. A Rust change that only breaks Windows must fail here rather than in a
+  # release job that runs after review.
+  native:
+    name: native (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            artifact: librefrain_fs.so
+          - os: windows-latest
+            target: win32-x64
+            artifact: refrain_fs.dll
+          - os: macos-latest
+            target: darwin-arm64
+            artifact: librefrain_fs.dylib
+          - os: macos-13
+            target: darwin-x64
+            artifact: librefrain_fs.dylib
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt, clippy
+
+      # Cache keyed on the lockfile: a dependency change rebuilds, a source
+      # change does not.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/fs
+
+      - name: format
+        working-directory: packages/fs
+        run: cargo fmt --check
+
+      # `-D warnings`: a warning that is allowed to accumulate is a warning
+      # nobody reads.
+      - name: lint
+        working-directory: packages/fs
+        run: cargo clippy --all-targets -- -D warnings
+
+      # The guard, the index, the matcher, the sort, and the trash refusals.
+      # These run on the real filesystem of each platform, which is the only
+      # way a Windows path rule or a macOS trash binding gets tested at all.
+      - name: test
+        working-directory: packages/fs
+        run: cargo test --lib
+
+      - name: build
+        working-directory: packages/fs
+        run: cargo build --release
+
+      - name: name the artefact for its platform
+        shell: bash
+        working-directory: packages/fs
+        run: cp target/release/${{ matrix.artifact }} refrain-fs.${{ matrix.target }}.node
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: refrain-fs-${{ matrix.target }}
+          path: packages/fs/refrain-fs.${{ matrix.target }}.node
+          retention-days: 7
+
+  # The three gates from AGENTS.md, plus the checks that only a built bundle can
+  # answer. Depends on `native` so the boundary tests run against a real binary
+  # rather than skipping and reporting green.
   gate:
+    needs: native
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: refrain-fs-linux-x64
+          path: packages/fs
 
       # --frozen-lockfile: CI must fail on an out-of-date lockfile rather than
       # silently resolving different versions than the author tested against.
@@ -46,13 +130,63 @@ jobs:
         working-directory: apps/desktop
         run: bun test test/smoke.test.ts
 
+      - name: install a browser for the rendering checks
+        run: bun x playwright install chromium --only-shell
+
       # The ruled lines must land under the glyphs, not through them. Vision
       # cannot tell those apart in a screenshot; the geometry can.
       - name: ruled lines land under the glyphs
         working-directory: apps/desktop
-        run: |
-          bun x playwright install chromium --only-shell
-          bun scripts/verify-grid.ts
+        run: bun scripts/verify-grid.ts
+
+      # The file browser's claims: a windowed list, columns whose headers sit
+      # over their own values, a hairline that is one device pixel, and motion
+      # retargeted to the panel. Every one of these shipped broken at least once
+      # while passing its unit tests.
+      - name: the file browser renders what it claims
+        working-directory: apps/desktop
+        run: bun scripts/verify-files.ts
+
+      # The bundled faces must actually render. `document.fonts.check` returns
+      # true for any substitutable family, so this compares rendered pixels.
+      - name: the bundled typefaces render
+        working-directory: apps/desktop
+        run: bun scripts/verify-render.ts
+
+      - name: the rail seam is drawn
+        working-directory: apps/desktop
+        run: bun scripts/verify-seam.ts
+
+      # SPEC Q5: the chapter header does not share the manuscript's left edge.
+      # The check is wired in reporting-only until the defect is fixed — a
+      # verification script that lives outside CI stops being true without
+      # anyone noticing, which is exactly what happened to this one.
+      - name: chapter header alignment (SPEC Q5, known defect)
+        working-directory: apps/desktop
+        continue-on-error: true
+        run: bun scripts/verify-anchor.ts
+
+      # Speed is the file layer's reason to exist, so it is measured on every
+      # run and the numbers are kept. A threshold set from one run on a shared
+      # CI machine would fail randomly; recording the series lets a regression
+      # be seen against its own history instead.
+      - name: measure the file layer
+        working-directory: packages/fs
+        run: BENCH_FILES=20000 bun bench/file-layer.bench.ts | tee bench-result.txt
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: rendered-screens
+          path: apps/desktop/shots/
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: bench
+          path: packages/fs/bench-result.txt
+          retention-days: 30
 
   # The gate must be provably capable of failing. A misconfigured tsconfig or a
   # piped command turns `check` into a no-op that reports success forever.
@@ -62,7 +196,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: ${{ env.BUN_VERSION }}
       - run: bun install --frozen-lockfile
       - name: typecheck rejects ill-typed code
         run: bun run verify:gate
@@ -73,10 +207,16 @@ jobs:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: ${{ env.BUN_VERSION }}
       - run: bun install --frozen-lockfile
 
       # SPEC 1.3: the app process makes no outbound network requests.
       # Caught in CI because a stray import is invisible in review.
       - name: no network in core
         run: bun run verify:no-network
+
+      # A delete that cannot be undone is the one defect this application
+      # cannot apologise for. The channel list and the native surface are both
+      # asserted, so adding a permanent delete fails here before review.
+      - name: delete goes to the trash, everywhere
+        run: bun run verify:trash-only
