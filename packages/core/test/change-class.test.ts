@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test";
+import type { ReviewSlice, SliceKind } from "../src/index.ts";
 import { classifyChange, classifyProposal } from "../src/index.ts";
+
+/** Classification reads kind and text; lead and trail are spacing, not signal. */
+const slice = (id: string, kind: SliceKind, text: string): ReviewSlice => ({
+  id,
+  kind,
+  text,
+  lead: "",
+  trail: "",
+});
 
 /**
  * The safety property this file exists for: a semantic change must never be
@@ -62,9 +72,9 @@ describe("Change classification", () => {
 
   test("one semantic slice makes the whole proposal semantic", () => {
     const cls = classifyProposal([
-      { id: "s0", kind: "same", text: "他说" },
-      { id: "s1", kind: "del", text: ",好。" },
-      { id: "s2", kind: "ins", text: "，妙。" },
+      slice("s0", "same", "他说"),
+      slice("s1", "del", ",好。"),
+      slice("s2", "ins", "，妙。"),
     ]);
 
     expect(cls).toBe("semantic");
@@ -72,8 +82,8 @@ describe("Change classification", () => {
 
   test("a proposal of pure punctuation sweeps is formatting", () => {
     const cls = classifyProposal([
-      { id: "s0", kind: "del", text: "他说,好.她说,行." },
-      { id: "s1", kind: "ins", text: "他说，好。她说，行。" },
+      slice("s0", "del", "他说,好.她说,行."),
+      slice("s1", "ins", "他说，好。她说，行。"),
     ]);
 
     expect(cls).toBe("formatting");

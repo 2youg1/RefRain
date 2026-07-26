@@ -233,6 +233,45 @@ describe("Decision Batch", () => {
     expect(result.verdicts).toHaveLength(rejections.length);
   });
 
+  /**
+   * The guarantee an unjudged slice is supposed to carry: refusing everything
+   * leaves the author's text exactly as it was. It did not hold — sentences
+   * were trimmed for comparison and rejoined without their spacing, so a
+   * fully-refused proposal still closed every sentence gap and every
+   * paragraph break, and commitDecisionBatch returned ok with the eaten text.
+   */
+  test.each([
+    ["a Latin sentence gap", "First sentence. Second one stays."],
+    ["a paragraph break", "甲。\n\n乙。"],
+    ["two spaces after a stop", "A.  Two spaces."],
+    ["a CJK line break", "剑尖垂下去。\n她没有回头。"],
+    ["trailing whitespace", "黑暗中有人问。  "],
+  ])("rejecting every slice preserves %s", (_label, before) => {
+    const proposal: Proposal = {
+      id: "p-space",
+      runId: "run1",
+      baseline: "rev0",
+      scope: { id: "s1", blockIds: ["b1"] },
+      before,
+      after: `${before} 改写。`,
+    };
+
+    const rejections = sliceProposal(proposal)
+      .filter((slice) => slice.kind !== "same")
+      .map(
+        (slice, index): Verdict => ({
+          id: `v${index}`,
+          proposalId: proposal.id,
+          sliceId: slice.id,
+          kind: "reject",
+          baseline: "rev0",
+          decidedAt: "2026-07-26T00:00:00Z",
+        }),
+      );
+
+    expect(rebuildReplacement(proposal, rejections)).toBe(before);
+  });
+
   test("disjoint proposals commute", () => {
     const forward = commitDecisionBatch(
       head(),
