@@ -437,11 +437,26 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     return runs.map((r) => ({ id: r.id, requestPath: r.requestPath, resultPath: r.resultPath }));
   });
 
-  ipc.handle("agent:runs", (_e, root: string) =>
-    openWorkbench(root)
-      .host.runs()
-      .map((r) => ({ id: r.id, state: r.state, resultPath: r.resultPath, agentId: r.agentId })),
-  );
+  /**
+   * The runs, each carrying why it failed.
+   *
+   * The reason was recorded on the Host and had no channel out, so the
+   * interface could show that a run failed but never what went wrong — which
+   * for a harness misconfiguration is the only useful part.
+   */
+  ipc.handle("agent:runs", (_e, root: string) => {
+    const workbench = openWorkbench(root);
+    return workbench.host.runs().map((r) => {
+      const failure = workbench.host.failureFor(r.id);
+      return {
+        id: r.id,
+        state: r.state,
+        resultPath: r.resultPath,
+        agentId: r.agentId,
+        ...(failure === undefined ? {} : { failure }),
+      };
+    });
+  });
 
   ipc.handle("agent:collect", async (_e, root: string, runId: string) => {
     const workbench = openWorkbench(root);

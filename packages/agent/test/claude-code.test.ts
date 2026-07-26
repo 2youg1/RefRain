@@ -22,16 +22,43 @@ const root = join(tmpdir(), "refrain-claude-contract");
 const binDir = join(root, "bin");
 
 /** Runs the contract stub through Bun itself, so no platform shell is involved. */
-const stubClaude = (stdout: string, code = 0, delayMs = 0): ClaudeCodeConfig => {
+/**
+ * A stand-in for the `claude` binary.
+ *
+ * `writesResult` controls whether it produces a Result Artifact, which is what
+ * a real harness does on success. Several tests used to leave it out and still
+ * expect the run to survive — they were relying on the Host leaving a
+ * result-less run in `dispatched` forever, which was the hang in review #29.
+ * Now that such a run fails, a stub that means to succeed has to write one.
+ */
+const RESULT = '# Agent reply\n\n<agent-result version="1"><memo>done</memo></agent-result>';
+
+const stubClaude = (
+  stdout: string,
+  code = 0,
+  delayMs = 0,
+  writesResult = true,
+): ClaudeCodeConfig => {
   mkdirSync(binDir, { recursive: true });
   const path = join(binDir, `claude-${Math.random().toString(36).slice(2)}.js`);
   writeFileSync(
     path,
     [
       `await Bun.sleep(${delayMs});`,
+      // The adapter pipes the request in and names the result path in it, the
+      // way it names it to the real binary.
+      writesResult
+        ? [
+            `const asked = await Bun.stdin.text();`,
+            `const at = asked.match(/Write your reply to (.+)$/m)?.[1]?.trim();`,
+            `if (at) await Bun.write(at, ${JSON.stringify(RESULT)});`,
+          ].join("\n")
+        : "",
       `process.stdout.write(${JSON.stringify(stdout)});`,
       `process.exit(${code});`,
-    ].join("\n"),
+    ]
+      .filter(Boolean)
+      .join("\n"),
   );
   return { command: process.execPath, commandArgs: [path] };
 };

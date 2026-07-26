@@ -144,8 +144,20 @@ const send = async (): Promise<void> => {
         <div class="run">
           <span class="run-id">{run.id}</span>
           <span class="run-state {run.state}">{run.state}</span>
-          <button onclick={() => onCollect(run.id)}>{t("dispatch.collect")}</button>
+          <!-- Collecting a failed run has nothing to collect. -->
+          {#if run.state !== "failed"}
+            <button onclick={() => onCollect(run.id)}>{t("dispatch.collect")}</button>
+          {/if}
         </div>
+        <!--
+          The harness's own words. A misconfigured command or a malformed reply
+          is diagnosed by what it said; "failed" on its own tells an author
+          nothing they can act on, and the reason had no channel out of the Host
+          until now.
+        -->
+        {#if run.failure}
+          <p class="run-failure">{run.failure}</p>
+        {/if}
       {/each}
     </section>
   {/if}
@@ -298,6 +310,20 @@ const send = async (): Promise<void> => {
   .run-id {
     font-family: var(--mono);
     font-size: var(--step--2);
+  }
+
+  .run-failure {
+    font-family: var(--mono);
+    font-size: var(--step--2);
+    line-height: 1.7;
+    color: var(--refused);
+    background: var(--refused-wash);
+    border-left: 2px solid var(--refused);
+    padding: 0.4rem 0.6rem;
+    margin: 0.2rem 0 0.5rem;
+    /* A path or a stack trace has no spaces to break at. */
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
   }
 
   .run-state {
