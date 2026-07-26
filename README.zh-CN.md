@@ -106,7 +106,7 @@ bun run native     # 平台二进制
 cd apps/desktop && ./make.sh && bun x electron-builder --win --x64
 ```
 
-`gate` workflow 仍在普通 CI 中构建并测试各平台原生层。0.1.4 的 tag 只在 Windows x64 运行 `release.yml`；真实窗口启动检查通过后，发布一个 NSIS 安装包。
+`gate` workflow 仍在普通 CI 中构建并测试各平台原生层。当前 0.1.x 的 tag 只在 Windows x64 运行 `release.yml`；真实窗口启动检查通过后，发布一个 NSIS 安装包。
 
 ## 验证
 

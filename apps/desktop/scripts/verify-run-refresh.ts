@@ -32,7 +32,7 @@ await page.addInitScript(`
     createProject: async () => null,
     loadProject: async () => [chapter],
     loadWorkspace: async () => [chapter],
-    saveChapter: async () => ({ ok: true }),
+    saveChapter: async () => ({ ok: true, edits: [] }),
     resolveConflict: async () => ({ ok: false, reason: "not expected" }),
     pathFor: () => "",
     resolveDrop: async () => null,
@@ -64,7 +64,7 @@ await page.addInitScript(`
     ledger: async () => [],
     reply: async () => "",
     searchLedger: async () => [],
-    editsBetween: async () => [],
+
     revertEdit: async (text) => text,
     revertAll: async (text) => text,
     describeEdits: async () => "",

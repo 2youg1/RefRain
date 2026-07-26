@@ -13,11 +13,10 @@ const api = {
   loadWorkspace: (roots: string[]) => ipcRenderer.invoke("project:load-workspace", roots),
 
   /** The record of what the author changed, and how to put any of it back. */
-  editsBetween: (before: string, after: string) =>
-    ipcRenderer.invoke("edits:between", before, after),
-  revertEdit: (text: string, edit: unknown) => ipcRenderer.invoke("edits:revert", text, edit),
-  revertAll: (text: string, edits: unknown[]) =>
-    ipcRenderer.invoke("edits:revert-all", text, edits),
+  revertEdit: (root: string, chapterId: string, edit: unknown) =>
+    ipcRenderer.invoke("edits:revert", root, chapterId, edit),
+  revertAll: (root: string, chapterId: string, edits: unknown[]) =>
+    ipcRenderer.invoke("edits:revert-all", root, chapterId, edits),
   describeEdits: (edits: unknown[]) => ipcRenderer.invoke("edits:describe", edits),
   resolveConflict: (root: string, chapterId: string, choice: "mine" | "disk") =>
     ipcRenderer.invoke("project:resolve-conflict", root, chapterId, choice),

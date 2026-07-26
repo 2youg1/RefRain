@@ -137,7 +137,7 @@ jobs:
           files: release-assets/*
           generate_release_notes: true
           body: |
-            RefRain 0.1.4 is available for **Windows x64**.
+            RefRain 0.1.5 is available for **Windows x64**.
 
             Open or drop a folder of Markdown files. **Ctrl K** reaches every
             command; **Ctrl Enter** enters Zen.

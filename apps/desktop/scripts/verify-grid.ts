@@ -34,7 +34,7 @@ await page.addInitScript(`window.refrain = {
   openProject: async () => "/p",
   loadProject: async () => [{ id: "01.md", title: "01", text: ${JSON.stringify(LONG)} }],
   createProject: async () => null, pathFor: () => "", resolveDrop: async () => null,
-  fullscreen: async () => true, saveChapter: async () => true, listAgents: async () => [],
+  fullscreen: async () => true, saveChapter: async () => ({ ok: true, edits: [] }), listAgents: async () => [],
   addAgent: async () => ({}), enqueue: async () => true, manifest: async () => [], send: async () => [],
   collect: async () => ({ proposals: [], comments: [] }), runs: async () => [],
   commit: async () => ({ ok: true, text: "" }), ledger: async () => [], reply: async () => "",

@@ -231,7 +231,11 @@ test("keeping the displayed local version commits it once when the disk stays pu
       text?: string;
     };
 
-    expect(outcome).toEqual({ ok: true, text: "我明确保留的版本。" });
+    expect(outcome).toMatchObject({
+      ok: true,
+      text: "我明确保留的版本。",
+      edits: [{ kind: "replace", before: "最初版本。", after: "我明确保留的版本。" }],
+    });
     expect(readFileSync(path, "utf8")).toBe("我明确保留的版本。\n");
   } finally {
     closeWorkbenches();
@@ -331,6 +335,72 @@ test("same-stem chapters keep distinct portable identities", async () => {
   }
 });
 
+test("reverting a removed middle paragraph through IPC restores its original position", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-ipc-revert-"));
+  const path = join(root, "01.md");
+  const before = "甲。\n\n乙。\n\n丙。";
+  try {
+    writeFileSync(path, `${before}\n`, "utf8");
+    await call("project:load", root);
+
+    const saved = (await call("project:save", root, "01.md", "甲。\n\n丙。")) as {
+      ok: boolean;
+      edits?: { id: string; kind: string; blockId: string; at: string }[];
+    };
+    const removed = saved.edits?.find((edit) => edit.kind === "remove");
+
+    expect(removed).toBeDefined();
+    expect(await call("edits:revert", root, "01.md", removed)).toBe(before);
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a later disjoint insertion does not move where an earlier removal is restored", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-ipc-lineage-"));
+  const path = join(root, "01.md");
+  try {
+    writeFileSync(path, "甲。\n\n乙。\n\n丙。\n", "utf8");
+    await call("project:load", root);
+    const first = (await call("project:save", root, "01.md", "甲。\n\n丙。")) as {
+      edits: { id: string; kind: string; blockId: string; at: string }[];
+    };
+    await call("project:save", root, "01.md", "前。\n\n甲。\n\n丙。");
+
+    const removed = first.edits.find((edit) => edit.kind === "remove");
+    expect(await call("edits:revert", root, "01.md", removed)).toBe("前。\n\n甲。\n\n乙。\n\n丙。");
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("one save may insert adjacent paragraphs without losing their lineage", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-ipc-adjacent-"));
+  const path = join(root, "01.md");
+  const after = "甲。\n\n乙一。\n\n乙二。\n\n丙。";
+  try {
+    writeFileSync(path, "甲。\n\n丙。\n", "utf8");
+    await call("project:load", root);
+
+    const saved = (await call("project:save", root, "01.md", after)) as {
+      ok: boolean;
+      edits: { kind: string; after?: string }[];
+    };
+
+    expect(saved.ok).toBe(true);
+    expect(saved.edits.filter((edit) => edit.kind === "insert").map((edit) => edit.after)).toEqual([
+      "乙一。",
+      "乙二。",
+    ]);
+    expect(readFileSync(path, "utf8")).toBe(`${after}\n`);
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("an external edit has one atomic resolution channel", () => {
   expect(handlers.has("project:resolve-conflict")).toBe(true);
   expect(handlers.has("project:reload-chapter")).toBe(false);
@@ -339,7 +409,7 @@ test("an external edit has one atomic resolution channel", () => {
 test("the editor channels do not depend on the file layer", () => {
   // The ordinary path stays whole when the fast path is absent: opening,
   // loading, and saving a chapter are registered independently.
-  for (const channel of ["project:load", "project:save", "edits:between", "review:commit"]) {
+  for (const channel of ["project:load", "project:save", "edits:revert", "review:commit"]) {
     expect(handlers.has(channel)).toBe(true);
   }
 });

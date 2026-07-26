@@ -67,7 +67,7 @@ await page.addInitScript(`
     probeAgent: async () => ({ ok: true }), enqueue: async () => true, manifest: async () => [],
     send: async () => [], collect: async () => ({ proposals: [], comments: [] }),
     runs: async () => [], commit: async () => ({ ok: true, text: "" }),
-    ledger: async () => [], reply: async () => "", editsBetween: async () => [],
+    ledger: async () => [], reply: async () => "",
     revertEdit: async (t) => t, revertAll: async (t) => t, describeEdits: async () => "",
     systemFonts: async () => [], openProjectUrl: async () => true,
     files: {

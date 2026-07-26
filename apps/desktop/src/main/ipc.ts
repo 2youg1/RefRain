@@ -11,12 +11,12 @@ import {
   sendManifest,
 } from "@refrain/agent";
 import {
+  advanceTextHead,
   type ChangedUnderneath,
   commitDecisionBatch,
   currentText,
   describeEditsForAgent,
   type Edit,
-  editsBetween,
   type FileStamp,
   loadProject,
   loadWorkspace,
@@ -184,6 +184,13 @@ const chapterHead = (chapterId: string, text: string, cause: string): TextHead =
   cause,
 });
 
+const advanceChapter = (workbench: Workbench, chapterId: string, text: string, cause: string) =>
+  advanceTextHead(
+    workbench.heads.get(chapterId) ?? chapterHead(chapterId, "", "new chapter"),
+    text,
+    cause,
+  );
+
 export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
   ipc.handle("project:open", async () => {
     const result = await dialog.showOpenDialog({
@@ -242,27 +249,19 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     }));
   });
 
-  const asHead = (text: string): TextHead => ({
-    id: `mem@${Date.now()}`,
-    blocks: text
-      .split(/\n\s*\n/)
-      .map((t) => t.trim())
-      .filter((t) => t.length > 0)
-      .map((t, i) => ({ id: `b${i}`, text: t })),
-    cause: "in memory",
+  ipc.handle("edits:revert", (_e, root: string, chapterId: string, edit: Edit) => {
+    const workbench = openWorkbench(root);
+    const head = revertEdit(headFor(root, chapterId), edit);
+    workbench.heads.set(chapterId, head);
+    return currentText(head);
   });
 
-  ipc.handle("edits:between", (_e, before: string, after: string) =>
-    editsBetween(asHead(before), asHead(after)),
-  );
-
-  ipc.handle("edits:revert", (_e, text: string, edit: Edit) =>
-    currentText(revertEdit(asHead(text), edit)),
-  );
-
-  ipc.handle("edits:revert-all", (_e, text: string, edits: Edit[]) =>
-    currentText(revertAll(asHead(text), edits)),
-  );
+  ipc.handle("edits:revert-all", (_e, root: string, chapterId: string, edits: Edit[]) => {
+    const workbench = openWorkbench(root);
+    const head = revertAll(headFor(root, chapterId), edits);
+    workbench.heads.set(chapterId, head);
+    return currentText(head);
+  });
 
   ipc.handle("edits:describe", (_e, edits: Edit[]) => describeEditsForAgent(edits));
 
@@ -297,7 +296,8 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
    */
   ipc.handle("project:save", (_e, root: string, chapterId: string, text: string) => {
     const workbench = openWorkbench(root);
-    const head = chapterHead(chapterId, text, "author edit");
+    const advanced = advanceChapter(workbench, chapterId, text, "author edit");
+    const head = advanced.head;
 
     const known = workbench.onDisk.get(chapterId);
     const outcome = known
@@ -317,7 +317,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     workbench.conflicts.delete(chapterId);
     workbench.heads.set(chapterId, head);
     workbench.onDisk.set(chapterId, { path: outcome.path, stamp: outcome.stamp });
-    return { ok: true as const };
+    return { ok: true as const, edits: advanced.edits };
   });
 
   ipc.handle("project:resolve-conflict", (_e, root: string, chapterId: string, choice: unknown) => {
@@ -345,14 +345,25 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
           stamp: actual.stamp,
         };
       }
-      const head = chapterHead(chapterId, pending.onDisk, "author accepted an external edit");
+      const head = advanceChapter(
+        workbench,
+        chapterId,
+        pending.onDisk,
+        "author accepted an external edit",
+      ).head;
       workbench.conflicts.delete(chapterId);
       workbench.heads.set(chapterId, head);
       workbench.onDisk.set(chapterId, { path: pending.path, stamp: pending.stamp });
       return { ok: true as const, text: pending.onDisk };
     }
 
-    const head = chapterHead(chapterId, pending.mine, "author resolved an external edit");
+    const advanced = advanceChapter(
+      workbench,
+      chapterId,
+      pending.mine,
+      "author resolved an external edit",
+    );
+    const head = advanced.head;
     const outcome = writeChapter(pending.path, head, pending.stamp);
     if (!outcome.ok) {
       workbench.conflicts.set(chapterId, {
@@ -367,7 +378,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     workbench.conflicts.delete(chapterId);
     workbench.heads.set(chapterId, head);
     workbench.onDisk.set(chapterId, { path: pending.path, stamp: outcome.stamp });
-    return { ok: true as const, text: pending.mine };
+    return { ok: true as const, text: pending.mine, edits: advanced.edits };
   });
 
   /**

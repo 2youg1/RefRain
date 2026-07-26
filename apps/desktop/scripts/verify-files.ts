@@ -45,7 +45,7 @@ const bridge = `
     createProject: async () => null,
     loadProject: async () => [],
     loadWorkspace: async () => [],
-    saveChapter: async () => true,
+    saveChapter: async () => ({ ok: true, edits: [] }),
     systemFonts: async () => [],
     pathFor: () => "",
     resolveDrop: async () => null,
@@ -63,7 +63,7 @@ const bridge = `
     ledger: async () => [],
     reply: async () => "",
     searchLedger: async () => [],
-    editsBetween: async () => [],
+
     revertEdit: async (t) => t,
     revertAll: async (t) => t,
     describeEdits: async () => "",

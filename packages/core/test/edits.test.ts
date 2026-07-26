@@ -93,6 +93,35 @@ describe("reverting", () => {
     expect(currentText(revertAll(after, edits))).toBe(currentText(before));
   });
 
+  test("a later append does not push a restored tail behind the new text", () => {
+    const original = head([
+      ["b1", "甲。"],
+      ["b2", "乙。"],
+    ]);
+    const removed = head([["b1", "甲。"]]);
+    const edit = editsBetween(original, removed)[0] as Edit;
+    const later = head([
+      ["b1", "甲。"],
+      ["b3", "后来新增。"],
+    ]);
+
+    expect(currentText(revertEdit(later, edit))).toBe("甲。\n\n乙。\n\n后来新增。");
+  });
+
+  test("reverting refuses to guess after both lineage neighbours vanished", () => {
+    const removed = head([
+      ["b1", "黑暗中有人问。"],
+      ["b3", "剑尖垂下去。"],
+    ]);
+    const edit = editsBetween(before, removed)[0] as Edit;
+    const unrelated = head([["bx", "后来只剩这一段。"]]);
+
+    expect(() => revertEdit(unrelated, edit)).toThrow(
+      "cannot restore block b2: its lineage boundary is gone",
+    );
+    expect(currentText(unrelated)).toBe("后来只剩这一段。");
+  });
+
   test("reverting everything restores the earlier manuscript exactly", () => {
     const edits = editsBetween(before, after);
 

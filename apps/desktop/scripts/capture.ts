@@ -100,7 +100,7 @@ const bridge = `
     fullscreen: async () => true,
     loadProject: async () => ${JSON.stringify(CHAPTERS)},
     loadWorkspace: async () => ${JSON.stringify(CHAPTERS)},
-    saveChapter: async () => true,
+    saveChapter: async () => ({ ok: true, edits: ${JSON.stringify(EDITS)} }),
     systemFonts: async () => ["方正书宋", "方正楷体", "思源黑体", "华文中宋", "Times New Roman", "Georgia"],
     listAgents: async () => [
       { id: "a1", name: "kimi", binding: { harness: "command:kimi run", model: "unspecified", reasoningEffort: "unspecified" } },
@@ -117,7 +117,7 @@ const bridge = `
     commit: async () => ({ ok: true, text: "" }),
     ledger: async () => ${JSON.stringify(LEDGER)},
     reply: async () => "<changes>…</changes>",
-    editsBetween: async () => ${JSON.stringify(EDITS)},
+
     revertEdit: async (t) => t,
     revertAll: async (t) => t,
     describeEdits: async () => "<edits>…</edits>",

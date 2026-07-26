@@ -1,11 +1,12 @@
 # SPEC — Design Baseline
 
-> v0.1.3 · 2026-07-26 · This file is the authoritative design baseline.
+> v0.1.5 · 2026-07-27 · This file is the authoritative design baseline.
 > When an implementation disagrees with this document, change the implementation.
 > Append a Changelog line for every edit. Never rewrite history silently.
 
 ## Changelog
 
+- 2026-07-27 v0.1.5 — Author saves now advance the main process's canonical Text Head instead of rebuilding paragraph IDs from strings at each IPC call. Unchanged blocks keep their IDs across removals and later disjoint insertions. Restoring a removed block is an insertion Text Change inside a compensating Text Action; a vanished lineage boundary fails closed instead of appending the block elsewhere.
 - 2026-07-26 v0.1.3 — The file layer (§13) and display matching (§14). The Claude Code adapter relays its four reported token counts without deriving a price or a synthetic total. The Host reclaims launched runs, closing BUG-1. Q5 reopened because 289px was a measurement fault. `packages/fs` is the only package carrying Rust and a platform binary; releases build it on Windows x64, Linux x64, and macOS arm64/x64 before packaging. Motion and hairlines derive from the panel's refresh rate and scale factor. Q8 opened for the cross-volume trash failure measured on Linux.
 - 2026-07-26 v0.1.2 — Renamed RefRain. Cool default palette (§4.4). Edit record, multi-root workspace, command palette as sole entrance, eighteen typographic controls, bundled OFL faces. Q5 opened for the header alignment defect.
 - 2026-07-26 v0.1.1 — M0 landed. Toolchain findings recorded in §4.3; prototype absorbed into `core`; Q1 closed.

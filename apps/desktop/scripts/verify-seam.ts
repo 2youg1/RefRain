@@ -27,12 +27,12 @@ await page.addInitScript(`
     openProject: async () => "/p", openFile: async () => null, createProject: async () => null,
     pathFor: () => "/p", resolveDrop: async (p) => p, fullscreen: async () => true,
     loadProject: async () => [], loadWorkspace: async () => [],
-    saveChapter: async () => true, systemFonts: async () => [], listAgents: async () => [],
+    saveChapter: async () => ({ ok: true, edits: [] }), systemFonts: async () => [], listAgents: async () => [],
     probeAgent: async () => ({ ok: true }), removeAgent: async () => true, addAgent: async () => ({}),
     enqueue: async () => true, manifest: async () => [], send: async () => [],
     collect: async () => ({ proposals: [], comments: [] }), runs: async () => [],
     commit: async () => ({ ok: true, text: "" }), ledger: async () => [], reply: async () => "",
-    editsBetween: async () => [], revertEdit: async (t) => t, revertAll: async (t) => t,
+    revertEdit: async (t) => t, revertAll: async (t) => t,
     describeEdits: async () => "",
   };
   localStorage.setItem("refrain.roots", JSON.stringify(["/p"]));

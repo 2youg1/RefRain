@@ -106,7 +106,7 @@ bun run native     # the platform binary
 cd apps/desktop && ./make.sh && bun x electron-builder --win --x64
 ```
 
-The `gate` workflow builds and tests the native layer on every platform covered by ordinary CI. For 0.1.4, a tag runs `release.yml` on Windows x64 and publishes one NSIS installer after the real window launch check passes.
+The `gate` workflow builds and tests the native layer on every platform covered by ordinary CI. Current 0.1.x tags run `release.yml` on Windows x64 and publish one NSIS installer after the real window launch check passes.
 
 ## Verification
 

@@ -1,4 +1,5 @@
-import type { Block, TextHead } from "./domain.ts";
+import { randomUUID } from "node:crypto";
+import type { Block, TextChange, TextHead } from "./domain.ts";
 import { applyTextAction } from "./text-engine.ts";
 import { cdata, xmlText } from "./xml.ts";
 
@@ -23,6 +24,8 @@ export interface Edit {
   readonly after?: string;
   /** The original successor of a removed block, so undo restores its position. */
   readonly nextBlockId?: string;
+  /** The original predecessor, used when the removal had no surviving successor. */
+  readonly previousBlockId?: string;
   readonly at: string;
   /** The author's own account of why. Travels to the agent with the edit. */
   readonly note?: string;
@@ -30,12 +33,7 @@ export interface Edit {
 
 const key = (block: Block): string => block.text;
 
-/**
- * Longest common subsequence over block text. Comparing by identifier would
- * report a rewritten paragraph as a removal plus an insertion, which is true of
- * the data and useless to a reader.
- */
-const align = (before: readonly Block[], after: readonly Block[]): Edit[] => {
+const commonLength = (before: readonly string[], after: readonly string[]) => {
   const width = after.length + 1;
   const common = new Int32Array((before.length + 1) * width);
   const at = (i: number, j: number): number => common[i * width + j] ?? 0;
@@ -43,9 +41,18 @@ const align = (before: readonly Block[], after: readonly Block[]): Edit[] => {
   for (let i = before.length - 1; i >= 0; i--)
     for (let j = after.length - 1; j >= 0; j--)
       common[i * width + j] =
-        key(before[i] as Block) === key(after[j] as Block)
-          ? at(i + 1, j + 1) + 1
-          : Math.max(at(i + 1, j), at(i, j + 1));
+        before[i] === after[j] ? at(i + 1, j + 1) + 1 : Math.max(at(i + 1, j), at(i, j + 1));
+
+  return at;
+};
+
+/**
+ * Longest common subsequence over block text. Comparing by identifier would
+ * report a rewritten paragraph as a removal plus an insertion, which is true of
+ * the data and useless to a reader.
+ */
+const align = (before: readonly Block[], after: readonly Block[]): Edit[] => {
+  const at = commonLength(before.map(key), after.map(key));
 
   const edits: Edit[] = [];
   const stamp = new Date().toISOString();
@@ -69,11 +76,13 @@ const align = (before: readonly Block[], after: readonly Block[]): Edit[] => {
       j++;
     } else if (at(i + 1, j) > at(i, j + 1)) {
       const nextBlockId = before[i + 1]?.id;
+      const previousBlockId = before[i - 1]?.id;
       emit({
         kind: "remove",
         blockId: left.id,
         before: left.text,
         ...(nextBlockId === undefined ? {} : { nextBlockId }),
+        ...(previousBlockId === undefined ? {} : { previousBlockId }),
       });
       i++;
     } else {
@@ -82,6 +91,7 @@ const align = (before: readonly Block[], after: readonly Block[]): Edit[] => {
     }
   }
   while (i < before.length) {
+    const previousBlockId = before[i - 1]?.id;
     const left = before[i++] as Block;
     const nextBlockId = before[i]?.id;
     emit({
@@ -89,6 +99,7 @@ const align = (before: readonly Block[], after: readonly Block[]): Edit[] => {
       blockId: left.id,
       before: left.text,
       ...(nextBlockId === undefined ? {} : { nextBlockId }),
+      ...(previousBlockId === undefined ? {} : { previousBlockId }),
     });
   }
   while (j < after.length) {
@@ -101,6 +112,63 @@ const align = (before: readonly Block[], after: readonly Block[]): Edit[] => {
 
 export const editsBetween = (before: TextHead, after: TextHead): Edit[] =>
   align(before.blocks, after.blocks);
+
+const paragraphs = (text: string): string[] =>
+  text
+    .split(/\n\s*\n/)
+    .map((block) => block.trim())
+    .filter((block) => block.length > 0);
+
+/** Carry unchanged and rewritten block identities across one author action. */
+const stableBlocks = (before: readonly Block[], text: string): Block[] => {
+  const after = paragraphs(text);
+  const at = commonLength(before.map(key), after);
+
+  const blocks: Block[] = [];
+  const inserted = (text: string): Block => ({ id: `b-${randomUUID()}`, text });
+  let i = 0;
+  let j = 0;
+  while (i < before.length && j < after.length) {
+    const left = before[i] as Block;
+    const right = after[j] as string;
+    if (left.text === right || at(i + 1, j) === at(i, j + 1)) {
+      blocks.push({ id: left.id, text: right });
+      i++;
+      j++;
+    } else if (at(i + 1, j) > at(i, j + 1)) {
+      i++;
+    } else {
+      blocks.push(inserted(right));
+      j++;
+    }
+  }
+  while (j < after.length) blocks.push(inserted(after[j++] as string));
+  return blocks;
+};
+
+/** Advance the canonical head and record the author's addressable edits once. */
+export const advanceTextHead = (
+  before: TextHead,
+  text: string,
+  cause: string,
+): { readonly head: TextHead; readonly edits: readonly Edit[] } => {
+  const after: TextHead = { id: "candidate", blocks: stableBlocks(before.blocks, text), cause };
+  const edits = editsBetween(before, after);
+  const changes: TextChange[] = edits.map((edit) => {
+    if (edit.kind === "remove") return { blockIds: [edit.blockId], text: null };
+    if (edit.kind === "replace") return { blockIds: [edit.blockId], text: edit.after ?? "" };
+    const index = after.blocks.findIndex((block) => block.id === edit.blockId);
+    const next = after.blocks[index + 1]?.id;
+    return {
+      kind: "insert",
+      blockIds: [],
+      blockId: edit.blockId,
+      text: edit.after ?? "",
+      ...(next === undefined ? {} : { beforeBlockId: next }),
+    };
+  });
+  return { head: applyTextAction(before, changes, cause), edits };
+};
 
 /**
  * Undo one edit without disturbing the others.
@@ -120,17 +188,30 @@ export const revertEdit = (head: TextHead, edit: Edit): TextHead => {
   if (edit.kind === "insert")
     return applyTextAction(head, [{ blockIds: [edit.blockId], text: null }], `revert(${edit.id})`);
 
-  // A removal is restored by putting the block back where it was.
-  const index =
-    edit.nextBlockId === undefined
-      ? head.blocks.length
-      : head.blocks.findIndex((block) => block.id === edit.nextBlockId);
-  const blocks = [...head.blocks];
-  blocks.splice(index === -1 ? blocks.length : index, 0, {
-    id: edit.blockId,
-    text: edit.before ?? "",
-  });
-  return { id: `h-revert-${edit.id}`, blocks, cause: `revert(${edit.id})` };
+  const nextIndex = head.blocks.findIndex((block) => block.id === edit.nextBlockId);
+  const previousIndex = head.blocks.findIndex((block) => block.id === edit.previousBlockId);
+  if (nextIndex < 0 && previousIndex < 0 && head.blocks.length > 0)
+    throw new Error(`cannot restore block ${edit.blockId}: its lineage boundary is gone`);
+  const beforeBlockId =
+    nextIndex >= 0
+      ? head.blocks[nextIndex]?.id
+      : previousIndex >= 0
+        ? head.blocks[previousIndex + 1]?.id
+        : undefined;
+
+  return applyTextAction(
+    head,
+    [
+      {
+        kind: "insert",
+        blockIds: [],
+        blockId: edit.blockId,
+        text: edit.before ?? "",
+        ...(beforeBlockId === undefined ? {} : { beforeBlockId }),
+      },
+    ],
+    `revert(${edit.id})`,
+  );
 };
 
 /** Undo a whole session's worth of edits, newest first so indices stay valid. */
