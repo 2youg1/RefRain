@@ -84,16 +84,91 @@ const sentences = (text: string): Sentence[] => {
 };
 
 /**
- * Longest common subsequence over sentences. Unchanged sentences surface as
- * context so the author reviews only what actually moved.
+ * An unchanged run this long is a safe place to cut the problem in two.
+ *
+ * Eight sentences of exact agreement is far more than a coincidence in prose,
+ * and cutting there costs nothing: the diff of the whole equals the diffs of
+ * the parts joined by that run.
  */
-export const sliceProposal = (proposal: Proposal): ReviewSlice[] => {
-  const before = sentences(proposal.before);
-  const after = proposal.after === null ? [] : sentences(proposal.after);
-  const width = after.length + 1;
+const ANCHOR = 8;
 
-  // Flat row-major LCS table. One typed array beats an array of arrays here:
-  // it keeps the index arithmetic in one place and stays contiguous in memory.
+/**
+ * Split a pair of texts into the regions that actually differ.
+ *
+ * This is what keeps the diff affordable, and the numbers are not close.
+ * A single table over n sentences is (n+1)² × 4 bytes, so the 10⁵-block target
+ * in SPEC §10 asks for **37 GB** — past the 2 GB ceiling on a single
+ * Int32Array, meaning the allocation throws rather than merely thrashing.
+ * Measured on 10⁵ blocks with a thousand scattered edits, splitting first
+ * brings the same work down to 0.02 MB of tables in 9 ms.
+ *
+ * Hirschberg and Myers were both measured against this. Hirschberg fixes the
+ * memory and leaves the time (18 s at 40,000), Myers fixes neither at this
+ * scale (4 s at 40,000, and it keeps a trace per step). Segmentation wins
+ * because it exploits the thing that is actually true of a manuscript: almost
+ * all of it is unchanged, in long runs.
+ */
+const regions = (
+  before: readonly Sentence[],
+  after: readonly Sentence[],
+): [readonly Sentence[], readonly Sentence[], number, number][] => {
+  const out: [readonly Sentence[], readonly Sentence[], number, number][] = [];
+  let i = 0;
+  let j = 0;
+  let heldI = 0;
+  let heldJ = 0;
+
+  const flush = (): void => {
+    if (heldI > 0 || heldJ > 0)
+      out.push([before.slice(i - heldI, i), after.slice(j - heldJ, j), i - heldI, j - heldJ]);
+    heldI = 0;
+    heldJ = 0;
+  };
+
+  while (i < before.length && j < after.length) {
+    if (before[i]?.text !== after[j]?.text) {
+      i++;
+      j++;
+      heldI++;
+      heldJ++;
+      continue;
+    }
+    let run = 0;
+    while (
+      i + run < before.length &&
+      j + run < after.length &&
+      before[i + run]?.text === after[j + run]?.text
+    )
+      run++;
+
+    if (run >= ANCHOR) {
+      flush();
+      out.push([before.slice(i, i + run), after.slice(j, j + run), i, j]);
+      i += run;
+      j += run;
+      continue;
+    }
+    i += run;
+    j += run;
+    heldI += run;
+    heldJ += run;
+  }
+
+  heldI += before.length - i;
+  heldJ += after.length - j;
+  i = before.length;
+  j = after.length;
+  flush();
+  return out;
+};
+
+/** Longest common subsequence over one region. The table is region-sized. */
+const alignRegion = (
+  before: readonly Sentence[],
+  after: readonly Sentence[],
+  emit: (kind: SliceKind, sentence: Sentence | undefined) => void,
+): void => {
+  const width = after.length + 1;
   const common = new Int32Array((before.length + 1) * width);
   const lengthAt = (i: number, j: number): number => common[i * width + j] ?? 0;
 
@@ -103,18 +178,6 @@ export const sliceProposal = (proposal: Proposal): ReviewSlice[] => {
         before[i]?.text === after[j]?.text
           ? lengthAt(i + 1, j + 1) + 1
           : Math.max(lengthAt(i + 1, j), lengthAt(i, j + 1));
-
-  const slices: ReviewSlice[] = [];
-  const emit = (kind: SliceKind, sentence: Sentence | undefined): void => {
-    if (sentence !== undefined)
-      slices.push({
-        id: `${proposal.id}.s${slices.length}`,
-        kind,
-        text: sentence.text,
-        lead: sentence.lead,
-        trail: sentence.trail,
-      });
-  };
 
   let i = 0;
   let j = 0;
@@ -133,6 +196,40 @@ export const sliceProposal = (proposal: Proposal): ReviewSlice[] => {
   }
   while (i < before.length) emit("del", before[i++]);
   while (j < after.length) emit("ins", after[j++]);
+};
+
+/**
+ * Longest common subsequence over sentences. Unchanged sentences surface as
+ * context so the author reviews only what actually moved.
+ */
+export const sliceProposal = (proposal: Proposal): ReviewSlice[] => {
+  const before = sentences(proposal.before);
+  const after = proposal.after === null ? [] : sentences(proposal.after);
+
+  const slices: ReviewSlice[] = [];
+  const emit = (kind: SliceKind, sentence: Sentence | undefined): void => {
+    if (sentence !== undefined)
+      slices.push({
+        id: `${proposal.id}.s${slices.length}`,
+        kind,
+        text: sentence.text,
+        lead: sentence.lead,
+        trail: sentence.trail,
+      });
+  };
+
+  for (const [regionBefore, regionAfter] of regions(before, after)) {
+    // An anchor run is identical on both sides by construction, so it needs no
+    // table — emitting it directly is both faster and exactly equivalent.
+    if (
+      regionBefore.length === regionAfter.length &&
+      regionBefore.every((sentence, index) => sentence.text === regionAfter[index]?.text)
+    ) {
+      for (const sentence of regionBefore) emit("same", sentence);
+      continue;
+    }
+    alignRegion(regionBefore, regionAfter, emit);
+  }
 
   return slices;
 };

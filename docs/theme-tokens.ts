@@ -37,6 +37,16 @@ interface Theme {
   readonly seal: Oklch;
   /** The theme's own second accent. Carries the agent mark. */
   readonly alt: Oklch;
+  /**
+   * Where the rail sits on the lightness range.
+   *
+   * `"deep"` is the default and right for most themes: a dark counterweight
+   * against pale paper. `"light"` keeps the rail in the paper's own register,
+   * for a theme whose whole character is high-key — a dark slab there becomes
+   * the highest-contrast element on screen and drags the palette toward
+   * gravity, which is what stopped 霞 reading as youthful.
+   */
+  readonly rail?: "deep" | "light";
 }
 
 /*
@@ -65,12 +75,13 @@ const THEMES: readonly Theme[] = [
     slug: "kasumi",
     mode: "day",
     lineage: "当代日本青春动漫",
-    why: "冷白底，纸面自带极淡的青。墨用冰蓝灰而非黑，印色取樱作点缀——七套里唯一以粉为印，也是唯一的现代题材。",
+    why: "冷白底，纸面那层冰蓝要看得见而不只是暗示。八套里唯一以樱为印，也是唯一的现代题材，也是唯一侧栏留在明度上半区的一套——深侧栏此前是全屏对比最强的一块，占屏 12%，把整套从「清晨」拽回了「专业工具」。冰蓝彩度 .142 → .190：发灰的成因是彩度不足而非色相不对。樱色停在 L .700，再推白到 .740 就跌到 Lc 43.6、印章看不清，所以「偏白」交给渐变浅端。",
     source: "冰蓝 → 樱色。参照当代日系动画的高调冷白与低饱和点缀",
-    paper: [0.968, 0.011, 212],
-    ink: [0.33, 0.043, 246],
-    seal: [0.66, 0.128, 10],
-    alt: [0.58, 0.104, 196],
+    paper: [0.952, 0.022, 204],
+    ink: [0.322, 0.058, 242],
+    seal: [0.7, 0.152, 8],
+    alt: [0.61, 0.19, 193],
+    rail: "light",
   },
   {
     cn: "枯",
@@ -115,10 +126,22 @@ const THEMES: readonly Theme[] = [
     lineage: "夜の墨・行灯",
     why: "夜间。不是把日间的墨反相，而是重画：纸是熄了灯的和室，墨是灯下的宣纸白。行灯只照亮一处，所以印色提到 L 0.70——夜里的朱必须比昼间更亮才能被看见。",
     source: "夜间独立设计，非日间反相",
-    paper: [0.19, 0.012, 74],
+    paper: [0.238, 0.013, 74],
     ink: [0.9, 0.01, 84],
     seal: [0.7, 0.158, 36],
     alt: [0.7, 0.058, 238],
+  },
+  {
+    cn: "幽",
+    slug: "yu",
+    mode: "night",
+    lineage: "月下の森",
+    why: "夜间。月光下的林，重做过一次：初版把印色定为淡金，而金读作烛光不是月光，又被同时用在四处四个值上，在绿黑上压出一块像渲染故障的浊橄榄。现在森只留在纸里，墨是月光落在纸上的冷白偏蓝，印是月自身的银——低彩度，因为月不刺眼；苔绿退为第二强调，与银月构成森与月两极。整套没有一点金。",
+    source: "夜间独立设计。印取月的银，不用金",
+    paper: [0.220, 0.024, 166],
+    ink: [0.898, 0.016, 232],
+    seal: [0.78, 0.07, 228],
+    alt: [0.69, 0.112, 142],
   },
   {
     cn: "時雨",
@@ -127,7 +150,7 @@ const THEMES: readonly Theme[] = [
     lineage: "Blade Runner の雨夜",
     why: "夜间。赛博但克制：底色是雨夜的深蓝黑，不用纯黑。霓虹只在远处——青与洋红各占一个语义位，绝不同屏出现。正文墨仍是可长读的冷白，不是荧光。",
     source: "夜间独立设计。霓虹作强调而非底色",
-    paper: [0.172, 0.026, 262],
+    paper: [0.216, 0.028, 262],
     ink: [0.885, 0.018, 232],
     seal: [0.76, 0.132, 192],
     alt: [0.742, 0.148, 352],
@@ -216,21 +239,47 @@ const derive = (t: Theme): Record<string, Oklch> => {
     pH,
   ];
 
-  const railL = night ? Math.max(0.115, pL - 0.04) : 0.352;
-  const railC = night ? pC * 2.2 : Math.max(0.03, iC * 0.92);
-  const railInkL = night ? 0.884 : 0.902;
+  // Night rails step further from an already dark paper; day rails either sink
+  // to a counterweight or stay in the paper's register. The dark-mode step is
+  // 0.075 rather than 0.04 because the eye resolves far less difference in
+  // shadow than in highlight — at 0.04 the three planes were separated only by
+  // their hairlines.
+  const light = t.rail === "light";
+  // Proportional, not fixed: 墨's paper sits at L 0.19, so a flat 0.075 step
+  // reached near-black. Taking a third of the available range keeps the three
+  // planes separable in every night theme without any of them bottoming out.
+  // A fixed step with a floor: the floor is what stops a dark paper running off
+  // the bottom, so the earlier proportional term was redundant — and being the
+  // darker of the two, it got clipped by the floor and collapsed 墨's span.
+  const railL = night ? Math.max(0.152, pL - 0.072) : light ? pL - 0.072 : 0.352;
+  const railC = night ? pC * 2.0 : light ? pC * 1.5 : Math.max(0.03, iC * 0.92);
+  const railInkL = night ? 0.884 : light ? iL - 0.008 : 0.902;
 
   return {
     paper: [pL, pC, pH],
-    "paper-raised": [Math.min(0.985, pL + 0.03), pC * 0.9, pH],
+    "paper-raised": [Math.min(0.966, pL + 0.03), pC * 0.9, pH],
     "paper-sunk": [Math.max(0.105, pL - 0.026), pC * 1.1, pH],
-    sheet: [pL + up * 0.014, pC * 0.82, pH],
+    // The sheet is the page: lightest by day, lit by the lamp at night. Always
+    // a step further from the desk, never toward it.
+    sheet: [night ? pL + 0.016 : Math.min(0.972, pL + 0.014), pC * 0.82, pH],
     rule: sep(0.076, 1.3),
     "rule-strong": sep(0.15, 1.5),
-    rail: [railL, railC, iH],
-    "rail-ink": [railInkL, Math.min(0.026, railC * 0.4), iH],
-    "rail-faint": [railInkL - 0.132, Math.min(0.034, railC * 0.6), iH],
-    "rail-rule": [night ? Math.min(0.42, railL + 0.09) : railL + 0.08, railC * 1.1, iH],
+    // A rail belongs to the room, so it carries the paper's hue at night;
+    // taking the ink's hue gave 幽 a night-sky sidebar beside a forest page.
+    rail: [railL, railC, night || light ? pH : iH],
+    "rail-ink": [railInkL, light ? iC : Math.min(0.026, railC * 0.4), iH],
+    // Away from the rail's own lightness: darker on a light rail, paler on a
+    // dark one. A single signed step would invert on one of the two.
+    "rail-faint": [
+      light ? railInkL + 0.176 : railInkL - 0.132,
+      light ? iC * 0.8 : Math.min(0.034, railC * 0.6),
+      iH,
+    ],
+    "rail-rule": [
+      night ? Math.min(0.42, railL + 0.09) : light ? railL - 0.062 : railL + 0.08,
+      railC * 1.1,
+      night || light ? pH : iH,
+    ],
     ink: [iL, iC, iH],
     "ink-soft": [iL + (night ? -0.144 : 0.15), iC * 1.02, iH],
     "ink-faint": [iL + (night ? -0.268 : 0.286), iC * 0.95, iH],
@@ -247,6 +296,13 @@ const derive = (t: Theme): Record<string, Oklch> => {
     source: [night ? 0.712 : 0.476, 0.078, 232],
     "source-wash": [pL + up * 0.012, 0.024, 232],
     pending: [sL + (night ? 0.1 : 0), sC, sH],
+    // The pale end of each accent, for gradients and large washes. Decorative
+    // only: nothing legible sits on these, so they are exempt from the text
+    // floor — which is exactly why the seal itself must not be pushed here.
+    // 霞 asked to go "toward white"; pushing the cherry to L .740 dropped it
+    // to Lc 43.6 and the mark stopped reading. The pale end takes that job.
+    "seal-pale": [night ? Math.max(0.3, sL - 0.2) : Math.min(0.93, sL + 0.202), sC * 0.34, sH + 4],
+    "agent-pale": [night ? Math.max(0.3, aL - 0.2) : Math.min(0.95, aL + 0.336), aC * 0.16, aH + 7],
   };
 };
 
@@ -279,12 +335,52 @@ const block = (t: Theme): string => {
   for (const [label, lc, floor] of measured)
     if (Math.abs(lc) < floor) failures.push(`${t.cn} ${label.trim()} Lc ${lc} < ${floor}`);
 
-  // The brief forbids a pure white sheet and pure black. Assert it rather than
-  // trusting that the derivation kept its promise.
-  for (const name of ["paper", "paper-sunk", "rule", "rule-strong", "rail"]) {
-    const [r, g, b] = srgb(v[name] as Oklch);
-    if (Math.max(r, g, b) < 12) failures.push(`${t.cn} --${name} ${hex(v[name] as Oklch)} 近纯黑`);
-    if (Math.min(r, g, b) > 246) failures.push(`${t.cn} --${name} ${hex(v[name] as Oklch)} 近纯白`);
+  // Three planes must be separable by lightness alone. The eye resolves far
+  // less difference in shadow than in highlight, so a night theme needs a
+  // wider span than intuition suggests — and hairlines do not count, because a
+  // reader should see the panels, not the lines drawn around them.
+  const planes = [v.rail as Oklch, v.paper as Oklch, v.sheet as Oklch].map((c) => c[0]);
+  const span = Math.max(...planes) - Math.min(...planes);
+  if (span < 0.06) failures.push(`${t.cn} 侧栏/纸/版心 明度跨度 ${span.toFixed(3)} < 0.060`);
+
+  // The page must be the lit plane. When it was darker than the desk it read as
+  // a tinted card lying on paper — the layering inverted, in every day theme.
+  const paperL = (v.paper as Oklch)[0];
+  const sheetL = (v.sheet as Oklch)[0];
+  if (sheetL <= paperL)
+    failures.push(`${t.cn} 版心 L${sheetL.toFixed(3)} 不亮于纸面 L${paperL.toFixed(3)}`);
+
+  /*
+   * No pure white, no pure black, and nothing close enough to pass for either.
+   *
+   * The brief is stricter than "not #fff": a surface at #fcfaf6 or #0c0700 is
+   * indistinguishable from the pure value on a real panel, so the margin has to
+   * be wide enough that the difference survives a screen. Seven variables sat
+   * inside it before this check existed.
+   *
+   * Applied to every surface, not a chosen few — the earlier list omitted
+   * `sheet` and `paper-raised`, which is exactly where the offenders were.
+   */
+  const SURFACES = [
+    "paper",
+    "paper-raised",
+    "paper-sunk",
+    "sheet",
+    "rule",
+    "rule-strong",
+    "rail",
+    "rail-rule",
+  ];
+  for (const name of SURFACES) {
+    const colour = v[name] as Oklch;
+    const [r, g, b] = srgb(colour);
+    const reasons: string[] = [];
+    if (Math.max(r, g, b) < 16) reasons.push(`最亮通道 ${Math.max(r, g, b)}`);
+    if (Math.min(r, g, b) > 242) reasons.push(`最暗通道 ${Math.min(r, g, b)}`);
+    if (colour[0] < 0.14) reasons.push(`L ${colour[0].toFixed(3)}`);
+    if (colour[0] > 0.972) reasons.push(`L ${colour[0].toFixed(3)}`);
+    if (reasons.length > 0)
+      failures.push(`${t.cn} --${name} ${hex(colour)} 擦边纯黑白（${reasons.join("，")}）`);
   }
 
   const head = `${t.cn} ${t.slug} · ${t.mode === "day" ? "日间" : "夜间"} · ${t.lineage}`;

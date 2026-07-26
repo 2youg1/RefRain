@@ -21,11 +21,11 @@ await page.waitForTimeout(900);
 const cards = page.locator("section.card");
 const count = await cards.count();
 console.log(`themes: ${count}`);
-if (count !== 7) throw new Error(`expected 7 theme cards, found ${count}`);
+if (count !== 8) throw new Error(`expected 8 theme cards, found ${count}`);
 
 // Element screenshots, not viewport clips: a clip is viewport-relative, so
 // every card below the fold fails with "clipped area outside the image".
-const slugs = ["tou", "kasumi", "kare", "hayashi", "seiji", "sumi", "shigure"];
+const slugs = ["tou", "kasumi", "kare", "hayashi", "seiji", "sumi", "yu", "shigure"];
 for (const [i, slug] of slugs.entries()) {
   await page.locator(`#${slug}`).screenshot({ path: join(shots, `theme-${i + 1}-${slug}.png`) });
   console.log(`  ${slug}`);

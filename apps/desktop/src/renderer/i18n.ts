@@ -122,6 +122,7 @@ export const dict = {
   "theme.hayashi": { zh: "林", en: "Hayashi" },
   "theme.seiji": { zh: "瓷", en: "Seiji" },
   "theme.sumi": { zh: "墨", en: "Sumi" },
+  "theme.yu": { zh: "幽", en: "Yū" },
   "theme.shigure": { zh: "時雨", en: "Shigure" },
   "set.day": { zh: "日间", en: "Day" },
   "set.night": { zh: "夜间", en: "Night" },
