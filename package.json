@@ -19,6 +19,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.5",
     "@types/bun": "latest",
+    "playwright": "^1.62.0",
     "typescript": "7.0.2"
   }
 }

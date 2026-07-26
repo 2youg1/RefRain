@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { Agent, ReviewTask } from "@recension/agent";
 import { AgentHost, CommandAdapter, FileChannelAdapter, sendManifest } from "@recension/agent";
 import {
@@ -67,6 +67,26 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
       title: "Open a project folder",
     });
     return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+
+  ipc.handle("project:create", async () => {
+    const result = await dialog.showSaveDialog({
+      title: "New project",
+      properties: ["createDirectory"],
+      buttonLabel: "Create",
+    });
+    if (result.canceled || !result.filePath) return null;
+    mkdirSync(result.filePath, { recursive: true });
+    return result.filePath;
+  });
+
+  /** A dropped file opens its folder; a dropped folder opens itself. */
+  ipc.handle("project:resolve-drop", (_e, path: string) => {
+    try {
+      return statSync(path).isDirectory() ? path : dirname(path);
+    } catch {
+      return null;
+    }
   });
 
   ipc.handle("project:load", (_e, root: string) => {

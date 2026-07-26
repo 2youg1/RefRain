@@ -1,14 +1,16 @@
 <script lang="ts">
 import type { ProposalView, SliceView, VerdictView } from "./api.ts";
+import type { Key } from "./i18n.ts";
 
 interface Props {
   proposals: ProposalView[];
   comments: { target: string; text: string }[];
-  onCommit: (verdicts: VerdictView[]) => void;
+  t: (key: Key) => string;
   refusal: { reason: string; detail: string[] } | null;
+  onCommit: (verdicts: VerdictView[]) => void;
 }
 
-const { proposals, comments, onCommit, refusal }: Props = $props();
+const { proposals, comments, t, refusal, onCommit }: Props = $props();
 
 // Staged judgments, keyed by slice. Nothing here has touched the manuscript.
 let staged = $state<Record<string, VerdictView>>({});
@@ -26,10 +28,11 @@ const judge = (
 ): void => {
   const existing = staged[slice.id];
   if (existing?.kind === kind && finalText === undefined) {
-    const { [slice.id]: _, ...rest } = staged;
+    const { [slice.id]: _removed, ...rest } = staged;
     staged = rest;
     return;
   }
+
   staged = {
     ...staged,
     [slice.id]: {
@@ -48,195 +51,213 @@ const judge = (
 const setReason = (sliceId: string, reason: string): void => {
   const verdict = staged[sliceId];
   if (!verdict) return;
-  staged = {
-    ...staged,
-    [sliceId]:
-      reason.trim().length === 0
-        ? { ...verdict, reason: undefined }
-        : { ...verdict, reason: reason.trim() },
-  };
+  const trimmed = reason.trim();
+  const { reason: _dropped, ...rest } = verdict;
+  staged = { ...staged, [sliceId]: trimmed.length === 0 ? rest : { ...rest, reason: trimmed } };
   reasonFor = null;
-};
-
-const beginEdit = (slice: SliceView): void => {
-  editing = slice.id;
-  draft = staged[slice.id]?.finalText ?? slice.text;
 };
 </script>
 
 <div class="review">
   {#if proposals.length === 0 && comments.length === 0}
-    <div class="empty">
-      <p class="label">尚无提案</p>
-      <p>把段落交给 Agent，结果回来后在这里逐句裁决。</p>
-    </div>
-  {:else}
-    {#each proposals as proposal (proposal.id)}
-      <article class="proposal">
-        <header>
-          <span class="label">提案 {proposal.id}</span>
-          <span class="scope">作用于 {proposal.scope.id}</span>
-        </header>
+    <p class="empty">{t("review.empty")}</p>
+  {/if}
 
-        {#each proposal.slices as slice (slice.id)}
-          {@const verdict = staged[slice.id]}
-          <div class="row">
-            <div
-              class="slice {slice.kind} {verdict ? `judged-${verdict.kind}` : ''}"
-              class:editing={editing === slice.id}
-            >
-              {#if editing === slice.id}
-                <textarea bind:value={draft} rows="3"></textarea>
-                <div class="edit-actions">
-                  <button
-                    class="primary"
-                    onclick={() => {
-                      judge(proposal, slice, "accept-modified", draft);
-                      editing = null;
-                    }}>用我的写法</button
-                  >
-                  <button onclick={() => (editing = null)}>取消</button>
-                </div>
-              {:else}
-                {slice.text}
-              {/if}
-            </div>
+  {#each proposals as proposal (proposal.id)}
+    <article class="proposal">
+      <header>
+        <span class="label">{proposal.id}</span>
+        <span class="scope">{proposal.scope.id}</span>
+      </header>
 
-            {#if slice.kind !== "same" && editing !== slice.id}
-              <div class="actions">
+      {#each proposal.slices as slice (slice.id)}
+        {@const verdict = staged[slice.id]}
+        <div class="row">
+          <div class="slice {slice.kind}" class:judged={verdict !== undefined}>
+            {#if editing === slice.id}
+              <textarea bind:value={draft} rows="3"></textarea>
+              <div class="edit-actions">
                 <button
-                  class:on={verdict?.kind === "accept"}
-                  title="接受"
-                  onclick={() => judge(proposal, slice, "accept")}>接受</button
+                  class="primary"
+                  onclick={() => {
+                    judge(proposal, slice, "accept-modified", draft);
+                    editing = null;
+                  }}>{t("review.useMine")}</button
                 >
-                <button
-                  class:on={verdict?.kind === "reject"}
-                  title="拒绝"
-                  onclick={() => judge(proposal, slice, "reject")}>拒绝</button
-                >
-                {#if slice.kind === "ins"}
-                  <button title="改写后接受" onclick={() => beginEdit(slice)}>改写</button>
-                {/if}
-                {#if verdict}
-                  <button
-                    class="reason-toggle"
-                    class:has={verdict.reason !== undefined}
-                    title="写下理由"
-                    onclick={() => (reasonFor = reasonFor === slice.id ? null : slice.id)}
-                    >理由</button
-                  >
-                {/if}
+                <button onclick={() => (editing = null)}>{t("review.cancel")}</button>
               </div>
+            {:else}
+              <span class="text" class:struck={slice.kind === "del" && verdict?.kind === "accept"}>
+                {verdict?.finalText ?? slice.text}
+              </span>
             {/if}
           </div>
 
-          {#if reasonFor === slice.id}
-            <div class="reason">
-              <input
-                placeholder="为什么这样判断——这句会随下一轮送回给 Agent"
-                value={staged[slice.id]?.reason ?? ""}
-                onkeydown={(e) => {
-                  if (e.key === "Enter") setReason(slice.id, e.currentTarget.value);
-                  if (e.key === "Escape") reasonFor = null;
-                }}
-                onblur={(e) => setReason(slice.id, e.currentTarget.value)}
-              />
+          {#if slice.kind !== "same" && editing !== slice.id}
+            <div class="actions">
+              <button
+                class:on={verdict?.kind === "accept"}
+                onclick={() => judge(proposal, slice, "accept")}>{t("review.accept")}</button
+              >
+              <button
+                class:on={verdict?.kind === "reject"}
+                onclick={() => judge(proposal, slice, "reject")}>{t("review.reject")}</button
+              >
+              {#if slice.kind === "ins"}
+                <button
+                  onclick={() => {
+                    editing = slice.id;
+                    draft = verdict?.finalText ?? slice.text;
+                  }}>{t("review.rewrite")}</button
+                >
+              {/if}
+              {#if verdict}
+                <button
+                  class="reason-toggle"
+                  class:has={verdict.reason !== undefined}
+                  onclick={() => (reasonFor = reasonFor === slice.id ? null : slice.id)}
+                  >{t("review.reason")}</button
+                >
+              {/if}
             </div>
-          {:else if staged[slice.id]?.reason}
-            <p class="reason-shown">「{staged[slice.id]?.reason}」</p>
           {/if}
-        {/each}
-      </article>
-    {/each}
+        </div>
 
-    {#each comments as comment (comment.target + comment.text)}
-      <aside class="comment">
-        <span class="label">批注 · {comment.target}</span>
-        <p>{comment.text}</p>
-      </aside>
-    {/each}
+        {#if reasonFor === slice.id}
+          <div class="reason-field">
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              autofocus
+              placeholder={t("review.reasonPlaceholder")}
+              value={staged[slice.id]?.reason ?? ""}
+              onkeydown={(e) => {
+                if (e.key === "Enter") setReason(slice.id, e.currentTarget.value);
+                if (e.key === "Escape") reasonFor = null;
+              }}
+              onblur={(e) => setReason(slice.id, e.currentTarget.value)}
+            />
+          </div>
+        {:else if staged[slice.id]?.reason}
+          <p class="reason-shown">「{staged[slice.id]?.reason}」</p>
+        {/if}
+      {/each}
+    </article>
+  {/each}
+
+  {#each comments as comment (comment.target + comment.text)}
+    <aside class="comment">
+      <span class="label">{t("review.comment")} · {comment.target}</span>
+      <p>{comment.text}</p>
+    </aside>
+  {/each}
+
+  {#if refusal}
+    <div class="refusal">
+      <strong>{t("review.refused")}：{refusal.reason}</strong>
+      {#each refusal.detail as line (line)}<span>{line}</span>{/each}
+    </div>
   {/if}
 </div>
 
-{#if refusal}
-  <div class="refusal">
-    <strong>整批未合并：{refusal.reason}</strong>
-    {#each refusal.detail as line (line)}<span>{line}</span>{/each}
-  </div>
-{/if}
-
 {#if stagedCount > 0}
-  <footer class="commit-bar">
-    <span>{stagedCount} 项裁决待合并</span>
+  <div class="commit-bar">
+    <span>{stagedCount} {t("review.staged")}</span>
     <div>
-      <button onclick={() => (staged = {})}>全部撤下</button>
+      <button onclick={() => (staged = {})}>{t("review.clear")}</button>
       <button
         class="primary"
         onclick={() => {
           onCommit(Object.values(staged));
           staged = {};
-        }}>合并进正文</button
+        }}>{t("review.commit")}</button
       >
     </div>
-  </footer>
+  </div>
 {/if}
 
 <style>
   .review {
-    padding: 1.5rem 1.75rem 6rem;
-    overflow-y: auto;
-    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 1.2rem;
+    padding-bottom: 4rem;
   }
 
   .empty {
+    font-family: var(--serif);
     color: var(--ink-faint);
-    padding: 4rem 1rem;
-    text-align: center;
-    line-height: 2;
+    line-height: 1.95;
+    padding: 1rem 0;
   }
 
   .proposal {
-    background: var(--paper-raised);
     border: 1px solid var(--rule);
-    border-radius: 4px;
-    box-shadow: var(--shadow-raised);
-    margin-bottom: 1.25rem;
+    border-radius: 3px;
     overflow: hidden;
+    background: var(--paper-raised);
   }
 
   .proposal header {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    padding: 0.7rem 0.9rem;
+    padding: 0.55rem 0.75rem;
     border-bottom: 1px solid var(--rule);
-    background: linear-gradient(var(--paper), var(--paper-raised));
+    background: var(--paper);
   }
 
   .scope {
     font-family: var(--mono);
-    font-size: 11px;
-    color: var(--ink-faint);
+    font-size: var(--step--2);
+    color: var(--ink-ghost);
   }
 
   .row {
     display: flex;
     align-items: flex-start;
-    gap: 0.5rem;
-    padding: 0 0.5rem;
+    gap: 0.4rem;
+    padding: 0 0.4rem;
   }
 
-  .row .slice {
+  .slice {
     flex: 1;
     min-width: 0;
+    padding: 0.45rem 0.6rem;
+    border-left: 2px solid transparent;
+    font-family: var(--serif);
+    line-height: 1.9;
+  }
+
+  .slice.same {
+    color: var(--ink-ghost);
+  }
+
+  .slice.del {
+    border-left-color: var(--refused);
+    background: var(--refused-wash);
+  }
+
+  .slice.ins {
+    border-left-color: var(--accepted);
+    background: var(--accepted-wash);
+  }
+
+  .slice.judged {
+    border-left-width: 3px;
+  }
+
+  .struck {
+    text-decoration: line-through;
+    text-decoration-color: color-mix(in oklab, var(--refused) 55%, transparent);
+    opacity: 0.6;
   }
 
   .actions {
     display: flex;
-    gap: 0.15rem;
+    gap: 0.1rem;
     padding-top: 0.5rem;
     opacity: 0;
-    transition: opacity 120ms ease;
+    transition: opacity 130ms var(--ease);
   }
 
   .row:hover .actions,
@@ -245,15 +266,15 @@ const beginEdit = (slice: SliceView): void => {
   }
 
   .actions button {
-    font-size: 11px;
-    padding: 0.25rem 0.45rem;
-    border-radius: 3px;
-    color: var(--ink-soft);
+    font-size: var(--step--2);
+    padding: 0.22rem 0.42rem;
+    border-radius: 2px;
+    color: var(--ink-faint);
     white-space: nowrap;
   }
 
   .actions button:hover {
-    background: var(--paper);
+    background: var(--paper-sunk);
     color: var(--ink);
   }
 
@@ -266,80 +287,78 @@ const beginEdit = (slice: SliceView): void => {
     color: var(--seal);
   }
 
-  .reason {
-    padding: 0 0.9rem 0.6rem 1.4rem;
+  .reason-field {
+    padding: 0 0.75rem 0.55rem 1.05rem;
   }
 
   .reason-shown {
-    padding: 0 0.9rem 0.55rem 1.4rem;
+    padding: 0 0.75rem 0.5rem 1.05rem;
     color: var(--seal);
     font-family: var(--serif);
-    font-size: 13px;
+    font-size: var(--step--1);
+    line-height: 1.75;
   }
 
   .edit-actions {
     display: flex;
-    gap: 0.4rem;
+    gap: 0.35rem;
     margin-top: 0.5rem;
   }
 
   .edit-actions button,
   .commit-bar button {
-    font-size: 12px;
-    padding: 0.35rem 0.7rem;
-    border-radius: 3px;
+    font-size: var(--step--2);
+    padding: 0.32rem 0.7rem;
     border: 1px solid var(--rule-strong);
+    border-radius: 2px;
     background: var(--paper-raised);
+    color: var(--ink-soft);
   }
 
   .primary {
     background: var(--ink) !important;
-    color: var(--paper-raised);
+    color: var(--paper-raised) !important;
     border-color: var(--ink) !important;
   }
 
   .comment {
     border-left: 2px solid var(--rule-strong);
-    padding: 0.5rem 0.9rem;
-    margin-bottom: 1rem;
+    padding: 0.5rem 0.85rem;
     color: var(--ink-soft);
     font-family: var(--serif);
+    line-height: 1.85;
   }
 
   .refusal {
-    position: absolute;
-    bottom: 4.5rem;
-    left: 1.75rem;
-    right: 1.75rem;
     display: flex;
     flex-direction: column;
-    gap: 0.2rem;
+    gap: 0.25rem;
     padding: 0.75rem 0.9rem;
-    background: var(--refused-soft);
+    background: var(--refused-wash);
     border: 1px solid var(--refused);
-    border-radius: 4px;
-    font-size: 12px;
+    border-radius: 3px;
+    font-size: var(--step--2);
     color: var(--refused);
+    line-height: 1.7;
   }
 
   .commit-bar {
-    position: absolute;
+    position: sticky;
     bottom: 0;
-    left: 0;
-    right: 0;
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 1rem;
-    padding: 0.75rem 1.75rem;
+    margin: 0 -1.5rem -1.5rem;
+    padding: 0.8rem 1.5rem;
     background: var(--paper-raised);
     border-top: 1px solid var(--rule-strong);
-    font-size: 12px;
+    font-size: var(--step--1);
     color: var(--ink-soft);
   }
 
   .commit-bar div {
     display: flex;
-    gap: 0.4rem;
+    gap: 0.35rem;
   }
 </style>

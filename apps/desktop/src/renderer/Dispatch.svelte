@@ -1,48 +1,50 @@
 <script lang="ts">
 import type { AgentView, ManifestEntryView, RunView } from "./api.ts";
 import { api } from "./api.ts";
+import type { Key } from "./i18n.ts";
 
 interface Props {
   root: string | null;
   chapter: string | null;
   selection: string;
   runs: RunView[];
+  t: (key: Key) => string;
   onDispatched: () => void;
   onCollect: (runId: string) => void;
 }
 
-const { root, chapter, selection, runs, onDispatched, onCollect }: Props = $props();
+const { root, chapter, selection, runs, t, onDispatched, onCollect }: Props = $props();
 
 let agents = $state<AgentView[]>([]);
 let manifest = $state<ManifestEntryView[]>([]);
 let prompt = $state("");
 let chosen = $state<string | null>(null);
-let newName = $state("");
-let newCommand = $state("");
-let adding = $state(false);
-let queued = $state(0);
+
+const queued = $derived(manifest.reduce((sum, entry) => sum + entry.runCount, 0));
+const ready = $derived(
+  root !== null &&
+    chapter !== null &&
+    chosen !== null &&
+    prompt.trim().length > 0 &&
+    selection.trim().length > 0,
+);
 
 $effect(() => {
-  if (root)
-    void api()
-      .listAgents(root)
-      .then((list) => (agents = list));
+  if (!root) return;
+  void api()
+    .listAgents(root)
+    .then((list) => {
+      agents = list;
+      chosen ??= list[0]?.id ?? null;
+    });
+  void api()
+    .manifest(root)
+    .then((entries) => (manifest = entries));
 });
 
-const addAgent = async (): Promise<void> => {
-  if (!root || newName.trim().length === 0) return;
-  const agent = await api().addAgent(root, newName.trim(), newCommand.trim());
-  agents = [...agents, agent];
-  chosen = agent.id;
-  newName = "";
-  newCommand = "";
-  adding = false;
-};
-
 const enqueue = async (): Promise<void> => {
-  if (!root || !chapter || !chosen || prompt.trim().length === 0) return;
+  if (!root || !chapter || !chosen) return;
   const target = selection.trim();
-  if (target.length === 0) return;
 
   await api().enqueue(root, {
     id: `t${Date.now()}`,
@@ -52,8 +54,8 @@ const enqueue = async (): Promise<void> => {
     contextScope: [],
     editScopes: [{ id: `s${Date.now()}`, blockIds: [`${chapter}:sel`], text: target }],
   });
+
   manifest = await api().manifest(root);
-  queued = manifest.reduce((sum, entry) => sum + entry.runCount, 0);
   prompt = "";
 };
 
@@ -61,127 +63,116 @@ const send = async (): Promise<void> => {
   if (!root) return;
   await api().send(root);
   manifest = [];
-  queued = 0;
   onDispatched();
 };
 </script>
 
 <div class="dispatch">
   <section>
-    <p class="label">选中的文字</p>
+    <span class="label">{t("dispatch.selection")}</span>
     {#if selection.trim().length > 0}
       <blockquote>{selection.trim()}</blockquote>
     {:else}
-      <p class="hint">先在正文里选中一段，它将成为 Agent 唯一可以改写的范围。</p>
+      <p class="hint">{t("dispatch.noSelection")}</p>
     {/if}
   </section>
 
   <section>
-    <p class="label">交给谁</p>
-    <div class="agents">
-      {#each agents as agent (agent.id)}
-        <button class="agent" class:on={chosen === agent.id} onclick={() => (chosen = agent.id)}>
-          <span>{agent.name}</span>
-          <span class="binding">{agent.binding.harness}</span>
-        </button>
-      {/each}
-      <button class="agent add" onclick={() => (adding = !adding)}>＋ 新增</button>
-    </div>
-
-    {#if adding}
-      <div class="new-agent">
-        <input bind:value={newName} placeholder="名字，例如 kimi" />
-        <input
-          bind:value={newCommand}
-          placeholder="启动命令，留空则用文件通道（把 request.md 手动交给任意 Agent）"
-        />
-        <p class="hint">
-          命令里用 &#123;request&#125; 和 &#123;result&#125; 表示两个文件路径。留空最稳妥：
-          程序把请求写成 Markdown，你交给任何 Agent，再把回复贴回 result.md。
-        </p>
-        <button class="primary" onclick={addAgent}>建立</button>
+    <span class="label">{t("dispatch.who")}</span>
+    {#if agents.length === 0}
+      <p class="hint">{t("agents.none")}</p>
+    {:else}
+      <div class="agents">
+        {#each agents as agent (agent.id)}
+          <button class="agent" class:on={chosen === agent.id} onclick={() => (chosen = agent.id)}>
+            <span>{agent.name}</span>
+            <span class="binding">
+              {agent.binding.harness.startsWith("command:")
+                ? agent.binding.harness.slice(8)
+                : t("agents.fileChannel")}
+            </span>
+          </button>
+        {/each}
       </div>
     {/if}
   </section>
 
   <section>
-    <p class="label">要求</p>
-    <textarea bind:value={prompt} rows="4" placeholder="例如：把这段改得更冷，不要解释情绪。"></textarea>
-    <button class="queue" onclick={enqueue}>加入待发队列</button>
+    <span class="label">{t("dispatch.prompt")}</span>
+    <textarea bind:value={prompt} rows="4" placeholder={t("dispatch.promptPlaceholder")}></textarea>
+    <button class="queue" onclick={enqueue} disabled={!ready}>{t("dispatch.queue")}</button>
   </section>
 
   {#if manifest.length > 0}
     <section class="manifest">
-      <p class="label">待发清单 · {queued} 次运行</p>
+      <span class="label">{t("dispatch.manifest")} · {queued} {t("dispatch.runs")}</span>
+
       {#each manifest as entry (entry.agentName)}
         <div class="entry">
           <div class="entry-head">
             <strong>{entry.agentName}</strong>
-            <span>{entry.runCount} 次</span>
+            <span>{entry.runCount}</span>
           </div>
           <dl>
-            <dt>Harness</dt><dd>{entry.harness}</dd>
-            <dt>模型</dt><dd>{entry.model}</dd>
-            <dt>思考强度</dt><dd>{entry.reasoningEffort}</dd>
-            <dt>范围</dt><dd>{entry.scopes.join("、")}</dd>
+            <dt>harness</dt><dd>{entry.harness}</dd>
+            <dt>model</dt><dd>{entry.model}</dd>
+            <dt>effort</dt><dd>{entry.reasoningEffort}</dd>
+            <dt>scope</dt><dd>{entry.scopes.join(" · ")}</dd>
           </dl>
           {#if entry.drifted.length > 0}
-            <p class="drift">正文已变动：{entry.drifted.join("、")}——由你决定是否重读。</p>
+            <p class="drift">{entry.drifted.join("、")} — {t("dispatch.drifted")}</p>
           {/if}
         </div>
       {/each}
-      <p class="no-price">此处不显示价格，本程序不做任何计费换算。</p>
-      <button class="primary send" onclick={send}>一次送出全部</button>
+
+      <p class="no-price">{t("dispatch.noPrice")}</p>
+      <button class="send" onclick={send}>{t("dispatch.send")}</button>
     </section>
   {/if}
 
   {#if runs.length > 0}
     <section>
-      <p class="label">运行</p>
+      <span class="label">runs</span>
       {#each runs as run (run.id)}
         <div class="run">
           <span class="run-id">{run.id}</span>
           <span class="run-state {run.state}">{run.state}</span>
-          <button onclick={() => onCollect(run.id)}>读取结果</button>
+          <button onclick={() => onCollect(run.id)}>{t("dispatch.collect")}</button>
         </div>
       {/each}
-      <p class="hint">Agent 把回复写进 result.md 后，点「读取结果」把它冻结成提案。</p>
     </section>
   {/if}
 </div>
 
 <style>
   .dispatch {
-    padding: 1.25rem 1.5rem 3rem;
-    overflow-y: auto;
-    height: 100%;
     display: flex;
     flex-direction: column;
-    gap: 1.5rem;
+    gap: 1.6rem;
   }
 
   section {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: 0.55rem;
   }
 
   blockquote {
     font-family: var(--serif);
-    font-size: 14px;
-    line-height: 1.9;
-    padding: 0.6rem 0.8rem;
-    background: var(--paper-raised);
+    font-size: var(--step-0);
+    line-height: 1.95;
+    padding: 0.75rem 0.9rem;
+    background: var(--paper);
     border-left: 2px solid var(--seal);
-    border-radius: 0 3px 3px 0;
-    max-height: 8rem;
+    max-height: 9rem;
     overflow-y: auto;
+    color: var(--ink-soft);
   }
 
   .hint {
-    font-size: 11px;
+    font-size: var(--step--1);
     color: var(--ink-faint);
-    line-height: 1.7;
+    line-height: 1.85;
   }
 
   .agents {
@@ -194,11 +185,12 @@ const send = async (): Promise<void> => {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    padding: 0.4rem 0.6rem;
+    gap: 0.1rem;
+    padding: 0.45rem 0.7rem;
     border: 1px solid var(--rule-strong);
-    border-radius: 3px;
+    border-radius: 2px;
     background: var(--paper-raised);
-    font-size: 12px;
+    font-size: var(--step--1);
   }
 
   .agent.on {
@@ -208,130 +200,120 @@ const send = async (): Promise<void> => {
 
   .binding {
     font-family: var(--mono);
-    font-size: 10px;
-    color: var(--ink-faint);
+    font-size: var(--step--2);
+    color: var(--ink-ghost);
   }
 
-  .agent.add {
-    color: var(--ink-faint);
-    border-style: dashed;
-    justify-content: center;
-  }
-
-  .new-agent {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-    padding: 0.7rem;
-    background: var(--paper-raised);
-    border: 1px solid var(--rule);
-    border-radius: 3px;
-  }
-
-  button.primary {
-    background: var(--ink);
-    color: var(--paper-raised);
-    padding: 0.45rem 0.8rem;
-    border-radius: 3px;
-    font-size: 12px;
+  .queue,
+  .send {
     align-self: flex-start;
-  }
-
-  .queue {
-    align-self: flex-start;
-    padding: 0.4rem 0.75rem;
+    padding: 0.5rem 1.1rem;
     border: 1px solid var(--rule-strong);
-    border-radius: 3px;
+    border-radius: 2px;
     background: var(--paper-raised);
-    font-size: 12px;
+    font-size: var(--step--1);
+    color: var(--ink-soft);
+  }
+
+  .queue:hover:not(:disabled) {
+    border-color: var(--seal);
+    color: var(--seal);
+  }
+
+  .queue:disabled {
+    color: var(--ink-ghost);
+    cursor: not-allowed;
   }
 
   .manifest {
-    padding: 0.85rem;
-    background: var(--paper-raised);
+    padding: 0.95rem;
+    background: var(--paper);
     border: 1px solid var(--rule-strong);
-    border-radius: 4px;
-    box-shadow: var(--shadow-raised);
+    border-radius: 3px;
   }
 
   .entry-head {
     display: flex;
     justify-content: space-between;
-    font-size: 13px;
-    margin-bottom: 0.3rem;
+    font-family: var(--serif);
+    margin-bottom: 0.35rem;
   }
 
   dl {
     display: grid;
-    grid-template-columns: 5.5em 1fr;
-    gap: 0.15rem 0.5rem;
-    font-size: 11px;
-    color: var(--ink-soft);
+    grid-template-columns: 4.5em 1fr;
+    gap: 0.15rem 0.6rem;
+    font-size: var(--step--2);
   }
 
   dt {
-    color: var(--ink-faint);
+    color: var(--ink-ghost);
+    font-family: var(--mono);
   }
 
   dd {
     font-family: var(--mono);
+    color: var(--ink-soft);
     word-break: break-all;
   }
 
   .drift {
-    margin-top: 0.4rem;
-    font-size: 11px;
+    margin-top: 0.45rem;
+    font-size: var(--step--2);
     color: var(--seal);
+    line-height: 1.7;
   }
 
   .no-price {
-    margin-top: 0.6rem;
-    font-size: 10px;
-    color: var(--ink-faint);
-    letter-spacing: 0.02em;
+    margin: 0.75rem 0 0.6rem;
+    font-size: var(--step--2);
+    color: var(--ink-ghost);
+    line-height: 1.7;
   }
 
   .send {
-    margin-top: 0.6rem;
     width: 100%;
     text-align: center;
+    background: var(--ink);
+    color: var(--paper-raised);
+    border-color: var(--ink);
   }
 
   .run {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    font-size: 12px;
-    padding: 0.35rem 0;
+    gap: 0.6rem;
+    padding: 0.4rem 0;
     border-bottom: 1px solid var(--rule);
+    font-size: var(--step--1);
   }
 
   .run-id {
     font-family: var(--mono);
-    font-size: 11px;
+    font-size: var(--step--2);
   }
 
   .run-state {
-    font-size: 10px;
+    font-size: var(--step--2);
     padding: 0.1rem 0.35rem;
     border-radius: 2px;
-    background: var(--paper);
+    background: var(--paper-sunk);
     color: var(--ink-faint);
   }
 
   .run-state.completed {
     color: var(--accepted);
-    background: var(--accepted-soft);
+    background: var(--accepted-wash);
   }
 
   .run-state.failed {
     color: var(--refused);
-    background: var(--refused-soft);
+    background: var(--refused-wash);
   }
 
   .run button {
     margin-left: auto;
-    font-size: 11px;
+    font-size: var(--step--2);
     color: var(--seal);
   }
 </style>

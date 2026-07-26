@@ -37,7 +37,8 @@
     },
     {
       "includes": ["**/*.svelte"],
-      "linter": { "enabled": false }
+      "linter": { "enabled": false },
+      "formatter": { "enabled": false }
     }
   ]
 }
