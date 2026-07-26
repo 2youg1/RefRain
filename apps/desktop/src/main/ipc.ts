@@ -29,6 +29,7 @@ import {
   saveChapter,
   serializeVerdicts,
   sliceProposal,
+  splitBlocks,
   type TextHead,
   type Verdict,
   VerdictLedger,
@@ -176,11 +177,11 @@ const headFor = (root: string, chapterId: string): TextHead => {
 
 const chapterHead = (chapterId: string, text: string, cause: string): TextHead => ({
   id: `${chapterId}@${Date.now()}`,
-  blocks: text
-    .split(/\n\s*\n/)
-    .map((block) => block.trim())
-    .filter((block) => block.length > 0)
-    .map((block, index) => ({ id: `${chapterId}:b${index}`, text: block })),
+  // `core` owns where a block begins. This was one of three copies of that
+  // rule; block identity is positional, so any disagreement between them
+  // renumbers blocks across the process boundary and silently detaches every
+  // queued proposal from the text it was written against.
+  blocks: splitBlocks(text).map((block, index) => ({ id: `${chapterId}:b${index}`, text: block })),
   cause,
 });
 

@@ -13,6 +13,7 @@ import {
 import { basename, dirname, extname, join, relative } from "node:path";
 import { replaceFileAtomically } from "./atomic-file.ts";
 import type { TextHead } from "./domain.ts";
+import { applyBlocks, blockPrefix, parseSource, splitBlocks } from "./roundtrip.ts";
 
 /**
  * Axiom 1: files are truth. A chapter is a Markdown file a reader can open,
@@ -122,7 +123,6 @@ export interface Workspace {
   readonly chapters: readonly Chapter[];
 }
 
-const BLOCK_SEPARATOR = /\n\s*\n/;
 const MARKDOWN = new Set([".md", ".markdown", ".mdown", ".txt"]);
 const ILLEGAL_CHAPTER_CHARACTER = /[<>:"/\\|?*]/;
 const WINDOWS_DEVICE = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
@@ -183,11 +183,10 @@ const parseChapter = (
     stamp: snapshot.stamp,
     head: {
       id: `${path}@load`,
-      blocks: snapshot.text
-        .split(BLOCK_SEPARATOR)
-        .map((text) => text.trim())
-        .filter((text) => text.length > 0)
-        .map((text, index) => ({ id: `${id}:b${index}`, text })),
+      // No trim. An ideographic indent is how a Chinese paragraph begins, and
+      // stripping it on load deleted the author's bytes before they had done
+      // anything at all (SPEC INV-5).
+      blocks: splitBlocks(snapshot.text).map((text, index) => ({ id: `${id}:b${index}`, text })),
       cause: "loaded from disk",
     },
   };
@@ -300,8 +299,31 @@ export const loadProject = (root: string): { root: string; chapters: readonly Ch
   chapters: chaptersUnder(describeRoot(root)),
 });
 
+/**
+ * Rebuild a chapter's text from its blocks.
+ *
+ * Used when there is nothing on disk to compare against — a new chapter, or a
+ * caller that never read the file. When the file does exist, `writeChapter`
+ * goes through `applyBlocks` instead, which keeps the author's own blank lines
+ * rather than normalising every gap to one (SPEC INV-5).
+ */
 export const serializeChapter = (head: TextHead): string =>
   `${head.blocks.map((b) => b.text).join("\n\n")}\n`;
+
+/**
+ * The bytes to write, preserving everything the author did not edit.
+ *
+ * The head carries block text and nothing about what stood between blocks, so
+ * rebuilding a file from it alone flattened three blank lines into one and
+ * dropped a missing final newline back in. Parsing the disk copy gives those
+ * bytes back: unedited blocks land in their own ranges with their own
+ * surroundings, and only the text that changed is text that changes.
+ */
+const chapterBytes = (path: string, head: TextHead): string => {
+  const onDisk = readChapterFile(path);
+  if (onDisk === undefined) return serializeChapter(head);
+  return applyBlocks(parseSource(onDisk.text, blockPrefix(head.blocks)), head.blocks);
+};
 
 /** A refusal, not an exception: the caller has to ask a person what to do. */
 export interface ChangedUnderneath {
@@ -348,7 +370,7 @@ export const writeChapter = (path: string, head: TextHead, expected?: FileStamp)
       };
   }
 
-  replaceFileAtomically(path, serializeChapter(head));
+  replaceFileAtomically(path, chapterBytes(path, head));
   const stamp = stampOf(path);
   if (stamp === undefined) throw new Error(`chapter vanished after save: ${path}`);
   return { ok: true, path, stamp };
