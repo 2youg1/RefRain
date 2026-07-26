@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { commonTable, segment } from "./align.ts";
 import type { Block, TextChange, TextHead } from "./domain.ts";
 import { splitBlocks } from "./roundtrip.ts";
 import { applyTextAction } from "./text-engine.ts";
@@ -34,18 +35,17 @@ export interface Edit {
 
 const key = (block: Block): string => block.text;
 
-const commonLength = (before: readonly string[], after: readonly string[]) => {
-  const width = after.length + 1;
-  const common = new Int32Array((before.length + 1) * width);
-  const at = (i: number, j: number): number => common[i * width + j] ?? 0;
-
-  for (let i = before.length - 1; i >= 0; i--)
-    for (let j = after.length - 1; j >= 0; j--)
-      common[i * width + j] =
-        before[i] === after[j] ? at(i + 1, j + 1) + 1 : Math.max(at(i + 1, j), at(i, j + 1));
-
-  return at;
-};
+/**
+ * Alignment inside one region, or nothing when the region is too large.
+ *
+ * `undefined` is not an error: a region past the table budget is aligned as a
+ * wholesale replacement, which is true and costs nothing. The previous code
+ * allocated whatever the document asked for and took the application down with
+ * it — a 40,000-block manuscript threw `RangeError: Out of memory` on a save,
+ * however little the author had changed, because the table is built before
+ * anything is compared.
+ */
+const commonLength = commonTable;
 
 /**
  * Longest common subsequence over block text. Comparing by identifier would
@@ -53,13 +53,61 @@ const commonLength = (before: readonly string[], after: readonly string[]) => {
  * the data and useless to a reader.
  */
 const align = (before: readonly Block[], after: readonly Block[]): Edit[] => {
-  const at = commonLength(before.map(key), after.map(key));
-
   const edits: Edit[] = [];
   const stamp = new Date().toISOString();
   const emit = (edit: Omit<Edit, "id" | "at">): void => {
     edits.push({ ...edit, id: `e${edits.length}-${edit.blockId}`, at: stamp });
   };
+
+  // Segment first. One table over the whole manuscript is what made a long
+  // book impossible to save; the diff of the whole equals the diffs of the
+  // regions that differ, joined by the runs that do not.
+  for (const region of segment(before, after, key)) {
+    if (region.anchor) continue;
+    alignRegion(region.before, region.after, emit);
+  }
+  return edits;
+};
+
+/**
+ * Align one region, reporting each difference as an addressable edit.
+ *
+ * When the region is too large to table, every block in it is reported as
+ * changed rather than aligned. That is a coarser answer, not a wrong one, and
+ * it is reachable only on a region tens of thousands of blocks long with no
+ * eight-block agreement anywhere inside it — a manuscript that was replaced,
+ * not edited.
+ */
+const alignRegion = (
+  before: readonly Block[],
+  after: readonly Block[],
+  emit: (edit: Omit<Edit, "id" | "at">) => void,
+): void => {
+  const at = commonLength(before.map(key), after.map(key));
+  if (at === undefined) {
+    const shared = Math.min(before.length, after.length);
+    for (let k = 0; k < shared; k++) {
+      const left = before[k] as Block;
+      const right = after[k] as Block;
+      if (left.text !== right.text)
+        emit({ kind: "replace", blockId: right.id, before: left.text, after: right.text });
+    }
+    for (let k = shared; k < before.length; k++) {
+      const left = before[k] as Block;
+      const nextBlockId = before[k + 1]?.id;
+      const previousBlockId = before[k - 1]?.id;
+      emit({
+        kind: "remove",
+        blockId: left.id,
+        before: left.text,
+        ...(nextBlockId === undefined ? {} : { nextBlockId }),
+        ...(previousBlockId === undefined ? {} : { previousBlockId }),
+      });
+    }
+    for (let k = shared; k < after.length; k++)
+      emit({ kind: "insert", blockId: (after[k] as Block).id, after: (after[k] as Block).text });
+    return;
+  }
 
   let i = 0;
   let j = 0;
@@ -107,8 +155,6 @@ const align = (before: readonly Block[], after: readonly Block[]): Edit[] => {
     const right = after[j++] as Block;
     emit({ kind: "insert", blockId: right.id, after: right.text });
   }
-
-  return edits;
 };
 
 export const editsBetween = (before: TextHead, after: TextHead): Edit[] =>
@@ -117,31 +163,63 @@ export const editsBetween = (before: TextHead, after: TextHead): Edit[] =>
 /** One authority for where a block begins (`roundtrip.ts`), not a third copy. */
 const paragraphs = (text: string): string[] => splitBlocks(text);
 
-/** Carry unchanged and rewritten block identities across one author action. */
-const stableBlocks = (before: readonly Block[], text: string): Block[] => {
-  const after = paragraphs(text);
-  const at = commonLength(before.map(key), after);
+const inserted = (text: string): Block => ({ id: `b-${randomUUID()}`, text });
 
+/**
+ * Carry unchanged and rewritten block identities across one author action.
+ *
+ * Segmented for the same reason the edit log is: this ran a table over the
+ * whole manuscript before comparing anything, so the cost of saving was set by
+ * the length of the book rather than by the size of the change.
+ */
+const stableBlocks = (before: readonly Block[], text: string): Block[] => {
+  const after = paragraphs(text).map((body): Block => ({ id: "", text: body }));
   const blocks: Block[] = [];
-  const inserted = (text: string): Block => ({ id: `b-${randomUUID()}`, text });
+
+  for (const region of segment(before, after, key)) {
+    if (region.anchor) {
+      for (let k = 0; k < region.before.length; k++) {
+        const left = region.before[k] as Block;
+        blocks.push({ id: left.id, text: (region.after[k] as Block).text });
+      }
+      continue;
+    }
+    stableRegion(region.before, region.after, blocks);
+  }
+  return blocks;
+};
+
+/** Keep the identity of a block the author rewrote; mint one for a block they added. */
+const stableRegion = (before: readonly Block[], after: readonly Block[], into: Block[]): void => {
+  const at = commonLength(before.map(key), after.map(key));
+  if (at === undefined) {
+    // Too large to align: keep identity positionally, which is right for the
+    // shape that gets here — a region replaced wholesale rather than edited.
+    for (let k = 0; k < after.length; k++) {
+      const left = before[k];
+      const right = after[k] as Block;
+      into.push(left === undefined ? inserted(right.text) : { id: left.id, text: right.text });
+    }
+    return;
+  }
+
   let i = 0;
   let j = 0;
   while (i < before.length && j < after.length) {
     const left = before[i] as Block;
-    const right = after[j] as string;
-    if (left.text === right || at(i + 1, j) === at(i, j + 1)) {
-      blocks.push({ id: left.id, text: right });
+    const right = after[j] as Block;
+    if (left.text === right.text || at(i + 1, j) === at(i, j + 1)) {
+      into.push({ id: left.id, text: right.text });
       i++;
       j++;
     } else if (at(i + 1, j) > at(i, j + 1)) {
       i++;
     } else {
-      blocks.push(inserted(right));
+      into.push(inserted(right.text));
       j++;
     }
   }
-  while (j < after.length) blocks.push(inserted(after[j++] as string));
-  return blocks;
+  while (j < after.length) into.push(inserted((after[j++] as Block).text));
 };
 
 /** Advance the canonical head and record the author's addressable edits once. */
