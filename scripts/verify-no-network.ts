@@ -36,8 +36,9 @@ const surfaces = [
   "packages/core/src/**/*.ts",
   "packages/agent/src/**/*.ts",
   "packages/fs/src/**/*.ts",
-  "apps/desktop/src/**/*.ts",
-  "apps/desktop/src/**/*.svelte",
+  "apps/desktop/src/main/**/*.ts",
+  "apps/desktop/src/renderer/**/*.ts",
+  "apps/desktop/src/renderer/**/*.svelte",
 ];
 
 const violations: string[] = [];

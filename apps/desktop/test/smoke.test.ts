@@ -14,7 +14,7 @@ const dist = join(here, "..", "dist");
 const built = existsSync(join(dist, "main", "main.cjs"));
 const whenBuilt = built ? describe : describe.skip;
 
-test.failing("the default gate cannot skip every desktop test on a clean checkout", () => {
+test("the default gate cannot skip every desktop test on a clean checkout", () => {
   const rootPackage = JSON.parse(
     readFileSync(join(here, "..", "..", "..", "package.json"), "utf8"),
   );
@@ -22,7 +22,7 @@ test.failing("the default gate cannot skip every desktop test on a clean checkou
   expect(rootPackage.scripts.gate).toMatch(/build|desktop/);
 });
 
-test.failing("an Electron version change triggers the Windows IME gate", () => {
+test("an Electron version change triggers the Windows IME gate", () => {
   const workflow = readFileSync(
     join(here, "..", "..", "..", ".github", "workflows", "ime-gate.yml"),
     "utf8",
@@ -32,7 +32,7 @@ test.failing("an Electron version change triggers the Windows IME gate", () => {
   expect(workflow).toContain("bun.lock");
 });
 
-test.failing("the no-network gate scans every process that the application starts", () => {
+test("the no-network gate scans every process that the application starts", () => {
   const verifier = readFileSync(
     join(here, "..", "..", "..", "scripts", "verify-no-network.ts"),
     "utf8",

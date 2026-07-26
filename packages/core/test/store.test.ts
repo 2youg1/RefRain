@@ -44,20 +44,31 @@ describe("files are truth", () => {
     expect(loadProject(root).chapters).toEqual([]);
   });
 
-  test.failing("a directory whose name ends in .md is ignored", () => {
+  test("a directory whose name ends in .md is ignored", () => {
     mkdirSync(join(root, "notes.md"));
     writeFileSync(join(root, "01.md"), "甲。\n");
 
     expect(loadProject(root).chapters.map((chapter) => chapter.title)).toEqual(["01"]);
   });
 
-  test.failing("a new chapter title cannot escape the project root", () => {
+  test("a new chapter title cannot escape the project root", () => {
     const outside = join(root, "..", "escaped.md");
     const project = loadProject(root);
     const head = { id: "h1", blocks: [{ id: "b1", text: "甲。" }], cause: "test" };
 
+    const invalid = [
+      "../escaped",
+      "..\\escaped",
+      "bad\0name",
+      "nul",
+      "chapter.",
+      "chapter ",
+      "a:b",
+    ];
+
     try {
-      expect(() => saveChapter(project, "../escaped", head)).toThrow(/invalid chapter title/);
+      for (const title of invalid)
+        expect(() => saveChapter(project, title, head)).toThrow(/invalid chapter title/);
       expect(() => readFileSync(outside, "utf8")).toThrow();
     } finally {
       rmSync(outside, { force: true });
@@ -122,7 +133,7 @@ describe("Verdict Ledger", () => {
     ledger.close();
   });
 
-  test.failing("a duplicate Verdict id cannot rewrite the original audit record", () => {
+  test("a duplicate Verdict id cannot rewrite the original audit record", () => {
     const ledger = new VerdictLedger(join(root, "ledger.db"));
     const original = verdict({ id: "fixed", reason: "原来的理由" });
     try {

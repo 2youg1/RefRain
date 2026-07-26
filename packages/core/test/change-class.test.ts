@@ -35,13 +35,13 @@ describe("Change classification", () => {
     expect(classifyChange("等等...", "等等……")).toBe("formatting");
   });
 
-  test.failing("moving punctuation across a clause boundary is semantic", () => {
+  test("moving punctuation across a clause boundary is semantic", () => {
     expect(classifyChange("下雨天留客，天留我不留。", "下雨天，留客天，留我不？留。")).toBe(
       "semantic",
     );
   });
 
-  test.failing("changing an emoji ZWJ sequence is semantic", () => {
+  test("changing an emoji ZWJ sequence is semantic", () => {
     expect(classifyChange("工程师 👩‍💻", "工程师 👩💻")).toBe("semantic");
   });
 

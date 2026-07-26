@@ -26,7 +26,38 @@ export type ChangeClass = "formatting" | "semantic";
  * letters and digits are absent by design: those carry meaning.
  */
 const COSMETIC =
-  /[\s\u3000\u200b-\u200d\ufeff,.;:!?'"()[\]{}\-–—…、。，；：！？「」『』（）《》〈〉·・]/gu;
+  /[\s\u3000\u200b\ufeff,.;:!?'"()[\]{}\-–—…、。，；：！？「」『』（）《》〈〉·・]/gu;
+
+const PUNCTUATION = /[,.;:!?'"()[\]{}\-–—…、。，；：！？「」『』（）《》〈〉·・]/u;
+const punctuationClass = (character: string): string => {
+  if (",，、".includes(character)) return "comma";
+  if (".。".includes(character)) return "stop";
+  if (";；".includes(character)) return "semicolon";
+  if (":：".includes(character)) return "colon";
+  if ("!！".includes(character)) return "exclamation";
+  if ("?？".includes(character)) return "question";
+  if ('"“”「」'.includes(character)) return "double-quote";
+  if ("'‘’『』".includes(character)) return "single-quote";
+  if ("(（[【{《〈".includes(character)) return "open";
+  if (")）]】}》〉".includes(character)) return "close";
+  if ("-–—".includes(character)) return "dash";
+  if ("·・".includes(character)) return "middle-dot";
+  return "ellipsis";
+};
+
+const punctuationShape = (text: string): string => {
+  const shape: string[] = [];
+  let semanticPosition = 0;
+  for (const character of text.replace(/\.{2,}|…+/gu, "…")) {
+    if (/[\s\u3000\u200b\ufeff]/u.test(character)) continue;
+    if (PUNCTUATION.test(character)) {
+      shape.push(`${semanticPosition}:${punctuationClass(character)}`);
+      continue;
+    }
+    semanticPosition += 1;
+  }
+  return shape.join("|");
+};
 
 const skeleton = (text: string): string => text.replace(COSMETIC, "");
 
@@ -35,7 +66,9 @@ const skeleton = (text: string): string => text.replace(COSMETIC, "");
  * mean only cosmetic characters moved.
  */
 export const classifyChange = (before: string, after: string): ChangeClass =>
-  skeleton(before) === skeleton(after) ? "formatting" : "semantic";
+  skeleton(before) === skeleton(after) && punctuationShape(before) === punctuationShape(after)
+    ? "formatting"
+    : "semantic";
 
 /**
  * Classify a whole Proposal from its slices. One semantic slice makes the

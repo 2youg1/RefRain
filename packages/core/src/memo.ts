@@ -1,6 +1,8 @@
+import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AgentMemo } from "./artifact.ts";
+import { xmlAttribute, xmlText } from "./xml.ts";
 
 /**
  * Agent working memory, kept as Markdown on disk.
@@ -26,8 +28,12 @@ export interface MemoEntry {
   readonly text: string;
 }
 
-const pathFor = (stateDir: string, agentId: string): string =>
-  join(stateDir, "memos", `${agentId}.md`);
+const pathFor = (stateDir: string, agentId: string): string => {
+  const name = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(agentId)
+    ? agentId
+    : `agent-${createHash("sha256").update(agentId).digest("hex")}`;
+  return join(stateDir, "memos", `${name}.md`);
+};
 
 /**
  * Appended, never rewritten. An agent revising its own history would erase the
@@ -44,6 +50,7 @@ export const appendMemos = (
 
   const file = pathFor(stateDir, agentId);
   mkdirSync(dirname(file), { recursive: true });
+  if (existsSync(file) && readFileSync(file, "utf8").includes(`<!-- run ${runId} -->`)) return;
 
   const at = new Date().toISOString();
   const body = memos
@@ -80,5 +87,5 @@ export const carryForward = (
   if (whole === undefined) return undefined;
 
   const body = whole.length <= budget ? whole : `…\n${whole.slice(-budget)}`;
-  return `<memory agent="${agentId}">\n${body.trim()}\n</memory>`;
+  return `<memory agent="${xmlAttribute(agentId)}">\n${xmlText(body.trim())}\n</memory>`;
 };

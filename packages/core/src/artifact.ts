@@ -208,7 +208,8 @@ export const parseAgentResult = (artifact: string): ParseResult<AgentResult> => 
 
     if (element.name === "memo") {
       const topic = element.attrs.get("topic");
-      memos.push({ text: content(element.body), ...(topic === undefined ? {} : { topic }) });
+      const text = content(element.body);
+      if (text.length > 0) memos.push({ text, ...(topic === undefined ? {} : { topic }) });
       continue;
     }
 

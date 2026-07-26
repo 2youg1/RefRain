@@ -109,11 +109,14 @@ interface RefRainApi {
   ): Promise<
     { ok: true } | { ok: false; reason: "changed-underneath"; path: string; onDisk: string }
   >;
-  /** Takes the file as it now is, discarding this session's unsaved text. */
-  reloadChapter(
+  /** Resolves only the two versions the conflict dialog displayed. */
+  resolveConflict(
     root: string,
     title: string,
-  ): Promise<{ ok: true; text: string } | { ok: false; reason: string }>;
+    choice: "mine" | "disk",
+  ): Promise<
+    { ok: true; text: string } | { ok: false; reason: string; path?: string; onDisk?: string }
+  >;
   listAgents(root: string): Promise<AgentView[]>;
   addAgent(root: string, name: string, command: string): Promise<AgentView>;
   enqueue(root: string, task: unknown): Promise<boolean>;

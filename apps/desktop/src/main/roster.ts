@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Agent } from "@refrain/agent";
+import { replaceFileAtomically } from "@refrain/core";
 
 /**
  * The agent roster, on disk.
@@ -64,6 +65,16 @@ export const readRoster = (stateDir: string): RosterEntry[] => {
       )
         return [];
 
+      const template =
+        Array.isArray(entry.template) &&
+        entry.template.length > 0 &&
+        entry.template.every(
+          (part): part is string => typeof part === "string" && !part.includes("\0"),
+        )
+          ? entry.template
+          : undefined;
+      if (entry.harness.startsWith("command:") && template === undefined) return [];
+
       return [
         {
           agent: {
@@ -76,7 +87,7 @@ export const readRoster = (stateDir: string): RosterEntry[] => {
                 typeof entry.reasoningEffort === "string" ? entry.reasoningEffort : "unspecified",
             },
           },
-          ...(Array.isArray(entry.template) ? { template: entry.template as string[] } : {}),
+          ...(template === undefined ? {} : { template }),
         },
       ];
     });
@@ -101,9 +112,5 @@ export const writeRoster = (stateDir: string, entries: readonly RosterEntry[]): 
     ...(template === undefined ? {} : { template }),
   }));
 
-  const path = fileFor(stateDir);
-  mkdirSync(dirname(path), { recursive: true });
-  const temporary = `${path}.writing`;
-  writeFileSync(temporary, `${JSON.stringify(stored, null, 2)}\n`, "utf8");
-  renameSync(temporary, path);
+  replaceFileAtomically(fileFor(stateDir), `${JSON.stringify(stored, null, 2)}\n`);
 };

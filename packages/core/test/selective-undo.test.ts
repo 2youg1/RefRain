@@ -117,7 +117,7 @@ describe("when a later action touched the same text", () => {
     expect(result.current).toBe("第二次改。");
   });
 
-  test.failing("a multi-block conflict reports the block that actually intersected", () => {
+  test("a multi-block conflict reports the block that actually intersected", () => {
     const start = head([
       ["b1", "甲。"],
       ["b2", "乙。"],

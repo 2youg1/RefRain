@@ -5,7 +5,11 @@ import { applyTextAction, blockAt } from "./text-engine.ts";
 import type { Verdict } from "./verdict.ts";
 import { isAccepted } from "./verdict.ts";
 
-export type BatchRefusal = "nothing-staged" | "stale-baseline" | "overlapping-scopes";
+export type BatchRefusal =
+  | "nothing-staged"
+  | "invalid-verdicts"
+  | "stale-baseline"
+  | "overlapping-scopes";
 
 export type DecisionBatchResult =
   | { readonly ok: true; readonly head: TextHead; readonly verdicts: readonly Verdict[] }
@@ -14,6 +18,51 @@ export type DecisionBatchResult =
 const scopeText = (head: TextHead, proposal: Proposal): string | undefined => {
   const texts = proposal.scope.blockIds.map((id) => blockAt(head, id)?.text);
   return texts.some((t) => t === undefined) ? undefined : texts.join("\n\n");
+};
+
+const invalidVerdicts = (
+  proposals: readonly Proposal[],
+  verdicts: readonly Verdict[],
+): string[] => {
+  const byProposal = new Map(proposals.map((proposal) => [proposal.id, proposal] as const));
+  const sliceIds = new Map(
+    proposals.map((proposal) => [
+      proposal.id,
+      new Set(
+        sliceProposal(proposal)
+          .filter((slice) => slice.kind !== "same")
+          .map((slice) => slice.id),
+      ),
+    ]),
+  );
+  const judged = new Set<string>();
+  const invalid: string[] = [];
+
+  for (const verdict of verdicts) {
+    const proposal = byProposal.get(verdict.proposalId);
+    if (!proposal) {
+      invalid.push(`${verdict.id}: unknown Proposal ${verdict.proposalId}`);
+      continue;
+    }
+    if (verdict.baseline !== proposal.baseline)
+      invalid.push(`${verdict.id}: baseline does not match Proposal ${proposal.id}`);
+    if (verdict.sliceId === undefined) {
+      invalid.push(`${verdict.id}: Decision Batch requires a Review Slice`);
+      continue;
+    }
+    if (!sliceIds.get(proposal.id)?.has(verdict.sliceId))
+      invalid.push(`${verdict.id}: unknown Review Slice ${verdict.sliceId}`);
+    const key = `${proposal.id}\0${verdict.sliceId}`;
+    if (judged.has(key))
+      invalid.push(`${verdict.id}: Review Slice ${verdict.sliceId} is judged twice`);
+    judged.add(key);
+    if (verdict.kind === "accept-modified" && verdict.finalText === undefined)
+      invalid.push(`${verdict.id}: accept-modified requires finalText`);
+    if (verdict.kind !== "accept-modified" && verdict.finalText !== undefined)
+      invalid.push(`${verdict.id}: ${verdict.kind} cannot carry finalText`);
+  }
+
+  return invalid;
 };
 
 /**
@@ -56,6 +105,9 @@ export const commitDecisionBatch = (
   verdicts: readonly Verdict[],
 ): DecisionBatchResult => {
   if (verdicts.length === 0) return { ok: false, reason: "nothing-staged", detail: [] };
+
+  const invalid = invalidVerdicts(proposals, verdicts);
+  if (invalid.length > 0) return { ok: false, reason: "invalid-verdicts", detail: invalid };
 
   const judged = new Set(verdicts.map((v) => v.proposalId));
   const staged = proposals.filter((p) => judged.has(p.id));

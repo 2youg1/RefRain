@@ -22,7 +22,7 @@ export class FileChannelAdapter implements HarnessAdapter {
   }
 
   async cancel(run: Run): Promise<void> {
-    run.state = "cancelled";
+    if (run.state === "dispatched") run.state = "cancelled";
   }
 
   /** A file drop reports nothing. Unknown is the honest answer, and never zero. */

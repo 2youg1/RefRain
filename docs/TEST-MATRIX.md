@@ -8,13 +8,14 @@
 
 | 标记 | 含义 |
 |---|---|
-| **已有** | 本轮开始时已经存在的普通测试。基线为 173 项。 |
+| **已有** | 测试源码已经存在；不等于本轮运行过，也不等于覆盖了真实链路。 |
 | **RED** | 本轮新增或改写为 `test.failing` 的契约。它真实执行当前缺口；实现后先去掉 `.failing`，再进入普通门禁。 |
 | **待写** | 已完成行为设计，但还没有可执行夹具。 |
+| **预期 RED** | 尚未写成测试；静态审查已找到会使该契约失败的路径。不是运行结果。 |
 | **待裁定** | 产品语义没有定，不能凭测试替作者决定。 |
 | **实机** | 只能在指定操作系统、真实窗口、真实 Harness 或真实 IME 下签字。 |
 
-当前静态清单共有 **203 个逻辑测试**：172 个普通测试，31 个 RED 契约。数字由测试源码索引得出；按用户要求，本轮不运行验证。
+本表不再把测试数量当作质量证据。数字会随着普通测试与 RED 互相转换而失真；签字只看产品承诺是否在真实边界上被独立 oracle 验证。按用户要求，本轮只更新测试设计，不运行测试。
 
 测试只落在已经确认的公共边界：
 
@@ -33,9 +34,9 @@
 
 | 区域 | 逻辑测试数 | 已有优势 | 主要缺口 |
 |---|---:|---|---|
-| `packages/core` | 121 | Artifact 拒绝语料、Review Slice、Decision Batch、Selective Undo、Round Input、Ledger | Text Action 只有 2 项；没有插入语义；缺少属性测试、崩溃注入、Source Backup、跨层事务 |
-| `packages/agent` | 71 | L0/L1 基础路径、Grant、Round、Broadcast、Session 投影 | Host 不自动回收；重启不恢复；timeout 空壳；无真实 L2 合约；磁盘原子性不足 |
-| `apps/desktop` | 11 | 构建形状、CSP、相对资源、沙箱 | 只有静态 bundle 测试；无 IPC、preload、Svelte 工作流、恢复、真实启动、运行时零出网 |
+| `packages/core` | 不在本轮重算 | Artifact 拒绝语料、Review Slice、Decision Batch、Selective Undo、Round Input、Ledger、外部修改的基础拒绝 | Text Action 仍缺插入语义、属性测试、崩溃注入、Source Backup、跨层事务；文件戳记未覆盖同 mtime 且同字节数的改写 |
+| `packages/agent` | 不在本轮重算 | L0/L1 基础路径、Grant、Round、Broadcast、Session 投影、无结果 Run 的基础终态 | 重启不恢复；无真实 L2 合约；终态竞态、迟到结果与失败原因跨层传递尚未闭合 |
+| `apps/desktop` | 不在本轮重算 | 构建形状、CSP、IPC 表、外部修改对话框的一个分支 | Agent 名册尚无 IPC 重启往返；冲突对话框未覆盖保留本地、稍后决定和二次外部修改；Run 失败尚无自动刷新黑盒证据 |
 
 ### 2.1 保留的测试簇
 
@@ -51,13 +52,15 @@
 - `session.test.ts` 原先要求 compaction 永久冻结 Agent；这与 `SPEC §3.4` 冲突。现改为 RED：compaction 只把 lineage 标成不可验证，Session 仍可由人决定是否继续。
 - `smoke.test.ts` 在 `dist/` 不存在时整组 skip，而根 `gate` 不 build；“干净检出全跳过”不能算通过。
 - `change-class.test.ts` 只验证典型标点替换，没有验证标点移动和 Emoji ZWJ。原测试不能证明“格式批量接受绝不吞语义”。
-- `host.test.ts` 手工调用 `collect()`；它不能证明 L1 completion 会被 Host 接住。
-- `command.test.ts` 手工调用 Adapter 私有的 `awaitCompletion()`；它绕过了真正缺失的 Host 回收路径。
+- `host.test.ts` 里“退出 0 但无结果”已改为等待 Host 的 `settled()`；这只证明内存内的基础终态，不证明真实子进程、IPC 或界面收到失败。
+- Claude Code 的进程存根现在会写 Result Artifact；它不再依赖 Run 永久停留在 `dispatched`。真实 CLI 的 tier 仍须按 `SPEC §6.5` 单独签字。
 - `capture.ts` 里的标题对齐仅 warning；warning 不是门禁。
 
 ---
 
-## 3. 已落盘的 RED 契约
+## 3. 既有 RED 契约索引
+
+本节保留早期测试设计的 ID，便于实现时追踪；本轮没有重跑源码索引，不能把未勾选项解释为当前仍是 `test.failing`，也不能把已经有普通测试源码的项解释为已通过。最近三项修复的当前增补与签字条件以 §10 为准。
 
 ### 3.1 Agent Host 与文件协议
 
@@ -148,7 +151,7 @@
 - [ ] **CORE-BATCH-006** 任一 stale/overlap/unknown 使整批零写入、零入账。
 - [ ] **CORE-BATCH-007** 文件写成功而 Ledger 失败、Ledger 成功而文件写失败，两种故障都不能留下半个 commit。
 - [ ] **CORE-BATCH-008** commit basis 在准备和提交之间变化时整批拒绝。
-- [ ] **CORE-BATCH-009** Proposal 级 accept 的最终语义。**待裁定 Q6；共同底线已由 BATCH-001 锁定。**
+- [ ] **CORE-BATCH-009** “全部接受／全部退回”为每个 Review Slice 分别暂存 Verdict；不存在无粒度的 Proposal 级 accept。Q6 已关闭。
 
 ### 4.4 Artifact parser 与序列化
 
@@ -402,7 +405,7 @@
 
 - [ ] **Q2** 人与 Agent 能否同时编辑同一文件；决定锁定、drift 或三方合并的黑盒期望。
 - [ ] **Q3** 跨 Session 多 Agent 对话编排 UI；决定谁能看见谁的输出。
-- [ ] **Q6** Proposal 级 accept 是接受全部，还是必须逐 Slice。已有共同底线测试防止成功空操作。
+- [ ] **Q6（已关闭）** “全部接受／全部退回”逐 Slice 暂存 Verdict，之后仍由作者提交；测试不得重新引入无粒度的 Proposal 级 accept。
 - [ ] **INSERT** Text Change 的 insertion anchor 与稳定 ID 表示。
 - [ ] **CLI** Agent 是否有只读 request/只写 result 的 CLI；无论如何不得存在 merge 命令。
 - [ ] **SOURCE** 从既有文件建立项目时，Source Backup 的创建时点、目录结构和恢复入口。
@@ -462,7 +465,94 @@
 
 ---
 
-## 10. 最终签字清单
+## 10. 最近三项修复的质量验证增补
+
+> 2026-07-26 增补。范围只含 `09c39eb`（外部修改冲突）、`52e8255`（Agent 名册持久化）与 `8e2bfb7`（Run 失败终态和原因显示）。以下全是测试设计；本轮没有写测试代码、没有运行测试、没有修改生产代码。
+
+### 10.1 已有证据不能证明什么
+
+| 修复 | 已有源码证据 | 尚不能据此签字 |
+|---|---|---|
+| 外部修改冲突 | `external-edit.test.ts` 直接调用 `writeChapter`；`verify-conflict.ts` 显示两个版本并走“采用磁盘版本” | 文件戳记的碰撞、IPC 缓存、保留本地、稍后决定、保存期间继续输入、对话框出现后二次外部修改、多 Root 同名章节 |
+| Agent 名册 | `roster.test.ts` 直接读写 `agents.json` | `agent:add/remove/list` 的真实 IPC 往返、重启后 Adapter 可派发、写盘失败的事务性、命令参数边界、多项目隔离、崩溃耐久性 |
+| Run 失败 | `host.test.ts` 用内存 Adapter 验证“退出但无结果”；Claude Code 用真实子进程存根 | 失败原因是否穿过 IPC/preload 到达界面、慢失败是否自动刷新、终态是否能被迟到结果改写、错误文本是否安全显示、多个 Run 是否串因 |
+
+三组测试都采用独立 oracle：正文和名册以盘上字节为准，Run 以公开状态和 Result Artifact 为准，界面只通过可访问名称、键盘、窗口和 preload 公共 API 观察。测试不得断言私有函数调用次数，也不得用实现自身生成 expected。
+
+### 10.2 外部修改冲突
+
+夹具分三层：`writeChapter` 的真实文件测试、注册到假 `ipcMain` 的 handler 测试、构建后 renderer 的 Playwright 黑盒。文件内容另算 SHA-256；不得把待测的 mtime/字节数再次当 oracle。
+
+| ID | 状态 | 设置与动作 | 必须观察到的结果 |
+|---|---|---|---|
+| **EXT-001** | **预期 RED** | 读入 A；外部写入等字节数的 B；用 `utimes` 把 mtime 恢复为 A 的值；再保存本地 C | 返回 `changed-underneath`；磁盘仍为 B。只比较 mtime 与字节数会漏掉本例 |
+| **EXT-002** | 待写 | 分别制造“只改 mtime”和“只改字节数”两组文件戳记变化 | 任一分量变化都拒绝；两条分支各自有测试，不能用一次同时改变两者的写入冒充覆盖 |
+| **EXT-003** | 待写 | `project:load-workspace` 后外部改文件，再经 `project:save` 保存 | IPC 返回磁盘版本与路径；磁盘、main 中缓存的 Text Head、renderer 中未保存文本三者均未被静默改写 |
+| **EXT-004** | 待写 | 第一次冲突后不作决定，再次按保存 | 仍显示冲突；第一次拒绝不得偷偷更新 expected stamp，使第二次保存覆盖磁盘版本 |
+| **EXT-005** | **预期 RED** | 冲突框显示磁盘版本 B 后，外部再写 C；分别点击“保留我的版本”和“采用磁盘版本” | 旧同意不能支配未展示的 C。系统可刷新对话框或拒绝动作，但不得覆盖 C，也不得把 C 当成用户刚才选择的 B |
+| **EXT-006** | **预期 RED** | 让 `saveChapter` 延迟；等待期间继续输入；随后返回冲突并处理 | 禁止出现“已保存”而磁盘缺少后输入。允许的结果只有两种：全部输入已落盘，或后输入仍清楚标成未保存并可再次保存 |
+| **EXT-007** | 待写 | 点击“保留我的版本”且磁盘此后不再变化 | 恰好写入对话框所示本地文本；更新文件戳记；产生相应 Edit/Text Action；选择性撤销仍能找到这次作者修改 |
+| **EXT-008** | 待写 | 点击“采用磁盘版本”且磁盘此后不再变化 | 不执行正文写入；编辑器、章节缓存和 saved 状态都采用所展示的磁盘文本；不伪造作者 Edit |
+| **EXT-009** | 待写 | 点击“稍后决定”，继续输入，再次保存 | 第一次关闭不调用 reload/save；正文与后续输入均保留且状态为未保存；第二次对话框显示最新本地文本 |
+| **EXT-010** | **预期 RED** | 两个 Root 各有同名章节；只让其中一个发生外部修改并选择版本 | 只改变目标 Root 的章节、stamp 和 saved 状态；不得按标题把另一 Root 的同名章节一起替换 |
+| **EXT-011** | **预期 RED** | 在 write、fsync、rename 前后分别强杀保存子进程 | 重启后只允许旧文件或新文件完整存在；`.writing` 不得冒充正文，Source Backup 的 hash 始终不变 |
+| **EXT-012** | 待写 | 键盘操作冲突框：焦点进入、Tab 遍历、稍后决定、两项选择 | `alertdialog` 有名称；两个版本及代价在动作前可读；键盘不会因位置丢失而把两项操作混同 |
+
+`EXT-005` 的判据来自既有界面承诺：“选择双方都必须看得见”。对话框出现后才写入的 C 从未展示，因而不能被旧按钮静默覆盖或采用。该测试不规定刷新还是拒绝，只禁止未经展示的版本获胜。
+
+### 10.3 Agent 名册持久化
+
+所有往返都从 preload 公共方法或已注册 IPC handler 进入；直接调用 `readRoster/writeRoster` 只保留为 codec 测试，不能替代本节。命令 Harness 使用真实无 shell 子进程存根，并在结果文件写入可辨认的 Adapter ID。
+
+| ID | 状态 | 设置与动作 | 必须观察到的结果 |
+|---|---|---|---|
+| **ROSTER-001** | 待写 | 经 `agent:add` 建立 file 与 command 两类 Agent；`closeWorkbenches()` 后以同一 Root 调用 `agent:list` | ID、name、Runtime Binding 与 template 完整恢复；未指定字段不被编造 |
+| **ROSTER-002** | 待写 | 重启后向恢复的 command Agent 派发一项真实 Run | 调用原来的 argv 存根并产出可收取 Artifact；“名字回来了但 Adapter 不能跑”判失败 |
+| **ROSTER-003** | 待写 | 经 `agent:remove` 删除一个 Agent，关闭并重开 | 被删项不复活，其他 Agent 的 ID、顺序、Binding 和 template 逐字不变 |
+| **ROSTER-004** | 待写 | 同时打开两个 Root，各增删不同 Agent，再交错关闭重开 | 两份 `.refrain/agents.json` 及 IPC 列表互不串线；同名 Agent 也按 Root 隔离 |
+| **ROSTER-005** | **预期 RED** | 新增两个同名 command Agent，但给不同 argv 存根；重启后分别派发 | 每个 Agent 只能调用自己的模板。显示名相同不得让 Adapter ID 碰撞后共用第一份命令 |
+| **ROSTER-006** | **预期 RED** | 命令路径含空格、中文和引号，参数自身也含空格；保存、重启、派发 | argv 的元素边界逐项不变；不得用空白 `split` 把一个路径拆成多个参数，也不得经过 shell |
+| **ROSTER-007** | **预期 RED** | 预先让 `agents.json.writing` 成为目录以稳定触发写失败；分别执行 add 和 remove | IPC 明确失败；内存 roster、Host 注册表和原 `agents.json` 同时保持旧状态，不得出现“本窗口有、重启后无” |
+| **ROSTER-008** | **预期 RED** | 子进程在 temp write、文件 fsync、rename、目录 fsync 四点强杀 | 重开只读到完整旧 roster 或完整新 roster；JSON 不截断；残留 temp 不自动替代权威文件 |
+| **ROSTER-009** | 待写 | `template` 含数字、对象、NUL，或 binding 字段类型错误；同文件另有合法项 | 项目照常打开；非法项不得注册可执行 Adapter；合法项保留。错误条目不能污染整份 roster |
+| **ROSTER-010** | **待裁定** | 同一文件含重复 Agent ID | 活跃名册中不得同时出现两个相同 ID，也不得让删除一个后另一个复活；保留哪一项或是否提示用户仍属待裁定 |
+| **ROSTER-011** | 待写 | roster 文件损坏后只调用 load/list，不作增删 | 项目仍能打开且正文可编辑；损坏文件在用户明确改名册前保持原样，便于人工恢复 |
+| **ROSTER-012** | 待写 | 只读目录、磁盘满与 rename 拒绝三类写盘错误 | 错误到达界面；既有 Agent 仍可用；失败操作不产生半个新状态 |
+
+`ROSTER-010` 只锁“不允许两个活跃身份共用一个 ID”，不替产品决定冲突时保留第一项、最后一项，还是要求作者修文件。实施前把该策略补进 SPEC §12。
+
+### 10.4 Run 失败终态与原因显示
+
+本组从真实子进程开始，依次观察 `AgentHost`、`agent:runs`、preload 返回值和构建后页面。只在 Host 里看到 `failureFor()` 不算到达用户；只把一段失败文本塞给 Svelte 也不算 Host 真的送到了界面。
+
+| ID | 状态 | 设置与动作 | 必须观察到的结果 |
+|---|---|---|---|
+| **RUN-FAIL-001** | 待写 | 真实子进程非零退出并写 stderr | `settled()` 正常收束；Run 为 `failed`；failure 含可操作原因；无 unhandled rejection |
+| **RUN-FAIL-002** | 待写 | 真实子进程退出 0 且不写 Result Artifact | 有界时间内从 `dispatched` 到 `failed`；原因指明没有结果；不得要求手点 Collect 才结束 |
+| **RUN-FAIL-003** | 待写 | 分别写非法 UTF-8、DTD、未知 root、伪造 scope 的 Artifact | Run 为 `failed`；原因保留结构化错误码；Proposal、comment、memo 均为零；诊断文件仍在 |
+| **RUN-FAIL-004** | **预期 RED** | Run 因无结果进入 `failed` 后，再把合法 result 写入原路径并调用 collect | 原 Run 仍为 `failed`，failure 不变，迟到文件不能把终态改成 `completed` 或冻结 Proposal |
+| **RUN-FAIL-005** | 待写 | 把 cancel、进程退出、timeout、result rename 放在同一 barrier 后随机释放，固定种子重复 1,000 次 | 每个 Run 只有一个终态；先到终态者获胜；迟到事件不改状态、不换 failure、不重复 memo |
+| **RUN-FAIL-006** | 待写 | 经注册 handler 调用 `agent:runs`，混合 completed/failed/cancelled Run | failure 只跟随对应 failed Run；文本与 Host 保存值一致；其他 Run 不出现旧原因或 `undefined` 占位字符串 |
+| **RUN-FAIL-007** | **预期 RED** | renderer 首次读到 `dispatched`；让进程延迟后失败；用户不点按钮、不关面板 | 页面自行更新为 `failed` 并显示原因，Collect 消失。只在 send 后立刻读取一次 runs 不满足本例 |
+| **RUN-FAIL-008** | 待写 | failure 含 `<script>`、`&<>`、换行、中文、Windows 路径和 500 字符无空格串 | 页面只显示文本，不生成元素或执行脚本；换行保留，长串可折行；Run ID 与原因仍能对应 |
+| **RUN-FAIL-009** | 待写 | 100 个 Run 以不同顺序完成，其中 20 个失败 | 每个原因只出现在自己的 Run 下；列表无重复、漏项或串因；正文输入路径不受错误刷新影响 |
+| **RUN-FAIL-010** | 待写 | 先失败后 cancel、先 cancel 后 Adapter 拒绝、先 completed 后迟到失败 | 终态单调；failed 保留首个签字原因，cancelled/completed 不被迟到错误改写成 failed |
+| **RUN-FAIL-011** | 待写（受恢复阻塞） | 失败后关闭并重开 Workbench | Run 恢复后仍为 failed 且带原原因。须与 `AG-RUN-006` 的 runs 持久化一起实现，不能只复制一套界面状态 |
+| **RUN-FAIL-012** | **待裁定** | Harness 产生 1 MiB 错误文本 | 需要先在 SPEC 规定保存上限、截断标记与原始诊断文件位置；测试不得私自选择字节数 |
+
+### 10.5 三项修复的最低签字包
+
+| 修复 | 必须先通过的新增测试 | 仍需的真实路径 |
+|---|---|---|
+| 外部修改冲突 | EXT-001、003、005、006、007、008、009、010 | core 真实文件 → IPC → 构建后 renderer；两项选择和“稍后决定”都要走 |
+| Agent 名册 | ROSTER-001、002、003、004、005、006、007、008 | IPC add/remove/list → `closeWorkbenches` → 真实 command 子进程 |
+| Run 失败 | RUN-FAIL-001、002、003、004、005、006、007、008、010 | 真实子进程 → Host → IPC/preload → 构建后 renderer；用户不手动刷新 |
+
+一个修复只有直接单元测试变绿，不能签字。上表的最低签字包要求同一缺陷同时经过最小语义边界、跨层边界和用户看见的最终边界；哪一层失败，就在拥有该行为的边界修，不把预期写弱。
+
+---
+
+## 11. 最终签字清单
 
 测试实现完成后，按以下顺序签字；上一层未过，不用更昂贵的下一层掩盖它。
 
@@ -478,5 +568,6 @@
 10. [ ] Windows 安装包在干净机器完成安装—启动—编辑—协作—恢复。
 11. [ ] `bun run fmt:check && bun run check && bun test` 通过。
 12. [ ] CI 的 build、smoke、运行时零出网、IME gate 都能被对应改动触发，并各自有“门禁确实会咬”的反向测试。
+13. [ ] §10 的三个最低签字包逐层通过；没有用直接函数测试代替 IPC、重启、真实子进程或构建后页面。
 
 本表完成的标准不是“测试数量多”，而是每条产品承诺都能在其真实边界上失败一次，并在实现后由同一条命令证明恢复。

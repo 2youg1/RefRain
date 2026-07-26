@@ -6,6 +6,7 @@ import { carriesOn, renderPersona } from "./persona.ts";
 import { serializeVerdicts } from "./reply.ts";
 import { currentText } from "./text-engine.ts";
 import type { Verdict } from "./verdict.ts";
+import { xmlText } from "./xml.ts";
 
 /**
  * What a run carries into the harness, and in what order (SPEC 7.3).
@@ -53,11 +54,11 @@ export const composeRound = (input: RoundInput, carry: Carry): string => {
   if (persona !== undefined) sections.push(persona);
 
   if (carry === "full")
-    sections.push(`<manuscript>\n${currentText(input.baseline)}\n</manuscript>`);
+    sections.push(`<manuscript>\n${xmlText(currentText(input.baseline))}\n</manuscript>`);
   if (input.verdicts.length > 0) sections.push(serializeVerdicts(input.verdicts));
   if (carry === "diff" && input.edits.length > 0) sections.push(describeEditsForAgent(input.edits));
 
-  sections.push(`<request>\n${input.prompt}\n</request>`);
+  sections.push(`<request>\n${xmlText(input.prompt)}\n</request>`);
 
   return sections.join("\n\n");
 };

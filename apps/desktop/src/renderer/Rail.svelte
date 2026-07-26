@@ -11,7 +11,7 @@ interface Props {
   roots: string[];
   chapters: ChapterView[];
   active: string | null;
-  onSelect: (title: string) => void;
+  onSelect: (path: string) => void;
   onAddRoot: () => void;
   onRemoveRoot: (path: string) => void;
   onNewChapter: () => void;
@@ -61,11 +61,11 @@ const nameOf = (path: string): string => path.split(/[/\\]/).pop() ?? path;
           <span class="root-name">{nameOf(path)}</span>
           <button class="drop-root" onclick={() => onRemoveRoot(path)} aria-label="remove">✕</button>
         </div>
-        {#each rootChapters as chapter (chapter.title)}
+        {#each rootChapters as chapter (chapter.path)}
           <button
             class="chapter"
-            class:on={chapter.title === active}
-            onclick={() => onSelect(chapter.title)}
+            class:on={chapter.path === active}
+            onclick={() => onSelect(chapter.path)}
           >
             {chapter.title}
           </button>

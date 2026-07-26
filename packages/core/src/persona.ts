@@ -28,6 +28,8 @@
  * pretends to write one for them.
  */
 
+import { xmlAttribute, xmlText } from "./xml.ts";
+
 export interface Persona {
   readonly id: string;
   readonly name: string;
@@ -74,14 +76,11 @@ export const PRESETS: readonly Persona[] = [
   },
 ];
 
-const xmlText = (text: string): string =>
-  text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-
 /** The persona as it appears in a prompt, or nothing when the brief is empty. */
 export const renderPersona = (persona: Persona): string | undefined =>
   persona.brief.trim().length === 0
     ? undefined
-    : `<persona name="${xmlText(persona.name)}">\n${xmlText(persona.brief.trim())}\n</persona>`;
+    : `<persona name="${xmlAttribute(persona.name)}">\n${xmlText(persona.brief.trim())}\n</persona>`;
 
 /**
  * Whether the persona travels on this round.

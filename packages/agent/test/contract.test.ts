@@ -70,7 +70,7 @@ describe("Reply contract", () => {
     expect(parsed.value.memos).toEqual([]);
   });
 
-  test.failing("an empty memo is omitted rather than spending future context", () => {
+  test("an empty memo is omitted rather than spending future context", () => {
     const parsed = parseAgentResult(
       `<agent-result version="1"><memo topic="empty">   </memo></agent-result>`,
     );

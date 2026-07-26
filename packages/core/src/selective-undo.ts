@@ -47,9 +47,15 @@ const blocksOf = (action: TextAction): Set<string> =>
  * Only the actions that came after need checking, and only for shared blocks —
  * which is what keeps this independent of how long the history is.
  */
-const intersects = (action: TextAction, later: readonly TextAction[]): boolean => {
+const intersectingBlock = (
+  action: TextAction,
+  later: readonly TextAction[],
+): string | undefined => {
   const touched = blocksOf(action);
-  return later.some((l) => l.changes.some((c) => c.blockIds.some((id) => touched.has(id))));
+  for (const laterAction of later)
+    for (const change of laterAction.changes)
+      for (const id of change.blockIds) if (touched.has(id)) return id;
+  return undefined;
 };
 
 export const selectiveUndo = (
@@ -57,20 +63,23 @@ export const selectiveUndo = (
   action: TextAction,
   later: readonly TextAction[],
 ): UndoResult => {
-  const first = action.changes[0]?.blockIds[0];
-  const before = action.undoes[0]?.text ?? "";
-  const after = action.changes[0]?.text ?? "";
-  const current = first === undefined ? "" : (blockAt(head, first)?.text ?? "");
+  const conflict = intersectingBlock(action, later);
+  const missing = action.undoes
+    .flatMap((change) => change.blockIds)
+    .find((id) => !blockAt(head, id));
+  const affected = conflict ?? missing ?? action.changes[0]?.blockIds[0];
+  const before =
+    action.undoes.find((change) => change.blockIds.includes(affected ?? ""))?.text ?? "";
+  const after =
+    action.changes.find((change) => change.blockIds.includes(affected ?? ""))?.text ?? "";
+  const current = affected === undefined ? "" : (blockAt(head, affected)?.text ?? "");
 
-  if (intersects(action, later))
+  if (conflict !== undefined)
     return { ok: false, reason: "later-action-intersects", before, after, current };
 
   // The blocks may also have been removed outright, which is not a conflict
   // between edits but still leaves nothing to compensate.
-  const missing = action.undoes.some((c) =>
-    c.blockIds.some((id) => blockAt(head, id) === undefined),
-  );
-  if (missing) return { ok: false, reason: "blocks-gone", before, after, current };
+  if (missing !== undefined) return { ok: false, reason: "blocks-gone", before, after, current };
 
   const compensation: TextAction = {
     id: `undo-${action.id}`,

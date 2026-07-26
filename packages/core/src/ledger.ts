@@ -56,22 +56,32 @@ export class VerdictLedger {
   }
 
   record(verdict: Verdict): this {
-    this.db
-      .prepare(
-        `INSERT INTO verdicts VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-           kind = excluded.kind, final_text = excluded.final_text, reason = excluded.reason`,
-      )
-      .run(
-        verdict.id,
-        verdict.proposalId,
-        verdict.sliceId ?? null,
-        verdict.kind,
-        verdict.finalText ?? null,
-        verdict.reason ?? null,
-        verdict.baseline,
-        verdict.decidedAt,
-      );
+    return this.recordAll([verdict]);
+  }
+
+  /** One Decision Batch is one ledger transaction; a partial audit cannot exist. */
+  recordAll(verdicts: readonly Verdict[]): this {
+    if (verdicts.length === 0) return this;
+    const insert = this.db.prepare(`INSERT INTO verdicts VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                   ON CONFLICT(id) DO NOTHING`);
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const verdict of verdicts)
+        insert.run(
+          verdict.id,
+          verdict.proposalId,
+          verdict.sliceId ?? null,
+          verdict.kind,
+          verdict.finalText ?? null,
+          verdict.reason ?? null,
+          verdict.baseline,
+          verdict.decidedAt,
+        );
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
     return this;
   }
 
