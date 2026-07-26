@@ -86,7 +86,7 @@ bun run dev
 | **L1** | 命令。RefRain 启动你的 Harness 并收取结果。 |
 | **L2** | 会话。Harness 报告自己的模型、思考强度与 token 用量，RefRain 原样转述。 |
 
-目前 L0、L1 与首个 L2 适配（Claude Code）已可用，其余 L2 适配陆续跟上。任何一档都是能用的——档位说的是 RefRain 能告诉你多少，而不是它跑不跑得起来。
+目前 L0 与 L1 已可用。Claude Code 适配器也能解析 CLI 回报的模型与 token，但在真实安装环境和 compaction 信号通过 §6.5 合约前，仍标为 L1。任何一档都能工作——档位说的是 RefRain 能证明多少，不是它跑不跑得起来。
 
 ## 构建
 
@@ -96,7 +96,7 @@ bun run native     # 平台二进制
 cd apps/desktop && ./make.sh && bun x electron-builder --linux AppImage
 ```
 
-Windows、macOS、Linux 的产物由 `gate` workflow 产出，它会先在每个平台上构建并测试原生层，再跑其余检查。
+`gate` workflow 在每个支持的平台构建并测试原生层。tag 触发 `release.yml`，分别打包 Windows x64、Linux x64、macOS arm64 与 macOS x64，再由一个 job 发布五个安装包。
 
 ## 验证
 

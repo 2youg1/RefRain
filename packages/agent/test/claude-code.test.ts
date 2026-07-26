@@ -79,8 +79,8 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 describe("Claude Code adapter", () => {
-  test("declares L2, which is the claim the rest of these tests hold it to", () => {
-    expect(new ClaudeCodeAdapter().tier).toBe("L2");
+  test("stays L1 until a real session and compaction signal prove L2", () => {
+    expect(new ClaudeCodeAdapter().tier).toBe("L1");
     expect(new ClaudeCodeAdapter().id).toBe("claude-code");
   });
 
