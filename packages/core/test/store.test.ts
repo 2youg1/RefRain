@@ -7,7 +7,7 @@ import { currentText, loadProject, saveChapter, VerdictLedger } from "../src/ind
 
 let root = "";
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "recension-"));
+  root = mkdtempSync(join(tmpdir(), "refrain-"));
 });
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });

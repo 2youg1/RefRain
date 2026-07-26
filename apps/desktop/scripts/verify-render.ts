@@ -23,7 +23,7 @@ const server = Bun.serve({
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-await page.addInitScript(`window.recension = {
+await page.addInitScript(`window.refrain = {
   openProject: async () => "/p", loadProject: async () => [{ title: "01", text: "黑暗中有人问。\\n\\n声音很熟，熟到她握剑的手松了半分。她想起十年前那个雨夜，那时他也是这样开口的。\\n\\n剑尖垂下去，抵住青石板。" }],
   createProject: async () => null, pathFor: () => "", resolveDrop: async () => null,
   fullscreen: async () => true, saveChapter: async () => true, listAgents: async () => [],

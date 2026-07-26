@@ -515,7 +515,7 @@ Accept: the tier table is re-verified in a real environment; a clean machine pas
 
 | # | Question | Status |
 |---|---|---|
-| Q1 | Product and repository name | Closed — `recension`, chosen 2026-07-26 |
+| Q1 | Product and repository name | Closed — `RefRain`, chosen 2026-07-26. A reference and a refrain; the default theme is 雨. |
 | Q2 | May a human and an agent edit the same file concurrently? (Leaning: the file is read-only to the human while an agent works on it) | Open |
 | Q3 | UI for cross-session multi-agent dialogue orchestration | Needs design |
 | Q4 | Does the Verdict Ledger's retrieval interface ship in v1? | Open |

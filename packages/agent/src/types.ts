@@ -1,4 +1,4 @@
-import type { BlockId, RevisionId } from "@recension/core";
+import type { BlockId, RevisionId } from "@refrain/core";
 
 /** Harness capability tier (SPEC 6.1). Missing capability degrades and is labeled. */
 export type Tier = "L0" | "L1" | "L2";

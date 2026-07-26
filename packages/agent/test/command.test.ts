@@ -7,7 +7,7 @@ import { AgentHost, CommandAdapter } from "../src/index.ts";
 
 let root = "";
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "recension-cmd-"));
+  root = mkdtempSync(join(tmpdir(), "refrain-cmd-"));
 });
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });

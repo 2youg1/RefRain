@@ -1,4 +1,4 @@
-# Recension
+# RefRain
 
 **A local writing workbench where every agent edit is a proposal you can refuse — and your refusal is data.**
 
@@ -6,7 +6,7 @@
 
 ---
 
-*Recension* — the scholarly practice of collating variant manuscripts and deciding, with stated reasons, which reading stands. Competing versions arrive; one human judges; the judgment is recorded and can be argued with later.
+*RefRain* — the scholarly practice of collating variant manuscripts and deciding, with stated reasons, which reading stands. Competing versions arrive; one human judges; the judgment is recorded and can be argued with later.
 
 That is the whole product.
 
@@ -34,7 +34,7 @@ Agents write directly into your files. You get a diff, you skim it, you accept o
 
 Every tool treats your judgment as a transient UI event. Click accept, and it is gone.
 
-Recension persists it. Every judgment — accept, reject, accept-with-changes, and **why** — is first-class, durable, structured data. That single change produces three things:
+RefRain persists it. Every judgment — accept, reject, accept-with-changes, and **why** — is first-class, durable, structured data. That single change produces three things:
 
 **It replies.** Your verdict becomes part of the next prompt. The agent reads why the last draft failed, in your words, anchored to the exact passage.
 
@@ -46,9 +46,9 @@ Editors go stale. Harnesses turn over every year. A record of your judgment does
 
 ## Not a harness — an orchestration layer above them
 
-Recension runs no model and owns no agent loop. It drives the harnesses you already use, and its ambition sits one level up: **the coordination between a human and several agents, and among the agents themselves.**
+RefRain runs no model and owns no agent loop. It drives the harnesses you already use, and its ambition sits one level up: **the coordination between a human and several agents, and among the agents themselves.**
 
-Most harnesses give you one conversation and one agent. Real work is not shaped that way. Recension models it as a graph — tasks that fan out to competing agents, results that converge on a single human decision point, and a decision that becomes the input to the next round.
+Most harnesses give you one conversation and one agent. Real work is not shaped that way. RefRain models it as a graph — tasks that fan out to competing agents, results that converge on a single human decision point, and a decision that becomes the input to the next round.
 
 - **Competing proposals.** Broadcast one passage to several agents, then choose, combine, or reject all of them.
 - **Cross-session dialogue.** Two sessions each hold a character; the workbench relays between them for several rounds; the resulting exchange arrives as one proposal.
@@ -65,7 +65,7 @@ write normally
   -> queue it; batch as many as you like
   -> send with one click
   -> your harness runs and writes a result file
-  -> Recension freezes it into an immutable Proposal
+  -> RefRain freezes it into an immutable Proposal
   -> you adjudicate, slice by slice, with reasons
   -> your decision commits atomically to the manuscript
   -> the verdict enters the ledger
@@ -95,7 +95,7 @@ Missing capability is never rejection — it is degradation with honest labeling
 
 Two earlier projects by the same author, both still running:
 
-**[md2prompt](https://github.com/kaile9/md2prompt)** — a single-file HTML editor that logs every human revision and exports a protocol-precise `Prompt.md` for an agent to read. It proved the half that mattered: a human's edits and annotations, serialized into a format an agent consumes without tool calls or re-uploading the document. Recension inverts the direction — the agent proposes, the human adjudicates — and keeps the protocol discipline that made the original work.
+**[md2prompt](https://github.com/kaile9/md2prompt)** — a single-file HTML editor that logs every human revision and exports a protocol-precise `Prompt.md` for an agent to read. It proved the half that mattered: a human's edits and annotations, serialized into a format an agent consumes without tool calls or re-uploading the document. RefRain inverts the direction — the agent proposes, the human adjudicates — and keeps the protocol discipline that made the original work.
 
 **[apostle-skills](https://github.com/kaile9/apostle-skills)** — agent skills for serious reading, research, translation, and long-horizon work. Two shaped this design directly. `apostle-artifacts-loops` contributed the commissioning discipline: single-use identifiers, no overwrite on retry, and artifacts on disk as the meeting point between agents that cannot see each other. `apostle-constitutio` contributed bidirectional zero-trust, which became the rule that this workbench never believes an agent's own report — only files on disk, verified.
 

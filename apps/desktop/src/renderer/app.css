@@ -1,40 +1,104 @@
 /*
- * Recension — a surface for manuscripts.
+ * RefRain — a surface for manuscripts.
  *
  * The composition is typographic, not chrome-driven: hierarchy comes from
  * scale, measure, and rest, and the only saturated colour is the one spent on
  * a human decision. A writing application that looks like a dashboard has
  * already told the author that the software matters more than the sentence.
  *
- * Two themes, both warm-neutral. Paper is a printed page under daylight; ink
- * is the same page under a desk lamp — not an inverted screen.
+ * Colour is stated in OKLCH. It is the reason the dark theme reads as a lamp on
+ * paper rather than an inverted screen: lightness can be lowered while chroma
+ * and hue hold, which HSL cannot do without the greys turning to mud.
+ *
+ * The palette takes its named colours from the Japanese tradition — 墨 sumi,
+ * 白練 shironeri, 銀鼠 ginnezumi, 蘇芳 suou, media 藍鼠 ainezumi — used as
+ * accents and boundaries rather than as a costume. The geometry is contemporary
+ * and deliberately slightly off-axis: nothing here is centred for its own sake.
  */
 
 :root {
   color-scheme: light;
 
-  /* Surfaces. Warm greys with a trace of yellow, the way paper stock behaves. */
-  --paper: #f7f4ef;
-  --paper-raised: #fffefb;
-  --paper-sunk: #efeae1;
-  --rule: #e0d9cd;
-  --rule-strong: #cabfad;
+  /*
+   * Surfaces. 白練 shironeri, the colour of silk after refining — warm, but
+   * only just. Chroma stays under 0.012 so the eye reads paper, not cream.
+   */
+  /*
+   :root {
+     color-scheme: light;
 
-  /* Type. Never pure black: ink on paper reflects, it does not absorb. */
-  --ink: #1a1714;
-  --ink-soft: #4a443c;
-  --ink-faint: #8a8175;
-  --ink-ghost: #b5aa99;
+     /*
+      * 雨 — rain. The default, and deliberately not warm.
+      *
+      * Warm paper is the settled answer for writing tools, which is why nearly
+      * every one of them looks the same. This surface is cool: a hue near 230,
+      * chroma low enough that it reads as light rather than as blue. Two things
+      * follow. Cinnabar becomes genuinely hot against it — on cream the same red
+      * merely sits there — and cool light keeps a reader alert where warm light
+      * settles them, which is the right bias for a working surface rather than a
+      * reading one. The warm palette remains, one click away, as 楮 kōzo.
+      */
+  /*
+   * Chroma near 0.012, not 0.034. The higher value was the chroma of an
+   * information callout, and a whole viewport of it reads as a system panel
+   * rather than as a sheet. Cool comes from hue, not from saturation.
+   */
+  /*
+   * The desk is warm, the sheet is cool. Neither reads as temperature on its
+   * own — a cool sheet on a cool desk is just two greys, which is what the
+   * previous set produced. The contrast is what makes the surface a material.
+   */
+  --paper: oklch(0.934 0.01 76);
+  --paper-raised: oklch(0.968 0.007 232);
+  --paper-sunk: oklch(0.898 0.013 74);
+  --rule: oklch(0.856 0.015 74);
+  --rule-strong: oklch(0.742 0.02 72);
 
-  /* The seal. Spent only where a human commits to something. */
-  --seal: #8c2f18;
-  --seal-bright: #b03d1f;
-  --seal-wash: #f7e9e2;
+  /* The rail is a different material, not a darker shade of the same one. */
+  /* Three points of warmth mixed into the indigo, so the two surfaces read as
+   * one room under one lamp rather than as two applications side by side. */
+  --rail: oklch(0.368 0.042 252);
+  --rail-ink: oklch(0.868 0.02 232);
+  --rail-faint: oklch(0.688 0.03 236);
+  --rail-rule: oklch(0.442 0.044 248);
 
-  --accepted: #3d5a2b;
-  --accepted-wash: #eef2e5;
-  --refused: #8a2540;
-  --refused-wash: #f8e9ed;
+  /*
+      * 藍墨 aizumi — ink ground with indigo. Never pure black, and never neutral
+      * grey: the scale carries the paper's own hue so nothing on the page reads
+      * as dirt.
+      */
+  /*
+      * Cool paper, warm ink.
+      *
+      * The illusion of paper does not come from the ground alone: it comes from a
+      * charcoal that leans warm sitting on a sheet that leans cold. Matching the
+      * ink to the paper's hue — which the previous set did — produces a tinted
+      * PDF, technically harmonious and materially dead.
+      */
+  /*
+   * Solid values, never a tint of the ground. Hue survives at these
+   * lightnesses; dilute the same charcoal with opacity and it turns grey,
+   * which is how an earlier "warm ink" arrived on screen as no ink at all.
+   */
+  --ink: oklch(0.246 0.03 56);
+  --ink-soft: oklch(0.406 0.032 54);
+  --ink-faint: oklch(0.548 0.03 50);
+  --ink-ghost: oklch(0.672 0.026 48);
+
+  /*
+      * 朱 shu — cinnabar. Spent only where a human commits to something. Against
+      * a cool ground its complement lands near hue 40, which is why it reads as
+      * temperature rather than as decoration.
+      */
+  --seal: oklch(0.512 0.176 32);
+  --seal-bright: oklch(0.608 0.196 34);
+  --seal-wash: oklch(0.944 0.032 34);
+
+  /* 青竹 aotake and 今様 imayō: agreement and refusal, held low in chroma. */
+  --accepted: oklch(0.508 0.104 168);
+  --accepted-wash: oklch(0.952 0.024 168);
+  --refused: oklch(0.492 0.148 8);
+  --refused-wash: oklch(0.948 0.024 8);
 
   /*
    * Type stacks. The bundled faces come first so the application looks the same
@@ -62,39 +126,126 @@
   --manuscript-leading: 1.95;
   --manuscript-tracking: 0.01em;
   --manuscript-measure: 34em;
-  --baseline: 0px; /* > 0 shows a baseline grid */
 
-  --shadow-lift: 0 1px 2px rgb(26 23 20 / 0.05), 0 6px 20px rgb(26 23 20 / 0.07);
-  --shadow-float: 0 12px 32px rgb(26 23 20 / 0.14), 0 2px 8px rgb(26 23 20 / 0.08);
+  /*
+   * Shadows carry the paper's hue rather than neutral black, which is what
+   * keeps a raised surface looking lit rather than cut out.
+   */
+  --shadow-lift: 0 1px 2px oklch(0.222 0.021 248 / 0.06), 0 6px 20px oklch(0.222 0.021 248 / 0.08);
+  --shadow-float:
+    0 14px 38px oklch(0.222 0.021 248 / 0.16), 0 2px 8px oklch(0.222 0.021 248 / 0.09);
 
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  /* Slight overshoot: interface motion should arrive, not merely stop. */
+  --spring: cubic-bezier(0.34, 1.42, 0.44, 1);
+
+  --surface-alpha: 1;
+  --surface-blur: 0px;
+}
+
+/*
+ * 墨 — the same page under a desk lamp, not an inverted screen.
+ *
+ * The base sits at L 0.19 with chroma held at 0.014 and hue at 62: warm enough
+ * to read as paper in low light, dark enough to disappear. Pure black would
+ * halate around dense Chinese strokes and make every panel the same plane.
+ */
+/* 楮 kōzo — mulberry paper. The warm surface, kept as a choice. */
+:root[data-theme="kozo"] {
+  --paper: oklch(0.938 0.011 84);
+  --paper-raised: oklch(0.988 0.005 86);
+  --paper-sunk: oklch(0.902 0.014 82);
+  --rule: oklch(0.862 0.015 80);
+  --rule-strong: oklch(0.772 0.021 76);
+
+  --ink: oklch(0.225 0.016 58);
+  --ink-soft: oklch(0.392 0.019 60);
+  --ink-faint: oklch(0.542 0.021 64);
+  --ink-ghost: oklch(0.668 0.022 70);
+
+  --seal: oklch(0.468 0.148 36);
+  --seal-bright: oklch(0.572 0.171 38);
+  --seal-wash: oklch(0.947 0.026 40);
+
+  --accepted: oklch(0.492 0.096 138);
+  --accepted-wash: oklch(0.955 0.021 138);
+  --refused: oklch(0.472 0.132 12);
+  --refused-wash: oklch(0.951 0.021 12);
 }
 
 :root[data-theme="ink"] {
   color-scheme: dark;
 
-  --paper: #17150f;
-  --paper-raised: #201d16;
-  --paper-sunk: #100e0a;
-  --rule: #2e2a21;
-  --rule-strong: #443e31;
+  /*
+   * 夜 yoru — the same page after dark, lit from one side.
+   *
+   * Cool rather than sepia, and separated by 6–8 points of lightness between
+   * planes: the eye reads far less difference in the shadows than in the
+   * highlights, so a dark theme needs wider steps than its light counterpart,
+   * not narrower ones.
+   */
+  --paper: oklch(0.194 0.019 250);
+  --paper-raised: oklch(0.262 0.022 248);
+  --paper-sunk: oklch(0.146 0.016 252);
+  --rule: oklch(0.336 0.024 246);
+  --rule-strong: oklch(0.448 0.028 244);
 
-  --ink: #ece5d8;
-  --ink-soft: #b8b0a0;
-  --ink-faint: #857d6e;
-  --ink-ghost: #5a5348;
+  /* Held below L 0.90: full white halates against dark and tires the eye. */
+  --ink: oklch(0.892 0.012 236);
+  --ink-soft: oklch(0.744 0.016 238);
+  --ink-faint: oklch(0.612 0.019 240);
+  --ink-ghost: oklch(0.482 0.02 242);
 
-  --seal: #d4633f;
-  --seal-bright: #e8794f;
-  --seal-wash: #2c1c14;
+  /* Raised and pushed toward orange: pure cinnabar sinks into a dark ground. */
+  --seal: oklch(0.688 0.168 38);
+  --seal-bright: oklch(0.764 0.152 44);
+  --seal-wash: oklch(0.288 0.056 34);
 
-  --accepted: #97b872;
-  --accepted-wash: #1c2416;
-  --refused: #d97a94;
-  --refused-wash: #2a161c;
+  --accepted: oklch(0.736 0.112 168);
+  --accepted-wash: oklch(0.272 0.04 168);
+  --refused: oklch(0.702 0.142 10);
+  --refused-wash: oklch(0.278 0.048 10);
 
-  --shadow-lift: 0 1px 2px rgb(0 0 0 / 0.4), 0 6px 20px rgb(0 0 0 / 0.35);
-  --shadow-float: 0 12px 32px rgb(0 0 0 / 0.55), 0 2px 8px rgb(0 0 0 / 0.4);
+  --shadow-lift: 0 1px 2px oklch(0 0 0 / 0.44), 0 6px 20px oklch(0 0 0 / 0.36);
+  --shadow-float: 0 12px 34px oklch(0 0 0 / 0.56), 0 2px 8px oklch(0 0 0 / 0.42);
+}
+
+/* Surface treatment: opaque, translucent, or glass (SPEC: the author chooses). */
+/*
+ * The sheet is a setting, and its default is absent.
+ *
+ * A full white page is what most writing tools give you and what tires an eye
+ * first — a large, bright, evenly lit rectangle held at reading distance. The
+ * default here is no sheet at all: the text sits directly on the desk, which
+ * is dimmer and warmer. The other two options exist because some authors want
+ * the page boundary, and one of them will be the author using it.
+ */
+:root[data-sheet="none"] {
+  --sheet-fill: transparent;
+  --sheet-border: transparent;
+  --sheet-shadow: none;
+}
+
+:root[data-sheet="hairline"] {
+  --sheet-fill: color-mix(in oklab, var(--paper-raised) 42%, transparent);
+  --sheet-border: color-mix(in oklab, var(--rule-strong) 55%, transparent);
+  --sheet-shadow: none;
+}
+
+:root[data-sheet="paper"] {
+  --sheet-fill: var(--paper-raised);
+  --sheet-border: var(--rule);
+  --sheet-shadow: 0 1px 2px oklch(0.246 0.03 56 / 0.1), 0 10px 30px oklch(0.246 0.03 56 / 0.09);
+}
+
+:root[data-surface="translucent"] {
+  --surface-alpha: 0.86;
+  --surface-blur: 10px;
+}
+
+:root[data-surface="glass"] {
+  --surface-alpha: 0.66;
+  --surface-blur: 26px;
 }
 
 * {
@@ -112,6 +263,12 @@ body {
 body {
   background: var(--paper);
   color: var(--ink);
+  /*
+   * A trace of fibre. A flat fill reads as a panel; a barely-there grain reads
+   * as a sheet. Kept under 2% opacity so it never becomes a texture the eye
+   * can name — the difference should be felt, not seen.
+   */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.72' numOctaves='4'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.062'/%3E%3C/svg%3E");
   font-family: var(--sans);
   font-size: var(--step-0);
   line-height: 1.55;
@@ -135,7 +292,7 @@ button {
 }
 
 /*
- * The composition surface. Everything here is the author's to set.
+ * The composition surface.
  *
  * The CJK details are the difference between a text area with a serif stack and
  * a surface built for Chinese: punctuation compression closes the holes that
@@ -151,14 +308,12 @@ button {
   color: var(--ink);
   margin: 0 auto;
   outline: none;
-  white-space: pre-wrap;
   word-break: break-word;
   caret-color: var(--seal);
 
   font-weight: var(--manuscript-weight, 400);
   word-spacing: var(--manuscript-word-spacing, 0);
   text-align: var(--manuscript-align, left);
-  text-indent: var(--manuscript-indent, 0);
 
   hanging-punctuation: allow-end last;
   text-spacing-trim: trim-start;
@@ -169,6 +324,8 @@ button {
 }
 
 .manuscript > p {
+  /* Chinese indents by whole characters, so the unit is em, not a fixed length. */
+  text-indent: var(--manuscript-indent, 0);
   margin-block-end: calc(
     var(--manuscript-size) *
     var(--manuscript-leading) *
@@ -180,16 +337,57 @@ button {
   margin-block-end: 0;
 }
 
-/* Latin and digits inside Chinese prose want their own spacing, not the CJK advance. */
-.manuscript :is(code, .latin) {
-  font-family: var(--mono);
-  font-size: 0.92em;
-  margin: 0 0.12em;
+/*
+ * Breathing.
+ *
+ * The paragraph under the cursor holds full ink; the rest recede a little. Not
+ * the blackout that focus modes use — those treat the surrounding text as an
+ * obstacle, when in long-form work it is the thing you are writing against.
+ * This is closer to how a page looks when you lean toward one line of it: the
+ * others are still there, just further away. Off by default, because a writer
+ * who does not want it should never have to turn it off.
+ */
+.manuscript[data-breathe="on"] > p {
+  transition:
+    opacity 420ms var(--ease),
+    filter 420ms var(--ease);
+  opacity: 0.62;
+}
+
+.manuscript[data-breathe="on"] > p.here {
+  opacity: 1;
+}
+
+/*
+ * A proposal the author has not judged yet leaves a mark in the margin — the
+ * way a reader's pencil does before anyone decides anything. It is deliberately
+ * not the cinnabar: the seal belongs to decisions that have been made.
+ */
+.manuscript > p[data-pending="true"] {
+  position: relative;
+}
+
+.manuscript > p[data-pending="true"]::before {
+  content: "";
+  position: absolute;
+  left: -1.4em;
+  top: 0.32em;
+  bottom: 0.32em;
+  width: 2px;
+  border-radius: 1px;
+  background: repeating-linear-gradient(to bottom, var(--ink-ghost) 0 3px, transparent 3px 7px);
+  animation: waiting 3.2s ease-in-out infinite;
+}
+
+@keyframes waiting {
+  50% {
+    opacity: 0.45;
+  }
 }
 
 .manuscript::selection,
 .manuscript ::selection {
-  background: var(--seal-wash);
+  background: color-mix(in oklab, var(--seal) 22%, transparent);
   color: var(--ink);
 }
 
@@ -208,8 +406,7 @@ button {
  *      gaps between paragraphs.
  *
  * So the rules are painted per paragraph, from that paragraph's own top, and
- * `--rule-at` places them under the glyphs rather than through them. Paragraph
- * spacing then cannot accumulate error, because each paragraph starts over.
+ * `--rule-at` places them under the glyphs rather than through them.
  */
 .manuscript[data-grid="on"] > * {
   --line-box: calc(var(--manuscript-size) * var(--manuscript-leading));
@@ -220,11 +417,26 @@ button {
     to bottom,
     transparent 0,
     transparent calc(var(--rule-at) - 1px),
-    color-mix(in oklab, var(--seal) 20%, transparent) calc(var(--rule-at) - 1px),
-    color-mix(in oklab, var(--seal) 20%, transparent) var(--rule-at),
+    color-mix(in oklab, var(--seal) 22%, transparent) calc(var(--rule-at) - 1px),
+    color-mix(in oklab, var(--seal) 22%, transparent) var(--rule-at),
     transparent var(--rule-at),
     transparent calc(var(--line-box) * var(--grid-every, 1))
   );
+}
+
+/* Latin and digits inside Chinese prose want their own spacing, not the CJK advance. */
+.manuscript :is(code, .latin) {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  margin: 0 0.12em;
+}
+
+.manuscript :is(strong, b) {
+  font-weight: 700;
+}
+
+.manuscript :is(em, i) {
+  font-style: italic;
 }
 
 .label {
@@ -256,7 +468,7 @@ input:focus,
 textarea:focus,
 select:focus {
   border-color: var(--seal);
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--seal) 14%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--seal) 16%, transparent);
 }
 
 ::placeholder {

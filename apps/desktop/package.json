@@ -1,5 +1,5 @@
 {
-  "name": "@recension/desktop",
+  "name": "@refrain/desktop",
   "version": "0.1.1",
   "private": true,
   "type": "module",
@@ -11,8 +11,8 @@
     "smoke": "bun test test/smoke.test.ts"
   },
   "devDependencies": {
-    "@recension/agent": "workspace:*",
-    "@recension/core": "workspace:*",
+    "@refrain/agent": "workspace:*",
+    "@refrain/core": "workspace:*",
     "@sveltejs/vite-plugin-svelte": "7.2.0",
     "electron": "43.2.0",
     "electron-builder": "26.15.3",

@@ -5,6 +5,18 @@
 export interface ChapterView {
   title: string;
   text: string;
+  root: string;
+  path: string;
+}
+
+export interface EditView {
+  id: string;
+  kind: "replace" | "insert" | "remove";
+  blockId: string;
+  before?: string;
+  after?: string;
+  at: string;
+  note?: string;
 }
 
 export interface SliceView {
@@ -58,9 +70,18 @@ export interface AgentView {
   binding: { harness: string; model: string; reasoningEffort: string };
 }
 
-interface RecensionApi {
+interface RefRainApi {
   openProject(): Promise<string | null>;
+  openFile(): Promise<string | null>;
   createProject(): Promise<string | null>;
+  loadWorkspace(roots: string[]): Promise<ChapterView[]>;
+  systemFonts(): Promise<string[]>;
+  probeAgent(root: string, id: string): Promise<{ ok: boolean; detail?: string }>;
+  removeAgent(root: string, id: string): Promise<boolean>;
+  editsBetween(before: string, after: string): Promise<EditView[]>;
+  revertEdit(text: string, edit: EditView): Promise<string>;
+  revertAll(text: string, edits: EditView[]): Promise<string>;
+  describeEdits(edits: EditView[]): Promise<string>;
   pathFor(file: File): string;
   resolveDrop(path: string): Promise<string | null>;
   fullscreen(on: boolean): Promise<boolean>;
@@ -86,8 +107,8 @@ interface RecensionApi {
 
 declare global {
   interface Window {
-    recension: RecensionApi;
+    refrain: RefRainApi;
   }
 }
 
-export const api = (): RecensionApi => window.recension;
+export const api = (): RefRainApi => window.refrain;

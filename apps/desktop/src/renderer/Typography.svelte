@@ -1,41 +1,43 @@
 <script lang="ts">
+  
+  import { api } from "./api.ts";
 import type { Key } from "./i18n.ts";
+  import { BUNDLED_CJK, BUNDLED_LATIN, DEFAULTS, type TypeSettings } from "./typography.ts";
 
-import { DEFAULTS, type TypeSettings } from "./typography.ts";
+  interface Props {
+    settings: TypeSettings;
+    t: (key: Key) => string;
+    onChange: (next: TypeSettings) => void;
+  }
 
-interface Props {
-  settings: TypeSettings;
-  t: (key: Key) => string;
-  onChange: (next: TypeSettings) => void;
-}
+  const { settings, t, onChange }: Props = $props();
 
-const { settings, t, onChange }: Props = $props();
+  let systemFonts = $state<string[]>([]);
+  let filter = $state("");
 
-const set = <K extends keyof TypeSettings>(key: K, value: TypeSettings[K]): void =>
-  onChange({ ...settings, [key]: value });
+  $effect(() => {
+    void api().systemFonts().then((list) => (systemFonts = list));
+  });
 
-const families: { id: TypeSettings["family"]; label: Key }[] = [
-  { id: "serif", label: "typo.serif" },
-  { id: "sans", label: "typo.sans" },
-  { id: "display", label: "typo.display" },
-  { id: "mono", label: "typo.mono" },
-];
+  const set = <K extends keyof TypeSettings>(key: K, value: TypeSettings[K]): void =>
+    onChange({ ...settings, [key]: value });
 
-const weights = [200, 300, 400, 500, 600, 700];
+  const matching = $derived(
+    filter.trim().length === 0
+      ? systemFonts.slice(0, 60)
+      : systemFonts.filter((f) => f.toLowerCase().includes(filter.toLowerCase())).slice(0, 60),
+  );
 </script>
 
 <div class="typography">
   <div
     class="specimen"
     style="
-      font-family: {settings.family === 'custom' && settings.customFamily
-        ? settings.customFamily
-        : `var(--${settings.family})`};
+      font-family: '{settings.latinFamily}', '{settings.cjkFamily}', serif;
       font-size: {settings.size}px;
       font-weight: {settings.weight};
       line-height: {settings.leading};
       letter-spacing: {settings.tracking}em;
-      word-spacing: {settings.wordSpacing}em;
       text-align: {settings.align};
       text-indent: {settings.indent}em;
     "
@@ -44,46 +46,68 @@ const weights = [200, 300, 400, 500, 600, 700];
   </div>
 
   <section>
-    <span class="label">{t("typo.family")}</span>
-    <div class="segmented">
-      {#each families as family (family.id)}
-        <button class:on={settings.family === family.id} onclick={() => set("family", family.id)}>
-          {t(family.label)}
-        </button>
+    <span class="label">{t("typo.cjk")}</span>
+    <div class="chips">
+      {#each BUNDLED_CJK as family (family)}
+        <button
+          class:on={settings.cjkFamily === family}
+          style="font-family: '{family}'"
+          onclick={() => set("cjkFamily", family)}>{family}</button
+        >
       {/each}
     </div>
     <input
-      class="custom"
-      placeholder={t("typo.customPlaceholder")}
-      value={settings.customFamily}
-      oninput={(e) => {
-        set("customFamily", e.currentTarget.value);
-        if (e.currentTarget.value.trim()) set("family", "custom");
-      }}
+      class="typed"
+      value={settings.cjkFamily}
+      oninput={(e) => set("cjkFamily", e.currentTarget.value)}
+      placeholder={t("typo.typeName")}
     />
   </section>
 
   <section>
-    <span class="label">{t("typo.weight")}</span>
-    <div class="segmented">
-      {#each weights as weight (weight)}
-        <button class:on={settings.weight === weight} onclick={() => set("weight", weight)}>
-          {weight}
-        </button>
+    <span class="label">{t("typo.latin")}</span>
+    <div class="chips">
+      {#each BUNDLED_LATIN as family (family)}
+        <button
+          class:on={settings.latinFamily === family}
+          style="font-family: '{family}'"
+          onclick={() => set("latinFamily", family)}>{family}</button
+        >
       {/each}
     </div>
+    <input
+      class="typed"
+      value={settings.latinFamily}
+      oninput={(e) => set("latinFamily", e.currentTarget.value)}
+      placeholder={t("typo.typeName")}
+    />
   </section>
 
-  {#snippet slider(
+  {#if systemFonts.length > 0}
+    <section>
+      <span class="label">{t("typo.system")} · {systemFonts.length}</span>
+      <input bind:value={filter} placeholder={t("typo.searchFont")} class="typed" />
+      <div class="font-list">
+        {#each matching as family (family)}
+          <button style="font-family: '{family}'" onclick={() => set("cjkFamily", family)}>
+            {family}
+          </button>
+        {/each}
+      </div>
+      <p class="hint">{t("typo.systemHint")}</p>
+    </section>
+  {/if}
+
+  {#snippet number(
     label: Key,
     key: keyof TypeSettings,
     min: number,
     max: number,
     step: number,
-    format: (v: number) => string,
+    unit: string,
   )}
     <div class="row">
-      <span class="label">{t(label)}</span>
+      <span class="name">{t(label)}</span>
       <input
         type="range"
         {min}
@@ -92,20 +116,31 @@ const weights = [200, 300, 400, 500, 600, 700];
         value={settings[key] as number}
         oninput={(e) => set(key as "size", Number(e.currentTarget.value))}
       />
-      <output>{format(settings[key] as number)}</output>
+      <!-- Typed as well as dragged: a slider cannot hit 1.875 on purpose. -->
+      <input
+        class="value"
+        type="number"
+        {min}
+        {max}
+        {step}
+        value={settings[key] as number}
+        oninput={(e) => set(key as "size", Number(e.currentTarget.value))}
+      />
+      <span class="unit">{unit}</span>
     </div>
   {/snippet}
 
-  <section class="sliders">
-    {@render slider("typo.size", "size", 12, 32, 0.5, (v) => `${v}px`)}
-    {@render slider("typo.leading", "leading", 1.2, 3, 0.05, (v) => v.toFixed(2))}
-    {@render slider("typo.tracking", "tracking", -0.03, 0.2, 0.005, (v) => `${v.toFixed(3)}em`)}
-    {@render slider("typo.wordSpacing", "wordSpacing", -0.1, 1, 0.05, (v) => `${v.toFixed(2)}em`)}
-    {@render slider("typo.measure", "measure", 18, 60, 1, (v) => `${v}em`)}
-    {@render slider("typo.indent", "indent", 0, 4, 0.5, (v) => (v === 0 ? t("typo.none") : `${v}字`))}
-    {@render slider("typo.paraSpacing", "paragraphSpacing", 0, 3, 0.25, (v) => `${v.toFixed(2)}`)}
-    {@render slider("typo.marginTop", "marginTop", 0, 20, 0.5, (v) => `${v}rem`)}
-    {@render slider("typo.marginBottom", "marginBottom", 10, 70, 5, (v) => `${v}vh`)}
+  <section class="numbers">
+    {@render number("typo.size", "size", 10, 48, 0.5, "px")}
+    {@render number("typo.weight", "weight", 100, 900, 10, "")}
+    {@render number("typo.leading", "leading", 1, 4, 0.05, "×")}
+    {@render number("typo.tracking", "tracking", -0.05, 0.5, 0.005, "em")}
+    {@render number("typo.wordSpacing", "wordSpacing", -0.2, 2, 0.05, "em")}
+    {@render number("typo.measure", "measure", 14, 80, 1, "em")}
+    {@render number("typo.indent", "indent", 0, 8, 0.5, t("typo.chars"))}
+    {@render number("typo.paraSpacing", "paragraphSpacing", 0, 4, 0.25, "×")}
+    {@render number("typo.marginTop", "marginTop", 0, 30, 0.5, "rem")}
+    {@render number("typo.marginBottom", "marginBottom", 5, 80, 5, "vh")}
   </section>
 
   <section>
@@ -122,30 +157,81 @@ const weights = [200, 300, 400, 500, 600, 700];
 
   <section>
     <div class="row toggle">
-      <span class="label">{t("typo.grid")}</span>
+      <span class="name">{t("typo.grid")}</span>
       <button
         class="switch"
         class:on={settings.grid}
         aria-label={t("typo.grid")}
         aria-pressed={settings.grid}
-        onclick={() => set("grid", !settings.grid)}
+        onclick={() => set("grid", !settings.grid)}><span class="knob"></span></button
       >
-        <span class="knob"></span>
-      </button>
     </div>
     {#if settings.grid}
-      {@render slider("typo.gridEvery", "gridEvery", 1, 4, 1, (v) => `${t("typo.everyN")} ${v}`)}
+      {@render number("typo.gridEvery", "gridEvery", 1, 6, 1, t("typo.everyN"))}
+    {/if}
+
+    <div class="row toggle">
+      <span class="name">{t("typo.breathe")}</span>
+      <button
+        class="switch"
+        class:on={settings.breathe}
+        aria-label={t("typo.breathe")}
+        aria-pressed={settings.breathe}
+        onclick={() => set("breathe", !settings.breathe)}><span class="knob"></span></button
+      >
+    </div>
+    <p class="hint">{t("typo.breatheHint")}</p>
+
+    <div class="row toggle">
+      <span class="name">{t("typo.lineNumbers")}</span>
+      <button
+        class="switch"
+        class:on={settings.lineNumbers}
+        aria-label={t("typo.lineNumbers")}
+        aria-pressed={settings.lineNumbers}
+        onclick={() => set("lineNumbers", !settings.lineNumbers)}><span class="knob"></span></button
+      >
+    </div>
+  </section>
+
+  <section>
+    <span class="label">{t("typo.progress")}</span>
+    <div class="segmented">
+      <button class:on={settings.progress === "gradient"} onclick={() => set("progress", "gradient")}>
+        {t("typo.gradient")}
+      </button>
+      <button class:on={settings.progress === "solid"} onclick={() => set("progress", "solid")}>
+        {t("typo.solid")}
+      </button>
+      <button class:on={settings.progress === "minimap"} onclick={() => set("progress", "minimap")}>
+        {t("typo.minimap")}
+      </button>
+      <button class:on={settings.progress === "off"} onclick={() => set("progress", "off")}>
+        {t("typo.gridOff")}
+      </button>
+    </div>
+    {#if settings.progress !== "off" && settings.progress !== "minimap"}
+      <div class="segmented">
+        <button
+          class:on={settings.progressPlace === "top"}
+          onclick={() => set("progressPlace", "top")}>{t("typo.top")}</button
+        >
+        <button
+          class:on={settings.progressPlace === "right"}
+          onclick={() => set("progressPlace", "right")}>{t("typo.right")}</button
+        >
+      </div>
     {/if}
   </section>
 
-  <button class="reset" onclick={() => onChange(DEFAULTS)}>{t("typo.reset")}</button>
+  <button class="reset" onclick={() => onChange({ ...DEFAULTS })}>{t("typo.reset")}</button>
 </div>
 
 <style>
   .typography {
     display: flex;
     flex-direction: column;
-    gap: 1.5rem;
+    gap: 1.4rem;
   }
 
   .specimen {
@@ -154,7 +240,7 @@ const weights = [200, 300, 400, 500, 600, 700];
     border: 1px solid var(--rule);
     border-radius: 3px;
     color: var(--ink);
-    min-height: 7rem;
+    min-height: 6.5rem;
   }
 
   section {
@@ -163,52 +249,68 @@ const weights = [200, 300, 400, 500, 600, 700];
     gap: 0.5rem;
   }
 
-  .sliders {
-    gap: 0.75rem;
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
   }
 
-  .segmented {
-    display: flex;
+  .chips button {
+    padding: 0.35rem 0.65rem;
+    font-size: var(--step--1);
     border: 1px solid var(--rule-strong);
     border-radius: 2px;
-    overflow: hidden;
-  }
-
-  .segmented button {
-    flex: 1;
-    padding: 0.45rem 0;
-    font-size: var(--step--1);
     color: var(--ink-soft);
     background: var(--paper-raised);
-    border-right: 1px solid var(--rule);
   }
 
-  .segmented button:last-child {
-    border-right: none;
-  }
-
-  .segmented button.on {
+  .chips button.on {
     background: var(--ink);
     color: var(--paper-raised);
+    border-color: var(--ink);
   }
 
-  .custom {
+  .typed {
     font-size: var(--step--1);
     padding: 0.4rem 0.55rem;
   }
 
-  .row {
-    display: grid;
-    grid-template-columns: 5.2em 1fr 4.8em;
-    align-items: center;
-    gap: 0.7rem;
+  .font-list {
+    display: flex;
+    flex-direction: column;
+    max-height: 11rem;
+    overflow-y: auto;
+    border: 1px solid var(--rule);
+    border-radius: 2px;
   }
 
-  .row .label {
-    text-transform: none;
-    letter-spacing: 0.02em;
-    font-weight: 400;
+  .font-list button {
+    text-align: left;
+    padding: 0.35rem 0.6rem;
     font-size: var(--step--1);
+    color: var(--ink-soft);
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .font-list button:hover {
+    background: var(--paper-sunk);
+    color: var(--ink);
+  }
+
+  .numbers {
+    gap: 0.55rem;
+  }
+
+  .row {
+    display: grid;
+    grid-template-columns: 5em 1fr 4.2em 2em;
+    align-items: center;
+    gap: 0.55rem;
+  }
+
+  .name {
+    font-size: var(--step--1);
+    color: var(--ink-soft);
   }
 
   input[type="range"] {
@@ -236,11 +338,42 @@ const weights = [200, 300, 400, 500, 600, 700];
     box-shadow: 0 0 0 1px var(--seal);
   }
 
-  output {
+  .value {
     font-family: var(--mono);
     font-size: var(--step--2);
-    color: var(--ink-faint);
+    padding: 0.2rem 0.3rem;
     text-align: right;
+  }
+
+  .unit {
+    font-family: var(--mono);
+    font-size: var(--step--2);
+    color: var(--ink-ghost);
+  }
+
+  .segmented {
+    display: flex;
+    border: 1px solid var(--rule-strong);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .segmented button {
+    flex: 1;
+    padding: 0.45rem 0;
+    font-size: var(--step--1);
+    color: var(--ink-soft);
+    background: var(--paper-raised);
+    border-right: 1px solid var(--rule);
+  }
+
+  .segmented button:last-child {
+    border-right: none;
+  }
+
+  .segmented button.on {
+    background: var(--ink);
+    color: var(--paper-raised);
   }
 
   .toggle {
@@ -253,7 +386,7 @@ const weights = [200, 300, 400, 500, 600, 700];
     border-radius: 10px;
     background: var(--rule-strong);
     position: relative;
-    transition: background 160ms var(--ease);
+    transition: background 180ms var(--ease);
   }
 
   .switch.on {
@@ -268,18 +401,23 @@ const weights = [200, 300, 400, 500, 600, 700];
     height: 15px;
     border-radius: 50%;
     background: var(--paper-raised);
-    transition: transform 160ms var(--ease);
+    transition: transform 200ms var(--spring);
   }
 
   .switch.on .knob {
     transform: translateX(15px);
   }
 
+  .hint {
+    font-size: var(--step--2);
+    color: var(--ink-faint);
+    line-height: 1.7;
+  }
+
   .reset {
     align-self: flex-start;
     font-size: var(--step--2);
     color: var(--ink-faint);
-    padding: 0.35rem 0;
   }
 
   .reset:hover {
