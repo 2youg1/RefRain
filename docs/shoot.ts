@@ -1,27 +1,39 @@
+/**
+ * Render the theme preview to PNG.
+ *
+ * Source code is weak evidence about a palette: a hex value that reads well in
+ * a table can sit wrong against its neighbours. These shots are what gets
+ * reviewed, and the review happens before any of it reaches `app.css`.
+ */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
 const docs = dirname(fileURLToPath(import.meta.url));
+const shots = join(docs, "preview-shots");
+
 const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 1500, height: 1000 }, deviceScaleFactor: 2 });
+const page = await browser.newPage({
+  viewport: { width: 1460, height: 1100 },
+  deviceScaleFactor: 2,
+});
 await page.goto(`file://${join(docs, "theme-preview.html")}`);
-await page.waitForTimeout(1200);
+await page.waitForTimeout(900);
 
-const cards = await page.locator(".th-card, section.theme, .theme-card").count();
-console.log("theme sections:", cards);
+const cards = page.locator("section.card");
+const count = await cards.count();
+console.log(`themes: ${count}`);
+if (count !== 7) throw new Error(`expected 7 theme cards, found ${count}`);
 
-const names = ["ink", "wabi", "sand", "tex", "wave", "korea", "birch", "editorial", "fresh"];
-for (const [i, name] of names.entries()) {
-  const el = page.locator("section.theme").nth(i);
-  if ((await el.count()) === 0) break;
-  await el.screenshot({ path: join(docs, "preview-shots", `theme-${i + 1}-${name}.png`) });
-  console.log(`  ${name}`);
+// Element screenshots, not viewport clips: a clip is viewport-relative, so
+// every card below the fold failed with "clipped area outside the image".
+const names = ["tou", "sumi", "wabi", "sa", "shao", "kaba", "kasumi"];
+const order = ["tou", "sumi", "wabi", "sa", "shao", "hua", "xia"];
+for (const [i, id] of order.entries()) {
+  await page.locator(`#${id}`).screenshot({ path: join(shots, `theme-${i + 1}-${names[i]}.png`) });
+  console.log(`  ${names[i]}`);
 }
-const paper = page.locator("#paper");
-if ((await paper.count()) > 0) {
-  await paper.screenshot({ path: join(docs, "preview-shots", "99-paper-modes.png") });
-  console.log("  paper modes");
-}
-await page.screenshot({ path: join(docs, "preview-shots", "00-full-page.png"), fullPage: true });
+
+await page.screenshot({ path: join(shots, "00-themes.png"), fullPage: true });
 await browser.close();
+console.log("done");
