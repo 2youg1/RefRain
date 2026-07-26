@@ -38,6 +38,12 @@ Violating any of these is a bug, not a style preference.
 3. **No billing math.** Never display prices or cost estimates. Report token counts exactly as the harness reports them, tagged `actual` / `estimated` / `unknown`. When unavailable, show unknown.
 4. **Source Backup is never written to.** Every mutating call in `packages/fs` passes through `Guard::admit`, which refuses it along with any path outside a workspace root. `bun run verify:trash-only` fails the build if a route around the guard appears.
 
+4a. **Bytes the author did not edit come back unchanged.** Loading strips nothing; saving replaces only the ranges whose text actually changed and slices the rest out of the original. A lower bound, not lossless Markdown. One authority — `packages/core/src/roundtrip.ts` — decides where a block begins, because block identity is positional and two processes disagreeing about it detach every queued Proposal from the text it was written against. `bun run verify:roundtrip` fails the build over twenty corpora.
+
+4c. **Text under construction by an input method is not text.** Nothing reads a composition back as the manuscript, writes it to disk, or replaces the node the input method is composing into. A save asked for mid-composition is deferred to `compositionend`, not refused.
+
+4d. **No alignment allocates a table proportional to the whole manuscript.** Saving costs what the change costs. A region past the budget in `packages/core/src/align.ts` is reported as a wholesale replacement rather than aligned; refusing to allocate is the behaviour, and attempting it is what took the application down at 40,000 blocks.
+
 4b. **Delete goes to the system trash.** There is no permanent delete at any layer — not in Rust, not across N-API, not as an IPC channel. When the trash is unavailable the operation fails and the file stays; falling back to `remove_file` would turn an inconvenience into the one loss this application promises never to cause.
 5. **`packages/core` has no DOM and near-zero dependencies.** `packages/agent` is the only surface touching a harness; protocol drift stops there. `packages/fs` is the only surface holding a platform binary; native and OS-specific risk stops there. `apps/desktop` holds windowing and packaging only.
 6. **The editor core is framework-free.** The manuscript is a `contenteditable` holding paragraph elements, driven directly rather than through Svelte's reactivity — no framework code sits on the IME path. ProseMirror goes underneath in v0.2, under the same rule.
@@ -60,6 +66,18 @@ Three gates, all green or the PR does not land:
 
 ```bash
 bun run fmt:check && bun run check && bun test
+```
+
+The invariants have gates of their own, and every one of them was proved to
+bite by injecting the defect it names before it was wired into CI. A gate that
+cannot fail is worse than no gate:
+
+```bash
+bun run verify:roundtrip     # bytes survive a load and a save
+bun run verify:scale         # a long manuscript saves in bounded memory
+bun run verify:no-network    # no outbound request reaches the app process
+bun run verify:trash-only    # no permanent delete exists at any layer
+bun run verify:gates-run     # every verification surface has a path that runs it
 ```
 
 Most test effort belongs in `packages/core`. Adapters use contract tests against a real session and run (SPEC §6.5). The native file layer has its own suite — `cd packages/fs && cargo test` — which runs against the real filesystem of whichever platform it is on, because a Windows path rule and a macOS trash binding cannot be tested any other way.

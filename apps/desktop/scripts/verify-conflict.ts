@@ -44,9 +44,13 @@ await page.addInitScript(`
   window.refrain = {
     openProject: async () => "/p",
     loadProject: async () => [{ id: "01.md", title: "01", text: ${JSON.stringify(MINE)} }],
-    loadWorkspace: async () => [
-      { id: "01.md", title: "01", text: ${JSON.stringify(MINE)}, root: "/p", path: "/p/01.md" },
-    ],
+    loadWorkspace: async () => ({
+      roots: [{ id: "r-p", path: "/p", name: "p", kind: "folder" }],
+      chapters: [
+        { id: "01.md", title: "01", text: ${JSON.stringify(MINE)}, root: "/p",
+          rootId: "r-p", role: "chapter", path: "/p/01.md" },
+      ],
+    }),
     createProject: async () => null, pathFor: () => "", resolveDrop: async () => null,
     fullscreen: async () => true,
     saveChapter: async (root, title, text) => {

@@ -20,7 +20,9 @@
 
 - **用户掌握最终决定。** Agent 输出不能直接碰正文，只能成为不可变的提案；文件变化必须由人批准的 Text Action 完成。
 - **本地与隐私优先于便利。** 应用没有账号、API key、遥测、自动更新或外部请求。稿件与协作历史都留在项目文件夹里。
-- **性能针对真实交互路径。** Rust 把大型文件索引留在渲染层之外，列表只挂载可见行；diff 引擎处理十万块稿件时不再建立二次方表格。
+- **你的字节能活下来。** 打开文件再保存，你没编辑过的字节还是原来那些——中文段落开头的全角缩进、围栏代码块里的空行、你留在段落之间的那几行空白。一道覆盖二十份语料的门禁负责在这件事不成立时让构建失败。
+- **打中文时会等输入法。** 拼到一半按保存，落盘发生在词打完之后，而不是它还是拼音的时候。
+- **性能针对真实交互路径。** Rust 把大型文件索引留在渲染层之外，列表只挂载可见行；保存十万块的稿子，代价取决于改动多大，而不是书有多长。
 - **修改和迁移都简单。** 正文是普通 Markdown；Agent 名册、请求、结果和 memo 都有公开的磁盘格式，不运行 RefRain 也能读、能改、能搬走。
 - **反悔不只剩整篇撤回。** 合并前可驳回单个 Slice，普通输入可撤销，也可用补偿行动单独撤回旧 Text Action；外部编辑冲突会同时展示两个版本。
 - **多个 Agent 可以在同一基线上各自作答。** 一次派发保留每份独立提案；竞争答案不会暗中决胜，只有用户选中的措辞能进入正文。
@@ -114,7 +116,10 @@ cd apps/desktop && ./make.sh && bun x electron-builder --win --x64
 
 - `bun run verify:no-network` —— 没有外部请求能到达应用进程
 - `bun run verify:trash-only` —— 任何一层都不存在永久删除
+- `bun run verify:roundtrip` —— 二十份语料载入再保存，逐字节相同，块数也一并核对
+- `bun run verify:scale` —— 六种改动形态、最多十万块，都在预算内完成
 - `bun run verify:gate` —— 类型门禁确实会失败
+- `apps/desktop/scripts/verify-composition.ts` —— 组合期没有任何保存落盘，缩进渲染成缩进
 - `apps/desktop/scripts/verify-files.ts` —— 按渲染后的实际几何测量文件浏览器：虚拟列表、表头落在自己数据的正上方、发丝线是一个物理像素
 - `apps/desktop/scripts/verify-grid.ts` —— 界栏落在字下面，不穿过字
 - `e2e/ime` —— Windows + 微软拼音，四种外壳，真实 `SendInput` 输入。升级 Electron 前必跑。
@@ -125,6 +130,7 @@ cd apps/desktop && ./make.sh && bun x electron-builder --win --x64
 |---|---|
 | [`SPEC.md`](SPEC.md) | 权威设计基线。代码与它冲突时，改代码。 |
 | [`AGENTS.md`](AGENTS.md) | 在这个仓库里怎么干活：不变量、风格、门禁。 |
+| [`ROADMAP.zh-CN.md`](ROADMAP.zh-CN.md) | 已发布什么、已知的边界在哪、接下来做什么。 |
 | [`docs/TEST-MATRIX.md`](docs/TEST-MATRIX.md) | 已有的每一项测试，和应该有的每一项。 |
 | [`docs/project-layout.md`](docs/project-layout.md) | 可搬移的项目目录、文件归属与写入权限。 |
 | [`docs/flow.md`](docs/flow.md) | 派发、审阅、裁决、合并与回传的完整路径。 |

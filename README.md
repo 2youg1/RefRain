@@ -20,7 +20,9 @@ Three axioms, in priority order:
 
 - **The author decides.** Agent output cannot touch the manuscript. It becomes an immutable Proposal; only a Text Action approved by a human changes the file.
 - **Local and private outrank convenience.** The application has no account, API key, telemetry, updater, or outbound request. Manuscripts and collaboration history stay in the project folder.
-- **Performance is measured on the interaction path.** Rust keeps large file indexes out of the renderer, the list only mounts visible rows, and the diff engine handles 100,000-block manuscripts without a quadratic table.
+- **Your bytes survive.** Open a file, save it, and the bytes you did not edit are the bytes you had — the ideographic indent that opens a Chinese paragraph, the blank line inside a fenced block, the ones you left between paragraphs. A gate over twenty corpora fails the build if that stops being true.
+- **Typing Chinese waits for the input method.** A save requested mid-composition happens when the word is finished, not while it is still pinyin.
+- **Performance is measured on the interaction path.** Rust keeps large file indexes out of the renderer, the list only mounts visible rows, and saving a 100,000-block manuscript costs what the change costs rather than what the book costs.
 - **Nothing is trapped.** The manuscript is plain Markdown. Agent rosters, requests, results, and memos use documented files that remain readable and editable without RefRain.
 - **Regret has several honest forms.** Reject a Slice before merge, undo ordinary typing, selectively compensate an older Text Action without replaying later history, or inspect both versions when another editor changed the file.
 - **Several agents may disagree on one baseline.** Broadcast one request, keep every answer as a separate Proposal, compare competitors, and merge only the one whose wording survives review.
@@ -114,7 +116,10 @@ Green assertions are not correctness. Beyond the unit tests:
 
 - `bun run verify:no-network` — no outbound request reaches the application process
 - `bun run verify:trash-only` — no permanent delete exists at any layer
+- `bun run verify:roundtrip` — twenty corpora load and save byte for byte, block count included
+- `bun run verify:scale` — six mutation shapes up to 100,000 blocks stay inside their budget
 - `bun run verify:gate` — the type gate is provably capable of failing
+- `apps/desktop/scripts/verify-composition.ts` — no save lands mid-composition, and an indent renders as an indent
 - `apps/desktop/scripts/verify-files.ts` — the file browser is measured as rendered: a windowed list, columns whose headers sit over their own values, a hairline that is one device pixel
 - `apps/desktop/scripts/verify-grid.ts` — ruled lines land under the glyphs, not through them
 - `e2e/ime` — Windows + Microsoft Pinyin, four shells, real `SendInput` typing. Required before any Electron upgrade.
@@ -125,6 +130,7 @@ Green assertions are not correctness. Beyond the unit tests:
 |---|---|
 | [`SPEC.md`](SPEC.md) | The authoritative design baseline. When the code disagrees, the code changes. |
 | [`AGENTS.md`](AGENTS.md) | How to work in this repository: invariants, style, gates. |
+| [`ROADMAP.md`](ROADMAP.md) | What shipped, what is known broken, and what comes next. |
 | [`docs/TEST-MATRIX.md`](docs/TEST-MATRIX.md) | Every test that exists and every one that should. |
 | [`docs/project-layout.md`](docs/project-layout.md) | The portable project folder, ownership, and write permissions. |
 | [`docs/flow.md`](docs/flow.md) | The complete dispatch, review, decision, merge, and reply path. |

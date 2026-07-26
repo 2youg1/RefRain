@@ -22,7 +22,9 @@ const pageErrors: string[] = [];
 page.on("pageerror", (error) => pageErrors.push(error.message));
 await page.addInitScript(`
   localStorage.clear();
-  const chapter = { id: "01.md", title: "01", text: "等待 Agent 的正文。", root: "/work", path: "/work/01.md" };
+  const root = { id: "r-work", path: "/work", name: "work", kind: "folder" };
+  const chapter = { id: "01.md", title: "01", text: "等待 Agent 的正文。", root: "/work",
+    rootId: "r-work", role: "chapter", path: "/work/01.md" };
   let queued = false;
   let sent = false;
   let reads = 0;
@@ -31,7 +33,7 @@ await page.addInitScript(`
     openFile: async () => null,
     createProject: async () => null,
     loadProject: async () => [chapter],
-    loadWorkspace: async () => [chapter],
+    loadWorkspace: async () => ({ roots: [root], chapters: [chapter] }),
     saveChapter: async () => ({ ok: true, edits: [] }),
     resolveConflict: async () => ({ ok: false, reason: "not expected" }),
     pathFor: () => "",

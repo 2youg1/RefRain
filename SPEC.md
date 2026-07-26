@@ -6,6 +6,7 @@
 
 ## Changelog
 
+- 2026-07-27 v0.1.5 — Source fidelity (§1.3, INV-5) and bounded alignment (INV-8). A manuscript opened and saved with no edit lost twelve bytes of a hundred and eighty-six: `trim()` on load deleted the ideographic indent, a blank line inside a fence split one code block into two, and rebuilding the file from block text alone flattened consecutive blank lines. Three copies of the block split — `core`, the main process, the renderer — converged on one authority in `roundtrip.ts`, which keeps the original bytes and each block's range in them. The renderer learned that composition exists: a save asked for mid-composition is deferred rather than writing an uncommitted candidate to disk. `edits.ts` and `review.ts` now share `align.ts`, which segments at unchanged runs and refuses to allocate past a table budget; a 40,000-block save that threw `RangeError: Out of memory` now completes, and 100,000 blocks complete in every mutation shape.
 - 2026-07-27 v0.1.5 — Rewrote every claim this file made about a thing that does not exist. §4 no longer lists ProseMirror as installed; §5.1 separates what is on disk from what is planned, and drops `ui/`, an empty package whose `exports` pointed at a file nobody had written; §5.2 marks rules 4, 5, 6, and 8 as commitments rather than descriptions; §11 stops saying the IME gate has not landed, and says instead that it has landed without a latch. Q9 settles the eight themes and how day and night relate, Q10 the three typeface slots and the faces that fill them, Q11 whether a subdirectory's Markdown is material or a chapter.
 - 2026-07-27 v0.1.5 — Author saves now advance the main process's canonical Text Head instead of rebuilding paragraph IDs from strings at each IPC call. Unchanged blocks keep their IDs across removals and later disjoint insertions. Restoring a removed block is an insertion Text Change inside a compensating Text Action; a vanished lineage boundary fails closed instead of appending the block elsewhere.
 - 2026-07-26 v0.1.3 — The file layer (§13) and display matching (§14). The Claude Code adapter relays its four reported token counts without deriving a price or a synthetic total. The Host reclaims launched runs, closing BUG-1. Q5 reopened because 289px was a measurement fault. `packages/fs` is the only package carrying Rust and a platform binary; releases build it on Windows x64, Linux x64, and macOS arm64/x64 before packaging. Motion and hairlines derive from the panel's refresh rate and scale factor. Q8 opened for the cross-volume trash failure measured on Linux.
@@ -513,6 +514,12 @@ Concentrate on `core`: property-based protocol round trips, anchor corpora, thre
 
 ### 9.1 White-box invariants
 
+**INV-5 · Source fidelity.** Bytes the author did not edit come back unchanged. Loading strips nothing; saving replaces only the ranges whose text actually changed and slices everything else out of the original. This is a lower bound, not lossless Markdown — a paragraph the author rewrites is rewritten — and it holds for the ideographic indent that opens a Chinese paragraph, blank lines inside a fence, consecutive blank lines, hard line breaks, CRLF, a missing final newline, and a byte-order mark. One authority decides where a block begins, because block identity is positional and two processes disagreeing about it renumber every block after the disagreement, silently detaching queued Proposals from the text they were written against. Gate: `verify:roundtrip`, over twenty corpora, asserting SHA-256 and block counts.
+
+**INV-8 · Bounded alignment.** No alignment allocates a table proportional to the whole manuscript. The cost of a save follows the size of the change, not the length of the book. A region past the table budget is reported as a wholesale replacement rather than aligned — refusing to allocate is the behaviour; attempting it is what took the application down. Gate: `verify:scale`, six mutation shapes up to 100,000 blocks.
+
+**INV-9 · Composition is not text.** Text under construction by an input method is a candidate. Nothing reads it back as the manuscript, nothing writes it to disk, and no redraw replaces the node the input method is composing into. A save requested mid-composition is deferred to `compositionend`, not refused: the author pressed Ctrl+S and meant it. Gate: `apps/desktop/scripts/verify-composition.ts`.
+
 Only a Text Action mutates the manuscript. Source Backup is never written. Exactly one current Text Head. Run dispatch and Revision binding are atomic. A dispatched run's baseline never changes. Result Artifacts are complete, atomic, verifiable. No replacement produces no Proposal. Proposals are immutable. Disjoint Proposals commute. Decision Batches are atomic. No automatic merge path exists. Runtime Binding is never overridden per run. Deleting a Result Artifact changes neither the manuscript nor a frozen Proposal.
 
 ### 9.2 Black-box paths
@@ -526,6 +533,16 @@ Install, launch, crash recovery. Continuous CJK input and IME composition. Full 
 Thresholds are set from measurements on real long-form Chinese text, not invented in advance. Measurement must cover: input latency and IME stability; large pastes and multi-site Decision Batches; indexes at 10^5 Text Changes; selective undo of the first action after 10,000 disjoint ones; startup and restore time; resident memory and disk growth; a 100-run result list with on-demand loading; manuscript responsiveness while parsing is queued.
 
 The real bottleneck is architecture, not arithmetic: chapter granularity, on-demand disk reads, and keeping heavy work off the main thread.
+
+Measured, one word changed in a manuscript of n blocks, before and after `align.ts` (v0.1.5):
+
+| Blocks | Before | After |
+|---:|---:|---:|
+| 20,000 | 5,219 ms | 5.5 ms |
+| 40,000 | `RangeError: Out of memory` | 7.4 ms |
+| 100,000 | `RangeError: Out of memory` | 25.3 ms |
+
+The crash was not a function of the edit. The table is allocated before anything is compared, so correcting one character cost what rewriting the book cost.
 
 ---
 

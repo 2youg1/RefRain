@@ -23,9 +23,10 @@ page.on("pageerror", (error) => pageErrors.push(error.message));
 await page.addInitScript(`
   localStorage.clear();
   window.__calls = [];
+  const root = { id: "r-work", path: "/work", name: "work", kind: "folder" };
   const chapter = {
-    id: "01.md", title: "01", root: "/work", path: "/work/01.md",
-    text: "甲。\\n\\n乙。\\n\\n丙。",
+    id: "01.md", title: "01", root: "/work", rootId: "r-work", role: "chapter",
+    path: "/work/01.md", text: "甲。\\n\\n乙。\\n\\n丙。",
   };
   const removed = {
     id: "e0-01.md:b1", kind: "remove", blockId: "01.md:b1",
@@ -36,7 +37,7 @@ await page.addInitScript(`
     openFile: async () => null,
     createProject: async () => null,
     loadProject: async () => [chapter],
-    loadWorkspace: async () => [chapter],
+    loadWorkspace: async () => ({ roots: [root], chapters: [chapter] }),
     saveChapter: async (root, chapterId, text) => {
       window.__calls.push(["save", root, chapterId, text]);
       return { ok: true, edits: [removed] };
