@@ -1,7 +1,7 @@
 import { dirname, join } from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell } from "electron";
 import { cssVariables, profileForBounds } from "./display.ts";
-import { registerHandlers } from "./ipc.ts";
+import { closeWorkbenches, registerHandlers } from "./ipc.ts";
 
 /**
  * Windowing and packaging only (SPEC 5.2 rule 4). Business logic lives in
@@ -152,3 +152,5 @@ app.whenReady().then(() => {
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
+
+app.on("before-quit", closeWorkbenches);
