@@ -50,6 +50,9 @@ export type SortOrder = "name" | "modified" | "size" | "kind";
 export interface TrashOutcome {
   readonly path: string;
   readonly trashed: boolean;
+  /** A stable code to branch on, e.g. `NO_TRASH_HERE`. Never a sentence. */
+  readonly code?: string;
+  /** The same failure written for a person. Never parsed. */
   readonly error?: string;
 }
 
@@ -63,6 +66,7 @@ interface NativeWorkspace {
   moveEntry(from: string, to: string, replace?: boolean): string;
   copyEntry(from: string, to: string, replace?: boolean): string;
   trash(target: string): string;
+  trashViaHome(target: string): string;
   trashAll(targets: string[]): TrashOutcome[];
   link(target: string, linkPath: string): string;
   createDirectory(path: string): string;
@@ -194,6 +198,16 @@ export class Workspace {
   }
 
   /** Trash a selection, reporting each path separately. */
+  /**
+   * Trash by way of the volume holding the user's home (SPEC Q8).
+   *
+   * For when `trash` refused with `NO_TRASH_HERE`. Still recoverable from the
+   * operating system; still not a permanent delete.
+   */
+  trashViaHome(target: string): string {
+    return this.#inner.trashViaHome(target);
+  }
+
   trashAll(targets: readonly string[]): readonly TrashOutcome[] {
     return this.#inner.trashAll([...targets]);
   }

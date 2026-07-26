@@ -163,6 +163,21 @@ export const dict = {
     en: "These open in your system browser; the application itself still makes no requests.",
   },
 
+  "list.join": { zh: "、", en: ", " },
+  "files.noTrashHere": {
+    zh: "这个位置没有回收站，此处无法安全删除。",
+    en: "This location has no trash, so nothing here can be deleted safely.",
+  },
+  "files.trashViaHome": { zh: "移到系统回收站", en: "Move it to the system trash" },
+  "files.noTrashAnywhere": {
+    zh: "系统回收站也不可用，文件留在原处：",
+    en: "The system trash is unavailable too; these stayed where they were: ",
+  },
+  "files.keepHere": { zh: "留在原处", en: "Leave it" },
+
+  "review.acceptAll": { zh: "全部接受", en: "Accept all" },
+  "review.rejectAll": { zh: "全部退回", en: "Refuse all" },
+
   "agents.title": { zh: "Agent", en: "Agents" },
 
   "persona.why": {

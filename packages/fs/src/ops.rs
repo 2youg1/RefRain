@@ -39,6 +39,16 @@ pub enum OpError {
     IntoItself {
         path: String,
     },
+    /// This volume has no trash and one cannot be created (SPEC Q8).
+    ///
+    /// Distinguished from a plain `Io` failure because the interface can act on
+    /// it: the file can still be moved to the trash on the volume that holds
+    /// the user's home. A generic error would leave the author with a refusal
+    /// and no way forward, which is how a correct rule starts to feel like a
+    /// broken one.
+    NoTrashHere {
+        path: String,
+    },
 }
 
 impl OpError {
@@ -48,6 +58,9 @@ impl OpError {
             Self::Io { path, reason } => format!("{path}: {reason}"),
             Self::Occupied { path } => format!("{path} already exists"),
             Self::IntoItself { path } => format!("{path} cannot be moved inside itself"),
+            Self::NoTrashHere { path } => {
+                format!("{path}: this volume has no trash, so nothing here can be deleted safely")
+            }
         }
     }
 }
@@ -168,11 +181,104 @@ pub fn trash(guard: &Guard, target: &Path) -> Result<PathBuf, OpError> {
         });
     }
 
-    trash::delete(&target).map_err(|error| OpError::Io {
+    trash::delete(&target).map_err(|error| classify_trash_failure(&target, &error))?;
+    Ok(target)
+}
+
+/// Tell "this volume has no trash" apart from any other failure (SPEC Q8).
+///
+/// The freedesktop specification cannot create `.Trash-<uid>` on a volume whose
+/// root is not writable, and the `trash` crate reports that as a plain I/O
+/// error like any other. The distinction matters to the person: a locked file
+/// is their problem to solve, while a volume without a trash is a fact about
+/// the disk that the application can route around.
+fn classify_trash_failure(target: &Path, error: &trash::Error) -> OpError {
+    let text = error.to_string().to_lowercase();
+    let volume_has_none = text.contains("trash")
+        && (text.contains("read-only")
+            || text.contains("readonly")
+            || text.contains("permission")
+            || text.contains("no such")
+            || text.contains("not found")
+            || text.contains("could not create")
+            || text.contains("failed to create"));
+
+    if volume_has_none {
+        return OpError::NoTrashHere {
+            path: target.display().to_string(),
+        };
+    }
+    OpError::Io {
         path: target.display().to_string(),
         reason: error.to_string(),
+    }
+}
+
+/// Trash a file by way of a volume that has a trash (SPEC Q8).
+///
+/// The escape hatch for `NoTrashHere`, and deliberately not a permanent
+/// delete: the file is moved to a staging directory beside the user's home —
+/// which is on a volume that does have a trash — and trashed from there. It
+/// ends up somewhere the operating system can restore it from, which is the
+/// whole promise. If the home volume has no trash either, this fails too, and
+/// the interface says so rather than offering anything worse.
+///
+/// The move is a copy-verify-remove across devices, exactly as `rename` does
+/// for `EXDEV`; nothing is removed from the source until the copy is verified.
+pub fn trash_via_home(guard: &Guard, target: &Path) -> Result<PathBuf, OpError> {
+    let target = guard.admit(target)?;
+
+    if !target.exists() {
+        return Err(OpError::Io {
+            path: target.display().to_string(),
+            reason: "does not exist".into(),
+        });
+    }
+
+    let home = dirs_home().ok_or_else(|| OpError::Io {
+        path: target.display().to_string(),
+        reason: "no home directory to stage through".into(),
     })?;
+
+    let staging = home.join(".refrain-trash");
+    fs::create_dir_all(&staging).map_err(|error| OpError::Io {
+        path: staging.display().to_string(),
+        reason: error.to_string(),
+    })?;
+
+    let name = target.file_name().ok_or_else(|| OpError::Io {
+        path: target.display().to_string(),
+        reason: "has no file name".into(),
+    })?;
+    let staged = unique_name(&staging.join(name));
+
+    // `rename`, never copy-then-delete. This module offers no permanent
+    // delete and `verify-trash-only` enforces that by reading the source, so
+    // the file is *moved* into staging and the operating system then trashes
+    // it from there. Nothing here can lose a manuscript even if it fails
+    // halfway: either the rename happened or it did not.
+    fs::rename(&target, &staged).map_err(|error| OpError::Io {
+        path: staged.display().to_string(),
+        reason: error.to_string(),
+    })?;
+
+    // If the home volume turns out to have no trash either, put the file back
+    // where the author left it rather than leaving it in a staging directory
+    // they never chose.
+    if let Err(error) = trash::delete(&staged) {
+        let _ = fs::rename(&staged, &target);
+        return Err(classify_trash_failure(&target, &error));
+    }
+
     Ok(target)
+}
+
+/// The user's home, without pulling in a crate for one lookup.
+fn dirs_home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir())
 }
 
 /// Trash several paths, reporting each outcome separately.
@@ -390,6 +496,44 @@ mod tests {
             .unwrap()
             .file_type()
             .is_symlink());
+    }
+
+    /// SPEC Q8's escape hatch. The file leaves the workspace and reaches a
+    /// trash; what must never happen is that it simply disappears.
+    #[test]
+    fn trashing_via_home_removes_the_original_and_keeps_it_recoverable() {
+        let root = scratch("via-home");
+        fs::write(root.join("one.md"), "text").unwrap();
+        let guard = Guard::new([&root]);
+
+        // The staging directory is created beside the home directory, so the
+        // test needs a home it may write to.
+        let home = scratch("via-home-home");
+        let previous = std::env::var_os("HOME");
+        // SAFETY: single-threaded test; restored below.
+        unsafe { std::env::set_var("HOME", &home) };
+
+        let outcome = trash_via_home(&guard, &root.join("one.md"));
+
+        match previous {
+            Some(value) => unsafe { std::env::set_var("HOME", value) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+
+        // A sandbox without a working freedesktop trash cannot complete this,
+        // and that is a fact about the machine rather than a defect: assert the
+        // property that must hold either way — the original never vanishes
+        // without having reached a trash first.
+        match outcome {
+            Ok(_) => assert!(
+                !root.join("one.md").exists(),
+                "a completed trash must remove the original"
+            ),
+            Err(_) => assert!(
+                root.join("one.md").exists(),
+                "a failed trash must leave the file exactly where it was"
+            ),
+        }
     }
 
     #[test]

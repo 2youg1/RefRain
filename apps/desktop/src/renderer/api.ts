@@ -145,6 +145,15 @@ interface RefRainApi {
     ): Promise<FileResult<{ path: string }>>;
     /** Deletes to the system trash. There is deliberately no permanent variant. */
     trash(root: string, targets: string[]): Promise<FileResult<{ outcomes: TrashOutcomeView[] }>>;
+    /**
+     * For a volume with no trash of its own (SPEC Q8).
+     *
+     * Offered only after `trash` reported `NO_TRASH_HERE`, so the author
+     * chooses to send the file to the trash on another volume rather than
+     * having it moved somewhere they did not pick. Still recoverable from the
+     * operating system; still not a permanent delete.
+     */
+    trashViaHome(root: string, target: string): Promise<FileResult<{ path: string }>>;
     link(root: string, target: string, linkPath: string): Promise<FileResult<{ path: string }>>;
     createDirectory(root: string, path: string): Promise<FileResult<{ path: string }>>;
     uniqueName(root: string, desired: string): Promise<FileResult<{ path: string }>>;
@@ -178,6 +187,8 @@ export interface FileHitView {
 export interface TrashOutcomeView {
   path: string;
   trashed: boolean;
+  /** A stable code to branch on, e.g. `NO_TRASH_HERE`. Never a sentence. */
+  code?: string;
   error?: string;
 }
 
