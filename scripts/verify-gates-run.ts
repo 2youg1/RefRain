@@ -1,0 +1,81 @@
+#!/usr/bin/env bun
+/**
+ * Everything that can fail must have a path that runs it.
+ *
+ * This release found three defects in the packaging configuration, an icon
+ * that CI never generated, and a verification script that had been failing
+ * unnoticed for weeks — all of them the same shape: a check existed, and
+ * nothing ran it.
+ *
+ * A check nobody runs is worse than a missing one. It reads as coverage, and
+ * `verify-anchor` did more than go stale: it manufactured a defect that was
+ * written into SPEC as an open question and stayed there.
+ */
+
+import { Glob } from "bun";
+
+// `Glob.scan` skips dotted directories by default, so `.github` needs asking
+// for explicitly — the first draft of this script found nothing and would have
+// passed for exactly the reason it exists to catch.
+let ci = "";
+for await (const file of new Glob("workflows/*.yml").scan({ cwd: ".github" })) {
+  ci += await Bun.file(`.github/${file}`).text();
+}
+
+if (ci === "") {
+  console.error("FAIL  no workflow files found — the scan is looking in the wrong place");
+  process.exit(1);
+}
+
+const orphans: string[] = [];
+const checked: string[] = [];
+
+/*
+ * Verification scripts. Anything named `verify-*` claims to assert something;
+ * if CI does not invoke it, that claim is untested.
+ */
+for (const pattern of ["scripts/verify-*.ts", "apps/desktop/scripts/verify-*.ts"]) {
+  for await (const file of new Glob(pattern).scan(".")) {
+    const name = file.split("/").pop() ?? file;
+    checked.push(name);
+    // Either invoked by path, or through a package.json script that CI calls.
+    const byPath = ci.includes(name);
+    const byScript = ci.includes(`verify:${name.replace(/^verify-|\.ts$/g, "")}`);
+    if (!byPath && !byScript) orphans.push(file);
+  }
+}
+
+/* Root package scripts named `verify:*` are gates by intent. */
+const root = JSON.parse(await Bun.file("package.json").text()) as {
+  scripts?: Record<string, string>;
+};
+for (const script of Object.keys(root.scripts ?? {})) {
+  if (!script.startsWith("verify:")) continue;
+  checked.push(script);
+  if (!ci.includes(script)) orphans.push(`package.json script "${script}"`);
+}
+
+/*
+ * The packaging configuration. Its schema is validated only when the packager
+ * runs, and three of this release's defects lived there.
+ */
+if (!ci.includes("electron-builder")) {
+  orphans.push("electron-builder (the packaging configuration is never validated)");
+}
+
+/* The native layer, whose tests only run where its platform binary builds. */
+if (!ci.includes("cargo test")) {
+  orphans.push("cargo test (the native file layer is never tested)");
+}
+
+console.log(`checked ${checked.length} verification surfaces`);
+
+if (orphans.length > 0) {
+  console.error("\nFAIL  these can fail, but nothing runs them:");
+  for (const orphan of orphans) console.error(`  ${orphan}`);
+  console.error("\nAdd them to a workflow, or delete them. A check nobody runs reads as");
+  console.error("coverage while asserting nothing — and can invent defects of its own.");
+  process.exit(1);
+}
+
+console.log("PASS  every verification surface has a path that runs it");
