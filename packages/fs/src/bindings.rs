@@ -102,14 +102,21 @@ fn refusal_code(refusal: &Refusal) -> &'static str {
     }
 }
 
-fn op_error(error: ops::OpError) -> Error {
-    let code = match &error {
+/// The stable code for a failure, separate from its human sentence.
+fn op_error_code(error: &ops::OpError) -> &'static str {
+    match error {
         ops::OpError::Refused(refusal) => refusal_code(refusal),
         ops::OpError::Io { .. } => "IO",
         ops::OpError::Occupied { .. } => "OCCUPIED",
         ops::OpError::IntoItself { .. } => "INTO_ITSELF",
-    };
-    refuse(code, error.message())
+        // The interface keys the "move it to the system trash" offer off this
+        // code, so it must stay distinguishable from a plain IO failure.
+        ops::OpError::NoTrashHere { .. } => "NO_TRASH_HERE",
+    }
+}
+
+fn op_error(error: ops::OpError) -> Error {
+    refuse(op_error_code(&error), error.message())
 }
 
 /// A handle over one workspace: the roots, the index, and the guard that
@@ -246,6 +253,18 @@ impl Workspace {
             .map_err(op_error)
     }
 
+    /// Trash by way of the volume that holds the user's home (SPEC Q8).
+    ///
+    /// The escape hatch when `trash` returns `NO_TRASH_HERE`. Still not a
+    /// permanent delete: the file is staged beside the home directory and
+    /// trashed from there, so the operating system can restore it.
+    #[napi]
+    pub fn trash_via_home(&self, target: String) -> Result<String> {
+        ops::trash_via_home(&self.guard, &PathBuf::from(target))
+            .map(|path| path.display().to_string())
+            .map_err(op_error)
+    }
+
     /// Trash several paths, reporting each outcome separately: one locked file
     /// must not abandon the rest of the selection.
     #[napi]
@@ -258,11 +277,16 @@ impl Workspace {
                 Ok(trashed) => JsTrashOutcome {
                     path: trashed.display().to_string(),
                     trashed: true,
+                    code: None,
                     error: None,
                 },
                 Err(error) => JsTrashOutcome {
                     path: path.display().to_string(),
                     trashed: false,
+                    // Code and sentence in separate fields. The interface has
+                    // to branch on NO_TRASH_HERE to offer SPEC Q8's escape
+                    // hatch, and regex over a human sentence is not a contract.
+                    code: Some(op_error_code(&error).to_string()),
                     error: Some(error.message()),
                 },
             })
@@ -307,6 +331,9 @@ impl Workspace {
 pub struct JsTrashOutcome {
     pub path: String,
     pub trashed: bool,
+    /// A stable code the interface can branch on, e.g. `NO_TRASH_HERE`.
+    pub code: Option<String>,
+    /// The same failure as a sentence, for the person reading it.
     pub error: Option<String>,
 }
 

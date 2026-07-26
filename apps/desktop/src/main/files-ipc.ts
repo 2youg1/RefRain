@@ -122,6 +122,19 @@ export const registerFileHandlers = (
     return { ok: true as const, outcomes };
   });
 
+  /**
+   * The escape hatch for a volume with no trash (SPEC Q8). Offered by the
+   * interface only after `files:trash` reported NO_TRASH_HERE, so the author
+   * chooses it rather than having their file quietly moved somewhere else.
+   */
+  ipc.handle("files:trash-via-home", async (_e, root: string, target: string) => {
+    const files = await filesFor(root);
+    if (!files) return unavailable(root);
+    const outcome = attempt(() => files.trashViaHome(target));
+    if (outcome.ok) files.scan();
+    return outcome.ok ? { ok: true as const, path: outcome.value } : outcome;
+  });
+
   ipc.handle("files:link", async (_e, root: string, target: string, linkPath: string) => {
     const files = await filesFor(root);
     if (!files) return unavailable(root);

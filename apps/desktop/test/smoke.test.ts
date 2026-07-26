@@ -137,6 +137,28 @@ whenBuilt("packaged build", () => {
     }
   });
 
+  /**
+   * SPEC Q8. The escape hatch must remain an escape hatch: a route to another
+   * volume's trash, never a permanent delete dressed up as one. The Rust guard
+   * enforces the absence of `fs::remove_*`; this asserts the other half — that
+   * the interface can still tell the two failures apart.
+   */
+  test("a volume without a trash is a distinct code, not a sentence to parse", () => {
+    const bindings = readFileSync(
+      join(here, "..", "..", "..", "packages", "fs", "src", "bindings.rs"),
+      "utf8",
+    );
+
+    // The outcome carries a code as well as a message. Regex over a human
+    // sentence is not a contract, and branching on one silently stops working
+    // the first time the wording changes.
+    expect(bindings).toContain("NO_TRASH_HERE");
+    expect(bindings).toMatch(/pub code: Option<String>/);
+
+    const app = readFileSync(join(here, "..", "src", "renderer", "App.svelte"), "utf8");
+    expect(app).toContain('outcome.code === "NO_TRASH_HERE"');
+  });
+
   test("the renderer holds no privilege", () => {
     const main = readFileSync(join(dist, "main", "main.cjs"), "utf8");
 

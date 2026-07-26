@@ -48,6 +48,43 @@ const judge = (
   };
 };
 
+/**
+ * Stage one verdict for every slice in a proposal (SPEC Q6).
+ *
+ * The action an author wanted was never "merge without judging" — it was "I
+ * have read all twenty and I agree, stop making me click". Those two differ
+ * in the ledger, and the ledger is the point: this writes twenty separate
+ * verdicts, each revisable on its own, where a single "accepted the lot" row
+ * would lose exactly the grain the Verdict Ledger exists to keep.
+ *
+ * It stages. The author still presses Merge, and sees the whole proposal lit
+ * up before doing so.
+ */
+const judgeAll = (proposal: ProposalView, kind: "accept" | "reject"): void => {
+  const decidedAt = new Date().toISOString();
+  const next = { ...staged };
+  for (const slice of proposal.slices) {
+    if (slice.kind === "same") continue;
+    next[slice.id] = {
+      id: `v-${slice.id}-${Date.now()}`,
+      proposalId: proposal.id,
+      sliceId: slice.id,
+      kind,
+      baseline: proposal.baseline,
+      decidedAt,
+      ...(staged[slice.id]?.reason === undefined ? {} : { reason: staged[slice.id]?.reason }),
+    };
+  }
+  staged = next;
+};
+
+/** How many of this proposal's judgable slices already carry a verdict. */
+const judgedIn = (proposal: ProposalView): number =>
+  proposal.slices.filter((slice) => slice.kind !== "same" && staged[slice.id]).length;
+
+const judgableIn = (proposal: ProposalView): number =>
+  proposal.slices.filter((slice) => slice.kind !== "same").length;
+
 const setReason = (sliceId: string, reason: string): void => {
   const verdict = staged[sliceId];
   if (!verdict) return;
@@ -68,6 +105,13 @@ const setReason = (sliceId: string, reason: string): void => {
       <header>
         <span class="label">{proposal.id}</span>
         <span class="scope">{proposal.scope.id}</span>
+        {#if judgableIn(proposal) > 1}
+          <span class="progress">{judgedIn(proposal)}/{judgableIn(proposal)}</span>
+          <div class="bulk">
+            <button onclick={() => judgeAll(proposal, "accept")}>{t("review.acceptAll")}</button>
+            <button onclick={() => judgeAll(proposal, "reject")}>{t("review.rejectAll")}</button>
+          </div>
+        {/if}
       </header>
 
       {#each proposal.slices as slice (slice.id)}
@@ -201,15 +245,46 @@ const setReason = (sliceId: string, reason: string): void => {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
+    gap: 0.6rem;
     padding: 0.55rem 0.75rem;
     border-bottom: 1px solid var(--rule);
     background: var(--paper);
+  }
+
+  /* Pushes the bulk buttons to the right edge; the scope keeps the middle. */
+  .progress {
+    font-family: var(--mono);
+    font-size: var(--step--2);
+    color: var(--ink-faint);
+  }
+
+  .bulk {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  /* Deliberately quiet. Staging every slice at once is a convenience, not the
+     recommended path — the author should still read what they are agreeing to,
+     and a prominent button would say otherwise. */
+  .bulk button {
+    font-size: var(--step--2);
+    color: var(--ink-faint);
+    text-decoration: underline;
+    text-underline-offset: 0.24em;
+    text-decoration-thickness: 1px;
+    text-decoration-color: color-mix(in oklab, var(--ink-faint) 40%, transparent);
+  }
+
+  .bulk button:hover {
+    color: var(--ink);
   }
 
   .scope {
     font-family: var(--mono);
     font-size: var(--step--2);
     color: var(--ink-ghost);
+    /* Holds the middle so the bulk buttons sit at the right edge. */
+    margin-right: auto;
   }
 
   .row {

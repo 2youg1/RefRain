@@ -77,6 +77,9 @@ const api = {
       ipcRenderer.invoke("files:copy", root, from, to, replace),
     /** Deletes to the system trash. There is deliberately no permanent variant. */
     trash: (root: string, targets: string[]) => ipcRenderer.invoke("files:trash", root, targets),
+    /** For a volume with no trash of its own (SPEC Q8); still recoverable. */
+    trashViaHome: (root: string, target: string) =>
+      ipcRenderer.invoke("files:trash-via-home", root, target),
     link: (root: string, target: string, linkPath: string) =>
       ipcRenderer.invoke("files:link", root, target, linkPath),
     createDirectory: (root: string, path: string) =>

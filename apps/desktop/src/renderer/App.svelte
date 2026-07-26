@@ -233,19 +233,50 @@ const trashFiles = async (paths: string[]) => {
 
   // Report per path: one locked file must not read as a failure of the batch,
   // and a writer needs to know exactly which chapter is still there.
-  // Name the files that stayed. A partial failure reported as a single "error"
-  // leaves the writer unsure which chapter they still have.
   const failed = result.outcomes.filter((outcome) => !outcome.trashed);
-  if (failed.length > 0) {
-    notice = t("files.trashFailed") + failed.map((outcome) => outcome.path).join("、");
+
+  // SPEC Q8. A volume whose root is not writable cannot hold a trash, and the
+  // refusal is correct — but it used to be a dead end. The file can still go
+  // to the trash on the volume holding the author's home, so the offer is
+  // made and the author decides. Nothing is moved without them choosing it.
+  const noTrash = failed.filter((outcome) => outcome.code === "NO_TRASH_HERE");
+  if (noTrash.length > 0) {
+    trashOffer = noTrash.map((outcome) => outcome.path);
+  } else if (failed.length > 0) {
+    // The separator follows the interface language: a Chinese enumeration
+    // comma in an English build is the software speaking the wrong language.
+    notice = t("files.trashFailed") + failed.map((outcome) => outcome.path).join(t("list.join"));
   }
   await needFilePage(0, visibleRows);
   chapters = await api().loadWorkspace(roots);
 };
 
+/** Paths the author may send to the trash on another volume (SPEC Q8). */
+let trashOffer = $state<string[]>([]);
+
+const trashViaHome = async (): Promise<void> => {
+  if (!root) return;
+  const paths = trashOffer;
+  trashOffer = [];
+  const stayed: string[] = [];
+  for (const path of paths) {
+    const outcome = await api().files.trashViaHome(root, path);
+    if (!outcome.ok) stayed.push(path);
+  }
+  if (stayed.length > 0) say(t("files.noTrashAnywhere") + stayed.join(t("list.join")));
+  await needFilePage(0, visibleRows);
+  chapters = await api().loadWorkspace(roots);
+};
+
+/** The timer for the visible notice; a second message must cancel the first. */
+let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+
 const say = (message: string): void => {
+  // Without clearing, two notices in quick succession shared one deadline and
+  // the first one's timer wiped the second off the screen early.
+  clearTimeout(noticeTimer);
   notice = message;
-  setTimeout(() => (notice = null), 2800);
+  noticeTimer = setTimeout(() => (notice = null), 2800);
 };
 
 /** Paragraphs in, paragraphs out: the manuscript is blocks, not a string. */
@@ -802,6 +833,22 @@ const onScroll = (): void => {
   <div class="notice">{notice}</div>
 {/if}
 
+<!--
+  SPEC Q8. Not a toast: it waits for an answer, because the file is still
+  sitting where the author tried to delete it and they need to decide. The
+  offer names the other volume rather than doing anything silently.
+-->
+{#if trashOffer.length > 0}
+  <div class="offer" role="alertdialog" aria-label={t("files.noTrashHere")}>
+    <p>{t("files.noTrashHere")}</p>
+    <p class="paths">{trashOffer.join(t("list.join"))}</p>
+    <div class="offer-actions">
+      <button class="quiet" onclick={() => (trashOffer = [])}>{t("files.keepHere")}</button>
+      <button class="go" onclick={() => void trashViaHome()}>{t("files.trashViaHome")}</button>
+    </div>
+  </div>
+{/if}
+
 <style>
 .shell.dragging {
   background: var(--seal-wash);
@@ -1136,6 +1183,52 @@ const onScroll = (): void => {
 
 .writing:hover .zen-hint {
   opacity: 1;
+}
+
+/*
+ * The Q8 offer. Wider and stiller than a notice, and it does not time out:
+ * the author's file is still sitting undeleted and the software is asking a
+ * question, not announcing something.
+ */
+.offer {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 96;
+  max-width: 34rem;
+  padding: 0.9rem 1.1rem;
+  background: var(--paper-raised);
+  color: var(--ink);
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  box-shadow: var(--shadow-float);
+  font-size: var(--step--1);
+  line-height: 1.7;
+}
+
+.offer .paths {
+  font-family: var(--mono);
+  font-size: var(--step--2);
+  color: var(--ink-faint);
+  margin-top: 0.3rem;
+  overflow-wrap: anywhere;
+}
+
+.offer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+  margin-top: 0.8rem;
+}
+
+.offer-actions .quiet {
+  color: var(--ink-faint);
+}
+
+.offer-actions .go {
+  color: var(--seal);
+  font-weight: 600;
 }
 
 .notice {
