@@ -60,6 +60,10 @@ export interface AgentView {
 
 interface RecensionApi {
   openProject(): Promise<string | null>;
+  createProject(): Promise<string | null>;
+  pathFor(file: File): string;
+  resolveDrop(path: string): Promise<string | null>;
+  fullscreen(on: boolean): Promise<boolean>;
   loadProject(root: string): Promise<ChapterView[]>;
   saveChapter(root: string, title: string, text: string): Promise<boolean>;
   listAgents(root: string): Promise<AgentView[]>;

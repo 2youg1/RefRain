@@ -46,6 +46,14 @@ jobs:
         working-directory: apps/desktop
         run: bun test test/smoke.test.ts
 
+      # The ruled lines must land under the glyphs, not through them. Vision
+      # cannot tell those apart in a screenshot; the geometry can.
+      - name: ruled lines land under the glyphs
+        working-directory: apps/desktop
+        run: |
+          bun x playwright install chromium --only-shell
+          bun scripts/verify-grid.ts
+
   # The gate must be provably capable of failing. A misconfigured tsconfig or a
   # piped command turns `check` into a no-op that reports success forever.
   gate-bites:

@@ -1,0 +1,51 @@
+/*
+ * Typefaces shipped with the application, all under the SIL Open Font License.
+ *
+ * Bundled rather than requested: this application makes no network requests, so
+ * a webfont URL would be a contradiction, and a system-font stack renders
+ * differently on every machine — which is unacceptable for a tool whose subject
+ * is typography. The author's own library remains reachable through the
+ * typography sheet.
+ *
+ *   Chiron Sung HK  — Chinese serif for the manuscript. A modern revival in the
+ *                     Song lineage, drawn for screen; the reading face.
+ *   Antic Didone    — Latin display serif for titles. High contrast, quiet.
+ *   Jost            — Latin interface sans. Geometric, sets small text cleanly.
+ *   Murecho         — CJK-capable sans for interface text and Japanese.
+ *   Courier Prime   — monospace for identifiers, paths, and protocol text.
+ */
+
+@font-face {
+  font-family: "Chiron Sung HK";
+  src: url("./fonts/ChironSungHK.woff2") format("woff2");
+  font-weight: 200 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Antic Didone";
+  src: url("./fonts/AnticDidone.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Jost";
+  src: url("./fonts/Jost.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Murecho";
+  src: url("./fonts/Murecho.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Courier Prime";
+  src: url("./fonts/CourierPrime.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}

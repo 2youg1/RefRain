@@ -1,38 +1,100 @@
 /*
- * A workbench for prose, so the surface reads like paper rather than a
- * dashboard: warm neutrals, one accent reserved for the human's decision, and
- * type sized for reading a manuscript rather than scanning a table.
+ * Recension — a surface for manuscripts.
+ *
+ * The composition is typographic, not chrome-driven: hierarchy comes from
+ * scale, measure, and rest, and the only saturated colour is the one spent on
+ * a human decision. A writing application that looks like a dashboard has
+ * already told the author that the software matters more than the sentence.
+ *
+ * Two themes, both warm-neutral. Paper is a printed page under daylight; ink
+ * is the same page under a desk lamp — not an inverted screen.
  */
 
-@font-face {
-  font-family: "system-serif";
-  src:
-    local("Source Han Serif SC"), local("Noto Serif CJK SC"), local("Songti SC"), local("SimSun");
-  font-display: swap;
+:root {
+  color-scheme: light;
+
+  /* Surfaces. Warm greys with a trace of yellow, the way paper stock behaves. */
+  --paper: #f7f4ef;
+  --paper-raised: #fffefb;
+  --paper-sunk: #efeae1;
+  --rule: #e0d9cd;
+  --rule-strong: #cabfad;
+
+  /* Type. Never pure black: ink on paper reflects, it does not absorb. */
+  --ink: #1a1714;
+  --ink-soft: #4a443c;
+  --ink-faint: #8a8175;
+  --ink-ghost: #b5aa99;
+
+  /* The seal. Spent only where a human commits to something. */
+  --seal: #8c2f18;
+  --seal-bright: #b03d1f;
+  --seal-wash: #f7e9e2;
+
+  --accepted: #3d5a2b;
+  --accepted-wash: #eef2e5;
+  --refused: #8a2540;
+  --refused-wash: #f8e9ed;
+
+  /*
+   * Type stacks. The bundled faces come first so the application looks the same
+   * on every machine; the system stack follows for anything they do not cover,
+   * and the author's own library is reachable from the typography sheet.
+   */
+  --serif: "Chiron Sung HK", "Source Han Serif SC", "Songti SC", "SimSun", Georgia, serif;
+  --sans:
+    "Jost", "Murecho", "PingFang SC", "Microsoft YaHei UI", -apple-system, "Segoe UI", sans-serif;
+  --mono: "Courier Prime", "Cascadia Mono", Consolas, monospace;
+  --display: "Antic Didone", "Chiron Sung HK", Georgia, serif;
+
+  /* A modular scale at 1.25. Sizes are chosen, not typed by hand. */
+  --step--2: 0.64rem;
+  --step--1: 0.8rem;
+  --step-0: 1rem;
+  --step-1: 1.25rem;
+  --step-2: 1.563rem;
+  --step-3: 1.953rem;
+  --step-4: 2.441rem;
+
+  /* Author-adjustable typography (SPEC: the manuscript surface is theirs). */
+  --manuscript-family: var(--serif);
+  --manuscript-size: 17px;
+  --manuscript-leading: 1.95;
+  --manuscript-tracking: 0.01em;
+  --manuscript-measure: 34em;
+  --baseline: 0px; /* > 0 shows a baseline grid */
+
+  --shadow-lift: 0 1px 2px rgb(26 23 20 / 0.05), 0 6px 20px rgb(26 23 20 / 0.07);
+  --shadow-float: 0 12px 32px rgb(26 23 20 / 0.14), 0 2px 8px rgb(26 23 20 / 0.08);
+
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
-:root {
-  --paper: #faf9f7;
-  --paper-raised: #ffffff;
-  --rule: #e6e2db;
-  --rule-strong: #d3cec4;
-  --ink: #1c1a17;
-  --ink-soft: #57534e;
-  --ink-faint: #8b857c;
+:root[data-theme="ink"] {
+  color-scheme: dark;
 
-  /* One accent, spent only on the author's own decisions. */
-  --seal: #9a3412;
-  --seal-soft: #fef3ec;
-  --accepted: #3f6212;
-  --accepted-soft: #f2f7e9;
-  --refused: #9f1239;
-  --refused-soft: #fdf2f5;
+  --paper: #17150f;
+  --paper-raised: #201d16;
+  --paper-sunk: #100e0a;
+  --rule: #2e2a21;
+  --rule-strong: #443e31;
 
-  --serif: "system-serif", "Songti SC", "Source Han Serif SC", Georgia, serif;
-  --sans: "Inter", -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  --mono: "SF Mono", "Cascadia Code", "Consolas", monospace;
+  --ink: #ece5d8;
+  --ink-soft: #b8b0a0;
+  --ink-faint: #857d6e;
+  --ink-ghost: #5a5348;
 
-  --shadow-raised: 0 1px 2px rgb(28 26 23 / 0.04), 0 4px 12px rgb(28 26 23 / 0.06);
+  --seal: #d4633f;
+  --seal-bright: #e8794f;
+  --seal-wash: #2c1c14;
+
+  --accepted: #97b872;
+  --accepted-wash: #1c2416;
+  --refused: #d97a94;
+  --refused-wash: #2a161c;
+
+  --shadow-lift: 0 1px 2px rgb(0 0 0 / 0.4), 0 6px 20px rgb(0 0 0 / 0.35);
+  --shadow-float: 0 12px 32px rgb(0 0 0 / 0.55), 0 2px 8px rgb(0 0 0 / 0.4);
 }
 
 * {
@@ -41,18 +103,24 @@
   padding: 0;
 }
 
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   background: var(--paper);
   color: var(--ink);
   font-family: var(--sans);
-  font-size: 14px;
-  line-height: 1.6;
+  font-size: var(--step-0);
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
-  overflow: hidden;
+  text-rendering: optimizeLegibility;
 }
 
 #app {
-  height: 100vh;
+  height: 100%;
 }
 
 button {
@@ -61,116 +129,171 @@ button {
   background: none;
   border: none;
   cursor: pointer;
+  transition:
+    color 140ms var(--ease),
+    background 140ms var(--ease);
 }
 
-/* The composition surface. Measure and leading come first; nothing decorates. */
+/*
+ * The composition surface. Everything here is the author's to set.
+ *
+ * The CJK details are the difference between a text area with a serif stack and
+ * a surface built for Chinese: punctuation compression closes the holes that
+ * full-width marks leave, hanging punctuation keeps the right edge true, and
+ * the Latin-CJK gap is set once rather than left to the browser's default.
+ */
 .manuscript {
-  font-family: var(--serif);
-  font-size: 17px;
-  line-height: 2;
-  letter-spacing: 0.01em;
+  font-family: var(--manuscript-family);
+  font-size: var(--manuscript-size);
+  line-height: var(--manuscript-leading);
+  letter-spacing: var(--manuscript-tracking);
+  max-width: var(--manuscript-measure);
   color: var(--ink);
-  max-width: 34em;
   margin: 0 auto;
-  padding: 4rem 0 40vh;
   outline: none;
   white-space: pre-wrap;
   word-break: break-word;
   caret-color: var(--seal);
+
+  font-weight: var(--manuscript-weight, 400);
+  word-spacing: var(--manuscript-word-spacing, 0);
+  text-align: var(--manuscript-align, left);
+  text-indent: var(--manuscript-indent, 0);
+
+  hanging-punctuation: allow-end last;
+  text-spacing-trim: trim-start;
+  font-feature-settings:
+    "halt" 1,
+    "vhal" 1;
+  font-variant-east-asian: proportional-width;
+}
+
+.manuscript > p {
+  margin-block-end: calc(
+    var(--manuscript-size) *
+    var(--manuscript-leading) *
+    var(--paragraph-spacing, 1)
+  );
+}
+
+.manuscript > p:last-child {
+  margin-block-end: 0;
+}
+
+/* Latin and digits inside Chinese prose want their own spacing, not the CJK advance. */
+.manuscript :is(code, .latin) {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  margin: 0 0.12em;
 }
 
 .manuscript::selection,
 .manuscript ::selection {
-  background: var(--seal-soft);
+  background: var(--seal-wash);
+  color: var(--ink);
 }
 
-/* A slice under judgment. Removal and addition read as one gesture. */
-.slice {
-  display: block;
-  padding: 0.5rem 0.75rem;
-  border-left: 2px solid transparent;
-  font-family: var(--serif);
-  line-height: 1.9;
-  transition:
-    background 120ms ease,
-    border-color 120ms ease;
-}
+/*
+ * Ruled lines — one rule a pixel under every line of text, the way a sheet of
+ * writing paper is ruled.
+ *
+ * Two facts make this harder than a repeating gradient over the whole element:
+ *
+ *   1. CSS splits the difference between the line box and the font's own line
+ *      height equally above and below the glyphs, so a rule at a multiple of
+ *      the line box lands through the characters and reads as a strikethrough.
+ *   2. Paragraph spacing is not generally a whole number of line boxes, so a
+ *      grid painted on the container drifts out of step after the first
+ *      paragraph — which is exactly what happened: rules survived only in the
+ *      gaps between paragraphs.
+ *
+ * So the rules are painted per paragraph, from that paragraph's own top, and
+ * `--rule-at` places them under the glyphs rather than through them. Paragraph
+ * spacing then cannot accumulate error, because each paragraph starts over.
+ */
+.manuscript[data-grid="on"] > * {
+  --line-box: calc(var(--manuscript-size) * var(--manuscript-leading));
+  --half-leading: calc((var(--line-box) - var(--manuscript-size) * var(--font-line, 1.16)) / 2);
+  --rule-at: calc(var(--half-leading) + var(--manuscript-size) * var(--font-line, 1.16));
 
-.slice.same {
-  color: var(--ink-faint);
-}
-
-.slice.del {
-  border-left-color: var(--refused);
-  background: var(--refused-soft);
-  text-decoration: line-through;
-  text-decoration-color: rgb(159 18 57 / 0.4);
-}
-
-.slice.ins {
-  border-left-color: var(--accepted);
-  background: var(--accepted-soft);
-}
-
-.slice.judged-accept {
-  border-left-width: 3px;
-  border-left-color: var(--accepted);
-}
-
-.slice.judged-reject {
-  opacity: 0.45;
-}
-
-.slice.judged-accept-modified {
-  border-left-width: 3px;
-  border-left-color: var(--seal);
-  background: var(--seal-soft);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(var(--rule-at) - 1px),
+    color-mix(in oklab, var(--seal) 20%, transparent) calc(var(--rule-at) - 1px),
+    color-mix(in oklab, var(--seal) 20%, transparent) var(--rule-at),
+    transparent var(--rule-at),
+    transparent calc(var(--line-box) * var(--grid-every, 1))
+  );
 }
 
 .label {
   font-family: var(--sans);
-  font-size: 10px;
+  font-size: var(--step--2);
   font-weight: 600;
-  letter-spacing: 0.09em;
+  letter-spacing: 0.11em;
   text-transform: uppercase;
   color: var(--ink-faint);
 }
 
-.rule {
-  height: 1px;
-  background: var(--rule);
-  border: none;
-}
-
 input,
-textarea {
+textarea,
+select {
   font: inherit;
   color: var(--ink);
   background: var(--paper-raised);
   border: 1px solid var(--rule-strong);
-  border-radius: 3px;
-  padding: 0.5rem 0.65rem;
+  border-radius: 2px;
+  padding: 0.55rem 0.7rem;
   width: 100%;
   outline: none;
+  transition:
+    border-color 140ms var(--ease),
+    box-shadow 140ms var(--ease);
 }
 
 input:focus,
-textarea:focus {
+textarea:focus,
+select:focus {
   border-color: var(--seal);
-  box-shadow: 0 0 0 3px var(--seal-soft);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--seal) 14%, transparent);
+}
+
+::placeholder {
+  color: var(--ink-ghost);
 }
 
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 11px;
+  height: 11px;
 }
 
 ::-webkit-scrollbar-thumb {
   background: var(--rule-strong);
-  border: 3px solid var(--paper);
-  border-radius: 5px;
+  border: 3.5px solid var(--paper);
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-ghost);
 }
 
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/*
+ * The reduced-motion override is one of the few places !important is correct:
+ * a user who has asked the operating system to stop animation must win against
+ * every component rule, including ones added later.
+ */
+/* biome-ignore-start lint/complexity/noImportantStyles: honours the OS setting over component rules */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+/* biome-ignore-end lint/complexity/noImportantStyles: honours the OS setting over component rules */
