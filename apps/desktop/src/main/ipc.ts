@@ -43,6 +43,11 @@ interface Workbench {
 
 const workbenches = new Map<string, Workbench>();
 
+export const closeWorkbenches = (): void => {
+  for (const workbench of workbenches.values()) workbench.ledger.close();
+  workbenches.clear();
+};
+
 const openWorkbench = (root: string): Workbench => {
   const existing = workbenches.get(root);
   if (existing) return existing;

@@ -125,11 +125,13 @@ describe("Verdict Ledger", () => {
   test.failing("a duplicate Verdict id cannot rewrite the original audit record", () => {
     const ledger = new VerdictLedger(join(root, "ledger.db"));
     const original = verdict({ id: "fixed", reason: "原来的理由" });
-    ledger.record(original);
-    ledger.record({ ...original, kind: "reject", reason: "后来改写" });
-
-    expect(ledger.all()).toEqual([original]);
-    ledger.close();
+    try {
+      ledger.record(original);
+      ledger.record({ ...original, kind: "reject", reason: "后来改写" });
+      expect(ledger.all()).toEqual([original]);
+    } finally {
+      ledger.close();
+    }
   });
 
   test("recording the same verdict twice keeps one row", () => {

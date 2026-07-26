@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ClaudeCodeAdapter } from "../src/claude-code.ts";
+import { ClaudeCodeAdapter, type ClaudeCodeConfig } from "../src/claude-code.ts";
 import { AgentHost } from "../src/host.ts";
 import type { Agent, ReviewTask } from "../src/types.ts";
 
@@ -17,21 +18,22 @@ import type { Agent, ReviewTask } from "../src/types.ts";
  * these tests fix the wire format so a change in the parser fails here first.
  */
 
-const root = "/tmp/refrain-claude-contract";
+const root = join(tmpdir(), "refrain-claude-contract");
 const binDir = join(root, "bin");
 
-/** Writes an executable that prints `stdout` and exits with `code`. */
-const stubClaude = (stdout: string, code = 0): string => {
+/** Runs the contract stub through Bun itself, so no platform shell is involved. */
+const stubClaude = (stdout: string, code = 0, delayMs = 0): ClaudeCodeConfig => {
   mkdirSync(binDir, { recursive: true });
-  const path = join(binDir, `claude-${Math.random().toString(36).slice(2)}`);
+  const path = join(binDir, `claude-${Math.random().toString(36).slice(2)}.js`);
   writeFileSync(
     path,
-    ["#!/bin/sh", "cat > /dev/null", `printf '%s' ${JSON.stringify(stdout)}`, `exit ${code}`].join(
-      "\n",
-    ),
-    { mode: 0o755 },
+    [
+      `await Bun.sleep(${delayMs});`,
+      `process.stdout.write(${JSON.stringify(stdout)});`,
+      `process.exit(${code});`,
+    ].join("\n"),
   );
-  return path;
+  return { command: process.execPath, commandArgs: [path] };
 };
 
 /** A report shaped like Claude Code's `--output-format json`. */
@@ -91,7 +93,7 @@ describe("Claude Code adapter", () => {
   });
 
   test("relays the four token counts exactly as the harness stated them", async () => {
-    const adapter = new ClaudeCodeAdapter({ command: stubClaude(report()) });
+    const adapter = new ClaudeCodeAdapter(stubClaude(report()));
     const host = new AgentHost(root, [adapter]);
     host.register(agent).enqueue(task);
 
@@ -113,7 +115,7 @@ describe("Claude Code adapter", () => {
   });
 
   test("never surfaces the cost the harness reports", async () => {
-    const adapter = new ClaudeCodeAdapter({ command: stubClaude(report()) });
+    const adapter = new ClaudeCodeAdapter(stubClaude(report()));
     const host = new AgentHost(root, [adapter]);
     host.register(agent).enqueue(task);
     const [run] = await host.send();
@@ -130,9 +132,7 @@ describe("Claude Code adapter", () => {
   test("reports the model the harness actually used, not the one requested", async () => {
     // `--fallback-model` and provider routing both substitute a model. Echoing
     // the request back would be a claim this adapter cannot support.
-    const adapter = new ClaudeCodeAdapter({
-      command: stubClaude(report({ model: "claude-opus-4-6" })),
-    });
+    const adapter = new ClaudeCodeAdapter(stubClaude(report({ model: "claude-opus-4-6" })));
     const host = new AgentHost(root, [adapter]);
     host.register(agent).enqueue(task);
     const [run] = await host.send();
@@ -143,7 +143,7 @@ describe("Claude Code adapter", () => {
   });
 
   test("carries the session forward, which is what first-round persona relies on", async () => {
-    const adapter = new ClaudeCodeAdapter({ command: stubClaude(report()) });
+    const adapter = new ClaudeCodeAdapter(stubClaude(report()));
     const host = new AgentHost(root, [adapter]);
     host.register(agent).enqueue(task);
     const [run] = await host.send();
@@ -153,7 +153,7 @@ describe("Claude Code adapter", () => {
   });
 
   test("accumulates a total across runs while keeping the latest turn separate", async () => {
-    const adapter = new ClaudeCodeAdapter({ command: stubClaude(report()) });
+    const adapter = new ClaudeCodeAdapter(stubClaude(report()));
     const host = new AgentHost(root, [adapter]);
     host
       .register(agent)
@@ -172,7 +172,7 @@ describe("Claude Code adapter", () => {
   });
 
   test("attributes usage to one run, so a proposal can carry what it cost", async () => {
-    const adapter = new ClaudeCodeAdapter({ command: stubClaude(report()) });
+    const adapter = new ClaudeCodeAdapter(stubClaude(report()));
     const host = new AgentHost(root, [adapter]);
     host.register(agent).enqueue(task);
     const [run] = await host.send();
@@ -186,9 +186,9 @@ describe("Claude Code adapter", () => {
   test("an error report fails the run and still keeps its usage", async () => {
     // A harness that errored still spent tokens. Dropping the report would
     // understate what the round cost the author.
-    const adapter = new ClaudeCodeAdapter({
-      command: stubClaude(report({ is_error: true, result: "rate limited" })),
-    });
+    const adapter = new ClaudeCodeAdapter(
+      stubClaude(report({ is_error: true, result: "rate limited" })),
+    );
     const host = new AgentHost(root, [adapter]);
     host.register(agent).enqueue(task);
     const [run] = await host.send();
@@ -199,7 +199,7 @@ describe("Claude Code adapter", () => {
   });
 
   test("a non-zero exit fails the run", async () => {
-    const adapter = new ClaudeCodeAdapter({ command: stubClaude("", 4) });
+    const adapter = new ClaudeCodeAdapter(stubClaude("", 4));
     const host = new AgentHost(root, [adapter]);
     host.register(agent).enqueue(task);
     const [run] = await host.send();
@@ -211,7 +211,7 @@ describe("Claude Code adapter", () => {
   test("unparseable stdout costs the usage report, not the run", async () => {
     // A wrapper script or a warning line can put text around the JSON. The
     // Proposal is frozen from the result file, so the run survives.
-    const adapter = new ClaudeCodeAdapter({ command: stubClaude("not json at all") });
+    const adapter = new ClaudeCodeAdapter(stubClaude("not json at all"));
     const host = new AgentHost(root, [adapter]);
     host.register(agent).enqueue(task);
     const [run] = await host.send();
@@ -222,9 +222,7 @@ describe("Claude Code adapter", () => {
   });
 
   test("finds the report inside surrounding noise", async () => {
-    const adapter = new ClaudeCodeAdapter({
-      command: stubClaude(`warning: something\n${report()}\n`),
-    });
+    const adapter = new ClaudeCodeAdapter(stubClaude(`warning: something\n${report()}\n`));
     const host = new AgentHost(root, [adapter]);
     host.register(agent).enqueue(task);
     const [run] = await host.send();
@@ -234,11 +232,7 @@ describe("Claude Code adapter", () => {
   });
 
   test("a timeout kills the harness and fails the run", async () => {
-    mkdirSync(binDir, { recursive: true });
-    const slow = join(binDir, "slow-claude");
-    writeFileSync(slow, "#!/bin/sh\nsleep 30\n", { mode: 0o755 });
-
-    const adapter = new ClaudeCodeAdapter({ command: slow, timeoutMs: 40 });
+    const adapter = new ClaudeCodeAdapter({ ...stubClaude("", 0, 30_000), timeoutMs: 40 });
     const host = new AgentHost(root, [adapter]);
     host.register(agent).enqueue(task);
 
@@ -251,7 +245,7 @@ describe("Claude Code adapter", () => {
   });
 
   test("cancelling after completion cannot rewrite the terminal state", async () => {
-    const adapter = new ClaudeCodeAdapter({ command: stubClaude(report()) });
+    const adapter = new ClaudeCodeAdapter(stubClaude(report()));
     const host = new AgentHost(root, [adapter]);
     host.register(agent).enqueue(task);
     const [run] = await host.send();
@@ -263,7 +257,7 @@ describe("Claude Code adapter", () => {
   });
 
   test("writes a request the agent can answer without the repository", async () => {
-    const adapter = new ClaudeCodeAdapter({ command: stubClaude(report()) });
+    const adapter = new ClaudeCodeAdapter(stubClaude(report()));
     const host = new AgentHost(root, [adapter]);
     host.register(agent).enqueue(task);
     const [run] = await host.send();
@@ -279,10 +273,7 @@ describe("Claude Code adapter", () => {
     // A subprocess nobody is watching must never wait on a permission prompt,
     // and this agent has no reason to run a command.
     const adapter = new ClaudeCodeAdapter();
-    const argv = (adapter as unknown as { argv(run: unknown, agent: Agent): string[] }).argv(
-      { id: "r1" },
-      agent,
-    );
+    const argv = (adapter as unknown as { argv(agent: Agent): string[] }).argv(agent);
 
     expect(argv).toContain("dontAsk");
     expect(argv).toContain("Read,Write");

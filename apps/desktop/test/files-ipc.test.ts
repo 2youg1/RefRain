@@ -18,7 +18,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { registerHandlers } from "../src/main/ipc.ts";
+import { closeWorkbenches, registerHandlers } from "../src/main/ipc.ts";
 
 type Handler = (event: unknown, ...args: unknown[]) => unknown;
 
@@ -95,6 +95,7 @@ test("a scan reports a count or an explained unavailability, never a throw", asy
       expect(result.detail).toBeTruthy();
     }
   } finally {
+    closeWorkbenches();
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -113,6 +114,7 @@ test("a mutating call on an unavailable layer changes nothing and says why", asy
     expect(typeof outcome.ok).toBe("boolean");
     if (!outcome.ok) expect(outcome.detail).toBeTruthy();
   } finally {
+    closeWorkbenches();
     rmSync(root, { recursive: true, force: true });
   }
 });

@@ -1,5 +1,4 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { scaffold } from "./file-channel.ts";
 import type {
   Agent,
@@ -28,6 +27,8 @@ import type {
 export interface ClaudeCodeConfig {
   /** Path to the `claude` binary. Not searched for: an absent binary must fail loudly. */
   readonly command?: string;
+  /** Argv placed immediately after the binary, for launchers such as `bun wrapper.ts`. */
+  readonly commandArgs?: readonly string[];
   readonly cwd?: string;
   readonly env?: Readonly<Record<string, string>>;
   readonly timeoutMs?: number;
@@ -92,11 +93,12 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
    * explicit allowlist means anything not named here is denied rather than
    * prompted — a prompt in a subprocess nobody is watching hangs forever.
    */
-  private argv(run: Run, agent: Agent): string[] {
+  private argv(agent: Agent): string[] {
     const binary = this.config.command ?? "claude";
 
     return [
       binary,
+      ...(this.config.commandArgs ?? []),
       "-p",
       "--output-format",
       "json",
@@ -126,7 +128,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
     mkdirSync(run.workspace, { recursive: true });
     writeFileSync(run.requestPath, scaffold(task), "utf8");
 
-    const child = Bun.spawn(this.argv(run, agent), {
+    const child = Bun.spawn(this.argv(agent), {
       cwd: this.config.cwd ?? run.workspace,
       env: { ...process.env, ...this.config.env },
       stdin: new Response(
@@ -171,6 +173,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
 
     if (exited === TIMED_OUT) {
       child.kill();
+      await child.exited;
       this.running.delete(run.id);
       if (run.state === "dispatched") run.state = "failed";
       throw new Error(`claude-code exceeded ${timeout}ms for run ${run.id}`);
