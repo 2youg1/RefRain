@@ -105,6 +105,17 @@ let display = $state<DisplayProfile>(FALLBACK);
 
 const root = $derived(roots[0] ?? null);
 
+/**
+ * The root that owns a chapter.
+ *
+ * `root` is the first workspace and is right for anything workspace-shaped
+ * (the file browser, the agent roster). It is wrong for anything
+ * chapter-shaped: a chapter in the second root saved against `roots[0]`
+ * created a same-named file in the wrong project and reported success.
+ */
+const rootOf = (title: string | null): string | null =>
+  chapters.find((c) => c.title === title)?.root ?? root;
+
 // Every durable choice is written back the moment it changes; the storage
 // keys and the CSS custom properties both live in preferences.ts.
 $effect(() => {
@@ -297,6 +308,18 @@ const createProject = async (): Promise<void> => {
 };
 
 const select = (title: string | null): void => {
+  // Unsaved text used to disappear here: `render()` overwrote the surface with
+  // the newly selected chapter and the old paragraphs were simply gone. The
+  // manuscript is the one thing this application may never lose, so the switch
+  // saves first rather than asking.
+  if (!saved && active !== null && active !== title) {
+    void save().then(() => selectNow(title));
+    return;
+  }
+  selectNow(title);
+};
+
+const selectNow = (title: string | null): void => {
   active = title;
   text = chapters.find((c) => c.title === title)?.text ?? "";
   saved = true;
@@ -314,13 +337,20 @@ const newChapter = async (): Promise<void> => {
 };
 
 const save = async (): Promise<void> => {
-  if (!root || !active) return;
-  const previous = chapters.find((c) => c.title === active)?.text ?? "";
-  await api().saveChapter(root, active, text);
-  const recorded = await api().editsBetween(previous, text);
+  const title = active;
+  const owner = rootOf(title);
+  if (!owner || !title) return;
+
+  // Snapshot before awaiting. Typing during the write used to leave `saved`
+  // true over text that had never reached disk, and recorded an edit against
+  // characters that were never saved.
+  const written = text;
+  const previous = chapters.find((c) => c.title === title)?.text ?? "";
+  await api().saveChapter(owner, title, written);
+  const recorded = await api().editsBetween(previous, written);
   edits = [...edits, ...recorded];
-  chapters = chapters.map((c) => (c.title === active ? { ...c, text } : c));
-  saved = true;
+  chapters = chapters.map((c) => (c.title === title ? { ...c, text: written } : c));
+  if (text === written && active === title) saved = true;
 };
 
 const revert = async (id: string): Promise<void> => {
@@ -358,9 +388,14 @@ const collect = async (runId: string): Promise<void> => {
 };
 
 const commit = async (verdicts: VerdictView[]): Promise<void> => {
-  if (!root || !active) return;
+  const owner = rootOf(active);
+  if (!owner || !active) return;
+  // The main process merges against its own head. With unsaved text in the
+  // editor that head is stale, and `result.text` would overwrite characters
+  // the author had just typed.
+  if (!saved) await save();
   refusal = null;
-  const result = await api().commit(root, { chapter: active, verdicts });
+  const result = await api().commit(owner, { chapter: active, verdicts });
   if (!result.ok) {
     refusal = { reason: result.reason, detail: result.detail };
     return;
@@ -653,8 +688,11 @@ const onScroll = (): void => {
     onSelect={(entry) => {
       // Only a manuscript opens in the editor; clicking a folder or an image
       // selects it for a move or a trash without changing what is on screen.
+      // This called `open()`, which is not defined here — it resolved to
+      // `window.open`, took the chapter title as a URL, and was denied by the
+      // window-open handler. Clicking a file appeared to do nothing at all.
       const chapter = chapters.find((c) => c.path === entry.path);
-      if (chapter) open(chapter.title);
+      if (chapter) select(chapter.title);
     }}
     onQuery={searchFiles}
     onSort={sortFiles}
