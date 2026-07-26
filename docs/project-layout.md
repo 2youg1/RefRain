@@ -29,8 +29,8 @@
     │   ├── 文字编辑.md            按 Agent 分文件，追加不重写
     │   └── 结构读者.md
     │
-    ├── agents.json             ← Agent 名册：身份、Runtime Binding、注入档位
-    │                             （设计如此；当前实现只在内存里，重启即失）
+    ├── agents.json             ← Agent 名册：身份、Runtime Binding、命令模板
+    │                             人可直接编辑；损坏则读作空册，不阻止开项目
     │
     └── runs/                   ← 每个 Run 一个目录，软件从不自动删
         ├── run1/
