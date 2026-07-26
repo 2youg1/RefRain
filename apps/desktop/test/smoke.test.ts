@@ -49,15 +49,17 @@ test("packaging uses Node platform names for the native binary", () => {
   expect(config).not.toMatch(/refrain-fs\.\$\{os\}-\$\{arch\}\.node/);
 });
 
-test("one release job gathers every supported desktop build", () => {
+test("the release publishes one Windows x64 installer", () => {
   const workflow = readFileSync(
     join(here, "..", "..", "..", ".github", "workflows", "release.yml"),
     "utf8",
   );
 
-  for (const target of ["windows-x64", "linux-x64", "mac-arm64", "mac-x64"])
-    expect(workflow).toContain(`target: ${target}`);
-  expect(workflow).toContain("needs: build");
+  expect(workflow).toContain("target: windows-x64");
+  expect(workflow).not.toContain("target: linux-x64");
+  expect(workflow).not.toContain("target: mac-arm64");
+  expect(workflow).not.toContain("target: mac-x64");
+  expect(workflow).toContain("expected 1 release file");
   expect(workflow.match(/softprops\/action-gh-release/g)).toHaveLength(1);
 });
 

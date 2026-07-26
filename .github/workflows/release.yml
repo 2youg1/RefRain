@@ -30,26 +30,6 @@ jobs:
             arch: x64
             builder_args: --win --x64
             assets: apps/desktop/release/*.exe
-          - target: linux-x64
-            os: ubuntu-latest
-            node_platform: linux
-            arch: x64
-            builder_args: --linux AppImage deb --x64
-            assets: |
-              apps/desktop/release/*.AppImage
-              apps/desktop/release/*.deb
-          - target: mac-arm64
-            os: macos-latest
-            node_platform: darwin
-            arch: arm64
-            builder_args: --mac dmg --arm64
-            assets: apps/desktop/release/*-mac-arm64.dmg
-          - target: mac-x64
-            os: macos-15-intel
-            node_platform: darwin
-            arch: x64
-            builder_args: --mac dmg --x64
-            assets: apps/desktop/release/*-mac-x64.dmg
 
     steps:
       - uses: actions/checkout@v7
@@ -144,21 +124,20 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           assets = sorted(p for p in Path("release-assets").iterdir() if p.is_file())
-          if len(assets) != 5:
-              raise SystemExit(f"expected 5 release files, found {len(assets)}")
+          if len(assets) != 1:
+              raise SystemExit(f"expected 1 release file, found {len(assets)}")
           for path in assets:
               print(f"{path.name}  {path.stat().st_size} bytes")
           PY
 
-      # One job owns the Release. Matrix jobs only upload workflow artefacts, so
-      # two platforms can never race while writing the same GitHub Release.
+      # One job owns the Release. The build job uploads one verified Windows
+      # installer; this job alone turns it into a public release asset.
       - uses: softprops/action-gh-release@v2
         with:
           files: release-assets/*
           generate_release_notes: true
           body: |
-            RefRain is available for **Windows x64**, **Linux x64**, and
-            **macOS arm64/x64**. Linux ships both a portable AppImage and a deb.
+            RefRain 0.1.4 is available for **Windows x64**.
 
             Open or drop a folder of Markdown files. **Ctrl K** reaches every
             command; **Ctrl Enter** enters Zen.
@@ -167,5 +146,5 @@ jobs:
             never merges agent output without a human click. Token counts show
             exactly what a harness reports, and unknown when it reports nothing.
 
-            These builds are unsigned preview releases. Windows SmartScreen and
-            macOS Gatekeeper may therefore ask for an explicit confirmation.
+            This is an unsigned preview release. Windows SmartScreen may
+            therefore ask for an explicit confirmation.
