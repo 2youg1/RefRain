@@ -6,7 +6,7 @@
 
 ## Changelog
 
-- 2026-07-26 v0.1.3 — The file layer (§13) and display matching (§14). The first L2 adapter (Claude Code) relays token counts verbatim from the harness, so the second half of the transparency promise is kept rather than only the first. The Host now reclaims a launched run without an adapter-specific call, closing BUG-1. Q5 reopened: its 289px was a measurement fault. A native Rust crate, `packages/fs`, holds traversal, search, sort, and a delete that goes to the system trash; it is the only package carrying a platform binary. Motion and hairlines derive from the panel's measured refresh rate and scale factor rather than from constants. Q8 opened for the cross-volume trash failure measured on Linux.
+- 2026-07-26 v0.1.3 — The file layer (§13) and display matching (§14). The Claude Code adapter relays its four reported token counts without deriving a price or a synthetic total. The Host reclaims launched runs, closing BUG-1. Q5 reopened because 289px was a measurement fault. `packages/fs` is the only package carrying Rust and a platform binary; releases build it on Windows x64, Linux x64, and macOS arm64/x64 before packaging. Motion and hairlines derive from the panel's refresh rate and scale factor. Q8 opened for the cross-volume trash failure measured on Linux.
 - 2026-07-26 v0.1.2 — Renamed RefRain. Cool default palette (§4.4). Edit record, multi-root workspace, command palette as sole entrance, eighteen typographic controls, bundled OFL faces. Q5 opened for the header alignment defect.
 - 2026-07-26 v0.1.1 — M0 landed. Toolchain findings recorded in §4.3; prototype absorbed into `core`; Q1 closed.
 - 2026-07-26 v0.1.0 — First draft: form, domain language, module boundaries, Verdict Ledger protocol, harness tiers, M0 gates.
@@ -173,13 +173,11 @@ WebView2 Evergreen updates on Microsoft's schedule; an app cannot pin or revert 
 
 A measured test (four shells × four criteria, Microsoft Pinyin driven by `SendInput`) found no reproduction on current engines. Its author stated the confidence boundary: machine cadence is not human cadence, and fixed-interval keystrokes cannot surface TSF races that appear only under irregular typing. Hence the conclusion is **relax the pin, keep the gate** — not remove the gate.
 
-### 4.2 Why no Rust in this codebase
+### 4.2 Why Rust stops at the file boundary
 
-Bun's core is already Rust (64.6% of the repository, with 21.4% C++). File I/O, SQLite, hashing, and process management run on Rust while we write TypeScript. **Rust is in the foundation; it need not enter the house.**
+The measured file workload justified one native module: walking and searching 20,000 paths, natural sorting, and recoverable deletion through three operating systems. `packages/fs` owns that work and exposes it through N-API, the ABI shared by Electron, Node, and Bun.
 
-Our own code carries domain logic — transaction semantics, three-way mapping, protocol contracts. Its bottleneck is correctness and changeability, not throughput. Its readers are contributors writing harness adapters, and that ecosystem is almost entirely TypeScript.
-
-The door stays open under one condition: if an M0 performance gate fails on a specific operation, lower **that one function** into a native module. Do not rewrite a layer.
+Domain logic remains TypeScript. Text Actions, Proposals, Verdicts, and harness contracts change for semantic reasons, not throughput, and their contributors work in the TypeScript ecosystem. Rust may enter only behind a measured boundary with its own cross-platform tests; it does not spread upward into `core`, `agent`, the editor, or the shell.
 
 ### 4.3 Colour, and why the default is cool
 
@@ -215,6 +213,7 @@ M0 required proving the TypeScript 7 chain rather than assuming it. Three findin
 5. **Biome lints only a Svelte file's `<script>` block**, so template references read as unused variables. Biome formats `.svelte`; the compiler check owns its linting.
 6. **Electron loads CommonJS**, so `main` and `preload` are bundled to `.cjs` — under `"type": "module"` a `.js` CJS bundle fails at launch, which no unit test reaches. `apps/desktop/test/smoke.test.ts` asserts the build shape, and CI launches the real binary with `--smoke` and requires the window to report a finished load.
 7. **`core` runs in two runtimes with disjoint SQLite builtins.** Bun 1.3 ships `bun:sqlite` and lacks `node:sqlite`; Electron's Node ships the reverse. A direct import of either passes every test in one runtime and throws at launch in the other — which is how `bun:sqlite` reached a release build and failed the launch gate. `packages/core/src/sqlite.ts` selects at runtime, `packages/core/test/runtime.test.ts` forbids a top-level `bun:` import anywhere in `core`, and `make.sh` exercises the Node branch with a real round trip.
+8. **electron-builder and Node name platforms differently.** electron-builder's `${os}` expands to `win`, `mac`, or `linux`; the native loader uses Node's `win32`, `darwin`, or `linux`. `extraResources` therefore uses `${platform}-${arch}`, and every release runner builds the binary it will package.
 
 ---
 
@@ -226,6 +225,7 @@ M0 required proving the TypeScript 7 chain rather than assuming it. Three findin
 packages/
   core/      TypeScript, no DOM, no framework   <- 80% of test effort
   agent/     Agent Host and harness adapters
+  fs/        Rust behind N-API; the only platform binary
   editor/    ProseMirror, no framework
   ui/        Svelte 5
 apps/
@@ -242,6 +242,8 @@ e2e/
 4. **The shell is replaceable.** `apps/desktop` holds no business logic.
 5. **The editor core is framework-free.** ProseMirror owns the DOM; Svelte owns the shell; an explicit command interface separates them. No framework code sits on the IME path.
 6. **Heavy work runs outside the renderer.** Text engine, diffing, indexing, and Agent Host live in a Bun process; the renderer only presents and accepts input.
+7. **`fs` is the only native boundary.** It owns path admission, traversal, search, sort, file operations, and trash integration. Every mutating call passes through its guard; no caller can request permanent deletion.
+8. **A release binary is built where it runs.** Windows x64, Linux x64, and both macOS architectures each build and test their own N-API binary before packaging. Matrix jobs upload artifacts; one final job owns the GitHub Release.
 
 ### 5.3 Responsibilities
 
@@ -253,6 +255,7 @@ e2e/
 | Verdict Ledger | Persisting, searching, and serializing verdicts | Mutating the manuscript |
 | Agent Host | Agents, sessions, runs, queue, Automation Grant | Manuscript editing, harness-native UI |
 | Harness Adapter | One harness: launch, message, cancel, usage, capability verification | Faking uniform capability across harnesses |
+| File layer | Path admission, indexing, search, sort, guarded operations, system trash | Manuscript semantics, agent dispatch, UI state |
 
 ---
 
@@ -312,7 +315,7 @@ interface HarnessAdapter {
 | Harness | Tier | Entry point | Evidence |
 |---|---|---|---|
 | **Codex** | L2 | `codex app-server --stdio` | `thread/tokenUsage/updated` carries both `total` and `last`; `model/rerouted` is execution evidence; `contextCompaction` rides the standard item stream |
-| **Claude Code** | L2 | Agent SDK `query()`, streaming input required | `modelUsage[model]` with six fields; `system/compact_boundary` carries `trigger` and `pre_tokens` |
+| **Claude Code** | L1; model and usage parsing implemented | `claude -p --output-format json` | `usage` reports input, output, cache-read, and cache-creation tokens; a real session and compaction signal must pass §6.5 before L2 |
 | **Pi** | L2 | RPC (custom JSONL over stdio) or SDK | `AssistantMessage.usage` is required, not optional; `compaction_start/end` carries a three-state `reason` |
 | **Kimi Code** | L2 | node-sdk `KimiHarness` | `SessionUsage` provides `byModel` / `currentTurn` / `total`; four compaction events with `tokensBefore/After` |
 | **Hermes** | L1+ | TUI Gateway JSON-RPC | Usage is session-cumulative and needs differencing; API Server emits no compaction event; [issue #33072](https://github.com/NousResearch/hermes-agent/issues/33072) remains open |
@@ -322,7 +325,7 @@ interface HarnessAdapter {
 | Harness | Hazard |
 |---|---|
 | Codex | The default usage channel is populated by estimation and replay. Accumulate `last` for accounting and dedupe the first notification after resume or fork. `turn/completed` carries only a summary — accumulate `item/*` for full output. `ReasoningEffort` is an open string; read it from `model/list` rather than hardcoding |
-| Claude Code | Account with `modelUsage`, not `usage` — the latter excludes subagents. Dollar figures are local estimates and are officially documented as unsafe for billing. `setModel()` and `interrupt()` require streaming input mode. Deduplicate per-step usage by message ID |
+| Claude Code | The current print-mode report is one result, not a per-subagent ledger. Relay only the four fields under `usage`; never expose `total_cost_usd`. A stub process proves parsing and lifecycle, but §6.5 still requires a real installed CLI session before the README may call the tier verified |
 | Pi | **Do not parse RPC frames with Node `readline`** — it splits on `U+2028/U+2029`, which are legal inside JSON strings. Use `agent_settled`, not `agent_end`, as the completion signal. `usage.reasoning` is part of `output` and must not be added to it. `packages/server` is experimental; do not build on it |
 | Kimi Code | Print mode emits no usage; use node-sdk or the KAP WebSocket. AgentSwarm supports up to 128 subagents and offers `resume_agent_ids` |
 | Hermes | `/v1/runs` silently drops `model` unless `provider` accompanies it. `_set_run_status` stores the requested value, not the effective one. SSE buffers expire after five minutes — consume continuously |

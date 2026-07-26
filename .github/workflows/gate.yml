@@ -31,19 +31,19 @@ jobs:
         include:
           - os: ubuntu-latest
             target: linux-x64
-            artifact: librefrain_fs.so
           - os: windows-latest
             target: win32-x64
-            artifact: refrain_fs.dll
           - os: macos-latest
             target: darwin-arm64
-            artifact: librefrain_fs.dylib
-          - os: macos-13
+          - os: macos-15-intel
             target: darwin-x64
-            artifact: librefrain_fs.dylib
 
     steps:
       - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -77,10 +77,11 @@ jobs:
         working-directory: packages/fs
         run: cargo build --release
 
+      # Use the same filename translation that release packaging uses. A second
+      # hand-written `cp` would let this gate pass while the real script broke.
       - name: name the artefact for its platform
-        shell: bash
         working-directory: packages/fs
-        run: cp target/release/${{ matrix.artifact }} refrain-fs.${{ matrix.target }}.node
+        run: bun run scripts/build.ts
 
       - uses: actions/upload-artifact@v7
         with:

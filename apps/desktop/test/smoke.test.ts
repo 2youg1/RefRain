@@ -41,6 +41,25 @@ test.failing("the no-network gate scans every process that the application start
   expect(verifier).toContain("apps/desktop/src/main");
 });
 
+test("packaging uses Node platform names for the native binary", () => {
+  const config = readFileSync(join(here, "..", "electron-builder.yml"), "utf8");
+
+  expect(config).toMatch(/refrain-fs\.\$\{platform\}-\$\{arch\}\.node/);
+  expect(config).not.toMatch(/refrain-fs\.\$\{os\}-\$\{arch\}\.node/);
+});
+
+test("one release job gathers every supported desktop build", () => {
+  const workflow = readFileSync(
+    join(here, "..", "..", "..", ".github", "workflows", "release.yml"),
+    "utf8",
+  );
+
+  for (const target of ["windows-x64", "linux-x64", "mac-arm64", "mac-x64"])
+    expect(workflow).toContain(`target: ${target}`);
+  expect(workflow).toContain("needs: build");
+  expect(workflow.match(/softprops\/action-gh-release/g)).toHaveLength(1);
+});
+
 /**
  * Build-shape checks. A packaged Electron app fails at launch for reasons no
  * unit test reaches: a CJS bundle under `"type": "module"`, an absolute asset

@@ -6,7 +6,7 @@
 
 ## 一句话现状
 
-**文件层落地：Rust 原生实现，291 项测试全绿，Linux 端已实机验证。** 界面层新增文件浏览器并通过 15 项渲染断言。Windows 与 macOS 的产物只能由 CI 产出，**尚未在真机验证**。
+**文件层已经落地：Rust 经 N-API 暴露，257 项 TypeScript 测试与 60 项 Rust 测试全绿。** Linux 原生层与打包资源已在本机实跑；Windows、macOS 和 IME 仍须以 GitHub runner 或真机结果为准。
 
 项目根：`/workspace/projects/stet/`
 仓库：`github.com/kaile9/refrain`（产品名 **RefRain**）
@@ -71,6 +71,8 @@
 - `gate` job 依赖 `native`，下载 Linux 产物后再跑边界测试——否则测试会跳过并报绿
 - 新增 `verify:trash-only` 不变量检查
 - 新增 `verify-files.ts` 渲染门禁
+- `package` job 在压缩前验证 electron-builder schema、图标与随包原生文件
+- tag 触发四目标 release matrix：Windows x64、Linux x64、macOS arm64、macOS x64；一个 publish job 汇总 NSIS、AppImage、deb 与两份 DMG
 
 ---
 
@@ -161,32 +163,32 @@ argv 用 `--permission-mode dontAsk` 加显式允许表（只给 `Read,Write`）
 
 ---
 
-## 四、未完成与未验证
+## 五、未完成与未验证
 
 ### 尚未在真机验证
 
-- **Windows** —— 产物只能由 CI 产出。IME 门禁 `e2e/ime` 在本沙箱无法跑（无 Windows 侧、无显示、无输入法）。**不得伪造该测试结果。**
-- **macOS** —— 同上，且 `NSFileManager` 回收站路径未实测。
+- **Windows** —— CI 能构建并启动未打包应用；IME 门禁 `e2e/ime` 在本沙箱无法跑（无 Windows 侧、无显示、无输入法）。**不得伪造该测试结果。**
+- **macOS** —— CI 负责两种架构的构建与打包；`NSFileManager` 回收站路径尚未在真机实测。
+- **Claude Code adapter** —— stub 进程已验证协议和生命周期，真实已安装 CLI 的会话与 compaction 信号仍未跑，因此当前标为 L1。
 
 ### 已知边界（SPEC Q8）
 
 工作区所在卷若根目录不可写，freedesktop 规范无法创建 `.Trash-<uid>`，删除失败。**文件保留在原处**，界面会指名说明。这是正确行为——回退到永久删除会破坏这一层存在的理由——但用户在该卷上无法从应用内删除。待产品裁定。
 
-### 上一版遗留、本轮未动
+### 仍待处理
 
-- BUG-1 `awaitCompletion` 无人调用（已有 RED 契约 AG-HOST-001）
-- BUG-2 整份 accept 不生效（SPEC Q6，待裁定）
-- 缺口-3 L2 Adapter 一个都没有
-- 缺口-4 引导式 harness 接入不存在
-- 缺口-6 SPEC Q5 章节标题对齐
+- BUG-2：整份 accept 不生效（SPEC Q6，待裁定）
+- 引导式 harness 接入尚未实现
+- SPEC Q5 的真实章节标题对齐尚待有效夹具重新测量
+- release 产物未签名；Windows SmartScreen 与 macOS Gatekeeper 会提示
 
 ---
 
-## 四、建议的下一步
+## 六、建议的下一步
 
-1. **你在 Windows 真机上跑一次 harness**，验证文件层与 IME。
-2. **裁定 SPEC Q8**（跨卷回收站）与 **Q6**（整份 accept）。
-3. **L2 Adapter 从 Claude Code 起**，兑现 token 透明。
+1. 等 v0.1.3 release matrix 的四个平台全部构建完成，核对五个安装包。
+2. 在 Windows 真机跑一次文件层、Claude Code 会话与 IME。
+3. 裁定 SPEC Q8（跨卷回收站）与 Q6（整份 accept）。
 
 ---
 
@@ -203,3 +205,4 @@ argv 用 `--permission-mode dontAsk` 加显式允许表（只给 `Read,Write`）
 | 回收站不变量 | `scripts/verify-trash-only.ts` |
 | 原生工具链 | `scripts/native-env.sh`（本机无 cc，用 Zig 作链接器；CI 不需要） |
 | 性能基准 | `packages/fs/bench/file-layer.bench.ts` |
+| 三平台发布 | `.github/workflows/release.yml`、`apps/desktop/electron-builder.yml` |

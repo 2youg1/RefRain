@@ -4,29 +4,86 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      version:
-        description: Version to build and publish, without the leading v
-        required: true
-        default: 0.1.0
 
-permissions:
-  contents: write
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BUN_VERSION: 1.3.14
+  RUST_VERSION: "1.97.1"
 
 jobs:
-  windows:
-    runs-on: windows-latest
-    timeout-minutes: 45
+  build:
+    name: ${{ matrix.target }}
+    permissions:
+      contents: read
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-x64
+            os: windows-latest
+            node_platform: win32
+            arch: x64
+            builder_args: --win --x64
+            assets: apps/desktop/release/*.exe
+          - target: linux-x64
+            os: ubuntu-latest
+            node_platform: linux
+            arch: x64
+            builder_args: --linux AppImage deb --x64
+            assets: |
+              apps/desktop/release/*.AppImage
+              apps/desktop/release/*.deb
+          - target: mac-arm64
+            os: macos-latest
+            node_platform: darwin
+            arch: arm64
+            builder_args: --mac dmg --arm64
+            assets: apps/desktop/release/*-mac-arm64.dmg
+          - target: mac-x64
+            os: macos-15-intel
+            node_platform: darwin
+            arch: x64
+            builder_args: --mac dmg --x64
+            assets: apps/desktop/release/*-mac-x64.dmg
+
     steps:
       - uses: actions/checkout@v7
+
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/fs
 
       - run: bun install --frozen-lockfile
 
-      # The three gates run here too: a release must not ship code that would
-      # have been refused on a pull request.
+      # A release rebuilds and tests the native layer on the platform that will
+      # load it. A binary copied from another job would only prove that bytes
+      # travelled, not that this runner can execute them.
+      - name: Test the native file layer
+        working-directory: packages/fs
+        run: cargo test --lib
+
+      - name: Build the platform binary
+        run: bun run native
+
+      - name: Require the binary under Node's platform name
+        shell: bash
+        run: test -s "packages/fs/refrain-fs.${{ matrix.node_platform }}-${{ matrix.arch }}.node"
+
+      # The TypeScript contracts also run on every release platform. This is
+      # where path and process assumptions that Linux permits are refused.
       - run: bun run fmt:check
       - run: bun run check
       - run: bun test
@@ -40,58 +97,68 @@ jobs:
         working-directory: apps/desktop
         run: bun test test/smoke.test.ts
 
-      # The decisive check. Files on disk prove nothing; this launches the real
-      # Electron binary on a real Windows desktop and requires the window to
-      # report that it finished loading.
+      # Windows is the first supported desktop and the only hosted runner on
+      # which this project has a real window launch check. The IME workflow is
+      # separate because it seizes a desktop and types through MS Pinyin.
       - name: Launch the app and require a loaded window
+        if: matrix.target == 'windows-x64'
         working-directory: apps/desktop
         timeout-minutes: 4
         run: node scripts/launch-check.mjs
 
-      - name: Package the Windows installer
+      - name: Package ${{ matrix.target }}
         working-directory: apps/desktop
         shell: bash
-        run: bun x electron-builder --win --publish never
-
-      - name: Verify the installer exists and is not a stub
-        working-directory: apps/desktop
-        shell: pwsh
-        run: |
-          $exe = Get-ChildItem release/*.exe | Select-Object -First 1
-          if (-not $exe) { throw 'electron-builder produced no installer' }
-          Write-Host "$($exe.Name)  $([math]::Round($exe.Length / 1MB, 1)) MB"
-          if ($exe.Length -lt 40MB) { throw 'installer is implausibly small' }
+        run: bun x electron-builder ${{ matrix.builder_args }} --publish never
 
       - uses: actions/upload-artifact@v7
         with:
-          name: refrain-windows-installer
-          path: apps/desktop/release/*.exe
+          name: refrain-${{ matrix.target }}
+          path: ${{ matrix.assets }}
+          if-no-files-found: error
           retention-days: 30
 
-      - name: Publish the release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+  publish:
+    name: publish
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
         with:
-          files: apps/desktop/release/*.exe
+          pattern: refrain-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: List the files that will be published
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          assets = sorted(p for p in Path("release-assets").iterdir() if p.is_file())
+          if len(assets) != 5:
+              raise SystemExit(f"expected 5 release files, found {len(assets)}")
+          for path in assets:
+              print(f"{path.name}  {path.stat().st_size} bytes")
+          PY
+
+      # One job owns the Release. Matrix jobs only upload workflow artefacts, so
+      # two platforms can never race while writing the same GitHub Release.
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
           generate_release_notes: true
           body: |
-            **Windows x64.**
+            RefRain is available for **Windows x64**, **Linux x64**, and
+            **macOS arm64/x64**. Linux ships both a portable AppImage and a deb.
 
-            Download the installer, run it, then open or drop a folder of
-            Markdown files.
-
-            One entrance: **Ctrl K** reaches every command. Nothing else stands
-            open — the manuscript is what remains on screen.
-
-            **Ctrl Enter** enters Zen: the text and its rest, with typewriter
-            scrolling so the line you are writing stays near the middle.
-
-            Five typefaces ship with the application under the SIL Open Font
-            License — Chiron Sung HK sets the Chinese — and the typography sheet
-            exposes face, size, weight, leading, tracking, word spacing,
-            measure, indent, paragraph spacing, alignment, margins, and ruled
-            lines. Your own font library is reachable by name.
+            Open or drop a folder of Markdown files. **Ctrl K** reaches every
+            command; **Ctrl Enter** enters Zen.
 
             The application makes no network requests, has no accounts, and
-            never merges anything without a click. Token counts display exactly
-            what a harness reports, and unknown when it reports nothing.
+            never merges agent output without a human click. Token counts show
+            exactly what a harness reports, and unknown when it reports nothing.
+
+            These builds are unsigned preview releases. Windows SmartScreen and
+            macOS Gatekeeper may therefore ask for an explicit confirmation.
