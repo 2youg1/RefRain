@@ -2,12 +2,25 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Agent, ReviewTask } from "@refrain/agent";
-import { AgentHost, CommandAdapter, FileChannelAdapter, sendManifest } from "@refrain/agent";
+import {
+  AgentHost,
+  after,
+  CommandAdapter,
+  FileChannelAdapter,
+  launch,
+  sendManifest,
+} from "@refrain/agent";
 import {
   commitDecisionBatch,
   currentText,
+  describeEditsForAgent,
+  type Edit,
+  editsBetween,
   loadProject,
+  loadWorkspace,
   type Proposal,
+  revertAll,
+  revertEdit,
   saveChapter,
   serializeVerdicts,
   sliceProposal,
@@ -210,39 +223,26 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
    * list rather than throwing — the bundled faces still work.
    */
   ipc.handle("fonts:list", async () => {
-    try {
-      if (process.platform === "win32") {
-        const child = Bun.spawn(
-          [
+    const argv =
+      process.platform === "win32"
+        ? [
             "powershell",
             "-NoProfile",
             "-Command",
             "Add-Type -AssemblyName System.Drawing; " +
               "(New-Object System.Drawing.Text.InstalledFontCollection).Families | " +
               "ForEach-Object { $_.Name }",
-          ],
-          { stdout: "pipe", stderr: "ignore" },
-        );
-        const text = await new Response(child.stdout).text();
-        return [
-          ...new Set(
-            text
-              .split(/\r?\n/)
-              .map((s) => s.trim())
-              .filter(Boolean),
-          ),
-        ].sort();
-      }
+          ]
+        : ["fc-list", "--format", "%{family[0]}\\n"];
 
-      const child = Bun.spawn(["fc-list", "--format", "%{family[0]}\\n"], {
-        stdout: "pipe",
-        stderr: "ignore",
-      });
-      const text = await new Response(child.stdout).text();
+    try {
+      const child = launch({ argv });
+      await child.exited;
+      const text = await child.stdout;
       return [
         ...new Set(
           text
-            .split("\n")
+            .split(/\r?\n/)
             .map((s) => s.trim())
             .filter(Boolean),
         ),
@@ -270,19 +270,22 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     if (!program) return { ok: false, detail: "no command configured" };
 
     try {
-      const child = Bun.spawn([program, "--version"], { stdout: "pipe", stderr: "pipe" });
-      const code = await Promise.race([
-        child.exited,
-        new Promise<number>((resolve) => setTimeout(() => resolve(-1), 4000)),
-      ]);
+      const child = launch({ argv: [program, "--version"] });
+      const timer = after(4000);
+      const code = await Promise.race([child.exited, timer.promise.then(() => -1)]);
+      timer.cancel();
       if (code === -1) {
         child.kill();
         return { ok: false, detail: "timed out after 4s" };
       }
-      const version = (await new Response(child.stdout).text()).trim().split("\n")[0];
+      // A missing binary surfaces as -1 from the spawn error event; saying so
+      // beats "exited -1", which tells an author nothing about what to fix.
+      if (code === -1) return { ok: false, detail: `cannot run ${program}` };
+      const version = (await child.stdout).trim().split("\n")[0];
+      const failure = (await child.stderr).trim().split("\n")[0];
       return code === 0
         ? { ok: true, detail: version || undefined }
-        : { ok: false, detail: `exited ${code}` };
+        : { ok: false, detail: failure || `exited ${code}` };
     } catch (error) {
       return { ok: false, detail: error instanceof Error ? error.message : String(error) };
     }

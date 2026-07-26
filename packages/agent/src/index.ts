@@ -27,6 +27,8 @@ export {
   raiseThreshold,
   recordUsage,
 } from "./session.ts";
+export type { Launch, Launched } from "./spawn.ts";
+export { after, launch } from "./spawn.ts";
 export type {
   Agent,
   Capability,

@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { scaffold } from "./file-channel.ts";
+import { after, type Launched, launch } from "./spawn.ts";
 import type {
   Agent,
   Capability,
@@ -79,7 +80,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
   // compaction signal before this adapter may claim L2.
   readonly tier = "L1" as const;
 
-  private readonly running = new Map<string, Bun.Subprocess>();
+  private readonly running = new Map<string, Launched>();
   private readonly reports = new Map<string, ClaudeResult>();
   /** One settled outcome per run, replayed to every later caller. */
   private readonly settled = new Map<string, Promise<void>>();
@@ -130,14 +131,11 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
     mkdirSync(run.workspace, { recursive: true });
     writeFileSync(run.requestPath, scaffold(task), "utf8");
 
-    const child = Bun.spawn(this.argv(agent), {
+    const child = launch({
+      argv: this.argv(agent),
       cwd: this.config.cwd ?? run.workspace,
-      env: { ...process.env, ...this.config.env },
-      stdin: new Response(
-        `${readFileSync(run.requestPath, "utf8")}\n\nWrite your reply to ${run.resultPath}`,
-      ),
-      stdout: "pipe",
-      stderr: "ignore",
+      env: this.config.env,
+      input: `${readFileSync(run.requestPath, "utf8")}\n\nWrite your reply to ${run.resultPath}`,
     });
 
     this.running.set(run.id, child);
@@ -169,24 +167,23 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
     if (!child) return;
 
     const timeout = this.config.timeoutMs;
-    const exited = timeout
-      ? await Promise.race([child.exited, Bun.sleep(timeout).then(() => TIMED_OUT)])
+    const timer = timeout ? after(timeout) : undefined;
+    const exited = timer
+      ? await Promise.race([child.exited, timer.promise.then(() => TIMED_OUT)])
       : await child.exited;
+    timer?.cancel();
 
     if (exited === TIMED_OUT) {
       child.kill();
       await child.exited;
-      if (child.stdout instanceof ReadableStream) await child.stdout.cancel();
       this.running.delete(run.id);
       if (run.state === "dispatched") run.state = "failed";
       throw new Error(`claude-code exceeded ${timeout}ms for run ${run.id}`);
     }
 
-    // `stdout` is a stream only because dispatch asked for a pipe; the type
-    // also admits a file descriptor, so the narrowing is stated rather than
-    // assumed.
-    const stdout =
-      child.stdout instanceof ReadableStream ? await new Response(child.stdout).text() : "";
+    // Already draining since dispatch; this awaits the accumulated text rather
+    // than starting to read a pipe the harness may have filled long ago.
+    const stdout = await child.stdout;
     this.running.delete(run.id);
 
     // The report is kept even on a failed run: a harness that errored still
