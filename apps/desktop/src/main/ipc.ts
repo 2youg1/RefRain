@@ -15,7 +15,9 @@ import {
   type Verdict,
   VerdictLedger,
 } from "@refrain/core";
+import type { Workspace as FileWorkspace } from "@refrain/fs";
 import type { Dialog, IpcMain } from "electron";
+import { registerFileHandlers } from "./files-ipc.ts";
 
 /**
  * The main process owns state; the renderer only presents and accepts input
@@ -27,6 +29,16 @@ interface Workbench {
   readonly heads: Map<string, TextHead>;
   readonly proposals: Map<string, Proposal>;
   readonly agents: Agent[];
+  /**
+   * The native file index, built lazily.
+   *
+   * Lazy because the file layer is a platform binary: a machine without one
+   * must still open a project and edit text. The manuscript path does not
+   * depend on the file browser, and tying them together would turn a missing
+   * `.node` into an application that cannot start.
+   */
+  files?: FileWorkspace;
+  fileError?: string;
 }
 
 const workbenches = new Map<string, Workbench>();
@@ -47,6 +59,34 @@ const openWorkbench = (root: string): Workbench => {
   };
   workbenches.set(root, workbench);
   return workbench;
+};
+
+/**
+ * The native file index for a root, built on first use.
+ *
+ * Returns `undefined` rather than throwing when the platform binary is absent:
+ * the file browser is an enhancement over an editor that must work without it.
+ * The reason is kept on the workbench so the interface can say which platform
+ * lacks a build instead of showing an empty tree.
+ */
+const filesFor = async (
+  root: string,
+  options?: Record<string, unknown>,
+): Promise<FileWorkspace | undefined> => {
+  const workbench = openWorkbench(root);
+  if (workbench.files) return workbench.files;
+  if (workbench.fileError) return undefined;
+
+  try {
+    const { Workspace } = await import("@refrain/fs");
+    const files = new Workspace([root], options ?? {});
+    files.scan();
+    workbench.files = files;
+    return files;
+  } catch (error) {
+    workbench.fileError = String(error);
+    return undefined;
+  }
 };
 
 const headFor = (root: string, title: string): TextHead => {
@@ -323,4 +363,18 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
   ipc.handle("ledger:reply", (_e, root: string, proposalId: string) =>
     serializeVerdicts(openWorkbench(root).ledger.forProposal(proposalId)),
   );
+
+  /*
+   * Retrieval over stated reasoning. The ledger informs the author when they
+   * revise an agent's persona; it does not compile one for them, which would
+   * require an inference this application has no way to perform.
+   */
+  ipc.handle("ledger:search", (_e, root: string, fragment: string) =>
+    openWorkbench(root).ledger.search(fragment),
+  );
+
+  // The file layer's channels live in their own module: they degrade as a
+  // group when the platform binary is missing, and that rule is easier to hold
+  // where it is the only rule in the file.
+  registerFileHandlers(ipc, filesFor, (root) => openWorkbench(root).fileError);
 };

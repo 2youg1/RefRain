@@ -102,7 +102,93 @@ interface RefRainApi {
     payload: { chapter: string; verdicts: VerdictView[] },
   ): Promise<{ ok: true; text: string } | { ok: false; reason: string; detail: string[] }>;
   ledger(root: string): Promise<VerdictView[]>;
+  /** Search the ledger over stated reasoning, to inform a persona revision. */
+  searchLedger(root: string, fragment: string): Promise<VerdictView[]>;
   reply(root: string, proposalId: string): Promise<string>;
+
+  /**
+   * The native file layer. Every call returns a tagged result rather than
+   * throwing, because a machine without the platform binary keeps its editor
+   * and loses only the browser — and the renderer has to tell those apart.
+   */
+  files: {
+    scan(root: string, options?: Record<string, unknown>): Promise<FileResult<{ count: number }>>;
+    page(
+      root: string,
+      offset: number,
+      limit: number,
+    ): Promise<FileResult<{ entries: FileEntryView[]; total: number }>>;
+    search(
+      root: string,
+      query: string,
+      limit?: number,
+    ): Promise<FileResult<{ hits: FileHitView[] }>>;
+    searchDirectories(
+      root: string,
+      query: string,
+      limit?: number,
+    ): Promise<FileResult<{ hits: FileHitView[] }>>;
+    sort(root: string, order: string, descending: boolean): Promise<FileResult<object>>;
+    move(
+      root: string,
+      from: string,
+      to: string,
+      replace?: boolean,
+    ): Promise<FileResult<{ path: string }>>;
+    copy(
+      root: string,
+      from: string,
+      to: string,
+      replace?: boolean,
+    ): Promise<FileResult<{ path: string }>>;
+    /** Deletes to the system trash. There is deliberately no permanent variant. */
+    trash(root: string, targets: string[]): Promise<FileResult<{ outcomes: TrashOutcomeView[] }>>;
+    link(root: string, target: string, linkPath: string): Promise<FileResult<{ path: string }>>;
+    createDirectory(root: string, path: string): Promise<FileResult<{ path: string }>>;
+    uniqueName(root: string, desired: string): Promise<FileResult<{ path: string }>>;
+    admits(root: string, path: string): Promise<FileResult<{ admitted: boolean }>>;
+  };
+
+  displayProfile?(): Promise<DisplayProfileView>;
+  onDisplayChange?(listener: (profile: DisplayProfileView) => void): () => void;
+}
+
+/** Success carries the payload; failure carries a reason a person can read. */
+export type FileResult<T> = ({ ok: true } & T) | { ok: false; reason: string; detail: string };
+
+export interface FileEntryView {
+  path: string;
+  name: string;
+  kind: "file" | "directory" | "symlink";
+  size: number;
+  modifiedMs: number;
+  depth: number;
+  manuscript: boolean;
+}
+
+export interface FileHitView {
+  entry: FileEntryView;
+  score: number;
+  /** Character offsets into `entry.name`, for highlighting. */
+  positions: number[];
+}
+
+export interface TrashOutcomeView {
+  path: string;
+  trashed: boolean;
+  error?: string;
+}
+
+export interface DisplayProfileView {
+  refreshHz: number;
+  frameBudgetMs: number;
+  scaleFactor: number;
+  hairlineCss: number;
+  width: number;
+  height: number;
+  highDensity: boolean;
+  highRefresh: boolean;
+  css: Record<string, string>;
 }
 
 declare global {
