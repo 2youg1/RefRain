@@ -16,6 +16,16 @@ Three axioms, in priority order:
 2. **Proposals are data.** An agent's edit is a reviewable object, not an accomplished fact.
 3. **Verdicts are replies.** Accept, reject, revise, annotate — all serialized back to the agent.
 
+## Why RefRain
+
+- **The author decides.** Agent output cannot touch the manuscript. It becomes an immutable Proposal; only a Text Action approved by a human changes the file.
+- **Local and private outrank convenience.** The application has no account, API key, telemetry, updater, or outbound request. Manuscripts and collaboration history stay in the project folder.
+- **Performance is measured on the interaction path.** Rust keeps large file indexes out of the renderer, the list only mounts visible rows, and the diff engine handles 100,000-block manuscripts without a quadratic table.
+- **Nothing is trapped.** The manuscript is plain Markdown. Agent rosters, requests, results, and memos use documented files that remain readable and editable without RefRain.
+- **Regret has several honest forms.** Reject a Slice before merge, undo ordinary typing, selectively compensate an older Text Action without replaying later history, or inspect both versions when another editor changed the file.
+- **Several agents may disagree on one baseline.** Broadcast one request, keep every answer as a separate Proposal, compare competitors, and merge only the one whose wording survives review.
+- **Harnesses are replaceable.** L0 accepts any program that can read and write a file; L1 launches argv without a shell; the L2 contract adds verifiable sessions and usage without changing the review model.
+
 ## The Verdict Ledger
 
 Every judgment about agent output — accept, reject, accept-with-changes, and **why** — is first-class data: persisted, searchable, accumulating.
@@ -115,8 +125,9 @@ Green assertions are not correctness. Beyond the unit tests:
 |---|---|
 | [`SPEC.md`](SPEC.md) | The authoritative design baseline. When the code disagrees, the code changes. |
 | [`AGENTS.md`](AGENTS.md) | How to work in this repository: invariants, style, gates. |
-| [`docs/STATUS.md`](docs/STATUS.md) | Current state, known defects, what is unverified. |
 | [`docs/TEST-MATRIX.md`](docs/TEST-MATRIX.md) | Every test that exists and every one that should. |
+| [`docs/project-layout.md`](docs/project-layout.md) | The portable project folder, ownership, and write permissions. |
+| [`docs/flow.md`](docs/flow.md) | The complete dispatch, review, decision, merge, and reply path. |
 
 ## Licence
 
