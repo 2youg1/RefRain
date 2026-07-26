@@ -1,5 +1,6 @@
 import { dirname, join } from "node:path";
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell } from "electron";
+import { cssVariables, profileForBounds } from "./display.ts";
 import { registerHandlers } from "./ipc.ts";
 
 /**
@@ -69,6 +70,39 @@ const createWindow = (): BrowserWindow => {
     window.setFullScreen(on);
     return window.isFullScreen();
   });
+
+  /*
+   * The panel decides the frame budget.
+   *
+   * A 165 Hz monitor has 6.06 ms per frame and a 60 Hz one 16.67; motion
+   * quantised to a constant stutters on the first and wastes the second. The
+   * renderer receives the measured rate and expresses durations in frames.
+   */
+  ipcMain.removeHandler("display:profile");
+  ipcMain.handle("display:profile", () => {
+    const profile = profileForBounds(screen, window.getBounds());
+    return { ...profile, css: cssVariables(profile) };
+  });
+
+  /*
+   * Dragging between monitors changes the target. Without this the window keeps
+   * whichever budget it started with, which is the wrong one for the panel the
+   * writer is now looking at.
+   */
+  let lastProfile = "";
+  const announceDisplay = () => {
+    if (window.isDestroyed()) return;
+    const profile = profileForBounds(screen, window.getBounds());
+    const signature = `${profile.refreshHz}/${profile.scaleFactor}`;
+    if (signature === lastProfile) return;
+    lastProfile = signature;
+    window.webContents.send("display:changed", { ...profile, css: cssVariables(profile) });
+  };
+
+  window.on("move", announceDisplay);
+  window.on("resize", announceDisplay);
+  window.webContents.once("did-finish-load", announceDisplay);
+  screen.on("display-metrics-changed", announceDisplay);
 
   if (useDevServer) window.loadURL("http://localhost:5173");
   else window.loadFile(join(bundleDir(), "..", "renderer", "index.html"));
