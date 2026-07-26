@@ -6,6 +6,7 @@
 
 ## Changelog
 
+- 2026-07-26 v0.1.2 — Renamed RefRain. Cool default palette (§4.4). Edit record, multi-root workspace, command palette as sole entrance, eighteen typographic controls, bundled OFL faces. Q5 opened for the header alignment defect.
 - 2026-07-26 v0.1.1 — M0 landed. Toolchain findings recorded in §4.3; prototype absorbed into `core`; Q1 closed.
 - 2026-07-26 v0.1.0 — First draft: form, domain language, module boundaries, Verdict Ledger protocol, harness tiers, M0 gates.
 
@@ -66,6 +67,7 @@ Implementation, tests, and UI strings use these terms. **One concept, one word. 
 
 | Term | Definition |
 |---|---|
+| **Workspace** | Several roots open at once. A root is a folder of Markdown, or a single file opened without adopting its neighbours |
 | **Project** | A work, its chapters, its rules, and its collaboration record — one local scope |
 | **Source Backup** | The immutable original kept when a project is created from existing files. Never written to |
 | **Canonical Text** | The text the human currently endorses, represented by the current Text Head |
@@ -89,6 +91,7 @@ Implementation, tests, and UI strings use these terms. **One concept, one word. 
 | **Review Slice** | A deterministic diff fragment between a Proposal's before and after text |
 | **Verdict** | A human judgment on one Review Slice or a whole Proposal. The ledger's unit |
 | **Decision Batch** | A set of Verdicts committed as a single atomic Text Action |
+| **Edit** | One addressable change the author made: a replacement, an insertion, or a removal, carrying before-text, after-text, and optionally the author's own note. Revertible on its own and serialisable to an agent |
 
 ### 2.3 Agents and harnesses
 
@@ -177,7 +180,30 @@ Our own code carries domain logic — transaction semantics, three-way mapping, 
 
 The door stays open under one condition: if an M0 performance gate fails on a specific operation, lower **that one function** into a native module. Do not rewrite a layer.
 
-### 4.3 Toolchain findings, measured
+### 4.3 Colour, and why the default is cool
+
+Warm paper is the settled answer for writing tools, which is why they look
+alike. The default palette here is 雨 — a cool ground near hue 235 with chroma
+around 0.012 — and the reason is not novelty.
+
+**Cinnabar needs a cool ground to read as heat.** On cream the same red merely
+sits there; against a cool sheet it is the only warm thing on screen, which is
+what an accent reserved for human decisions should be.
+
+**Cool paper wants warm ink.** Matching the ink to the paper's hue produces a
+tinted PDF: technically harmonious, materially dead. The charcoal leans warm
+(hue 48) and is stated as solid values, never as a tint of the ground — dilute
+a warm charcoal with opacity and it becomes grey, which is how an earlier
+"warm ink" arrived on screen as no ink at all.
+
+**Chroma is the difference between a sheet and a callout.** At 0.034 a
+viewport of it reads as an information panel. Cool comes from hue.
+
+The warm palette remains as 楮, and the dark one as 夜. All three are stated in
+OKLCH: lightness can be lowered while chroma and hue hold, which is what lets
+the dark theme read as a lamp on paper rather than as an inverted screen.
+
+### 4.4 Toolchain findings, measured
 
 M0 required proving the TypeScript 7 chain rather than assuming it. Three findings changed the build:
 

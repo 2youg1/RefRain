@@ -2,13 +2,11 @@
 
 **A local writing workbench where every agent edit is a proposal you can refuse — and your refusal is data.**
 
-*[中文 README](README.zh-CN.md)*
+*[中文 README](README.zh-CN.md)* · *[Download for Windows](https://github.com/kaile9/refrain/releases/latest)*
 
 ---
 
-*RefRain* — the scholarly practice of collating variant manuscripts and deciding, with stated reasons, which reading stands. Competing versions arrive; one human judges; the judgment is recorded and can be argued with later.
-
-That is the whole product.
+A *refrain* is the line a song returns to. To *refrain* is to hold back. And a *ref* is what you consult when you want to be sure. The name carries all three, because the work does: you return to the manuscript, you withhold assent until you have read the proposal, and the record of what you decided is there to consult later.
 
 ## Why you would use this
 
@@ -16,91 +14,86 @@ Start with what it refuses to do.
 
 **It will not write into your manuscript.** Agents produce proposals. A human click merges one. There is no auto-accept, no background merge, no YOLO mode — and no setting, flag, or plugin that creates one. If you have ever run an agent over a chapter and then spent an hour finding what it quietly changed, this is the entire reason this project exists.
 
-**It will not phone home.** The application process makes no outbound network requests. No account, no telemetry, no auto-update, no crash reporting. Every model call happens inside your own harness, under your own credentials. You can verify this claim with a firewall — which is the point of stating it this way.
+**It will not phone home.** The application process makes no outbound network requests. No account, no telemetry, no auto-update, no crash reporting. Every model call happens inside your own harness, under your own credentials. You can verify this with a firewall, which is why the claim is worth stating this way.
 
 **It will not estimate your bill.** No prices, no cost projections, no "you have used 40% of your budget." Token counts are reported exactly as your harness reports them, tagged `actual`, `estimated`, or `unknown`. When a harness reports nothing, you see *unknown* rather than a plausible-looking zero.
 
-**It will not spend tokens you did not authorize.** No background summarization, no automatic context enrichment, no helpful pre-fetching. Every run appears in a manifest you approve before it is sent, and nothing is silently trimmed to save you money.
+**It will not spend tokens you did not authorize.** No background summarisation, no automatic context enrichment, no helpful pre-fetching. Every run appears in a manifest you approve before it is sent, and nothing is silently trimmed to save you money.
 
-**It will not lock up your work.** Markdown files on disk, readable and git-trackable without this application. Delete the app tomorrow and your manuscript is intact and unchanged.
+**It will not lock up your work.** Markdown files on disk, readable and git-trackable without this application. Delete the app tomorrow and your manuscript is intact.
 
 **It will not stop working when the agents do.** With every harness disconnected, this is still a complete writing application: open, edit, search, save, undo.
 
-What remains after those refusals is a workbench that shows you exactly what an agent proposes, lets you accept it, rewrite it, or throw it out with a reason — and remembers the reason.
+What remains after those refusals is a workbench that shows you exactly what an agent proposes, lets you accept it, rewrite it, or throw it out with a reason — and keeps the reason.
 
-## The idea: a Verdict Ledger
+## The ledger
 
-Agents write directly into your files. You get a diff, you skim it, you accept or revert. Then the reasoning evaporates — why you rejected that paragraph, what was wrong with that phrasing, which version of the character's voice you actually wanted. Next session, the agent makes the same mistake, and you correct it again.
+Every judgment you make — accept, reject, accept-with-changes, and **why** — is stored, searchable, and replayable. Other tools treat a verdict as a UI event: you click accept and the reasoning evaporates. Keeping it produces three things nothing else offers.
 
-Every tool treats your judgment as a transient UI event. Click accept, and it is gone.
+**Reply.** Your verdict becomes part of the next prompt. The agent learns why the last draft was refused, in your words.
 
-RefRain persists it. Every judgment — accept, reject, accept-with-changes, and **why** — is first-class, durable, structured data. That single change produces three things:
+**Taste.** Accumulated verdicts are a sample of your judgment. No training required, only retrieval.
 
-**It replies.** Your verdict becomes part of the next prompt. The agent reads why the last draft failed, in your words, anchored to the exact passage.
+**Provenance.** A finished work can show which sentence you wrote, which an agent proposed, and which an agent proposed and you revised.
 
-**It accumulates.** A few hundred verdicts are a sample of how you actually judge prose. No training, no fine-tuning — just retrieval against your own recorded taste.
+Editors go stale. Harnesses turn over yearly. The ledger does neither.
 
-**It proves.** A finished manuscript can show which sentence you wrote, which an agent proposed, and which an agent proposed and you rewrote.
+## One entrance
 
-Editors go stale. Harnesses turn over every year. A record of your judgment does neither.
+There is no permanent toolbar. **Ctrl K** reaches every command; panels open on demand and close on Escape. What stays on screen is the manuscript.
 
-## Not a harness — an orchestration layer above them
+**Ctrl Enter** enters Zen: the text and its rest, with typewriter scrolling so the line you are writing stays near the middle of the screen rather than sinking to the bottom edge.
 
-RefRain runs no model and owns no agent loop. It drives the harnesses you already use, and its ambition sits one level up: **the coordination between a human and several agents, and among the agents themselves.**
+## Typography
 
-Most harnesses give you one conversation and one agent. Real work is not shaped that way. RefRain models it as a graph — tasks that fan out to competing agents, results that converge on a single human decision point, and a decision that becomes the input to the next round.
+Eighteen controls — face, size, weight, leading, tracking, word spacing, measure, first-line indent, paragraph spacing, alignment, margins, ruled lines, line numbers, and more. Chinese and Latin faces are set separately, values can be typed as well as dragged, and your own installed fonts are listed and searchable.
 
-- **Competing proposals.** Broadcast one passage to several agents, then choose, combine, or reject all of them.
-- **Cross-session dialogue.** Two sessions each hold a character; the workbench relays between them for several rounds; the resulting exchange arrives as one proposal.
-- **Batched dispatch.** Queue work across chapters and agents, review the consolidated manifest, send once.
-- **Every edge is human-gated.** No round advances without a click. No autonomous loop reaches your manuscript.
+Five typefaces ship with the application under the SIL Open Font License, so it renders identically on every machine: **Chiron Sung HK** sets the Chinese, **Antic Didone** the display, **Jost** and **Murecho** the interface, **Courier Prime** the monospace.
 
-The first release targets long-form prose. The orchestration model is not specific to prose, and programming workflows follow.
+The ruled lines land one pixel under the glyphs, per paragraph. That sounds like a detail until you see the alternative: a grid painted on the container drifts out of step wherever paragraph spacing is not a whole number of line boxes, and the rules end up through the middle of the characters. `scripts/verify-grid.ts` measures it on every build.
 
-## How it works
+**Breathing** dims every paragraph but the one under your cursor. Not the blackout that focus modes use — in long-form work the surrounding text is what you are writing against.
 
-```
-write normally
-  -> select a passage, write a prompt, pick an agent
-  -> queue it; batch as many as you like
-  -> send with one click
-  -> your harness runs and writes a result file
-  -> RefRain freezes it into an immutable Proposal
-  -> you adjudicate, slice by slice, with reasons
-  -> your decision commits atomically to the manuscript
-  -> the verdict enters the ledger
-```
+## Agents
 
-## Harness support
+Any harness works. The floor is the **file channel**: the application writes `request.md`, you hand it to anything at all — a terminal agent, a web chat, a colleague — and paste the reply into `result.md`. No command, no configuration, no network.
 
-Adapters are graded by what a harness can actually prove, not by what it claims.
+Above that, a **command adapter** automates any harness with a command-line entry point, and the agent panel tells you whether it is actually reachable rather than storing a command and letting you discover the mistake an hour later.
 
-| Tier | Requires | You get |
+| Harness | Tier | Entry point |
 |---|---|---|
-| **L0** | Nothing — the agent writes a file | Works with any harness, including copy-paste |
-| **L1** | Programmatic sessions, completion events, cancellation | Dispatch, cancel, live status |
-| **L2** | Honest usage reporting, effective-model readback, compaction events | Real token counts, trustworthy context warnings |
+| Codex | L2 | `codex app-server --stdio` |
+| Claude Code | L2 | Agent SDK `query()` |
+| Pi | L2 | RPC over stdio |
+| Kimi Code | L2 | node-sdk `KimiHarness` |
+| Hermes | L1+ | TUI Gateway JSON-RPC |
+| Anything else | L0 | the file channel |
 
-| Harness | Tier |
-|---|---|
-| [Codex](https://github.com/openai/codex) | L2 |
-| [Claude Code](https://code.claude.com/docs) | L2 |
-| [Pi](https://pi.dev) | L2 |
-| [Kimi Code](https://moonshotai.github.io/kimi-code/) | L2 |
-| [Hermes](https://hermes-agent.nousresearch.com/docs) | L1+ |
+## What changed, and putting it back
 
-Missing capability is never rejection — it is degradation with honest labeling. An L0 adapter takes a few dozen lines. **Contributions welcome; the list is meant to grow.**
+Every edit you make is recorded as an addressable change. Revert any one of them without disturbing the others, revert the lot, or attach your own note to a change and send the whole account to an agent so it works against the current text rather than the version it last saw.
 
-## Where this came from
+## Install
 
-Two earlier projects by the same author, both still running:
+Download the installer from [Releases](https://github.com/kaile9/refrain/releases/latest). Windows x64.
 
-**[md2prompt](https://github.com/kaile9/md2prompt)** — a single-file HTML editor that logs every human revision and exports a protocol-precise `Prompt.md` for an agent to read. It proved the half that mattered: a human's edits and annotations, serialized into a format an agent consumes without tool calls or re-uploading the document. RefRain inverts the direction — the agent proposes, the human adjudicates — and keeps the protocol discipline that made the original work.
+Then open a folder of Markdown files, or drop one onto the window. Several folders can be open at once, and a single file can be opened without adopting its neighbours.
 
-**[apostle-skills](https://github.com/kaile9/apostle-skills)** — agent skills for serious reading, research, translation, and long-horizon work. Two shaped this design directly. `apostle-artifacts-loops` contributed the commissioning discipline: single-use identifiers, no overwrite on retry, and artifacts on disk as the meeting point between agents that cannot see each other. `apostle-constitutio` contributed bidirectional zero-trust, which became the rule that this workbench never believes an agent's own report — only files on disk, verified.
+## Build from source
 
-## Status
+```bash
+bun install
+bun run gate                    # format, typecheck, test
+cd apps/desktop && ./make.sh    # renderer, main, preload
+bun x electron dist/main/main.cjs
+```
 
-Early development. [`SPEC.md`](SPEC.md) is the authoritative design baseline; [`ROADMAP.md`](ROADMAP.md) covers scope and what is deliberately excluded; [`AGENTS.md`](AGENTS.md) is the working contract for contributors, human or otherwise.
+## Two origins
 
-Built with TypeScript, Bun, Electron, Svelte, and ProseMirror.
+**[md2prompt](https://github.com/kaile9/md2prompt)** proved the half that mattered: that a human should see exactly what goes to a model and exactly what comes back. RefRain inverts the direction — the manuscript is the fixed point and the agent's output is the thing under review.
+
+**[apostle-skills](https://github.com/kaile9/apostle-skills)** supplied the discipline. `apostle-artifacts-loops` gave the delegation rules: single-use identifiers, retries that never overwrite, disk artefacts as the meeting point between processes. `apostle-constitutio` gave the two-way zero trust — an agent's self-report is never taken as evidence of what it did.
+
+## Licence
+
+Not yet chosen. Bundled typefaces are under the SIL Open Font License; their licences travel with them in `apps/desktop/src/renderer/fonts/`.
