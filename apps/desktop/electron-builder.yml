@@ -35,6 +35,11 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+  # electron-builder creates a desktop shortcut by default. Putting an icon on
+  # someone's desktop is a change to their machine they did not ask for, and
+  # this installer already shows a page where they can ask for it — so the
+  # default here is no, and the checkbox is the consent.
+  createDesktopShortcut: false
   # The manuscripts and the Verdict Ledger live in the project folder, not in
   # app data, but an uninstall must not take a writer's preferences with it
   # either. Removing state on uninstall is a decision for the person, not the

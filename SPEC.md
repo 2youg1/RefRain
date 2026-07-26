@@ -6,6 +6,7 @@
 
 ## Changelog
 
+- 2026-07-27 v0.1.5 — Rewrote every claim this file made about a thing that does not exist. §4 no longer lists ProseMirror as installed; §5.1 separates what is on disk from what is planned, and drops `ui/`, an empty package whose `exports` pointed at a file nobody had written; §5.2 marks rules 4, 5, 6, and 8 as commitments rather than descriptions; §11 stops saying the IME gate has not landed, and says instead that it has landed without a latch. Q9 settles the eight themes and how day and night relate, Q10 the three typeface slots and the faces that fill them, Q11 whether a subdirectory's Markdown is material or a chapter.
 - 2026-07-27 v0.1.5 — Author saves now advance the main process's canonical Text Head instead of rebuilding paragraph IDs from strings at each IPC call. Unchanged blocks keep their IDs across removals and later disjoint insertions. Restoring a removed block is an insertion Text Change inside a compensating Text Action; a vanished lineage boundary fails closed instead of appending the block elsewhere.
 - 2026-07-26 v0.1.3 — The file layer (§13) and display matching (§14). The Claude Code adapter relays its four reported token counts without deriving a price or a synthetic total. The Host reclaims launched runs, closing BUG-1. Q5 reopened because 289px was a measurement fault. `packages/fs` is the only package carrying Rust and a platform binary; releases build it on Windows x64, Linux x64, and macOS arm64/x64 before packaging. Motion and hairlines derive from the panel's refresh rate and scale factor. Q8 opened for the cross-volume trash failure measured on Linux.
 - 2026-07-26 v0.1.2 — Renamed RefRain. Cool default palette (§4.4). Edit record, multi-root workspace, command palette as sole entrance, eighteen typographic controls, bundled OFL faces. Q5 opened for the header alignment defect.
@@ -157,8 +158,16 @@ If an Edit Scope's text changes while queued, mark that slot `drifted` and surfa
 | Bun | 1.3.14 | Runtime, package manager, test runner, SQLite. Rust-implemented core |
 | Electron | 43.2.0 | Chromium 150.0.7871.129. Pinned and revertible |
 | Svelte | 5.56.x (runes) | Shell UI only |
-| ProseMirror | 1.42.x | Editor core, no framework |
+| ProseMirror | — | **Planned for v0.2, not installed.** The manuscript is a `contenteditable` driven directly |
 | Biome | 2.5.5 | Formatter and linter, one config |
+
+This table said `ProseMirror 1.42.x` for three releases while `grep prosemirror`
+returned nothing. That is worse than an omission: the IME gate's test page is a
+ProseMirror page, so the most expensive evidence this project owns — a Windows
+machine, Microsoft Pinyin, four shells, real `SendInput` typing — was guarding
+an editor that does not ship. §5.2 rule 5 states the rule the editor must meet;
+until `packages/editor` exists, the shipped surface has not been measured
+against it.
 
 ### 4.1 Why Electron, not Tauri
 
@@ -222,29 +231,47 @@ M0 required proving the TypeScript 7 chain rather than assuming it. Three findin
 
 ### 5.1 Layout
 
+What is on disk today:
+
 ```
 packages/
   core/      TypeScript, no DOM, no framework   <- 80% of test effort
   agent/     Agent Host and harness adapters
   fs/        Rust behind N-API; the only platform binary
-  editor/    ProseMirror, no framework
-  ui/        Svelte 5
 apps/
-  desktop/   Electron: windowing and packaging only
+  desktop/   Electron: windowing, packaging, and — for now — the editor
 e2e/
   ime/       IME gate; required before any Electron bump
 ```
 
+Planned for v0.2, and named here so nobody builds around their absence:
+
+```
+packages/
+  editor/    the manuscript surface, lifted out of apps/desktop
+```
+
+An earlier revision of this section drew `editor/` and `ui/` as though they
+existed. `ui/` was an empty package whose `exports` pointed at a file that had
+never been written, which tells a contributor to put UI code somewhere no build
+would find it; it has been deleted. `editor/` is a real commitment, so it stays
+— under a heading that says it has not been built.
+
 ### 5.2 Rules
 
 1. **`core` has no DOM and near-zero runtime dependencies.** Text engine, Revision Store, Review Engine, and protocol codecs live here and run under `bun test` alone.
-2. **`ui` consumes `core`.** It invents no data formats and touches no protocol files directly.
+2. **The renderer consumes `core`.** It invents no data formats and touches no protocol files directly.
 3. **`agent` is the only harness surface.** Protocol drift is absorbed there and never reaches `core`.
-4. **The shell is replaceable.** `apps/desktop` holds no business logic.
-5. **The editor core is framework-free.** ProseMirror owns the DOM; Svelte owns the shell; an explicit command interface separates them. No framework code sits on the IME path.
-6. **Heavy work runs outside the renderer.** Text engine, diffing, indexing, and Agent Host live in a Bun process; the renderer only presents and accepts input.
+4. **The shell is replaceable.** `apps/desktop` holds no business logic. *Not yet true: it currently holds the editor and the IPC coordination for heads, proposals, and commits. `packages/editor` is the first half of paying that off.*
+5. **The editor core is framework-free.** ProseMirror owns the DOM; Svelte owns the shell; an explicit command interface separates them. No framework code sits on the IME path. *Not yet true: the manuscript is a `contenteditable` in `App.svelte`, and Svelte reactivity sits on the input path. This is the rule v0.2 must satisfy, not a description of today.*
+6. **Heavy work runs outside the renderer.** Text engine, diffing, indexing, and Agent Host live in a separate process; the renderer only presents and accepts input. *Not yet true: they run in the Electron main process, where a large diff or a synchronous scan blocks the window.*
 7. **`fs` is the only native boundary.** It owns path admission, traversal, search, sort, file operations, and trash integration. Every mutating call passes through its guard; no caller can request permanent deletion.
-8. **A release binary is built where it runs.** Windows x64, Linux x64, and both macOS architectures each build and test their own N-API binary before packaging. Matrix jobs upload artifacts; one final job owns the GitHub Release.
+8. **A release binary is built where it runs.** Windows x64, Linux x64, and both macOS architectures each build and test their own N-API binary before packaging. Matrix jobs upload artifacts; one final job owns the GitHub Release. *Releases currently ship Windows x64 only; the other three are configured but not published.*
+
+Rules 4, 5, 6, and 8 carry an italic note because they were being read as
+descriptions of the system when they are commitments about it. A baseline that
+cannot be told apart from a status report is the mechanism by which a project
+builds on guarantees it does not have.
 
 ### 5.3 Responsibilities
 
@@ -514,7 +541,7 @@ TypeScript 7 is new enough that build-tool compatibility must be proven, not ass
 
 Accept: `bun run fmt:check`, `bun run check`, `bun test` all green; the IME gate runs on Windows and produces a report.
 
-Status: gates green (§4.3 records what the chain actually required). The IME gate project has not landed in the repository yet.
+Status: gates green (§4.3 records what the chain actually required). The IME gate has landed: `e2e/ime/` holds the project and `.github/workflows/ime-gate.yml` runs it. It does not yet run on a hosted runner, and `release.yml` does not depend on it — so "an Electron bump must pass the IME gate" is a rule with a door and no latch.
 
 ### M1 · `core`
 
@@ -593,3 +620,6 @@ The profile is per window, not per application: dragging from a laptop panel to 
 | Q8 | A workspace on a volume whose root is not writable cannot have a trash directory created, so the delete fails and the file stays. | Closed — 2026-07-26. The refusal stands; what changes is that it stops being a dead end. When the trash on the workspace's own volume is unavailable, the interface says so — *this location has no trash, so nothing here can be deleted safely* — and offers one action: **move it to the system trash**, meaning the trash on the volume that holds the user's home. That is a cross-device move followed by a trash, and `ops.rs` already performs both (the `EXDEV` branch copies, verifies, then trashes the source). If the home volume has no trash either, the interface explains and offers nothing. **No permanent delete appears at any layer, on any path.** The file always ends up somewhere the operating system can restore it from. |
 | Q5 | **Reopened as a measurement fault, not a layout defect.** `verify-anchor` reported a 289px drift, but its fixture never opened a chapter, so `header.bar` never rendered — and `Progress.svelte` carries the same `.bar` class. The script was measuring the progress rule against the sheet: two unrelated elements. The selector is now `header.bar` and an empty fixture fails instead of reporting a defect. Whether a real drift exists is unknown until the fixture opens a chapter, which needs the workspace-load path driven rather than `refrain.roots` seeded. | Open — remeasure |
 | ~~Q5 (old)~~ | The chapter header will not share the manuscript's left edge — it stays at the pane edge regardless of width, `align-self`, or a wrapper element, while the sheet centres correctly. Measured by `apps/desktop/scripts/capture.ts`, which warns rather than fails. | Open |
+| Q9 | Are the eight themes settled, and how do day and night relate? | Closed — 2026-07-27. **Day: 濤 tou, 霞 kasumi, 枯 kare, 林 hayashi, 瓷 seiji. Night: 墨 sumi, 幽 yu, 時雨 shigure. Default 濤.** Night is not day inverted: each palette is drawn from its own reference, so N themes means N, not N×2, and the light/dark command crosses between the two groups remembering where the writer was on each side. `docs/theme-tokens.ts` is the single authority; `themes.css` is generated and must not be hand-edited. |
+| Q10 | Which Japanese faces ship, alongside which Chinese ones? | Closed — 2026-07-27. Three slots rather than two: Chinese, Japanese, and Latin are separate settings, because one CJK slot cannot serve both a Chinese and a Japanese reader — 直, 骨, and 令 are drawn differently and a single face gets one of them wrong. **Japanese sans: Zen Kaku Gothic New** (OFL 1.1, no reserved name, five weights, freely subsettable). **Japanese serif: KazukiReiwa 一樹令和** (OFL 1.1; "KazukiReiwa" *is* a reserved name, and the 20–27 MB weights make subsetting unavoidable, so the shipped subset is renamed `RefRain Mincho`). **Chinese sans: ChillDINGothic** (OFL 1.1, reserved names `ChillDIN`/`ChillDINGothic`/`Source`; rename on subset). Chinese serif stays Chiron Sung HK. Rejected: 致一黑體_傳承形 and Mizuki-Gothic are IPA Font License — legal to ship only byte-for-byte, unrenamed, unsubsetted, and as a standalone file rather than linked into the executable; MiSans and OPPO Sans forbid redistributing the font binary at all. Evidence: two rounds of licence due diligence reading each upstream LICENSE directly and inspecting the binaries with fontTools. |
+| Q11 | Does a project collect Markdown from subdirectories, and as what? | Closed — 2026-07-27. **Material first, then chapters.** A subdirectory's Markdown is material by default — notes, chronologies, sources — and a chapter is the role a file is promoted into, not the role every `.md` starts with. Getting this backwards puts a chronology into the chapter sequence, where it corrupts numbering, the progress rule, and the send manifest. Presentation is a tree, expanded by directory; a graph view of the links between files may be added later as a second view, never as the only one. |
