@@ -27,7 +27,7 @@ const bundleDir = (): string => {
  * `electron` binary reports false, so CI's launch check went hunting for a dev
  * server that was never started.
  */
-const useDevServer = process.env.RECENSION_DEV === "1";
+const useDevServer = process.env.REFRAIN_DEV === "1";
 
 const createWindow = (): BrowserWindow => {
   const window = new BrowserWindow({

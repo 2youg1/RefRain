@@ -8,14 +8,15 @@
   "type": "module",
   "main": "dist/main/main.cjs",
   "scripts": {
-    "dev": "RECENSION_DEV=1 bun x vite",
+    "dev": "REFRAIN_DEV=1 bun x vite",
     "build": "./make.sh",
-    "pack": "electron-builder --win --publish never",
+    "pack": "electron-builder --publish never",
     "smoke": "bun test test/smoke.test.ts"
   },
   "devDependencies": {
     "@refrain/agent": "workspace:*",
     "@refrain/core": "workspace:*",
+    "@refrain/fs": "workspace:*",
     "@sveltejs/vite-plugin-svelte": "7.2.0",
     "electron": "43.2.0",
     "electron-builder": "26.15.3",
