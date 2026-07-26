@@ -126,8 +126,11 @@ const server = Bun.serve({
   port: 0,
   fetch(request) {
     const path = new URL(request.url).pathname;
+    // No caching: a rebuild changes the asset hash, and a stale bundle makes
+    // every measurement below describe the previous build.
     return new Response(
       Bun.file(join(root, "dist", "renderer", path === "/" ? "index.html" : path)),
+      { headers: { "cache-control": "no-store" } },
     );
   },
 });
@@ -231,6 +234,44 @@ await load();
 await page.keyboard.press("Control+Enter");
 await page.waitForTimeout(460);
 await shot("08-zen");
+
+/*
+ * With a chapter open, the header and the sheet must share one left edge.
+ * Vision reads "roughly aligned" as aligned; this does not. The check lives
+ * here because this fixture is the one that reliably opens a project.
+ */
+await load();
+const anchor = await page.evaluate(() => {
+  const left = (selector: string): number | null => {
+    const el = document.querySelector(selector);
+    return el ? Math.round(el.getBoundingClientRect().left) : null;
+  };
+  const bar = document.querySelector(".bar");
+  return {
+    bar: left(".bar"),
+    sheet: left(".sheet-surface"),
+    barCount: document.querySelectorAll(".bar").length,
+    barParent: bar?.parentElement?.className ?? "(none)",
+    railWidth: document.querySelector(".bar-rail")
+      ? getComputedStyle(document.querySelector(".bar-rail") as Element).width
+      : "(no rail)",
+  };
+});
+
+if (anchor.bar === null || anchor.sheet === null) {
+  console.warn("\n  anchor check skipped: no chapter open in the fixture");
+} else {
+  const drift = Math.abs(anchor.bar - anchor.sheet);
+  console.log(`\n  anchor: ${JSON.stringify(anchor)}`);
+  console.log(`  drift ${drift}px`);
+  if (drift > 1)
+    console.warn(
+      "  KNOWN  the header does not share the manuscript's left edge.\n" +
+        "  The header stays pinned at the pane edge regardless of width, align-self,\n" +
+        "  or wrapper; cause not yet found. Tracked in SPEC 12.",
+    );
+  else console.log("  PASS  the column hangs from one line");
+}
 
 await browser.close();
 server.stop();

@@ -519,3 +519,4 @@ Accept: the tier table is re-verified in a real environment; a clean machine pas
 | Q2 | May a human and an agent edit the same file concurrently? (Leaning: the file is read-only to the human while an agent works on it) | Open |
 | Q3 | UI for cross-session multi-agent dialogue orchestration | Needs design |
 | Q4 | Does the Verdict Ledger's retrieval interface ship in v1? | Open |
+| Q5 | The chapter header will not share the manuscript's left edge — it stays at the pane edge regardless of width, `align-self`, or a wrapper element, while the sheet centres correctly. Measured by `apps/desktop/scripts/capture.ts`, which warns rather than fails. | Open |
