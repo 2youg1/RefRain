@@ -27,12 +27,18 @@ const scopeText = (head: TextHead, proposal: Proposal): string | undefined => {
 export const rebuildReplacement = (proposal: Proposal, verdicts: readonly Verdict[]): string => {
   const bySlice = new Map(verdicts.filter((v) => v.sliceId).map((v) => [v.sliceId, v] as const));
 
+  // Each kept slice carries the whitespace it sat behind, so rejecting
+  // everything reproduces `proposal.before` byte for byte. Joining trimmed
+  // sentences instead — which is what this did — closed every sentence gap and
+  // every paragraph break, so a proposal the author had refused in full still
+  // came back having rewritten their spacing.
   return sliceProposal(proposal)
     .flatMap((slice) => {
       const verdict = bySlice.get(slice.id);
-      if (slice.kind === "same") return [slice.text];
-      if (slice.kind === "del") return isAccepted(verdict) ? [] : [slice.text];
-      return isAccepted(verdict) ? [verdict?.finalText ?? slice.text] : [];
+      const kept = (text: string) => [slice.lead + text + slice.trail];
+      if (slice.kind === "same") return kept(slice.text);
+      if (slice.kind === "del") return isAccepted(verdict) ? [] : kept(slice.text);
+      return isAccepted(verdict) ? kept(verdict?.finalText ?? slice.text) : [];
     })
     .join("");
 };

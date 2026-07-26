@@ -24,6 +24,19 @@ export interface ReviewSlice {
   readonly id: string;
   readonly kind: SliceKind;
   readonly text: string;
+  /** Whitespace after this sentence; non-empty only at the end of the text. */
+  readonly trail: string;
+  /**
+   * The whitespace that preceded this sentence in its own source text.
+   *
+   * Carried because rebuilding a replacement has to be lossless when every
+   * slice is rejected. Sentences are trimmed for comparison — otherwise a
+   * paragraph break would make two identical sentences unequal — and joining
+   * the trimmed forms deleted every space and every blank line between them.
+   * Rejecting the whole proposal then still rewrote the manuscript, which
+   * defeats the one guarantee an unjudged slice is supposed to carry.
+   */
+  readonly lead: string;
 }
 
 /**
@@ -33,8 +46,42 @@ export interface ReviewSlice {
  */
 const SENTENCE = /[^。！？…!?.]*[。！？…!?.]+["'”’)）」』]*|[^。！？…!?.]+$/g;
 
-const sentences = (text: string): string[] =>
-  (text.match(SENTENCE) ?? []).map((s) => s.trim()).filter((s) => s.length > 0);
+/** A sentence, trimmed for comparison, with the whitespace it sat behind. */
+interface Sentence {
+  readonly text: string;
+  readonly lead: string;
+  /** Only ever non-empty on the last sentence; see `sentences`. */
+  readonly trail: string;
+}
+
+const sentences = (text: string): Sentence[] => {
+  const found: Sentence[] = [];
+  let cursor = 0;
+
+  for (const match of text.matchAll(SENTENCE)) {
+    const raw = match[0];
+    const start = match.index ?? cursor;
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) continue;
+
+    // Everything skipped since the previous sentence, plus this match's own
+    // leading space — together they reproduce the source exactly.
+    found.push({
+      text: trimmed,
+      lead: text.slice(cursor, start + raw.indexOf(trimmed)),
+      trail: "",
+    });
+    cursor = start + raw.indexOf(trimmed) + trimmed.length;
+  }
+
+  // A lead covers the gap before its sentence, so whatever trails the last one
+  // belongs to no sentence and was dropped. It is the author's whitespace too.
+  const last = found.at(-1);
+  if (last && cursor < text.length)
+    found[found.length - 1] = { ...last, trail: text.slice(cursor) };
+
+  return found;
+};
 
 /**
  * Longest common subsequence over sentences. Unchanged sentences surface as
@@ -53,19 +100,26 @@ export const sliceProposal = (proposal: Proposal): ReviewSlice[] => {
   for (let i = before.length - 1; i >= 0; i--)
     for (let j = after.length - 1; j >= 0; j--)
       common[i * width + j] =
-        before[i] === after[j]
+        before[i]?.text === after[j]?.text
           ? lengthAt(i + 1, j + 1) + 1
           : Math.max(lengthAt(i + 1, j), lengthAt(i, j + 1));
 
   const slices: ReviewSlice[] = [];
-  const emit = (kind: SliceKind, text: string | undefined): void => {
-    if (text !== undefined) slices.push({ id: `${proposal.id}.s${slices.length}`, kind, text });
+  const emit = (kind: SliceKind, sentence: Sentence | undefined): void => {
+    if (sentence !== undefined)
+      slices.push({
+        id: `${proposal.id}.s${slices.length}`,
+        kind,
+        text: sentence.text,
+        lead: sentence.lead,
+        trail: sentence.trail,
+      });
   };
 
   let i = 0;
   let j = 0;
   while (i < before.length && j < after.length) {
-    if (before[i] === after[j]) {
+    if (before[i]?.text === after[j]?.text) {
       emit("same", before[i]);
       i++;
       j++;
