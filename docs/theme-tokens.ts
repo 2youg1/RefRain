@@ -399,8 +399,17 @@ const block = (t: Theme): string => {
 
   const selector = t.isDefault ? ":root" : `:root[data-theme="${t.slug}"]`;
   out.push(`${selector} {`, `  color-scheme: ${t.mode === "night" ? "dark" : "light"};`, "");
-  for (const [name, c] of Object.entries(v))
-    out.push(`  --${name}: oklch(${c[0].toFixed(3)} ${c[1].toFixed(4)} ${c[2].toFixed(1)});  /* ${hex(c)} */`);
+  {
+    // Trailing zeros are stripped and integers keep no decimal point, because
+    // that is what biome normalises these literals to — a generated file that
+    // never passes fmt:check makes the gate useless for the files people write.
+    const trim = (n: number, places: number): string =>
+      Number(n.toFixed(places)).toString();
+    for (const [name, c] of Object.entries(v))
+      out.push(
+        `  --${name}: oklch(${trim(c[0], 3)} ${trim(c[1], 4)} ${trim(c[2], 1)}); /* ${hex(c)} */`,
+      );
+  }
   out.push("}");
   return out.join("\n");
 };
