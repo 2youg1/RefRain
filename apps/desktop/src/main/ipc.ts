@@ -252,6 +252,30 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     }
   });
 
+  /**
+   * Open one of this project's own pages in the system browser.
+   *
+   * An allowlist rather than a pass-through: handing the renderer an
+   * "open any URL" channel would let it originate outbound traffic by proxy,
+   * and the no-network invariant would hold only in the letter. The four
+   * addresses here are the ones the About page offers.
+   */
+  ipc.handle("shell:open-project-url", async (_e, url: string) => {
+    const allowed = [
+      "https://github.com/kaile9/RefRain",
+      "https://github.com/kaile9/RefRain/issues",
+      "https://github.com/kaile9/RefRain/discussions",
+      "https://github.com/kaile9/RefRain/blob/main/LICENSE",
+    ];
+    if (!allowed.includes(url)) return false;
+    // Imported here rather than at the top: outside a real Electron process
+    // the `electron` module is a CommonJS stub that exports the binary's
+    // path, so a top-level named import fails to parse under `bun test`.
+    const { shell } = await import("electron");
+    await shell.openExternal(url);
+    return true;
+  });
+
   ipc.handle("agent:list", (_e, root: string) => openWorkbench(root).agents);
 
   /**

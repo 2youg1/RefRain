@@ -12,8 +12,16 @@ import type { Key, Lang } from "./i18n.ts";
     | "about"
     | null;
 
+  /**
+   * The four addresses the About page offers. Main holds the same list and
+   * refuses anything else, so this constant is a convenience rather than the
+   * security boundary.
+   */
+  const REPOSITORY = "https://github.com/kaile9/RefRain";
+
   interface Props {
     lang: Lang;
+    version: string;
     theme: "rain" | "kozo" | "ink";
     surface: "opaque" | "translucent" | "glass";
     sheet: "none" | "hairline" | "paper";
@@ -27,6 +35,7 @@ import type { Key, Lang } from "./i18n.ts";
     onSheet: (next: "none" | "hairline" | "paper") => void;
     onLayout: (next: "page" | "canvas") => void;
     onIcon: (dataUrl: string | null) => void;
+    onOpenUrl: (url: string) => void;
     typography: Snippet;
     agents: Snippet;
     shortcuts: Snippet;
@@ -34,6 +43,7 @@ import type { Key, Lang } from "./i18n.ts";
 
   const {
     lang,
+    version,
     theme,
     surface,
     sheet,
@@ -47,6 +57,7 @@ import type { Key, Lang } from "./i18n.ts";
     onSheet,
     onLayout,
     onIcon,
+    onOpenUrl,
     typography,
     agents,
     shortcuts,
@@ -172,9 +183,27 @@ import type { Key, Lang } from "./i18n.ts";
       {@render shortcuts()}
     {:else if section === "about"}
       <div class="field about">
-        <p class="version">RefRain 0.1.2</p>
+        <p class="version">RefRain {version}</p>
         <p class="quiet-text">{t("set.noNetwork")}</p>
         <p class="quiet-text">{t("set.fonts")}</p>
+        <p class="quiet-text">{t("set.openExternal")}</p>
+        <div class="links">
+          <!--
+            An external link opens in the system browser, never in a window of
+            this application: the app makes no requests of its own, and a page
+            rendered inside it would be exactly that.
+          -->
+          <button class="link" onclick={() => onOpenUrl(REPOSITORY)}>{t("set.repo")}</button>
+          <button class="link" onclick={() => onOpenUrl(`${REPOSITORY}/issues`)}>
+            {t("set.issues")}
+          </button>
+          <button class="link" onclick={() => onOpenUrl(`${REPOSITORY}/discussions`)}>
+            {t("set.discussions")}
+          </button>
+          <button class="link" onclick={() => onOpenUrl(`${REPOSITORY}/blob/main/LICENSE`)}>
+            {t("set.licence")}
+          </button>
+        </div>
       </div>
     {/if}
   </div>
@@ -317,5 +346,32 @@ import type { Key, Lang } from "./i18n.ts";
   .quiet-text {
     font-size: var(--step--1);
     color: var(--ink-faint);
+  }
+
+  .links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 1.4rem;
+    margin-top: 0.9rem;
+  }
+
+  .link {
+    font-size: var(--step--1);
+    color: var(--seal);
+    padding: 0;
+    /* An underline offset by the descender height, so it reads as a link
+       without cutting through the hooks of 源 or 议. */
+    text-decoration: underline;
+    /* Chinese needs a heavier rule than Latin at the same size: at 1px and 45%
+       opacity the line vanished into the strokes of 源 and 议, so only the
+       link containing Latin characters read as underlined at all. */
+    text-underline-offset: 0.24em;
+    text-decoration-thickness: 1.5px;
+    text-decoration-color: color-mix(in oklab, var(--seal) 68%, transparent);
+  }
+
+  .link:hover {
+    color: var(--seal-bright);
+    text-decoration-color: currentColor;
   }
 </style>

@@ -113,6 +113,30 @@ whenBuilt("packaged build", () => {
     expect(main).not.toMatch(/["'](\/home\/|\/Users\/|[A-Z]:\\\\)[^"']*src[/\\]main["']/);
   });
 
+  /**
+   * Modules loaded by tests may not name Electron's runtime API at the top
+   * level. Outside a real Electron process `electron` resolves to a CommonJS
+   * stub that exports the binary's path, so `import { shell } from "electron"`
+   * fails to parse and takes the whole suite with it. This is the third
+   * variant of one mistake — after bun:sqlite and Bun.spawn — where the test
+   * runtime and the shipping runtime disagree about what a module is.
+   */
+  test("modules the tests load do not name Electron's runtime API", () => {
+    const main = join(here, "..", "src", "main");
+    const ipc = readFileSync(join(main, "ipc.ts"), "utf8");
+    const filesIpc = readFileSync(join(main, "files-ipc.ts"), "utf8");
+
+    for (const [name, source] of [
+      ["ipc.ts", ipc],
+      ["files-ipc.ts", filesIpc],
+    ] as const) {
+      const offending = source
+        .split("\n")
+        .filter((line) => /^import\s+(?!type\b)[^;]*from\s+"electron";/.test(line));
+      expect(offending, `${name} imports an Electron value at the top level`).toEqual([]);
+    }
+  });
+
   test("the renderer holds no privilege", () => {
     const main = readFileSync(join(dist, "main", "main.cjs"), "utf8");
 

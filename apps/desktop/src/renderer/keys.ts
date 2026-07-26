@@ -32,21 +32,16 @@ export const DEFAULT_BINDINGS: Record<string, string> = {
   zoomReset: "Ctrl+0",
   undo: "Ctrl+Z",
   redo: "Ctrl+Y",
-
-  /*
-   * Verdict actions. Alt rather than Ctrl and never a bare letter: review
-   * happens with the manuscript in focus and often with an IME candidate
-   * window open, where a bare A would be a character, not a command.
-   */
-  verdictNext: "Alt+J",
-  verdictPrev: "Alt+K",
-  verdictAccept: "Alt+A",
-  verdictReject: "Alt+X",
-  verdictEdit: "Alt+E",
-  verdictToggleCheck: "Alt+S",
-  verdictCommit: "Alt+Enter",
-  verdictAcceptFormatting: "Alt+Shift+A",
 };
+
+/*
+ * Eight verdict chords used to live here — Alt+J, Alt+A, Alt+Enter and the
+ * rest — with no handler in any component. They were worse than absent:
+ * `commandFor` matches by iteration order, so a chord claimed by a dead
+ * binding was shadowed for whatever the author had rebound it to, and then
+ * nothing ran. They come back when Review has keyboard adjudication, together
+ * with it, and not before.
+ */
 
 /** Normalise an event into the same shape as a stored binding. */
 export const chordOf = (event: KeyboardEvent): string => {

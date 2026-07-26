@@ -32,6 +32,9 @@ const api = {
 
   fullscreen: (on: boolean) => ipcRenderer.invoke("window:fullscreen", on),
 
+  /** Opens one of this project's own pages; main refuses anything else. */
+  openProjectUrl: (url: string) => ipcRenderer.invoke("shell:open-project-url", url),
+
   /** Faces installed on this machine, so the author can pick from their own library. */
   systemFonts: () => ipcRenderer.invoke("fonts:list"),
 
