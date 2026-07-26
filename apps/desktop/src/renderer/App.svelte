@@ -4,44 +4,55 @@ import type { ChapterView, EditView, ProposalView, RunView, VerdictView } from "
 import { api } from "./api.ts";
 import ContextMenu from "./ContextMenu.svelte";
 import Dispatch from "./Dispatch.svelte";
+import { applyProfile, type DisplayProfile, FALLBACK, trackDisplay } from "./display.ts";
 import Edits from "./Edits.svelte";
+import Files, { type FileEntry, type SortOrder } from "./Files.svelte";
 import { type Key, type Lang, translator } from "./i18n.ts";
-import { chordOf, commandFor, loadBindings, saveBindings } from "./keys.ts";
+import { chordOf, commandFor } from "./keys.ts";
 import Ledger from "./Ledger.svelte";
 import Mark from "./Mark.svelte";
 import Palette, { type Command } from "./Palette.svelte";
 import Progress from "./Progress.svelte";
+import {
+  applyAppearance,
+  applyTypography,
+  type Layout,
+  loadPreferences,
+  persist,
+  persistBindings,
+  type SheetStyle,
+  type Surface,
+  type Theme,
+} from "./preferences.ts";
+import Rail from "./Rail.svelte";
 import Review from "./Review.svelte";
 import Settings, { type Section } from "./Settings.svelte";
 import Sheet from "./Sheet.svelte";
 import Shortcuts from "./Shortcuts.svelte";
 import Typography from "./Typography.svelte";
 import { DEFAULTS, measureFontLine, type TypeSettings } from "./typography.ts";
+import Welcome from "./Welcome.svelte";
 
-type SheetName = "dispatch" | "review" | "ledger" | "edits" | "settings" | null;
+type SheetName = "dispatch" | "review" | "ledger" | "edits" | "settings" | "files" | null;
 
-const stored = <T,>(key: string, fallback: T): T => {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw === null ? fallback : (JSON.parse(raw) as T);
-  } catch {
-    return fallback;
-  }
-};
+// Durable choices live in preferences.ts: they answer a different question
+// from anything on screen, and keeping them together puts every storage key
+// in one file.
+const saved0 = loadPreferences();
 
-let lang = $state<Lang>(stored("refrain.lang", "zh"));
-let theme = $state<"rain" | "kozo" | "ink">(stored("refrain.theme", "rain"));
-let surface = $state<"opaque" | "translucent" | "glass">(stored("refrain.surface", "opaque"));
-let sheetStyle = $state<"none" | "hairline" | "paper">(stored("refrain.sheet", "none"));
-let layout = $state<"page" | "canvas">(stored("refrain.layout", "page"));
-let icon = $state<string | null>(stored("refrain.icon", null));
-let type = $state<TypeSettings>({ ...DEFAULTS, ...stored("refrain.type", DEFAULTS) });
-let bindings = $state<Record<string, string>>(loadBindings());
+let lang = $state<Lang>(saved0.lang);
+let theme = $state<Theme>(saved0.theme);
+let surface = $state<Surface>(saved0.surface);
+let sheetStyle = $state<SheetStyle>(saved0.sheet);
+let layout = $state<Layout>(saved0.layout);
+let icon = $state<string | null>(saved0.icon);
+let type = $state<TypeSettings>(saved0.type);
+let bindings = $state<Record<string, string>>(saved0.bindings);
 
 const t = $derived(translator(lang));
 
 /** Several roots, so an empty folder for tidiness does not lock out the manuscripts. */
-let roots = $state<string[]>(stored("refrain.roots", []));
+let roots = $state<string[]>(saved0.roots);
 let chapters = $state<ChapterView[]>([]);
 let active = $state<string | null>(null);
 let text = $state("");
@@ -66,52 +77,155 @@ let notice = $state<string | null>(null);
 let surfaceEl = $state<HTMLElement | null>(null);
 let scrollEl = $state<HTMLElement | null>(null);
 
+/*
+ * The file browser. The index lives in the native layer; this holds only the
+ * page currently on screen, which is what keeps a workspace of any size from
+ * crossing the bridge on every keystroke.
+ */
+let fileEntries = $state<FileEntry[]>([]);
+let fileTotal = $state(0);
+let fileUnavailable = $state<string | null>(null);
+let fileQuery = $state("");
+let fileOrder = $state<SortOrder>("name");
+let fileDescending = $state(false);
+/**
+ * How many rows the viewport last asked for. The list measures itself and
+ * reports it, so a refresh after a sort or a trash fetches what is on screen
+ * rather than a fixed page that is either short on a tall monitor or wasteful
+ * on a short one.
+ */
+let visibleRows = $state(40);
+
+/*
+ * The panel this window sits on. Motion durations are expressed in frames of
+ * this profile, so a gesture reads the same on a 60 Hz laptop and a 165 Hz
+ * desktop instead of being quantised to whichever the developer owned.
+ */
+let display = $state<DisplayProfile>(FALLBACK);
+
 const root = $derived(roots[0] ?? null);
 
+// Every durable choice is written back the moment it changes; the storage
+// keys and the CSS custom properties both live in preferences.ts.
 $effect(() => {
-  document.documentElement.dataset.theme = theme;
-  document.documentElement.dataset.surface = surface;
-  document.documentElement.dataset.sheet = sheetStyle;
-  localStorage.setItem("refrain.theme", JSON.stringify(theme));
-  localStorage.setItem("refrain.surface", JSON.stringify(surface));
-  localStorage.setItem("refrain.sheet", JSON.stringify(sheetStyle));
+  applyAppearance(theme, surface, sheetStyle);
+  persist("theme", theme);
+  persist("surface", surface);
+  persist("sheet", sheetStyle);
 });
-$effect(() => localStorage.setItem("refrain.lang", JSON.stringify(lang)));
-$effect(() => localStorage.setItem("refrain.layout", JSON.stringify(layout)));
-$effect(() => localStorage.setItem("refrain.icon", JSON.stringify(icon)));
-$effect(() => localStorage.setItem("refrain.roots", JSON.stringify(roots)));
-$effect(() => saveBindings(bindings));
+$effect(() => persist("lang", lang));
+$effect(() => persist("layout", layout));
+$effect(() => persist("icon", icon));
+$effect(() => persist("roots", roots));
+$effect(() => persistBindings(bindings));
 
 $effect(() => {
-  localStorage.setItem("refrain.type", JSON.stringify(type));
-  const style = document.documentElement.style;
-  const family = `"${type.latinFamily}", "${type.cjkFamily}", serif`;
-
-  style.setProperty("--manuscript-family", family);
-  style.setProperty("--manuscript-size", `${type.size * type.zoom}px`);
-  style.setProperty("--manuscript-weight", String(type.weight));
-  style.setProperty("--manuscript-leading", String(type.leading));
-  style.setProperty("--manuscript-tracking", `${type.tracking}em`);
-  style.setProperty("--manuscript-word-spacing", `${type.wordSpacing}em`);
-  style.setProperty("--manuscript-measure", `${type.measure}em`);
-  /*
-   * The column's width as an absolute length.
-   *
-   * `measure` is em, which resolves against whichever element reads it — so
-   * the header at one font size and the manuscript at another produced two
-   * different widths from the same variable, and centring them gave two
-   * different left edges. One pixel value, shared, removes the whole class of
-   * bug.
-   */
-  style.setProperty("--column-width", `${type.measure * type.size * type.zoom + 144}px`);
-  style.setProperty("--manuscript-indent", `${type.indent}em`);
-  style.setProperty("--manuscript-align", type.align);
-  style.setProperty("--paragraph-spacing", String(type.paragraphSpacing));
-  style.setProperty("--margin-top", `${type.marginTop}rem`);
-  style.setProperty("--margin-bottom", `${type.marginBottom}vh`);
-  style.setProperty("--grid-every", String(type.gridEvery));
-  style.setProperty("--font-line", measureFontLine(family, type.size).toFixed(4));
+  persist("type", type);
+  applyTypography(type, measureFontLine(`"${type.latinFamily}", "${type.cjkFamily}", serif`, type.size));
 });
+
+/*
+ * Track the panel and write its variables onto :root. The unsubscribe matters:
+ * without it, moving the window between monitors accumulates listeners on one
+ * channel and the leak is invisible until it is large.
+ */
+$effect(() =>
+  trackDisplay(window.refrain ?? {}, (profile) => {
+    display = profile;
+    applyProfile(profile, document.documentElement);
+  }),
+);
+
+/**
+ * Open the browser, scanning on first use.
+ *
+ * The walk is deferred to the moment the pane is opened rather than run at
+ * project load: a writer who never opens the browser should never pay for it.
+ */
+const openFiles = async () => {
+  sheet = "files";
+  if (!root || fileUnavailable || fileTotal > 0) return;
+
+  const scanned = await api().files.scan(root);
+  if (!scanned.ok) {
+    fileUnavailable = t("files.unavailable");
+    return;
+  }
+  await api().files.sort(root, fileOrder, fileDescending);
+  // The viewport asks for its own rows once it has measured itself; seeding a
+  // fixed page here would put rows in the DOM that no one can see.
+  fileTotal = scanned.count;
+};
+
+/** Ask the native layer for the rows the viewport can actually show. */
+const needFilePage = async (offset: number, limit: number) => {
+  visibleRows = limit;
+  if (!root || fileUnavailable) return;
+  const result = await api().files.page(root, offset, limit);
+  if (!result.ok) {
+    fileUnavailable = t("files.unavailable");
+    return;
+  }
+  fileEntries = result.entries;
+  fileTotal = result.total;
+};
+
+const searchFiles = async (query: string) => {
+  fileQuery = query;
+  if (!root) return;
+
+  // An empty query returns to the ordered index rather than ranking nothing:
+  // clearing the box should show the folder, not an empty list.
+  if (query.trim() === "") {
+    const scanned = await api().files.scan(root);
+    if (!scanned.ok) {
+      fileUnavailable = t("files.unavailable");
+      return;
+    }
+    await api().files.sort(root, fileOrder, fileDescending);
+    fileTotal = scanned.count;
+    await needFilePage(0, visibleRows);
+    return;
+  }
+
+  const result = await api().files.search(root, query, 200);
+  if (!result.ok) {
+    fileUnavailable = t("files.unavailable");
+    return;
+  }
+  fileEntries = result.hits.map((hit) => hit.entry);
+  fileTotal = result.hits.length;
+};
+
+const sortFiles = async (order: SortOrder) => {
+  // Clicking the active column reverses it; clicking another switches to it
+  // ascending, which is what every file manager does and what a hand expects.
+  fileDescending = order === fileOrder ? !fileDescending : false;
+  fileOrder = order;
+  if (!root) return;
+  await api().files.sort(root, order, fileDescending);
+  await needFilePage(0, visibleRows);
+};
+
+const trashFiles = async (paths: string[]) => {
+  if (!root) return;
+  const result = await api().files.trash(root, paths);
+  if (!result.ok) {
+    notice = result.detail;
+    return;
+  }
+
+  // Report per path: one locked file must not read as a failure of the batch,
+  // and a writer needs to know exactly which chapter is still there.
+  // Name the files that stayed. A partial failure reported as a single "error"
+  // leaves the writer unsure which chapter they still have.
+  const failed = result.outcomes.filter((outcome) => !outcome.trashed);
+  if (failed.length > 0) {
+    notice = t("files.trashFailed") + failed.map((outcome) => outcome.path).join("、");
+  }
+  await needFilePage(0, visibleRows);
+  chapters = await api().loadWorkspace(roots);
+};
 
 const say = (message: string): void => {
   notice = message;
@@ -284,6 +398,7 @@ const commands = $derived<Command[]>([
   { id: "create", label: "cmd.create", group: "group.project", run: () => void createProject() },
   { id: "chapter", label: "cmd.newChapter", group: "group.project", keys: bindings.newChapter, run: () => void newChapter(), when: () => root !== null },
   { id: "save", label: "cmd.save", group: "group.write", keys: bindings.save, run: () => void save(), when: () => active !== null },
+  { id: "files", label: "cmd.files", group: "group.project", run: () => void openFiles(), when: () => root !== null },
   { id: "edits", label: "cmd.edits", group: "group.write", keys: bindings.edits, run: () => (sheet = "edits"), when: () => root !== null },
   { id: "zen", label: "cmd.zen", group: "group.view", keys: bindings.zen, run: () => void setZen(!zen), when: () => active !== null },
   { id: "dispatch", label: "cmd.dispatch", group: "group.collab", keys: bindings.dispatch, run: () => (sheet = "dispatch"), when: () => root !== null },
@@ -382,84 +497,36 @@ const onScroll = (): void => {
 />
 
 {#if roots.length === 0}
-  <main class="welcome" class:dragging>
-    <Mark size={54} custom={icon} />
-    <h1>RefRain</h1>
-    <p class="tagline">{t("app.tagline")}</p>
-
-    <div class="actions">
-      <button class="primary" onclick={() => void addRoot()}>{t("welcome.open")}</button>
-      <button onclick={() => void openFile()}>{t("welcome.openFile")}</button>
-      <button onclick={() => void createProject()}>{t("welcome.create")}</button>
-    </div>
-
-    <p class="drop">{t("welcome.drop")}</p>
-    <p class="fine">{t("welcome.fine")}</p>
-    <p class="fine key">{t("welcome.hint")}</p>
-
-    <div class="hidden-entry">
-      <Palette
-        open={paletteOpen}
-        {commands}
-        {t}
-        {icon}
-        onOpen={() => (paletteOpen = true)}
-        onClose={() => (paletteOpen = false)}
-      />
-    </div>
-  </main>
+  <Welcome
+    {t}
+    {icon}
+    {commands}
+    {paletteOpen}
+    {dragging}
+    onOpenFolder={() => void addRoot()}
+    onOpenFile={() => void openFile()}
+    onCreate={() => void createProject()}
+    onPaletteOpen={() => (paletteOpen = true)}
+    onPaletteClose={() => (paletteOpen = false)}
+  />
 {:else}
   <div class="shell" class:zen class:dragging>
     {#if !zen}
-      <nav class="rail">
-        <header class="rail-head">
-          <Palette
-            open={paletteOpen}
-            {commands}
-            {t}
-            {icon}
-            inverted
-            onOpen={() => (paletteOpen = true)}
-            onClose={() => (paletteOpen = false)}
-          />
-          <span class="wordmark">RefRain</span>
-        </header>
-
-        <div class="tree">
-          {#each roots as path (path)}
-            {@const rootChapters = chapters.filter((c) => c.root === path)}
-            <div class="root">
-              <div class="root-head">
-                <span class="root-name">{path.split(/[/\\]/).pop()}</span>
-                <button class="drop-root" onclick={() => void removeRoot(path)} aria-label="remove">
-                  ✕
-                </button>
-              </div>
-              {#each rootChapters as chapter (chapter.title)}
-                <button
-                  class="chapter"
-                  class:on={chapter.title === active}
-                  onclick={() => select(chapter.title)}
-                >
-                  {chapter.title}
-                </button>
-              {/each}
-              {#if rootChapters.length === 0}
-                <p class="root-empty">{t("chapter.empty")}</p>
-              {/if}
-            </div>
-          {/each}
-        </div>
-
-        <div class="rail-foot">
-          <button onclick={() => void addRoot()}>＋ {t("welcome.open")}</button>
-          {#if active}
-            <button onclick={() => void newChapter()}>
-              ＋ {t("cmd.newChapter").replace("…", "")}
-            </button>
-          {/if}
-        </div>
-      </nav>
+      <Rail
+        {t}
+        {icon}
+        {commands}
+        {paletteOpen}
+        {roots}
+        {chapters}
+        {active}
+        onSelect={select}
+        onAddRoot={() => void addRoot()}
+        onRemoveRoot={(path) => void removeRoot(path)}
+        onNewChapter={() => void newChapter()}
+        onPaletteOpen={() => (paletteOpen = true)}
+        onPaletteClose={() => (paletteOpen = false)}
+      />
     {/if}
 
     <main class="writing">
@@ -573,6 +640,29 @@ const onScroll = (): void => {
   <Review {proposals} {comments} {t} {refusal} onCommit={commit} />
 </Sheet>
 
+<Sheet open={sheet === "files"} title={t("files.title")} width="420px" onClose={() => (sheet = null)}>
+  <Files
+    {t}
+    entries={fileEntries}
+    total={fileTotal}
+    unavailable={fileUnavailable}
+    active={chapters.find((c) => c.title === active)?.path ?? null}
+    order={fileOrder}
+    descending={fileDescending}
+    query={fileQuery}
+    onSelect={(entry) => {
+      // Only a manuscript opens in the editor; clicking a folder or an image
+      // selects it for a move or a trash without changing what is on screen.
+      const chapter = chapters.find((c) => c.path === entry.path);
+      if (chapter) open(chapter.title);
+    }}
+    onQuery={searchFiles}
+    onSort={sortFiles}
+    onTrash={trashFiles}
+    onNeedPage={needFilePage}
+  />
+</Sheet>
+
 <Sheet open={sheet === "edits"} title={t("edits.title")} width="480px" onClose={() => (sheet = null)}>
   <Edits
     {edits}
@@ -627,96 +717,22 @@ const onScroll = (): void => {
 {/if}
 
 <style>
-.welcome {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100vh;
-  gap: 0;
-  text-align: center;
-  padding: 2rem 2rem 9vh;
-  transition: background 200ms var(--ease);
-}
-
-.welcome.dragging,
 .shell.dragging {
   background: var(--seal-wash);
 }
 
-h1 {
-  font-family: var(--display);
-  font-size: var(--step-4);
-  font-weight: 400;
-  letter-spacing: 0.04em;
-  margin-top: 1.4rem;
-}
 
-.tagline {
-  font-family: var(--serif);
-  color: var(--ink-soft);
-  max-width: 26em;
-  line-height: 1.95;
-  margin-top: 1.5rem;
-}
 
-.actions {
-  display: flex;
-  gap: 0.5rem;
-  margin-top: 2.3rem;
-}
 
-.actions button {
-  padding: 0.58rem 1.3rem;
-  border: 1px solid var(--rule-strong);
-  border-radius: 3px;
-  font-size: var(--step--1);
-  color: var(--ink-soft);
-  background: var(--paper-raised);
-  transition: transform 200ms var(--spring), border-color 160ms var(--ease), color 160ms var(--ease);
-}
 
-.actions button:hover {
-  border-color: var(--seal);
-  color: var(--seal);
-  transform: translateY(-1px);
-}
 
-.actions .primary {
-  background: var(--ink);
-  border-color: var(--ink);
-  color: var(--paper-raised);
-}
 
-.actions .primary:hover {
-  background: var(--seal);
-  border-color: var(--seal);
-  color: var(--paper-raised);
-}
 
-.drop {
-  font-size: var(--step--1);
-  color: var(--ink-faint);
-  margin-top: 0.9rem;
-}
 
-.welcome.dragging .drop {
-  color: var(--seal);
-}
 
-.fine {
-  font-size: var(--step--2);
-  color: var(--ink-ghost);
-  max-width: 25em;
-  margin-top: 2.6rem;
-  line-height: 1.9;
-}
 
-.fine.key {
-  margin-top: 0.5rem;
-  color: var(--ink-faint);
-  letter-spacing: 0.03em;
-}
+
+
 
 .shell {
   display: grid;
@@ -729,160 +745,22 @@ h1 {
   grid-template-columns: minmax(0, 1fr);
 }
 
-/*
- * The rail is a different material from the page — a dark board the sheets sit
- * against. Two shades of the same paper never separated properly; this does,
- * and it gives the cinnabar somewhere to be bright.
- */
-.rail {
-  display: flex;
-  flex-direction: column;
-  background: var(--rail);
-  color: var(--rail-ink);
-  padding: 0.7rem 0.5rem 0.7rem;
-  overflow: hidden;
-  flex: none;
-  /* The seam: a dark edge and a short gradient, so the cool and warm surfaces
-   * meet rather than collide. A hard butt joint makes the eye refocus. */
-  /*
-   * The seam. A 5:1 drop in lightness cannot be joined by a hairline: the eye
-   * refocuses on the boundary. A warm highlight on the rail's own edge gives
-   * the two surfaces a note in common, and the shadow spreads far enough into
-   * the warm side to be seen rather than merely specified.
-   */
-  box-shadow:
-    inset -1px 0 0 oklch(0.986 0.006 76 / 0.13),
-    1px 0 0 oklch(0.164 0.030 254),
-    12px 0 26px -12px oklch(0.164 0.030 254 / 0.42);
-  position: relative;
-  z-index: 2;
-}
 
-.rail-head {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0 0.15rem 0.9rem;
-}
 
-.wordmark {
-  font-family: var(--display);
-  font-size: var(--step--1);
-  letter-spacing: 0.06em;
-  color: var(--rail-ink);
-}
 
-/* The welcome screen needs the palette mounted but not shown as a button. */
-.hidden-entry {
-  position: absolute;
-  width: 0;
-  height: 0;
-  overflow: hidden;
-}
 
-.tree {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 0.9rem;
-}
 
-.root-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  padding: 0 0.5rem 0.25rem;
-}
 
-.root-name {
-  font-size: var(--step--2);
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--rail-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
-.drop-root {
-  font-size: var(--step--2);
-  color: var(--ink-ghost);
-  opacity: 0;
-  transition: opacity 140ms var(--ease);
-}
 
-.root:hover .drop-root {
-  opacity: 1;
-}
 
-.drop-root:hover {
-  color: var(--refused);
-}
 
-.chapter {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 0.4rem 0.6rem;
-  border-radius: 3px;
-  font-size: var(--step--1);
-  color: var(--rail-faint);
-  border-left: 2px solid transparent;
-}
 
-.chapter:hover {
-  background: color-mix(in oklab, var(--rail-ink) 8%, transparent);
-  color: var(--rail-ink);
-}
 
-/* The cinnabar earns its place here: it marks where the author is. */
-.chapter.on {
-  color: var(--rail-ink);
-  background: color-mix(in oklab, var(--seal) 26%, transparent);
-  border-left-color: var(--seal-bright);
-  font-weight: 500;
-}
 
-/*
- * Upright, not italic. CJK has no italic; the browser slants the glyphs
- * geometrically and the strokes collapse. Weight and value carry the
- * de-emphasis instead.
- */
-.root-empty {
-  padding: 0.25rem 0.6rem 0.2rem;
-  font-size: var(--step--2);
-  color: var(--rail-faint);
-  opacity: 0.66;
-  line-height: 1.7;
-}
 
-.rail-foot {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding-top: 0.5rem;
-  margin-top: 0.5rem;
-  border-top: 1px solid var(--rail-rule);
-  /* Never compressed away: these two commands create everything else. */
-  flex: none;
-  padding-bottom: 0.2rem;
-}
 
-.rail-foot button {
-  text-align: left;
-  padding: 0.42rem 0.6rem;
-  font-size: var(--step--2);
-  color: var(--rail-faint);
-  border-radius: 3px;
-}
 
-.rail-foot button:hover {
-  color: var(--seal-bright);
-  background: color-mix(in oklab, var(--rail-ink) 8%, transparent);
-}
 
 /*
  * A desk, and on it a sheet.

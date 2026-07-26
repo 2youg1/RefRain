@@ -156,6 +156,23 @@ export const dict = {
   },
 
   "agents.title": { zh: "Agent", en: "Agents" },
+
+  "persona.why": {
+    zh: "给这个 Agent 一个身份。同一个 harness、同一个模型，靠不同身份就是不同的协作者。",
+    en: "Give this agent an identity. The same harness and model, under different briefs, are different collaborators.",
+  },
+  "persona.unnamed": { zh: "未命名", en: "Unnamed" },
+  "persona.namePlaceholder": { zh: "身份名字", en: "Identity name" },
+  "persona.briefPlaceholder": {
+    zh: "它该做什么、不该做什么。写你自己的话。",
+    en: "What it should and should not do, in your own words.",
+  },
+  "persona.carryLabel": { zh: "何时随请求发送", en: "When it travels" },
+  "persona.carry.first-round": { zh: "只发第一轮", en: "First round only" },
+  "persona.carry.every-round": { zh: "每轮都发", en: "Every round" },
+  "persona.carry.never": { zh: "不发", en: "Never" },
+  "persona.cost": { zh: "长度", en: "Length" },
+  "persona.chars": { zh: "字", en: "chars" },
   "agents.name": { zh: "名字", en: "Name" },
   "agents.command": { zh: "启动命令", en: "Launch command" },
   "agents.commandHint": {
@@ -319,6 +336,34 @@ export const dict = {
   "keys.zoomIn": { zh: "放大", en: "Zoom in" },
   "keys.zoomOut": { zh: "缩小", en: "Zoom out" },
   "keys.zoomReset": { zh: "还原缩放", en: "Reset zoom" },
+
+  "cmd.files": { zh: "文件浏览", en: "Browse files" },
+  "files.title": { zh: "文件", en: "Files" },
+  "files.search": { zh: "搜索文件", en: "Search files" },
+  "files.sort": { zh: "排序", en: "Sort" },
+  "files.name": { zh: "名称", en: "Name" },
+  "files.modified": { zh: "修改时间", en: "Modified" },
+  "files.size": { zh: "大小", en: "Size" },
+  "files.count": { zh: "个文件", en: "files" },
+  /*
+   * Measured on Linux: a workspace on a volume without a writable trash
+   * directory cannot delete recoverably. The file stays, and saying so is the
+   * whole point — a writer who thinks a chapter is gone will not look for it.
+   */
+  "files.trashFailed": {
+    zh: "没能移到废纸篓，文件还在原处：",
+    en: "Could not move to Trash; the file is still where it was: ",
+  },
+  /*
+   * "移到废纸篓" rather than "删除": the wording is the promise. A control
+   * labelled delete and a control that is recoverable should not read alike,
+   * and the writer needs to know which one they are about to press.
+   */
+  "files.trash": { zh: "移到废纸篓", en: "Move to Trash" },
+  "files.unavailable": {
+    zh: "这台机器上没有文件层的原生组件，文件浏览暂不可用。编辑、保存与协作不受影响。",
+    en: "The native file layer has no build for this machine, so browsing is unavailable. Editing, saving, and review are unaffected.",
+  },
 } as const;
 
 export type Key = keyof typeof dict;

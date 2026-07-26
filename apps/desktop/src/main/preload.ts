@@ -49,6 +49,53 @@ const api = {
   commit: (root: string, payload: unknown) => ipcRenderer.invoke("review:commit", root, payload),
   ledger: (root: string) => ipcRenderer.invoke("ledger:all", root),
   reply: (root: string, proposalId: string) => ipcRenderer.invoke("ledger:reply", root, proposalId),
+  searchLedger: (root: string, fragment: string) =>
+    ipcRenderer.invoke("ledger:search", root, fragment),
+
+  /**
+   * The file layer. Every call returns a tagged result rather than throwing:
+   * a machine without the platform binary keeps its editor and loses only the
+   * browser, and the renderer needs to tell those apart.
+   */
+  files: {
+    scan: (root: string, options?: Record<string, unknown>) =>
+      ipcRenderer.invoke("files:scan", root, options),
+    page: (root: string, offset: number, limit: number) =>
+      ipcRenderer.invoke("files:page", root, offset, limit),
+    search: (root: string, query: string, limit?: number) =>
+      ipcRenderer.invoke("files:search", root, query, limit),
+    searchDirectories: (root: string, query: string, limit?: number) =>
+      ipcRenderer.invoke("files:search-directories", root, query, limit),
+    sort: (root: string, order: string, descending: boolean) =>
+      ipcRenderer.invoke("files:sort", root, order, descending),
+    move: (root: string, from: string, to: string, replace?: boolean) =>
+      ipcRenderer.invoke("files:move", root, from, to, replace),
+    copy: (root: string, from: string, to: string, replace?: boolean) =>
+      ipcRenderer.invoke("files:copy", root, from, to, replace),
+    /** Deletes to the system trash. There is deliberately no permanent variant. */
+    trash: (root: string, targets: string[]) => ipcRenderer.invoke("files:trash", root, targets),
+    link: (root: string, target: string, linkPath: string) =>
+      ipcRenderer.invoke("files:link", root, target, linkPath),
+    createDirectory: (root: string, path: string) =>
+      ipcRenderer.invoke("files:create-directory", root, path),
+    uniqueName: (root: string, desired: string) =>
+      ipcRenderer.invoke("files:unique-name", root, desired),
+    admits: (root: string, path: string) => ipcRenderer.invoke("files:admits", root, path),
+  },
+
+  /**
+   * The panel this window is on: its refresh rate and pixel density.
+   *
+   * `onDisplayChange` fires when the window moves to another monitor, so a drag
+   * from a 60 Hz laptop panel to a 165 Hz desktop one retargets the motion
+   * instead of keeping the budget it started with.
+   */
+  displayProfile: () => ipcRenderer.invoke("display:profile"),
+  onDisplayChange: (listener: (profile: unknown) => void) => {
+    const wrapped = (_event: unknown, profile: unknown) => listener(profile);
+    ipcRenderer.on("display:changed", wrapped);
+    return () => ipcRenderer.removeListener("display:changed", wrapped);
+  },
 } as const;
 
 export type RefRainApi = typeof api;
