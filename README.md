@@ -86,7 +86,7 @@ Adapters are tiered by what the harness can prove, not by preference:
 | **L1** | Command. RefRain launches your harness and collects the result. |
 | **L2** | Session. The harness reports its model, effort, and token usage, and RefRain relays them verbatim. |
 
-Today L0 and L1 ship; L2 adapters are the next milestone. A harness at any tier is a harness that works — the tier says how much RefRain can tell you about what it did, not whether it runs.
+L0, L1, and the first L2 adapter (Claude Code) ship today; the remaining L2 adapters follow. A harness at any tier is a harness that works — the tier says how much RefRain can tell you about what it did, not whether it runs.
 
 ## Building
 

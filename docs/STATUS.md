@@ -83,7 +83,43 @@
 
 ---
 
-## 三、发布前技术债审查（本轮）
+## 三、本轮后续完成的三项
+
+### 1. BUG-1 已修：Host 会自己收回 Run
+
+`awaitCompletion` 此前是 `CommandAdapter` 的私有方法，全仓无人调用，派发出去的 Run 永远停在 `dispatched`。
+
+改法：把它提升为 `HarnessAdapter` 的可选能力（文件通道没有进程可等，故为可选），Host 在 `send()` 后跟进每个 Run，命令干净退出即自动 `collect()`。`collect()` 改为幂等，否则自动收取加人工点击会解析两次、memo 追加两次。
+
+同时补上三件相邻的事：`timeoutMs` 真正生效（超时杀进程并置 `failed`）、终态不可逆（已完成的 Run 不被迟到的 cancel 改写）、派发预检失败时整批队列还原（含已启动的部分回滚）。
+
+**5 项 RED 契约转正。**
+
+### 2. L2 Adapter（Claude Code）落地
+
+`packages/agent/src/claude-code.ts`。这是「Token 消耗绝对透明」欠的另一半——此前只兑现了「不撒谎」（一律报 unknown），没兑现「如实回传」。
+
+一手核对了字段名，**与早前记忆不符，已修正**：实际是 `usage`（含 `input_tokens` / `output_tokens` / `cache_read_input_tokens` / `cache_creation_input_tokens`），不是 `modelUsage`。
+
+四个数字原样回传，**不做任何加总推导**——harness 没说过的数字就是我们编的。
+
+响应里有 `total_cost_usd`，**读到但刻意丢弃**：SPEC 1.3 禁止显示价格，而代码里存在的数字迟早会到屏幕上。有一条测试专门断言序列化结果里不含 `cost`、`usd` 或那个金额。
+
+argv 用 `--permission-mode dontAsk` 加显式允许表（只给 `Read,Write`），没人看着的子进程绝不能停在权限询问上。会话 ID 跟进，这正是 `personaCarry: first-round` 一直凭约定工作的那个依赖。
+
+**16 项合约测试**，用真实 stub 进程而非 mock。过程中抓到一个真缺陷：Host 自动收取已读过 stdout，调用方再读会拿到 `ReadableStream has already been used`——已改为一次性 promise 回放。
+
+### 3. SPEC Q5：是测量错误，不是布局缺陷
+
+`verify-anchor` 报的 289px 偏移，实测查明是**脚本自己测错了**：夹具从未打开章节，`header.bar` 从不渲染，而 `Progress.svelte` 也用 `.bar` 这个类名——它一直在测进度条与版心的距离，两个不相关的元素。
+
+已把选择器改为 `header.bar`，并让空夹具**失败而非静默报缺陷**。真实是否存在偏移，要等夹具能打开章节后重测。SPEC Q5 已改写为「重新测量」。
+
+教训：一个从未进 CI 的验证脚本，不但会失效，还会产出假的缺陷记录并写进 SPEC。
+
+---
+
+## 四、发布前技术债审查（本轮）
 
 扫过的面与结论：
 
