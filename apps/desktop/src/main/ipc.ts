@@ -34,6 +34,7 @@ import {
 import type { Workspace as FileWorkspace } from "@refrain/fs";
 import type { Dialog, IpcMain } from "electron";
 import { registerFileHandlers } from "./files-ipc.ts";
+import { type RosterEntry, readRoster, writeRoster } from "./roster.ts";
 
 /**
  * The main process owns state; the renderer only presents and accepts input
@@ -53,7 +54,14 @@ interface Workbench {
    */
   readonly onDisk: Map<string, { path: string; stamp?: FileStamp }>;
   readonly proposals: Map<string, Proposal>;
-  readonly agents: Agent[];
+  /**
+   * The roster, mirrored to `.refrain/agents.json`.
+   *
+   * Templates travel with it. Restoring names alone gives a list that cannot
+   * run — `agent:add` built each adapter from its template and then dropped it,
+   * so a reopened project had agents that failed on dispatch.
+   */
+  readonly roster: RosterEntry[];
   /**
    * The native file index, built lazily.
    *
@@ -80,13 +88,28 @@ const openWorkbench = (root: string): Workbench => {
   const stateDir = join(root, ".refrain");
   mkdirSync(stateDir, { recursive: true });
 
+  const host = new AgentHost(stateDir, [new FileChannelAdapter(stateDir)]);
+  const roster = readRoster(stateDir);
+
+  // Re-register what the author configured last time, adapters included. The
+  // roster is the one thing here that cannot be rebuilt from the disk: heads
+  // come from the chapters, runs and results are already files under
+  // `.refrain/runs/`, and proposals freeze from those.
+  for (const entry of roster) {
+    if (entry.template !== undefined)
+      host.addAdapter(
+        new CommandAdapter({ id: entry.agent.binding.harness, template: entry.template }),
+      );
+    host.register(entry.agent);
+  }
+
   const workbench: Workbench = {
-    host: new AgentHost(stateDir, [new FileChannelAdapter(stateDir)]),
+    host,
     ledger: new VerdictLedger(join(stateDir, "verdicts.db")),
     heads: new Map(),
     onDisk: new Map(),
     proposals: new Map(),
-    agents: [],
+    roster,
   };
   workbenches.set(root, workbench);
   return workbench;
@@ -336,7 +359,9 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     return true;
   });
 
-  ipc.handle("agent:list", (_e, root: string) => openWorkbench(root).agents);
+  ipc.handle("agent:list", (_e, root: string) =>
+    openWorkbench(root).roster.map((entry) => entry.agent),
+  );
 
   /**
    * Ask a harness whether it is actually reachable.
@@ -346,7 +371,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
    * the command's first token with a version flag and reports what came back.
    */
   ipc.handle("agent:probe", async (_e, root: string, id: string) => {
-    const agent = openWorkbench(root).agents.find((a) => a.id === id);
+    const agent = openWorkbench(root).roster.find((entry) => entry.agent.id === id)?.agent;
     if (!agent) return { ok: false, detail: "unknown agent" };
     if (agent.binding.harness === "file") return { ok: true };
 
@@ -377,8 +402,9 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
 
   ipc.handle("agent:remove", (_e, root: string, id: string) => {
     const workbench = openWorkbench(root);
-    const index = workbench.agents.findIndex((a) => a.id === id);
-    if (index >= 0) workbench.agents.splice(index, 1);
+    const index = workbench.roster.findIndex((entry) => entry.agent.id === id);
+    if (index >= 0) workbench.roster.splice(index, 1);
+    writeRoster(join(root, ".refrain"), workbench.roster);
     return true;
   });
 
@@ -390,12 +416,12 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
       name,
       binding: { harness, model: "unspecified", reasoningEffort: "unspecified" },
     };
-    if (harness !== "file")
-      workbench.host.addAdapter(
-        new CommandAdapter({ id: harness, template: command.split(/\s+/) }),
-      );
+    const template = harness === "file" ? undefined : command.split(/\s+/);
+    if (template !== undefined)
+      workbench.host.addAdapter(new CommandAdapter({ id: harness, template }));
     workbench.host.register(agent);
-    workbench.agents.push(agent);
+    workbench.roster.push({ agent, ...(template === undefined ? {} : { template }) });
+    writeRoster(join(root, ".refrain"), workbench.roster);
     return agent;
   });
 

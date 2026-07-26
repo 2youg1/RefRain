@@ -63,8 +63,12 @@ edit. ProseMirror goes underneath, with the IME gate as the acceptance test.
 **Guided harness setup.** The agent panel can say a command is unreachable; it
 cannot yet find the harnesses a machine already has.
 
-**Persistence across restarts.** Agents, queue, runs and unmerged proposals
-live in memory. Closing the window loses them.
+**Persistence across restarts.** The agent roster now survives in
+`.refrain/agents.json`, templates included — it was the one thing here the disk
+could not rebuild. The queue and unmerged proposals still live in memory, and
+should be rebuilt from `.refrain/runs/`, which is already on disk: the results
+are there, so a reopened project ought to find its own unfinished work rather
+than being told about it.
 
 **The canvas layout.** A window per piece, arranged freely, zoomable to a full
 editing surface. Designed, not built; the switch in settings is disabled and
