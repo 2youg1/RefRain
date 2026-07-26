@@ -20,7 +20,7 @@ import { DEFAULTS, type TypeSettings } from "./typography.ts";
  * themes and the two night themes are drawn separately, and switching between
  * them is a change of hour rather than a change of polarity.
  */
-export type Theme = "tou" | "kasumi" | "kare" | "hayashi" | "seiji" | "sumi" | "shigure";
+export type Theme = "tou" | "kasumi" | "kare" | "hayashi" | "seiji" | "sumi" | "yu" | "shigure";
 
 export const THEMES: readonly { id: Theme; label: `theme.${Theme}`; mode: "day" | "night" }[] = [
   { id: "tou", label: "theme.tou", mode: "day" },
@@ -29,6 +29,7 @@ export const THEMES: readonly { id: Theme; label: `theme.${Theme}`; mode: "day" 
   { id: "hayashi", label: "theme.hayashi", mode: "day" },
   { id: "seiji", label: "theme.seiji", mode: "day" },
   { id: "sumi", label: "theme.sumi", mode: "night" },
+  { id: "yu", label: "theme.yu", mode: "night" },
   { id: "shigure", label: "theme.shigure", mode: "night" },
 ];
 /**
