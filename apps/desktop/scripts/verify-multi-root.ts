@@ -34,7 +34,7 @@ await page.addInitScript(`
     loadWorkspace: async (roots) => chapters.filter((chapter) => roots.includes(chapter.root)),
     saveChapter: async (root, title, text) => {
       window.__calls.push(["save", root, title, text]);
-      return { ok: true };
+      return { ok: true, edits: [] };
     },
     resolveConflict: async () => ({ ok: false, reason: "not expected" }),
     pathFor: () => "",
@@ -55,7 +55,7 @@ await page.addInitScript(`
     ledger: async () => [],
     reply: async () => "",
     searchLedger: async () => [],
-    editsBetween: async () => [],
+
     revertEdit: async (text) => text,
     revertAll: async (text) => text,
     describeEdits: async () => "",

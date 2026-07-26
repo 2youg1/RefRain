@@ -42,7 +42,7 @@ await page.addInitScript(`
     fullscreen: async () => true,
     loadProject: async () => ${JSON.stringify(CHAPTERS)},
     loadWorkspace: async () => ${JSON.stringify(CHAPTERS)},
-    saveChapter: async () => true,
+    saveChapter: async () => ({ ok: true, edits: [] }),
     systemFonts: async () => [],
     listAgents: async () => [],
     probeAgent: async () => ({ ok: true }),
@@ -56,7 +56,7 @@ await page.addInitScript(`
     commit: async () => ({ ok: true, text: "" }),
     ledger: async () => [],
     reply: async () => "",
-    editsBetween: async () => [],
+
     revertEdit: async (t) => t,
     revertAll: async (t) => t,
     describeEdits: async () => "",

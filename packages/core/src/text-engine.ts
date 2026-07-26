@@ -21,8 +21,9 @@ export const applyTextAction = (
   changes: readonly TextChange[],
   cause: string,
 ): TextHead => {
-  const replaced = new Map(changes.map((c) => [c.blockIds[0], c] as const));
-  const consumed = new Set(changes.flatMap((c) => c.blockIds));
+  const ranges = changes.filter((change) => change.kind !== "insert");
+  const replaced = new Map(ranges.map((change) => [change.blockIds[0], change] as const));
+  const consumed = new Set(ranges.flatMap((change) => change.blockIds));
   const blocks: Block[] = [];
 
   for (const block of head.blocks) {
@@ -35,6 +36,19 @@ export const applyTextAction = (
       continue;
     }
     if (!consumed.has(block.id)) blocks.push(block);
+  }
+
+  // Right-to-left means an insertion may use the next insertion as its boundary.
+  for (const change of changes.toReversed()) {
+    if (change.kind !== "insert") continue;
+    if (blocks.some((block) => block.id === change.blockId))
+      throw new Error(`cannot insert duplicate block ${change.blockId}`);
+    const index =
+      change.beforeBlockId === undefined
+        ? blocks.length
+        : blocks.findIndex((block) => block.id === change.beforeBlockId);
+    if (index === -1) throw new Error(`cannot insert before missing block ${change.beforeBlockId}`);
+    blocks.splice(index, 0, { id: change.blockId, text: change.text });
   }
 
   return { id: nextHeadId(), blocks, cause };

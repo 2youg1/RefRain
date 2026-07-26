@@ -69,9 +69,9 @@ export const selectiveUndo = (
     .find((id) => !blockAt(head, id));
   const affected = conflict ?? missing ?? action.changes[0]?.blockIds[0];
   const before =
-    action.undoes.find((change) => change.blockIds.includes(affected ?? ""))?.text ?? "";
+    action.undoes.find((change) => change.blockIds.some((id) => id === affected))?.text ?? "";
   const after =
-    action.changes.find((change) => change.blockIds.includes(affected ?? ""))?.text ?? "";
+    action.changes.find((change) => change.blockIds.some((id) => id === affected))?.text ?? "";
   const current = affected === undefined ? "" : (blockAt(head, affected)?.text ?? "");
 
   if (conflict !== undefined)

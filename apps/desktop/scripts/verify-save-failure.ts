@@ -49,7 +49,7 @@ await page.addInitScript(`
     ledger: async () => [],
     reply: async () => "",
     searchLedger: async () => [],
-    editsBetween: async () => [],
+
     revertEdit: async (text) => text,
     revertAll: async (text) => text,
     describeEdits: async () => "",

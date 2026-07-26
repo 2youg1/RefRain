@@ -54,6 +54,7 @@ test("the release publishes one Windows x64 installer", () => {
     join(here, "..", "..", "..", ".github", "workflows", "release.yml"),
     "utf8",
   );
+  const desktopPackage = JSON.parse(readFileSync(join(here, "..", "package.json"), "utf8"));
 
   expect(workflow).toContain("target: windows-x64");
   expect(workflow).not.toContain("target: linux-x64");
@@ -61,6 +62,7 @@ test("the release publishes one Windows x64 installer", () => {
   expect(workflow).not.toContain("target: mac-x64");
   expect(workflow).toContain("expected 1 release file");
   expect(workflow.match(/softprops\/action-gh-release/g)).toHaveLength(1);
+  expect(workflow).toContain(`RefRain ${desktopPackage.version} is available`);
 });
 
 /**

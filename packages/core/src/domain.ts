@@ -18,8 +18,22 @@ export interface TextHead {
   readonly cause: string;
 }
 
-/** One item inside a Text Action: replace a run of blocks, or delete it. */
-export interface TextChange {
+/** Replace a run of existing blocks, or delete it when text is null. */
+export interface RangeTextChange {
+  readonly kind?: "range";
   readonly blockIds: readonly BlockId[];
   readonly text: string | null;
 }
+
+/** Restore or add one block at a stable lineage boundary. */
+export interface InsertTextChange {
+  readonly kind: "insert";
+  readonly blockIds: readonly [];
+  readonly text: string;
+  readonly blockId: BlockId;
+  /** Absent means append; a named boundary that vanished is a conflict. */
+  readonly beforeBlockId?: BlockId;
+}
+
+/** One independently locatable item inside a Text Action. */
+export type TextChange = RangeTextChange | InsertTextChange;

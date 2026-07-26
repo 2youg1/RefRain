@@ -1,6 +1,6 @@
 {
   "name": "@refrain/desktop",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "A local writing workbench where every agent edit is a reviewable proposal",
   "author": "RefRain contributors",
   "homepage": "https://github.com/kaile9/RefRain",

@@ -16,6 +16,8 @@ export interface EditView {
   blockId: string;
   before?: string;
   after?: string;
+  nextBlockId?: string;
+  previousBlockId?: string;
   at: string;
   note?: string;
 }
@@ -87,9 +89,8 @@ interface RefRainApi {
   systemFonts(): Promise<string[]>;
   probeAgent(root: string, id: string): Promise<{ ok: boolean; detail?: string }>;
   removeAgent(root: string, id: string): Promise<boolean>;
-  editsBetween(before: string, after: string): Promise<EditView[]>;
-  revertEdit(text: string, edit: EditView): Promise<string>;
-  revertAll(text: string, edits: EditView[]): Promise<string>;
+  revertEdit(root: string, chapterId: string, edit: EditView): Promise<string>;
+  revertAll(root: string, chapterId: string, edits: EditView[]): Promise<string>;
   describeEdits(edits: EditView[]): Promise<string>;
   pathFor(file: File): string;
   resolveDrop(path: string): Promise<string | null>;
@@ -108,7 +109,8 @@ interface RefRainApi {
     chapterId: string,
     text: string,
   ): Promise<
-    { ok: true } | { ok: false; reason: "changed-underneath"; path: string; onDisk: string }
+    | { ok: true; edits: EditView[] }
+    | { ok: false; reason: "changed-underneath"; path: string; onDisk: string }
   >;
   /** Resolves only the two versions the conflict dialog displayed. */
   resolveConflict(
@@ -116,7 +118,8 @@ interface RefRainApi {
     chapterId: string,
     choice: "mine" | "disk",
   ): Promise<
-    { ok: true; text: string } | { ok: false; reason: string; path?: string; onDisk?: string }
+    | { ok: true; text: string; edits?: EditView[] }
+    | { ok: false; reason: string; path?: string; onDisk?: string }
   >;
   listAgents(root: string): Promise<AgentView[]>;
   addAgent(root: string, name: string, command: string): Promise<AgentView>;

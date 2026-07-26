@@ -434,8 +434,7 @@ const save = async (): Promise<void> => {
       return;
     }
 
-    const recorded = await api().editsBetween(chapter.text, written);
-    edits = [...edits, ...recorded];
+    edits = [...edits, ...outcome.edits];
     chapters = chapters.map((entry) =>
       entry.path === chapter.path ? { ...entry, text: written } : entry,
     );
@@ -509,6 +508,7 @@ const resolveConflict = async (choice: "mine" | "disk"): Promise<void> => {
   }
 
   conflict = null;
+  if (outcome.edits) edits = [...edits, ...outcome.edits];
   chapters = chapters.map((chapter) =>
     chapter.path === pending.path ? { ...chapter, text: outcome.text } : chapter,
   );
@@ -524,18 +524,29 @@ const keepMine = async (): Promise<void> => resolveConflict("mine");
 
 const revert = async (id: string): Promise<void> => {
   const edit = edits.find((e) => e.id === id);
-  if (!edit) return;
-  text = await api().revertEdit(text, edit);
-  render(text);
-  edits = edits.filter((e) => e.id !== id);
-  saved = false;
+  const chapter = activeChapter;
+  if (!edit || !chapter) return;
+  try {
+    text = await api().revertEdit(chapter.root, chapter.id, edit);
+    render(text);
+    edits = edits.filter((e) => e.id !== id);
+    saved = false;
+  } catch (error) {
+    say(error instanceof Error ? error.message : String(error));
+  }
 };
 
 const revertAll = async (): Promise<void> => {
-  text = await api().revertAll(text, edits);
-  render(text);
-  edits = [];
-  saved = false;
+  const chapter = activeChapter;
+  if (!chapter) return;
+  try {
+    text = await api().revertAll(chapter.root, chapter.id, edits);
+    render(text);
+    edits = [];
+    saved = false;
+  } catch (error) {
+    say(error instanceof Error ? error.message : String(error));
+  }
 };
 
 const setZen = async (on: boolean): Promise<void> => {

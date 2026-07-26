@@ -16,9 +16,24 @@ export type { BatchRefusal, DecisionBatchResult } from "./decision-batch.ts";
 export { commitDecisionBatch, rebuildReplacement } from "./decision-batch.ts";
 export type { DecisionRecovery } from "./decision-commit.ts";
 export { persistDecisionCommit, recoverDecisionCommit } from "./decision-commit.ts";
-export type { Block, BlockId, RevisionId, TextChange, TextHead, TextHeadId } from "./domain.ts";
+export type {
+  Block,
+  BlockId,
+  InsertTextChange,
+  RangeTextChange,
+  RevisionId,
+  TextChange,
+  TextHead,
+  TextHeadId,
+} from "./domain.ts";
 export type { Edit, EditKind } from "./edits.ts";
-export { describeEditsForAgent, editsBetween, revertAll, revertEdit } from "./edits.ts";
+export {
+  advanceTextHead,
+  describeEditsForAgent,
+  editsBetween,
+  revertAll,
+  revertEdit,
+} from "./edits.ts";
 export { VerdictLedger } from "./ledger.ts";
 export type { MemoEntry } from "./memo.ts";
 export { appendMemos, carryForward, readMemos } from "./memo.ts";
