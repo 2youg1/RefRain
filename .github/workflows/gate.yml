@@ -179,6 +179,15 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-revert.ts
 
+      # Four entrances to "new chapter" — the rail button, the palette, Ctrl+N,
+      # and the empty page — all called `window.prompt`, which Electron
+      # disables. All four therefore did nothing at all: no dialog, no chapter,
+      # no error. This creates one, and checks the refusals, because a name
+      # field that accepts a duplicate writes over a chapter that exists.
+      - name: a new chapter can be named and created
+        working-directory: apps/desktop
+        run: bun scripts/verify-new.ts
+
       # Opening a single file used to show nothing: its chapter was filed under
       # the file's parent folder while the root recorded was the file, and the
       # rail grouped by comparing those two paths. Nothing matched, no test

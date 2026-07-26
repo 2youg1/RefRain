@@ -337,6 +337,25 @@ export const dict = {
     en: "No Markdown files in this folder yet",
   },
   "chapter.new": { zh: "新章节名", en: "Chapter name" },
+  "chapter.newHint": {
+    zh: "会在项目顶层建一个 Markdown 文件，进入章节序列。",
+    en: "Creates a Markdown file at the top level, in the chapter sequence.",
+  },
+  "chapter.badName": {
+    zh: "这个名字里有文件名不能用的字符。",
+    en: "That name contains characters a filename cannot hold.",
+  },
+  "chapter.taken": { zh: "这个名字已经有了。", en: "That name is already taken." },
+  "chapter.createFailed": { zh: "没能建立这个文件。", en: "The file could not be created." },
+  "material.new": { zh: "新资料名", en: "Material name" },
+  "material.newHint": {
+    zh: "会放进「资料」文件夹。资料可以编辑，但不进章节序列。",
+    en: "Goes into the material folder. Material is editable but stays out of the chapter sequence.",
+  },
+  "cmd.newMaterial": { zh: "新建资料…", en: "New material…" },
+  // The directory material is created in. A name, not a path: it is joined to
+  // the root, and the file layer refuses anything that tries to climb out.
+  "rail.materialDir": { zh: "资料", en: "material" },
   // SPEC Q11: a subdirectory holds material — notes, chronologies, sources.
   // A chapter is a promotion, not the role every Markdown file starts in.
   "rail.material": { zh: "资料", en: "Material" },
