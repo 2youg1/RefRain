@@ -10,7 +10,17 @@
  * wants its bundled Latin companion.
  */
 export interface TypeSettings {
+  /** Simplified and traditional Chinese. */
   cjkFamily: string;
+  /**
+   * Japanese, as its own slot (SPEC Q10).
+   *
+   * One CJK setting cannot serve both traditions: 直, 骨 and 令 are drawn
+   * differently, and a face chosen for one renders the other's characters in
+   * shapes its reader will call wrong. A writer quoting Japanese inside Chinese
+   * prose needs both at once, which a single slot cannot express.
+   */
+  jpFamily: string;
   latinFamily: string;
   size: number;
   weight: number;
@@ -36,6 +46,7 @@ export interface TypeSettings {
 
 export const DEFAULTS: TypeSettings = {
   cjkFamily: "Chiron Sung HK",
+  jpFamily: "Zen Kaku Gothic New",
   latinFamily: "Antic Didone",
   size: 17,
   weight: 400,
@@ -59,6 +70,7 @@ export const DEFAULTS: TypeSettings = {
 
 /** The faces this application ships, always present regardless of the machine. */
 export const BUNDLED_CJK = ["Chiron Sung HK", "Murecho"];
+export const BUNDLED_JP = ["Zen Kaku Gothic New", "Murecho"];
 export const BUNDLED_LATIN = ["Antic Didone", "Jost", "Courier Prime"];
 
 /**

@@ -137,9 +137,31 @@ export const persistBindings = saveBindings;
  */
 export const applyTypography = (type: TypeSettings, fontLine: number): void => {
   const style = document.documentElement.style;
-  const family = `"${type.latinFamily}", "${type.cjkFamily}", serif`;
 
-  style.setProperty("--manuscript-family", family);
+  /*
+   * Latin, then Japanese, then Chinese, then a generic.
+   *
+   * Order is the whole mechanism: a browser walks the stack per character and
+   * takes the first face that has a glyph for it. Latin leads because the CJK
+   * faces also carry Latin, and letting them answer would set English in a
+   * Chinese face's Latin — technically legible, visibly wrong.
+   *
+   * Japanese precedes Chinese for the same reason in the other direction. 直,
+   * 骨 and 令 exist in both faces and are drawn differently; whichever comes
+   * first wins every shared character, so a writer quoting Japanese inside
+   * Chinese prose needs kana-bearing faces ahead of the Chinese one. Before
+   * this stack there was no Japanese slot: every Japanese character fell
+   * through to whatever the operating system happened to supply.
+   *
+   * Each name is quoted. `Chiron Sung HK` contains spaces, and an unquoted
+   * multi-word family is a parse error that discards the whole declaration.
+   */
+  const family = [type.latinFamily, type.jpFamily, type.cjkFamily]
+    .filter((name) => name.trim().length > 0)
+    .map((name) => `"${name.replace(/["\\]/g, "")}"`)
+    .join(", ");
+
+  style.setProperty("--manuscript-family", `${family}, serif`);
   style.setProperty("--manuscript-size", `${type.size * type.zoom}px`);
   style.setProperty("--manuscript-weight", String(type.weight));
   style.setProperty("--manuscript-leading", String(type.leading));
