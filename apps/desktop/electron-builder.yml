@@ -18,8 +18,8 @@ files:
 # starts, opens a project, and silently has no file browser — the degradation
 # path working correctly for the wrong reason.
 extraResources:
-  - from: ../../packages/fs/refrain-fs.${os}-${arch}.node
-    to: refrain-fs.${os}-${arch}.node
+  - from: ../../packages/fs/refrain-fs.${platform}-${arch}.node
+    to: refrain-fs.${platform}-${arch}.node
 
 # The app never fetches anything, so there is no updater and no telemetry
 # endpoint to configure. Absence here is the feature.
