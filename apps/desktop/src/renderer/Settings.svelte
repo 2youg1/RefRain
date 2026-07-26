@@ -2,7 +2,7 @@
   
   import type { Snippet } from "svelte";
 import type { Key, Lang } from "./i18n.ts";
-import { SURFACES, type Surface } from "./preferences.ts";
+import { SURFACES, type Surface, THEMES, type Theme } from "./preferences.ts";
 
   export type Section =
     | "appearance"
@@ -23,7 +23,7 @@ import { SURFACES, type Surface } from "./preferences.ts";
   interface Props {
     lang: Lang;
     version: string;
-    theme: "rain" | "kozo" | "ink";
+    theme: Theme;
     surface: Surface;
     sheet: "none" | "hairline" | "paper";
     layout: "page" | "canvas";
@@ -31,7 +31,7 @@ import { SURFACES, type Surface } from "./preferences.ts";
     section: Section;
     onSection: (next: Section) => void;
     onLang: (next: Lang) => void;
-    onTheme: (next: "rain" | "kozo" | "ink") => void;
+    onTheme: (next: Theme) => void;
     onSurface: (next: Surface) => void;
     onSheet: (next: "none" | "hairline" | "paper") => void;
     onLayout: (next: "page" | "canvas") => void;
@@ -100,13 +100,26 @@ import { SURFACES, type Surface } from "./preferences.ts";
     {#if section === "appearance"}
       <div class="field">
         <span class="label">{t("set.theme")}</span>
-        <div class="segmented">
-          <button class:on={theme === "rain"} onclick={() => onTheme("rain")}>{t("set.ai")}</button>
-          <button class:on={theme === "kozo"} onclick={() => onTheme("kozo")}>
-            {t("set.kozo")}
-          </button>
-          <button class:on={theme === "ink"} onclick={() => onTheme("ink")}>{t("set.ink")}</button>
-        </div>
+        <!--
+          Two groups, not one row and an inverter. A night theme is drawn from
+          its own reference — a room under a lamp, a street in the rain — so the
+          two sides are separate palettes rather than a palette and its
+          negative. Iterating THEMES is deliberate: the panel used to re-list
+          its own identifiers, and drifted to offering three that no stylesheet
+          had ever answered to.
+        -->
+        {#each ["day", "night"] as const as mode (mode)}
+          <div class="theme-group">
+            <span class="sub">{t(mode === "day" ? "set.day" : "set.night")}</span>
+            <div class="segmented">
+              {#each THEMES.filter((entry) => entry.mode === mode) as entry (entry.id)}
+                <button class:on={theme === entry.id} onclick={() => onTheme(entry.id)}>
+                  {t(entry.label)}
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/each}
       </div>
 
       <div class="field">
@@ -255,6 +268,23 @@ import { SURFACES, type Surface } from "./preferences.ts";
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+  }
+
+  /* Day and night read as two lists, not one long strip of eight. */
+  .theme-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .theme-group + .theme-group {
+    margin-top: 0.6rem;
+  }
+
+  .sub {
+    font-size: 0.75rem;
+    color: var(--ink-faint);
+    letter-spacing: 0.04em;
   }
 
   .segmented {

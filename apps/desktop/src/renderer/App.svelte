@@ -22,6 +22,7 @@ import {
   persistBindings,
   type SheetStyle,
   type Surface,
+  THEMES,
   type Theme,
 } from "./preferences.ts";
 import Rail from "./Rail.svelte";
@@ -123,6 +124,29 @@ $effect(() => {
   persist("surface", surface);
   persist("sheet", sheetStyle);
 });
+
+/*
+ * Crossing between day and night, remembering where you were on each side.
+ *
+ * Not an inversion: the night themes are drawn from their own references, so
+ * there is no "dark version of 濤" to compute. What the writer means by
+ * toggling is "it is evening now" — so each side keeps its own last choice and
+ * the crossing returns you to it rather than to whichever theme happens to be
+ * listed first.
+ */
+let lastOfMode = $state<Record<"day" | "night", Theme | null>>({ day: null, night: null });
+
+const modeOf = (id: Theme): "day" | "night" =>
+  THEMES.find((entry) => entry.id === id)?.mode ?? "day";
+
+const toggleDayNight = (): void => {
+  const here = modeOf(theme);
+  const there = here === "day" ? "night" : "day";
+  lastOfMode = { ...lastOfMode, [here]: theme };
+  const remembered = lastOfMode[there];
+  theme =
+    remembered ?? (THEMES.find((entry) => entry.mode === there)?.id as Theme | undefined) ?? theme;
+};
 $effect(() => persist("lang", lang));
 $effect(() => persist("layout", layout));
 $effect(() => persist("icon", icon));
@@ -627,7 +651,7 @@ const commands = $derived<Command[]>([
   { id: "ledger", label: "cmd.ledger", group: "group.collab", keys: bindings.ledger, run: () => (sheet = "ledger"), when: () => root !== null },
   { id: "agents", label: "cmd.agents", group: "group.collab", run: () => openSettings("agents"), when: () => root !== null },
   { id: "typography", label: "cmd.typography", group: "group.view", run: () => openSettings("typography") },
-  { id: "theme", label: "cmd.theme", group: "group.view", run: () => { theme = theme === "rain" ? "kozo" : theme === "kozo" ? "ink" : "rain"; } },
+  { id: "theme", label: "cmd.theme", group: "group.view", run: () => toggleDayNight() },
   { id: "settings", label: "cmd.settings", group: "group.view", keys: bindings.settings, run: () => openSettings("appearance") },
 ]);
 

@@ -88,12 +88,33 @@ const read = <T>(key: string, fallback: T): T => {
   }
 };
 
+/**
+ * Valid JSON is not a valid value.
+ *
+ * `read` returns whatever parsed, cast to the declared type, so a theme name
+ * retired two versions ago still reached `data-theme` and left the interface
+ * on a palette no stylesheet answered to. Anything stored as one of a fixed
+ * set of names has to be checked against that set on the way in.
+ */
+const oneOf = <T extends string>(key: string, allowed: readonly T[], fallback: T): T => {
+  const stored = read<unknown>(key, fallback);
+  return allowed.includes(stored as T) ? (stored as T) : fallback;
+};
+
 export const loadPreferences = (): Preferences => ({
-  lang: read<Lang>(KEY.lang, "zh"),
-  theme: read<Theme>(KEY.theme, "tou"),
-  surface: read<Surface>(KEY.surface, "sei"),
-  sheet: read<SheetStyle>(KEY.sheet, "none"),
-  layout: read<Layout>(KEY.layout, "page"),
+  lang: oneOf<Lang>(KEY.lang, ["zh", "en"], "zh"),
+  theme: oneOf<Theme>(
+    KEY.theme,
+    THEMES.map((entry) => entry.id),
+    "tou",
+  ),
+  surface: oneOf<Surface>(
+    KEY.surface,
+    SURFACES.map((step) => step.id),
+    "sei",
+  ),
+  sheet: oneOf<SheetStyle>(KEY.sheet, ["none", "hairline", "paper"], "none"),
+  layout: oneOf<Layout>(KEY.layout, ["page", "canvas"], "page"),
   icon: read<string | null>(KEY.icon, null),
   type: { ...DEFAULTS, ...read<TypeSettings>(KEY.type, DEFAULTS) },
   bindings: loadBindings(),

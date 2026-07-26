@@ -160,6 +160,17 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-render.ts
 
+      # Every theme the panel offers must actually repaint the page. Eight were
+      # declared, seven had selectors, and the panel offered three retired names
+      # that matched none of them — so every click set `data-theme` to a value no
+      # stylesheet answered and the palette silently stayed put, with the whole
+      # suite green throughout. Nothing compared the list on screen against the
+      # list that renders; this does, by clicking each one and reading the paper
+      # colour back off `:root`.
+      - name: every theme the panel offers repaints the page
+        working-directory: apps/desktop
+        run: bun scripts/verify-themes.ts
+
       # Chapter titles are only labels; two workspace roots may contain the same
       # one. Selection, display, and save must stay bound to the absolute path.
       - name: duplicate chapter titles stay isolated across roots

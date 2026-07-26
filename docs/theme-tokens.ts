@@ -397,7 +397,18 @@ const block = (t: Theme): string => {
     " */",
   );
 
-  const selector = t.isDefault ? ":root" : `:root[data-theme="${t.slug}"]`;
+  /*
+   * The default theme needs both selectors, not just `:root`.
+   *
+   * With only the bare `:root` rule, a first launch looked right and choosing
+   * 濤 from the settings panel did nothing: the click sets `data-theme="tou"`,
+   * and no rule answered to that name, so the palette silently stayed on
+   * whatever the previous theme had left behind. "Default" and "chosen
+   * explicitly" are two states and both have to render.
+   */
+  const selector = t.isDefault
+    ? `:root,\n:root[data-theme="${t.slug}"]`
+    : `:root[data-theme="${t.slug}"]`;
   out.push(`${selector} {`, `  color-scheme: ${t.mode === "night" ? "dark" : "light"};`, "");
   {
     // Trailing zeros are stripped and integers keep no decimal point, because
@@ -422,18 +433,26 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
+// Counted, not restated. The prose said 七套 while eight shipped, and 幽 was
+// missing from the list of names — a header that repeats what the data already
+// says will disagree with it the first time someone adds a theme.
+const named = (mode: "day" | "night"): string =>
+  THEMES.filter((t) => t.mode === mode)
+    .map((t) => t.cn)
+    .join("・");
+
 const header = `/*
- * RefRain — 七套主题。由 docs/theme-tokens.ts 生成，勿手改。
+ * RefRain — ${THEMES.length} 套主题。由 docs/theme-tokens.ts 生成，勿手改。
  *
  * 昼夜不是同一套配色的正反两面。一套主题属于一个时段，为那个时段设计：
- * 日间五套（濤・霞・枯・林・瓷）与夜间两套（墨・時雨）各自成立。
+ * 日间${THEMES.filter((t) => t.mode === "day").length}套（${named("day")}）与夜间${THEMES.filter((t) => t.mode === "night").length}套（${named("night")}）各自成立。
  * 夜间不是把日间反相得来的——那样得到的是被翻过来的屏幕，不是灯下的纸。
  *
  * 颜色一律以 OKLCH 声明。同一亮度上换色相不会让灰色发浑，这是 HSL 做不到的，
- * 也是夜间那两套能读作「一盏灯照着纸」而非「一块发光的板」的原因。
+ * 也是夜间那几套能读作「一盏灯照着纸」而非「一块发光的板」的原因。
  *
  * 对比度用 APCA（W3C Silver 草案）而非 WCAG 2 的亮度比：WCAG 2 在深色底上
- * 会把浅字算得比实际好读，而这里有两套主题整个活在那种条件下。每套注释里的
+ * 会把浅字算得比实际好读，而这里有数套主题整个活在那种条件下。每套注释里的
  * Lc 是生成时实测的——正文门槛 |75|，界面与强调 |45|，不达标则脚本拒绝写出。
  *
  * 每套只由四个锚点定义（纸・墨・印・副强调），其余全部推导。加一套主题是写
