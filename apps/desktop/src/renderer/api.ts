@@ -6,8 +6,32 @@ export interface ChapterView {
   id: string;
   title: string;
   text: string;
+  /**
+   * The root this belongs to, by identity. The rail groups on this rather than
+   * on the path: a file opened on its own is its own root, and comparing paths
+   * filed it under its parent folder instead, so nothing matched and the
+   * workspace drew empty.
+   */
+  rootId: string;
+  /** The root's path, for the IPC calls that still address a workbench by it. */
   root: string;
+  /** SPEC Q11: material by default, chapter by promotion. */
+  role: "chapter" | "material";
   path: string;
+}
+
+export interface RootView {
+  id: string;
+  path: string;
+  name: string;
+  kind: "folder" | "file";
+  /** The path did not resolve. The other roots still opened. */
+  missing?: boolean;
+}
+
+export interface WorkspaceView {
+  roots: RootView[];
+  chapters: ChapterView[];
 }
 
 export interface EditView {
@@ -85,7 +109,7 @@ interface RefRainApi {
   openProject(): Promise<string | null>;
   openFile(): Promise<string | null>;
   createProject(): Promise<string | null>;
-  loadWorkspace(roots: string[]): Promise<ChapterView[]>;
+  loadWorkspace(roots: string[]): Promise<WorkspaceView>;
   systemFonts(): Promise<string[]>;
   probeAgent(root: string, id: string): Promise<{ ok: boolean; detail?: string }>;
   removeAgent(root: string, id: string): Promise<boolean>;

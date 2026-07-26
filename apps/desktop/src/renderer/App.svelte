@@ -1,6 +1,6 @@
 <script lang="ts">
 import Agents from "./Agents.svelte";
-import type { ChapterView, EditView, ProposalView, RunView, VerdictView } from "./api.ts";
+import type { ChapterView, EditView, ProposalView, RootView, RunView, VerdictView } from "./api.ts";
 import { api } from "./api.ts";
 import ContextMenu from "./ContextMenu.svelte";
 import Dispatch from "./Dispatch.svelte";
@@ -54,6 +54,11 @@ const t = $derived(translator(lang));
 
 /** Several roots, so an empty folder for tidiness does not lock out the manuscripts. */
 let roots = $state<string[]>(saved0.roots);
+// Roots as the main process described them: identity, kind, and whether the
+// path still resolves. The rail groups chapters on these ids rather than on
+// path equality, which is what filed a lone opened file under its parent
+// folder and drew a workspace with nothing in it.
+let rootViews = $state<RootView[]>([]);
 let chapters = $state<ChapterView[]>([]);
 /** The active chapter's absolute path; titles are not unique across workspace roots. */
 let active = $state<string | null>(null);
@@ -305,7 +310,7 @@ const trashFiles = async (paths: string[]) => {
     notice = t("files.trashFailed") + failed.map((outcome) => outcome.path).join(t("list.join"));
   }
   await needFilePage(0, visibleRows);
-  chapters = await api().loadWorkspace(roots);
+  await reload();
 };
 
 /** Paths the author may send to the trash on another volume (SPEC Q8). */
@@ -322,7 +327,7 @@ const trashViaHome = async (): Promise<void> => {
   }
   if (stayed.length > 0) say(t("files.noTrashAnywhere") + stayed.join(t("list.join")));
   await needFilePage(0, visibleRows);
-  chapters = await api().loadWorkspace(roots);
+  await reload();
 };
 
 /** The timer for the visible notice; a second message must cancel the first. */
@@ -389,9 +394,12 @@ const removeRoot = async (path: string): Promise<void> => {
 const reload = async (): Promise<void> => {
   if (roots.length === 0) {
     chapters = [];
+    rootViews = [];
     return select(null);
   }
-  chapters = await api().loadWorkspace(roots);
+  const workspace = await api().loadWorkspace(roots);
+  rootViews = workspace.roots;
+  chapters = workspace.chapters;
   if (!chapters.some((chapter) => chapter.path === active)) select(chapters[0]?.path ?? null);
 };
 
@@ -804,7 +812,7 @@ const onScroll = (): void => {
         {icon}
         {commands}
         {paletteOpen}
-        {roots}
+        {rootViews}
         {chapters}
         {active}
         onSelect={select}

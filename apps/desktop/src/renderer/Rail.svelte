@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { ChapterView } from "./api.ts";
+import type { ChapterView, RootView } from "./api.ts";
 import type { Key } from "./i18n.ts";
 import Palette, { type Command } from "./Palette.svelte";
 
@@ -8,7 +8,7 @@ interface Props {
   icon: string | null;
   commands: Command[];
   paletteOpen: boolean;
-  roots: string[];
+  rootViews: RootView[];
   chapters: ChapterView[];
   active: string | null;
   onSelect: (path: string) => void;
@@ -24,7 +24,7 @@ const {
   icon,
   commands,
   paletteOpen,
-  roots,
+  rootViews,
   chapters,
   active,
   onSelect,
@@ -35,8 +35,19 @@ const {
   onPaletteClose,
 }: Props = $props();
 
-/** The last path segment, whichever separator the platform uses. */
-const nameOf = (path: string): string => path.split(/[/\\]/).pop() ?? path;
+/**
+ * Chapters and material, grouped by root identity.
+ *
+ * Grouping on `chapter.root === path` was the defect: a file opened on its own
+ * records the file as the root while its chapter was filed under the parent
+ * folder, so the comparison never matched and the rail drew a workspace with
+ * no chapters in it. Identity cannot drift that way.
+ */
+const under = (root: RootView, role: "chapter" | "material"): ChapterView[] =>
+  chapters.filter((c) => c.rootId === root.id && c.role === role);
+
+/** Material folds away by default: it is reference, not the sequence. */
+let openMaterial = $state<Record<string, boolean>>({});
 </script>
 
 <nav class="rail">
@@ -54,24 +65,62 @@ const nameOf = (path: string): string => path.split(/[/\\]/).pop() ?? path;
   </header>
 
   <div class="tree">
-    {#each roots as path (path)}
-      {@const rootChapters = chapters.filter((c) => c.root === path)}
+    {#each rootViews as root (root.id)}
+      {@const chapterFiles = under(root, "chapter")}
+      {@const materialFiles = under(root, "material")}
       <div class="root">
         <div class="root-head">
-          <span class="root-name">{nameOf(path)}</span>
-          <button class="drop-root" onclick={() => onRemoveRoot(path)} aria-label="remove">✕</button>
-        </div>
-        {#each rootChapters as chapter (chapter.path)}
+          <span class="root-name">{root.name}</span>
           <button
-            class="chapter"
-            class:on={chapter.path === active}
-            onclick={() => onSelect(chapter.path)}
+            class="drop-root"
+            onclick={() => onRemoveRoot(root.path)}
+            aria-label={t("agents.remove")}>✕</button
           >
-            {chapter.title}
-          </button>
-        {/each}
-        {#if rootChapters.length === 0}
-          <p class="root-empty">{t("chapter.empty")}</p>
+        </div>
+
+        {#if root.missing}
+          <!-- A moved or unmounted folder is named rather than shown as empty:
+               an empty rail reads as "the work is gone". -->
+          <p class="root-missing">{t("root.missing")}</p>
+        {:else}
+          {#each chapterFiles as chapter (chapter.path)}
+            <button
+              class="chapter"
+              class:on={chapter.path === active}
+              onclick={() => onSelect(chapter.path)}
+            >
+              {chapter.title}
+            </button>
+          {/each}
+
+          {#if materialFiles.length > 0}
+            <button
+              class="material-head"
+              aria-expanded={openMaterial[root.id] ?? false}
+              onclick={() =>
+                (openMaterial = { ...openMaterial, [root.id]: !openMaterial[root.id] })}
+            >
+              {(openMaterial[root.id] ?? false) ? "▾" : "▸"}
+              {t("rail.material")}
+              <span class="count">{materialFiles.length}</span>
+            </button>
+            {#if openMaterial[root.id] ?? false}
+              {#each materialFiles as file (file.path)}
+                <button
+                  class="chapter material"
+                  class:on={file.path === active}
+                  onclick={() => onSelect(file.path)}
+                  title={file.id}
+                >
+                  {file.title}
+                </button>
+              {/each}
+            {/if}
+          {/if}
+
+          {#if chapterFiles.length === 0 && materialFiles.length === 0}
+            <p class="root-empty">{t("chapter.empty")}</p>
+          {/if}
         {/if}
       </div>
     {/each}
@@ -134,6 +183,39 @@ const nameOf = (path: string): string => path.split(/[/\\]/).pop() ?? path;
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
+}
+
+.root-missing {
+  margin: 0.2rem 0 0.5rem;
+  padding: 0 0.9rem;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--rail-faint);
+}
+
+/* Material is reference, so it sits a step back from the chapter sequence. */
+.material-head {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  padding: 0.3rem 0.9rem;
+  border: 0;
+  background: none;
+  color: var(--rail-faint);
+  font-size: 0.74rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.material-head .count {
+  margin-left: auto;
+  opacity: 0.7;
+}
+
+.chapter.material {
+  padding-left: 1.6rem;
+  color: var(--rail-faint);
 }
 
 .root-head {

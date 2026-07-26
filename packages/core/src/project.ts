@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   closeSync,
+  type Dirent,
   existsSync,
   fstatSync,
   openSync,
@@ -71,12 +72,31 @@ export const readChapterFile = (path: string): ChapterFileSnapshot | undefined =
 
 export const stampOf = (path: string): FileStamp | undefined => readChapterFile(path)?.stamp;
 
+/** What a file is to the work, which is not the same as where it sits. */
+export type ChapterRole = "chapter" | "material";
+
 export interface Chapter {
   /** Portable identity inside the Root, including the extension. */
   readonly id: string;
   readonly title: string;
   readonly path: string;
-  readonly root: string;
+  /**
+   * Which Root this belongs to, by identity rather than by path.
+   *
+   * A single file opened on its own used to record the file as the root and
+   * file its chapter under the file's parent directory, so the rail — which
+   * groups chapters by root — matched nothing and drew an empty workspace.
+   * Comparing identifiers cannot go wrong that way, and it survives two roots
+   * holding chapters of the same name.
+   */
+  readonly rootId: string;
+  /**
+   * Chapter or material (SPEC Q11). Material is the default for anything in a
+   * subdirectory: notes, chronologies and sources are not part of the chapter
+   * sequence, and filing them there corrupts numbering, the progress rule, and
+   * the send manifest. A chapter is a promotion, not the starting role.
+   */
+  readonly role: ChapterRole;
   readonly head: TextHead;
   /**
    * What the file looked like when it was read.
@@ -88,10 +108,13 @@ export interface Chapter {
 }
 
 export interface Root {
+  readonly id: string;
   readonly path: string;
   readonly name: string;
-  /** A single file opened on its own, not a folder whose contents were adopted. */
-  readonly single: boolean;
+  /** A folder whose Markdown was adopted, or a single file opened on its own. */
+  readonly kind: "folder" | "file";
+  /** The path did not resolve. The other roots still open. */
+  readonly missing?: boolean;
 }
 
 export interface Workspace {
@@ -140,16 +163,23 @@ const pathForNewChapter = (root: string, title: string): string => {
  * from the edit onward, which is exactly when a proposal should be flagged as
  * drifted rather than silently reattached.
  */
-const parseChapter = (root: string, path: string, snapshot: ChapterFileSnapshot): Chapter => {
+const parseChapter = (
+  root: Root,
+  base: string,
+  path: string,
+  role: ChapterRole,
+  snapshot: ChapterFileSnapshot,
+): Chapter => {
   const title = basename(path, extname(path));
-  const id = relative(root, path)
+  const id = relative(base, path)
     .split(/[/\\]+/)
     .join("/");
   return {
     id,
     title,
     path,
-    root,
+    rootId: root.id,
+    role,
     stamp: snapshot.stamp,
     head: {
       id: `${path}@load`,
@@ -163,29 +193,102 @@ const parseChapter = (root: string, path: string, snapshot: ChapterFileSnapshot)
   };
 };
 
-const chaptersUnder = (root: Root): Chapter[] => {
-  if (root.single) {
-    const snapshot = readChapterFile(root.path);
-    return snapshot === undefined ? [] : [parseChapter(dirname(root.path), root.path, snapshot)];
+/** Neither the Source Backup nor the application's own state is manuscript. */
+const RESERVED_DIR = new Set([SOURCE_BACKUP_DIR, ".refrain"]);
+
+const isMarkdown = (name: string): boolean => MARKDOWN.has(extname(name).toLowerCase());
+
+/**
+ * Walk a folder root, depth first, naming what each file is.
+ *
+ * Top level is the chapter sequence; everything below it is material (SPEC
+ * Q11). Reading only the top level — which is what this did — left Markdown in
+ * a subdirectory visible in the file browser, which walks the tree natively,
+ * and unopenable in the editor, which did not.
+ */
+const collect = (root: Root, dir: string, depth: number, into: Chapter[]): void => {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    // An unreadable subdirectory is not a reason to lose the rest of the work.
+    return;
   }
 
-  if (!existsSync(root.path)) return [];
-  return readdirSync(root.path, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && MARKDOWN.has(extname(entry.name).toLowerCase()))
-    .map((entry) => entry.name)
-    .sort()
-    .flatMap((name) => {
-      const path = join(root.path, name);
-      const snapshot = readChapterFile(path);
-      return snapshot === undefined ? [] : [parseChapter(root.path, path, snapshot)];
-    });
+  // Sorted so `chapter-2` precedes `chapter-10` never happens by accident of
+  // filesystem order; the rail's sequence is the writer's sequence.
+  for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
+    const name = entry.name;
+    if (name.startsWith(".") && RESERVED_DIR.has(name.toLowerCase())) continue;
+    const path = join(dir, name);
+
+    if (entry.isDirectory()) {
+      collect(root, path, depth + 1, into);
+      continue;
+    }
+    if (!entry.isFile() || !isMarkdown(name)) continue;
+
+    const snapshot = readChapterFile(path);
+    if (snapshot === undefined) continue;
+    into.push(parseChapter(root, root.path, path, depth === 0 ? "chapter" : "material", snapshot));
+  }
+};
+
+const chaptersUnder = (root: Root): Chapter[] => {
+  if (root.missing) return [];
+
+  if (root.kind === "file") {
+    const snapshot = readChapterFile(root.path);
+    // A lone file is a chapter: it is the thing the writer opened. Its id is
+    // taken against its own directory so it reads as a name rather than a path.
+    return snapshot === undefined
+      ? []
+      : [parseChapter(root, dirname(root.path), root.path, "chapter", snapshot)];
+  }
+
+  const found: Chapter[] = [];
+  collect(root, root.path, 0, found);
+  return found;
+};
+
+/**
+ * A Root's identity is its canonical path, hashed.
+ *
+ * Derived rather than random so it survives a restart: the rail, the queue and
+ * the ledger all reference roots, and an identifier regenerated on each launch
+ * would orphan every one of them. Canonical first, so the same folder reached
+ * through a symlink or a trailing slash is one root and not two.
+ */
+const identify = (path: string): string => {
+  let canonical = path;
+  try {
+    canonical = realpathSync(path);
+  } catch {
+    // A missing root still needs an identity — the interface has to name it.
+  }
+  return `r-${createHash("sha256").update(canonical).digest("hex").slice(0, 12)}`;
 };
 
 export const describeRoot = (path: string): Root => {
-  const single = existsSync(path) && statSync(path).isFile();
-  return { path, name: single ? basename(path) : basename(path) || path, single };
+  const exists = existsSync(path);
+  const kind = exists && statSync(path).isFile() ? "file" : "folder";
+  return {
+    id: identify(path),
+    path,
+    name: basename(path) || path,
+    kind,
+    ...(exists ? {} : { missing: true }),
+  };
 };
 
+/**
+ * One bad root does not close the workspace.
+ *
+ * A folder that has been moved, unmounted, or renamed since it was last opened
+ * used to take every other root down with it, so a writer with a chapter on a
+ * detached drive could not reach the chapters on their own disk. A missing root
+ * stays in the list, carrying `missing`, for the interface to explain.
+ */
 export const loadWorkspace = (paths: readonly string[]): Workspace => {
   const roots = paths.map(describeRoot);
   return { roots, chapters: roots.flatMap(chaptersUnder) };
@@ -194,7 +297,7 @@ export const loadWorkspace = (paths: readonly string[]): Workspace => {
 /** Backwards-compatible single-root load, kept because tests and the L0 channel use it. */
 export const loadProject = (root: string): { root: string; chapters: readonly Chapter[] } => ({
   root,
-  chapters: chaptersUnder({ path: root, name: basename(root), single: false }),
+  chapters: chaptersUnder(describeRoot(root)),
 });
 
 export const serializeChapter = (head: TextHead): string =>

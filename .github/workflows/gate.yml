@@ -179,6 +179,15 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-revert.ts
 
+      # Opening a single file used to show nothing: its chapter was filed under
+      # the file's parent folder while the root recorded was the file, and the
+      # rail grouped by comparing those two paths. Nothing matched, no test
+      # failed, and the writer could not open a manuscript at all. This opens
+      # one — and a folder whose subdirectory holds material (SPEC Q11).
+      - name: a lone file opens, and material stays out of the chapter sequence
+        working-directory: apps/desktop
+        run: bun scripts/verify-open.ts
+
       # Chapter titles are only labels; two workspace roots may contain the same
       # one. Selection, display, and save must stay bound to the absolute path.
       - name: duplicate chapter titles stay isolated across roots
