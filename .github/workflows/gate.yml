@@ -179,6 +179,14 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-revert.ts
 
+      # The mark on screen and the mark in the installer must be one drawing.
+      # They were two: the component drew a seal with a caret, the asset held a
+      # repeat sign, and `make-icon.ts` rendered the asset — so the desktop icon
+      # and the interface showed different figures, each correct on its own.
+      - name: the interface and the installer draw one mark
+        working-directory: apps/desktop
+        run: bun scripts/verify-mark.ts
+
       # Four entrances to "new chapter" — the rail button, the palette, Ctrl+N,
       # and the empty page — all called `window.prompt`, which Electron
       # disables. All four therefore did nothing at all: no dialog, no chapter,
