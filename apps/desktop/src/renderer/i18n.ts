@@ -76,12 +76,17 @@ export const dict = {
   "typo.none": { zh: "无", en: "none" },
   "typo.reset": { zh: "恢复默认", en: "Reset to defaults" },
   "typo.cjk": { zh: "中文字体", en: "Chinese face" },
+  "typo.jp": { zh: "日文字体", en: "Japanese face" },
+  "typo.jpHint": {
+    zh: "日文与中文分开设置：直、骨、令 两地写法不同，一套字体总有一边是错的。",
+    en: "Separate from the Chinese face: 直, 骨 and 令 are drawn differently in the two traditions, and one face always gets one of them wrong.",
+  },
   "typo.latin": { zh: "西文字体", en: "Latin face" },
   "typo.system": { zh: "系统字体", en: "Installed on this machine" },
   "typo.searchFont": { zh: "搜索字体…", en: "Search fonts…" },
   "typo.systemHint": {
-    zh: "点击即用作中文字体。西文字体请在上方输入名称。",
-    en: "Click to use as the Chinese face. Type a name above for the Latin face.",
+    zh: "先选上面的槽位，再点字体名。这台机器上装了什么，这里就有什么。",
+    en: "Choose a slot above, then click a face. This lists what is installed on this machine.",
   },
   "typo.typeName": { zh: "或直接输入字体名", en: "or type a font name" },
   "typo.chars": { zh: "字", en: "ch" },
@@ -156,8 +161,8 @@ export const dict = {
     en: "Any picture. It stays on this machine.",
   },
   "set.fonts": {
-    zh: "内置五款 SIL 开放字体协议字体：Chiron Sung HK、Antic Didone、Jost、Murecho、Courier Prime。",
-    en: "Five bundled typefaces under the SIL Open Font License: Chiron Sung HK, Antic Didone, Jost, Murecho, Courier Prime.",
+    zh: "内置六款 SIL 开放字体协议字体：Chiron Sung HK、Zen Kaku Gothic New、Murecho、Antic Didone、Jost、Courier Prime。",
+    en: "Six bundled typefaces under the SIL Open Font License: Chiron Sung HK, Zen Kaku Gothic New, Murecho, Antic Didone, Jost, Courier Prime.",
   },
   "set.noNetwork": {
     zh: "此程序不发出任何网络请求，不收集任何数据。",

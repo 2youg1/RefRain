@@ -2,7 +2,13 @@
   
   import { api } from "./api.ts";
 import type { Key } from "./i18n.ts";
-  import { BUNDLED_CJK, BUNDLED_LATIN, DEFAULTS, type TypeSettings } from "./typography.ts";
+  import {
+    BUNDLED_CJK,
+    BUNDLED_JP,
+    BUNDLED_LATIN,
+    DEFAULTS,
+    type TypeSettings,
+  } from "./typography.ts";
 
   interface Props {
     settings: TypeSettings;
@@ -14,6 +20,8 @@ import type { Key } from "./i18n.ts";
 
   let systemFonts = $state<string[]>([]);
   let filter = $state("");
+  /** Which slot a chosen system font fills. */
+  let slot = $state<"cjkFamily" | "jpFamily" | "latinFamily">("cjkFamily");
 
   $effect(() => {
     void api().systemFonts().then((list) => (systemFonts = list));
@@ -33,7 +41,7 @@ import type { Key } from "./i18n.ts";
   <div
     class="specimen"
     style="
-      font-family: '{settings.latinFamily}', '{settings.cjkFamily}', serif;
+      font-family: '{settings.latinFamily}', '{settings.jpFamily}', '{settings.cjkFamily}', serif;
       font-size: {settings.size}px;
       font-weight: {settings.weight};
       line-height: {settings.leading};
@@ -65,6 +73,26 @@ import type { Key } from "./i18n.ts";
   </section>
 
   <section>
+    <span class="label">{t("typo.jp")}</span>
+    <div class="chips">
+      {#each BUNDLED_JP as family (family)}
+        <button
+          class:on={settings.jpFamily === family}
+          style="font-family: '{family}'"
+          onclick={() => set("jpFamily", family)}>{family}</button
+        >
+      {/each}
+    </div>
+    <input
+      class="typed"
+      value={settings.jpFamily}
+      oninput={(e) => set("jpFamily", e.currentTarget.value)}
+      placeholder={t("typo.typeName")}
+    />
+    <p class="hint">{t("typo.jpHint")}</p>
+  </section>
+
+  <section>
     <span class="label">{t("typo.latin")}</span>
     <div class="chips">
       {#each BUNDLED_LATIN as family (family)}
@@ -86,10 +114,21 @@ import type { Key } from "./i18n.ts";
   {#if systemFonts.length > 0}
     <section>
       <span class="label">{t("typo.system")} · {systemFonts.length}</span>
+      <!--
+        Which slot a chosen system font fills.
+        Every button here used to write `cjkFamily`, so an author who wanted a
+        favourite Latin face from their own library got it installed as the
+        Chinese one instead — and no control existed to undo that choice.
+      -->
+      <div class="segmented slot">
+        {#each [["cjkFamily", "typo.cjk"], ["jpFamily", "typo.jp"], ["latinFamily", "typo.latin"]] as const as [key, label] (key)}
+          <button class:on={slot === key} onclick={() => (slot = key)}>{t(label)}</button>
+        {/each}
+      </div>
       <input bind:value={filter} placeholder={t("typo.searchFont")} class="typed" />
       <div class="font-list">
         {#each matching as family (family)}
-          <button style="font-family: '{family}'" onclick={() => set("cjkFamily", family)}>
+          <button style="font-family: '{family}'" onclick={() => set(slot, family)}>
             {family}
           </button>
         {/each}
@@ -273,6 +312,10 @@ import type { Key } from "./i18n.ts";
   .typed {
     font-size: var(--step--1);
     padding: 0.4rem 0.55rem;
+  }
+
+  .slot {
+    margin-bottom: 0.4rem;
   }
 
   .font-list {

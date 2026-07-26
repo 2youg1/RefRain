@@ -11,7 +11,11 @@
  *                     Song lineage, drawn for screen; the reading face.
  *   Antic Didone    — Latin display serif for titles. High contrast, quiet.
  *   Jost            — Latin interface sans. Geometric, sets small text cleanly.
- *   Murecho         — CJK-capable sans for interface text and Japanese.
+ *   Zen Kaku Gothic New — Japanese sans for the manuscript. Its own slot, not
+ *                     a substitute for the Chinese face: 直, 骨 and 令 are
+ *                     drawn differently in the two traditions, and one face
+ *                     gets one of them wrong.
+ *   Murecho         — CJK-capable sans for interface text.
  *   Courier Prime   — monospace for identifiers, paths, and protocol text.
  */
 
@@ -33,6 +37,13 @@
   font-family: "Jost";
   src: url("./fonts/Jost.woff2") format("woff2");
   font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Zen Kaku Gothic New";
+  src: url("./fonts/ZenKakuGothicNew-Regular.woff2") format("woff2");
+  font-weight: 400;
   font-display: swap;
 }
 

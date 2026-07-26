@@ -179,6 +179,14 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-revert.ts
 
+      # Changing a typeface must change the manuscript, not only the specimen.
+      # Every entry in the system-font list wrote `cjkFamily` whatever slot the
+      # author meant, and the manuscript stack had no Japanese slot at all, so
+      # Japanese fell through to whatever the machine happened to supply.
+      - name: a chosen typeface reaches the manuscript, in the right slot
+        working-directory: apps/desktop
+        run: bun scripts/verify-fonts.ts
+
       # The mark on screen and the mark in the installer must be one drawing.
       # They were two: the component drew a seal with a caret, the asset held a
       # repeat sign, and `make-icon.ts` rendered the asset — so the desktop icon
