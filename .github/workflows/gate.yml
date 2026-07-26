@@ -381,6 +381,16 @@ jobs:
       - name: bytes the author did not edit come back unchanged
         run: bun run verify:roundtrip
 
+      # INV-8: the cost of saving follows the size of the change, not of the
+      # book. A 40,000-block manuscript threw RangeError: Out of memory on a
+      # single save whatever the author had changed, because the alignment
+      # table is allocated before anything is compared — correcting one
+      # character cost what rewriting the book cost. Six mutation shapes,
+      # because the existing scale test uses only replacements, and a pure
+      # insertion at the head is what breaks segmentation.
+      - name: saving a long manuscript costs what the change costs
+        run: bun run verify:scale
+
       # A delete that cannot be undone is the one defect this application
       # cannot apologise for. The channel list and the native surface are both
       # asserted, so adding a permanent delete fails here before review.
