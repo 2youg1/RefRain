@@ -1,5 +1,7 @@
 export type { Round } from "./broadcast.ts";
 export { broadcast, competitorsFor, roundOf } from "./broadcast.ts";
+export type { ClaudeCodeConfig } from "./claude-code.ts";
+export { ClaudeCodeAdapter } from "./claude-code.ts";
 export type { CommandAdapterConfig } from "./command.ts";
 export { CommandAdapter } from "./command.ts";
 export { FileChannelAdapter, scaffold } from "./file-channel.ts";

@@ -1,0 +1,293 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { ClaudeCodeAdapter } from "../src/claude-code.ts";
+import { AgentHost } from "../src/host.ts";
+import type { Agent, ReviewTask } from "../src/types.ts";
+
+/**
+ * Contract tests for the Claude Code adapter.
+ *
+ * A stub binary stands in for `claude`, not a mocked class. The thing under
+ * test is how this adapter reads a real process's stdout and exit code, and a
+ * mock would assert that the code calls itself the way it was written.
+ *
+ * SPEC 6.5 asks for a real session and a real run before an adapter may claim
+ * its tier. That gate belongs to the machine that has Claude Code installed;
+ * these tests fix the wire format so a change in the parser fails here first.
+ */
+
+const root = "/tmp/refrain-claude-contract";
+const binDir = join(root, "bin");
+
+/** Writes an executable that prints `stdout` and exits with `code`. */
+const stubClaude = (stdout: string, code = 0): string => {
+  mkdirSync(binDir, { recursive: true });
+  const path = join(binDir, `claude-${Math.random().toString(36).slice(2)}`);
+  writeFileSync(
+    path,
+    ["#!/bin/sh", "cat > /dev/null", `printf '%s' ${JSON.stringify(stdout)}`, `exit ${code}`].join(
+      "\n",
+    ),
+    { mode: 0o755 },
+  );
+  return path;
+};
+
+/** A report shaped like Claude Code's `--output-format json`. */
+const report = (over: Record<string, unknown> = {}): string =>
+  JSON.stringify({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    num_turns: 1,
+    result: "done",
+    session_id: "session-abc",
+    model: "claude-sonnet-4-6",
+    total_cost_usd: 0.2136,
+    usage: {
+      input_tokens: 2,
+      cache_creation_input_tokens: 34159,
+      cache_read_input_tokens: 512,
+      output_tokens: 4,
+    },
+    ...over,
+  });
+
+const agent: Agent = {
+  id: "a1",
+  name: "线编",
+  binding: { harness: "claude-code", model: "sonnet", reasoningEffort: "medium" },
+};
+
+const task: ReviewTask = {
+  id: "t1",
+  agentId: "a1",
+  baseline: "rev0",
+  prompt: "收紧这一段",
+  contextScope: [],
+  editScopes: [{ id: "s1", blockIds: ["b1"], text: "声音很熟。" }],
+};
+
+beforeEach(() => {
+  rmSync(root, { recursive: true, force: true });
+  mkdirSync(root, { recursive: true });
+});
+
+afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+describe("Claude Code adapter", () => {
+  test("declares L2, which is the claim the rest of these tests hold it to", () => {
+    expect(new ClaudeCodeAdapter().tier).toBe("L2");
+    expect(new ClaudeCodeAdapter().id).toBe("claude-code");
+  });
+
+  test("reports unknown usage before anything has run", () => {
+    // Not zero. Zero is a number this application would have invented, and a
+    // reader cannot tell an invented zero from a real one.
+    const adapter = new ClaudeCodeAdapter();
+    expect(adapter.usage().kind).toBe("unknown");
+    expect(adapter.effectiveModel().kind).toBe("unknown");
+  });
+
+  test("relays the four token counts exactly as the harness stated them", async () => {
+    const adapter = new ClaudeCodeAdapter({ command: stubClaude(report()) });
+    const host = new AgentHost(root, [adapter]);
+    host.register(agent).enqueue(task);
+
+    const [run] = await host.send();
+    await adapter.awaitCompletion(run!).catch(() => undefined);
+
+    const usage = adapter.usage();
+    expect(usage.kind).toBe("actual");
+    if (usage.kind !== "actual") return;
+
+    // Verbatim: no addition, no derivation. A total the harness never stated
+    // is a number this layer made up.
+    expect(usage.value.currentTurn).toEqual({
+      inputOther: 2,
+      output: 4,
+      inputCacheRead: 512,
+      inputCacheCreation: 34159,
+    });
+  });
+
+  test("never surfaces the cost the harness reports", async () => {
+    const adapter = new ClaudeCodeAdapter({ command: stubClaude(report()) });
+    const host = new AgentHost(root, [adapter]);
+    host.register(agent).enqueue(task);
+    const [run] = await host.send();
+    await adapter.awaitCompletion(run!).catch(() => undefined);
+
+    // SPEC 1.3: no billing math, no prices. The field is in the report and must
+    // not reach anything the interface can read.
+    const serialized = JSON.stringify(adapter.usage());
+    expect(serialized).not.toContain("cost");
+    expect(serialized).not.toContain("0.2136");
+    expect(serialized).not.toContain("usd");
+  });
+
+  test("reports the model the harness actually used, not the one requested", async () => {
+    // `--fallback-model` and provider routing both substitute a model. Echoing
+    // the request back would be a claim this adapter cannot support.
+    const adapter = new ClaudeCodeAdapter({
+      command: stubClaude(report({ model: "claude-opus-4-6" })),
+    });
+    const host = new AgentHost(root, [adapter]);
+    host.register(agent).enqueue(task);
+    const [run] = await host.send();
+    await adapter.awaitCompletion(run!).catch(() => undefined);
+
+    const model = adapter.effectiveModel();
+    expect(model).toEqual({ kind: "actual", value: "claude-opus-4-6" });
+  });
+
+  test("carries the session forward, which is what first-round persona relies on", async () => {
+    const adapter = new ClaudeCodeAdapter({ command: stubClaude(report()) });
+    const host = new AgentHost(root, [adapter]);
+    host.register(agent).enqueue(task);
+    const [run] = await host.send();
+    await adapter.awaitCompletion(run!).catch(() => undefined);
+
+    expect(adapter.sessionId()).toBe("session-abc");
+  });
+
+  test("accumulates a total across runs while keeping the latest turn separate", async () => {
+    const adapter = new ClaudeCodeAdapter({ command: stubClaude(report()) });
+    const host = new AgentHost(root, [adapter]);
+    host
+      .register(agent)
+      .enqueue(task)
+      .enqueue({ ...task, id: "t2" });
+
+    const runs = await host.send();
+    for (const run of runs) await adapter.awaitCompletion(run).catch(() => undefined);
+
+    const usage = adapter.usage();
+    if (usage.kind !== "actual") throw new Error("expected actual usage");
+
+    expect(usage.value.currentTurn?.output).toBe(4);
+    expect(usage.value.total?.output).toBe(8);
+    expect(usage.value.total?.inputCacheCreation).toBe(34159 * 2);
+  });
+
+  test("attributes usage to one run, so a proposal can carry what it cost", async () => {
+    const adapter = new ClaudeCodeAdapter({ command: stubClaude(report()) });
+    const host = new AgentHost(root, [adapter]);
+    host.register(agent).enqueue(task);
+    const [run] = await host.send();
+    await adapter.awaitCompletion(run!).catch(() => undefined);
+
+    expect(adapter.usageFor(run!.id).kind).toBe("actual");
+    expect(adapter.usageFor("run-that-never-existed").kind).toBe("unknown");
+    expect(adapter.turnsFor(run!.id)).toBe(1);
+  });
+
+  test("an error report fails the run and still keeps its usage", async () => {
+    // A harness that errored still spent tokens. Dropping the report would
+    // understate what the round cost the author.
+    const adapter = new ClaudeCodeAdapter({
+      command: stubClaude(report({ is_error: true, result: "rate limited" })),
+    });
+    const host = new AgentHost(root, [adapter]);
+    host.register(agent).enqueue(task);
+    const [run] = await host.send();
+
+    await expect(adapter.awaitCompletion(run!)).rejects.toThrow(/rate limited/);
+    expect(run!.state).toBe("failed");
+    expect(adapter.usage().kind).toBe("actual");
+  });
+
+  test("a non-zero exit fails the run", async () => {
+    const adapter = new ClaudeCodeAdapter({ command: stubClaude("", 4) });
+    const host = new AgentHost(root, [adapter]);
+    host.register(agent).enqueue(task);
+    const [run] = await host.send();
+
+    await expect(adapter.awaitCompletion(run!)).rejects.toThrow();
+    expect(run!.state).toBe("failed");
+  });
+
+  test("unparseable stdout costs the usage report, not the run", async () => {
+    // A wrapper script or a warning line can put text around the JSON. The
+    // Proposal is frozen from the result file, so the run survives.
+    const adapter = new ClaudeCodeAdapter({ command: stubClaude("not json at all") });
+    const host = new AgentHost(root, [adapter]);
+    host.register(agent).enqueue(task);
+    const [run] = await host.send();
+
+    await adapter.awaitCompletion(run!).catch(() => undefined);
+    expect(run!.state).not.toBe("failed");
+    expect(adapter.usage().kind).toBe("unknown");
+  });
+
+  test("finds the report inside surrounding noise", async () => {
+    const adapter = new ClaudeCodeAdapter({
+      command: stubClaude(`warning: something\n${report()}\n`),
+    });
+    const host = new AgentHost(root, [adapter]);
+    host.register(agent).enqueue(task);
+    const [run] = await host.send();
+    await adapter.awaitCompletion(run!).catch(() => undefined);
+
+    expect(adapter.usage().kind).toBe("actual");
+  });
+
+  test("a timeout kills the harness and fails the run", async () => {
+    mkdirSync(binDir, { recursive: true });
+    const slow = join(binDir, "slow-claude");
+    writeFileSync(slow, "#!/bin/sh\nsleep 30\n", { mode: 0o755 });
+
+    const adapter = new ClaudeCodeAdapter({ command: slow, timeoutMs: 40 });
+    const host = new AgentHost(root, [adapter]);
+    host.register(agent).enqueue(task);
+
+    const started = performance.now();
+    const [run] = await host.send();
+    await expect(adapter.awaitCompletion(run!)).rejects.toThrow(/exceeded/);
+
+    expect(run!.state).toBe("failed");
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
+  test("cancelling after completion cannot rewrite the terminal state", async () => {
+    const adapter = new ClaudeCodeAdapter({ command: stubClaude(report()) });
+    const host = new AgentHost(root, [adapter]);
+    host.register(agent).enqueue(task);
+    const [run] = await host.send();
+    await adapter.awaitCompletion(run!).catch(() => undefined);
+
+    run!.state = "completed";
+    await adapter.cancel(run!);
+    expect(run!.state).toBe("completed");
+  });
+
+  test("writes a request the agent can answer without the repository", async () => {
+    const adapter = new ClaudeCodeAdapter({ command: stubClaude(report()) });
+    const host = new AgentHost(root, [adapter]);
+    host.register(agent).enqueue(task);
+    const [run] = await host.send();
+
+    expect(existsSync(run!.requestPath)).toBe(true);
+    const request = readFileSync(run!.requestPath, "utf8");
+    expect(request).toContain("s1");
+    expect(request).toContain("声音很熟。");
+    expect(request).toContain("agent-result");
+  });
+
+  test("the argv denies every tool it does not name", async () => {
+    // A subprocess nobody is watching must never wait on a permission prompt,
+    // and this agent has no reason to run a command.
+    const adapter = new ClaudeCodeAdapter();
+    const argv = (adapter as unknown as { argv(run: unknown, agent: Agent): string[] }).argv(
+      { id: "r1" },
+      agent,
+    );
+
+    expect(argv).toContain("dontAsk");
+    expect(argv).toContain("Read,Write");
+    expect(argv).toContain("--strict-mcp-config");
+    expect(argv).not.toContain("--dangerously-skip-permissions");
+    expect(argv.join(" ")).not.toContain("Bash");
+  });
+});
