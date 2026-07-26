@@ -337,6 +337,13 @@ export const dict = {
     en: "No Markdown files in this folder yet",
   },
   "chapter.new": { zh: "新章节名", en: "Chapter name" },
+  // SPEC Q11: a subdirectory holds material — notes, chronologies, sources.
+  // A chapter is a promotion, not the role every Markdown file starts in.
+  "rail.material": { zh: "资料", en: "Material" },
+  "root.missing": {
+    zh: "这个位置打不开了。文件可能被移动、改名，或所在的盘没有挂载。",
+    en: "This location cannot be opened. It may have been moved or renamed, or its drive is not mounted.",
+  },
   "chapter.pickOne": {
     zh: "从左边选一章，或者开一章新的。",
     en: "Choose a chapter, or start a new one.",

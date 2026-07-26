@@ -232,21 +232,40 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
   /** Several roots at once: a folder kept empty for tidiness locks out nothing. */
   ipc.handle("project:load-workspace", (_e, roots: string[]) => {
     const workspace = loadWorkspace(roots);
+    const pathOf = new Map(workspace.roots.map((root) => [root.id, root.path]));
+
     for (const chapter of workspace.chapters) {
-      const workbench = openWorkbench(chapter.root);
+      // A workbench is keyed by the root's own path. For a single opened file
+      // that is the file, not its folder — which is the whole of why a lone
+      // file used to open into an empty interface.
+      const owner = pathOf.get(chapter.rootId);
+      if (owner === undefined) continue;
+      const workbench = openWorkbench(owner);
       workbench.heads.set(chapter.id, chapter.head);
       workbench.onDisk.set(chapter.id, {
         path: chapter.path,
         ...(chapter.stamp === undefined ? {} : { stamp: chapter.stamp }),
       });
     }
-    return workspace.chapters.map((c) => ({
-      id: c.id,
-      title: c.title,
-      text: currentText(c.head),
-      root: c.root,
-      path: c.path,
-    }));
+
+    return {
+      roots: workspace.roots.map((root) => ({
+        id: root.id,
+        path: root.path,
+        name: root.name,
+        kind: root.kind,
+        ...(root.missing === undefined ? {} : { missing: root.missing }),
+      })),
+      chapters: workspace.chapters.map((c) => ({
+        id: c.id,
+        title: c.title,
+        text: currentText(c.head),
+        rootId: c.rootId,
+        root: pathOf.get(c.rootId) ?? "",
+        role: c.role,
+        path: c.path,
+      })),
+    };
   });
 
   ipc.handle("edits:revert", (_e, root: string, chapterId: string, edit: Edit) => {
@@ -279,7 +298,9 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
       id: chapter.id,
       title: chapter.title,
       text: currentText(chapter.head),
-      root: chapter.root,
+      rootId: chapter.rootId,
+      root: project.root,
+      role: chapter.role,
       path: chapter.path,
     }));
   });
