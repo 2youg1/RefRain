@@ -58,6 +58,8 @@ let active = $state<string | null>(null);
 let text = $state("");
 let saved = $state(true);
 let selection = $state("");
+/** The whole blocks the selection touches; see `selectedBlocks`. */
+let scope = $state<{ ids: string[]; text: string }>({ ids: [], text: "" });
 let progress = $state(0);
 let paragraphMarks = $state<number[]>([]);
 
@@ -500,8 +502,48 @@ const onDrop = async (event: DragEvent): Promise<void> => {
   if (path) await addRoot(path);
 };
 
+/**
+ * The paragraphs a selection touches, as whole blocks.
+ *
+ * Two failures made every merge from the interface impossible, and both are
+ * fixed by answering this one question properly.
+ *
+ * The Edit Scope used to carry a fabricated block id — `${chapter}:sel` —
+ * while core's real ids are `${chapter}:b${index}` (project.ts). A Decision
+ * Batch looks its scope up by id, never found it, and refused with
+ * stale-baseline every single time.
+ *
+ * And the Proposal's `before` used to be the literal characters the author
+ * had highlighted, while the batch compares against the *whole block*. Half a
+ * sentence could never match. So a selection snaps outward to the paragraphs
+ * it intersects: the author still marks a phrase, and the scope is the block
+ * that contains it.
+ *
+ * The index in `surfaceEl.children` is the block index, because `render` lays
+ * out one element per block and `readSurface` reads them back in the same
+ * order.
+ */
+const selectedBlocks = (): { ids: string[]; text: string } => {
+  const selected = window.getSelection();
+  if (!selected || selected.rangeCount === 0 || !surfaceEl || !active)
+    return { ids: [], text: "" };
+
+  const range = selected.getRangeAt(0);
+  const touched = [...surfaceEl.children].filter((node) => range.intersectsNode(node));
+  const blocks = touched.length > 0 ? touched : [];
+
+  return {
+    ids: blocks.map((node) => `${active}:b${[...surfaceEl.children].indexOf(node)}`),
+    text: blocks.map((node) => node.textContent?.trim() ?? "").join("\n\n"),
+  };
+};
+
 const captureSelection = (): void => {
-  selection = window.getSelection()?.toString() ?? "";
+  const selected = window.getSelection()?.toString() ?? "";
+  selection = selected;
+  // Kept beside the visible selection so Dispatch sends what the batch will
+  // actually compare against, rather than what the author's mouse covered.
+  scope = selected.trim().length > 0 ? selectedBlocks() : { ids: [], text: "" };
   markCurrentParagraph();
 };
 
@@ -662,6 +704,7 @@ const onScroll = (): void => {
     {root}
     chapter={active}
     {selection}
+    {scope}
     {runs}
     {t}
     onDispatched={async () => {
