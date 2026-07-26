@@ -157,9 +157,12 @@ import type { Key, Lang } from "./i18n.ts";
           <button class:on={layout === "page"} onclick={() => onLayout("page")}>
             {t("set.page")}
           </button>
-          <button class:on={layout === "canvas"} onclick={() => onLayout("canvas")}>
-            {t("set.canvas")}
-          </button>
+          <!--
+            The canvas layout is designed but not built. A switch that changes
+            nothing is worse than an absent one: it teaches the author that
+            settings here may be decorative.
+          -->
+          <button class="pending" disabled>{t("set.canvas")}</button>
         </div>
         <p class="hint">{t("set.layoutHint")}</p>
       </div>
@@ -251,6 +254,16 @@ import type { Key, Lang } from "./i18n.ts";
   .segmented button.on {
     background: var(--ink);
     color: var(--paper-raised);
+  }
+
+  .segmented button.pending {
+    color: var(--ink-ghost);
+    cursor: not-allowed;
+  }
+
+  .segmented button.pending::after {
+    content: " ·";
+    color: var(--seal);
   }
 
   .hint {
