@@ -160,6 +160,12 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-render.ts
 
+      # The About page carried a hand-typed "0.1.2" for a whole release. This
+      # reads the rendered text and compares it with package.json.
+      - name: the About page states this version and links to this project
+        working-directory: apps/desktop
+        run: bun scripts/verify-about.ts
+
       - name: the rail seam is drawn
         working-directory: apps/desktop
         run: bun scripts/verify-seam.ts

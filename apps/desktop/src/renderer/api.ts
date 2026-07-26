@@ -85,6 +85,8 @@ interface RefRainApi {
   pathFor(file: File): string;
   resolveDrop(path: string): Promise<string | null>;
   fullscreen(on: boolean): Promise<boolean>;
+  /** Opens one of this project's own pages in the system browser. */
+  openProjectUrl(url: string): Promise<boolean>;
   loadProject(root: string): Promise<ChapterView[]>;
   saveChapter(root: string, title: string, text: string): Promise<boolean>;
   listAgents(root: string): Promise<AgentView[]>;

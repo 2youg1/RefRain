@@ -154,6 +154,14 @@ export const dict = {
     zh: "此程序不发出任何网络请求，不收集任何数据。",
     en: "This application makes no network requests and collects nothing.",
   },
+  "set.repo": { zh: "源码仓库", en: "Source repository" },
+  "set.issues": { zh: "报告缺陷", en: "Report a defect" },
+  "set.discussions": { zh: "讨论区", en: "Discussions" },
+  "set.licence": { zh: "开源协议 GPL-3.0", en: "Licence · GPL-3.0" },
+  "set.openExternal": {
+    zh: "以下链接在系统浏览器中打开；程序自身仍不发出任何请求。",
+    en: "These open in your system browser; the application itself still makes no requests.",
+  },
 
   "agents.title": { zh: "Agent", en: "Agents" },
 

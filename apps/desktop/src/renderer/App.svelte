@@ -57,6 +57,9 @@ let chapters = $state<ChapterView[]>([]);
 let active = $state<string | null>(null);
 let text = $state("");
 let saved = $state(true);
+/** From package.json at build time; a hand-typed version goes stale. */
+const version = __APP_VERSION__;
+
 let selection = $state("");
 /** The whole blocks the selection touches; see `selectedBlocks`. */
 let scope = $state<{ ids: string[]; text: string }>({ ids: [], text: "" });
@@ -767,6 +770,7 @@ const onScroll = (): void => {
 <Sheet open={sheet === "settings"} title={t("set.title")} width="600px" onClose={() => (sheet = null)}>
   <Settings
     {lang}
+    {version}
     {theme}
     {surface}
     sheet={sheetStyle}
@@ -780,6 +784,7 @@ const onScroll = (): void => {
     onSheet={(next) => (sheetStyle = next)}
     onLayout={(next) => (layout = next)}
     onIcon={(next) => (icon = next)}
+    onOpenUrl={(url) => void api().openProjectUrl(url)}
   >
     {#snippet typography()}
       <Typography settings={type} {t} onChange={(next) => (type = next)} />
