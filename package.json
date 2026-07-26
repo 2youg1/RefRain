@@ -19,6 +19,7 @@
     "verify:no-network": "bun scripts/verify-no-network.ts",
     "verify:trash-only": "bun scripts/verify-trash-only.ts",
     "verify:gates-run": "bun scripts/verify-gates-run.ts",
+    "verify:roundtrip": "bun scripts/verify-roundtrip.ts",
     "native": "cd packages/fs && cargo build --release && bun run scripts/build.ts",
     "check:svelte": "cd apps/desktop && bun scripts/check-svelte.ts"
   },

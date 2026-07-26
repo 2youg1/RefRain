@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Block, TextChange, TextHead } from "./domain.ts";
+import { splitBlocks } from "./roundtrip.ts";
 import { applyTextAction } from "./text-engine.ts";
 import { cdata, xmlText } from "./xml.ts";
 
@@ -113,11 +114,8 @@ const align = (before: readonly Block[], after: readonly Block[]): Edit[] => {
 export const editsBetween = (before: TextHead, after: TextHead): Edit[] =>
   align(before.blocks, after.blocks);
 
-const paragraphs = (text: string): string[] =>
-  text
-    .split(/\n\s*\n/)
-    .map((block) => block.trim())
-    .filter((block) => block.length > 0);
+/** One authority for where a block begins (`roundtrip.ts`), not a third copy. */
+const paragraphs = (text: string): string[] => splitBlocks(text);
 
 /** Carry unchanged and rewritten block identities across one author action. */
 const stableBlocks = (before: readonly Block[], text: string): Block[] => {

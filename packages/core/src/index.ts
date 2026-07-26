@@ -63,6 +63,15 @@ export type { EditScope, Proposal, ReviewSlice, SliceKind } from "./review.ts";
 export { sliceProposal } from "./review.ts";
 export type { Carry, CarryBreakdown, RoundInput } from "./round-input.ts";
 export { breakdown, composeRound } from "./round-input.ts";
+export type { SourceBlock, SourceDocument } from "./roundtrip.ts";
+export {
+  applyBlocks,
+  blockPrefix,
+  parseSource,
+  serializeSource,
+  sourceBlocks,
+  splitBlocks,
+} from "./roundtrip.ts";
 export type { TextAction, UndoResult } from "./selective-undo.ts";
 export { selectiveUndo } from "./selective-undo.ts";
 export { applyTextAction, blockAt, currentText } from "./text-engine.ts";

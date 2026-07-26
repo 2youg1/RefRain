@@ -193,6 +193,13 @@ button {
 }
 
 .manuscript > p {
+  /*
+   * The author's own whitespace is the text.
+   * Collapsing it meant an ideographic indent — how a Chinese paragraph opens —
+   * rendered as nothing, so a writer could not see what was on their own disk,
+   * and a soft line break inside a paragraph had no representation at all.
+   */
+  white-space: pre-wrap;
   /* Chinese indents by whole characters, so the unit is em, not a fixed length. */
   text-indent: var(--manuscript-indent, 0);
   margin-block-end: calc(

@@ -358,6 +358,17 @@ jobs:
       - name: no network in core
         run: bun run verify:no-network
 
+      # INV-5. A manuscript opened and saved with no edit at all lost twelve
+      # bytes out of a hundred and eighty-six: the ideographic indent that opens
+      # a Chinese paragraph, deleted on load; a fenced code block cut in two by
+      # the blank line inside it; three blank lines flattened to one. Every test
+      # in the suite was green throughout, because the loss happened between the
+      # parser and the disk. This runs the real save path over twenty corpora
+      # and compares SHA-256, and asserts the block count where a wrong split
+      # would reassemble to the same bytes while renumbering block identity.
+      - name: bytes the author did not edit come back unchanged
+        run: bun run verify:roundtrip
+
       # A delete that cannot be undone is the one defect this application
       # cannot apologise for. The channel list and the native surface are both
       # asserted, so adding a permanent delete fails here before review.

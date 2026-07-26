@@ -1,4 +1,5 @@
 <script lang="ts">
+import { splitBlocks } from "@refrain/core";
 import Agents from "./Agents.svelte";
 import Ask from "./Ask.svelte";
 import type { ChapterView, EditView, ProposalView, RootView, RunView, VerdictView } from "./api.ts";
@@ -342,13 +343,25 @@ const say = (message: string): void => {
   noticeTimer = setTimeout(() => (notice = null), 2800);
 };
 
-/** Paragraphs in, paragraphs out: the manuscript is blocks, not a string. */
+/**
+ * Paragraphs in, paragraphs out: the manuscript is blocks, not a string.
+ *
+ * The split is `core`'s, not a fourth copy of it. Block identity is positional,
+ * so main and renderer disagreeing about where a block begins renumbers every
+ * block after the disagreement and detaches queued proposals from the text
+ * they were written against.
+ *
+ * `textContent` carries newlines verbatim — the surface is `white-space:
+ * pre-wrap`, so a soft line break inside a paragraph is a real `\n` rather
+ * than a `<br>` the reader would have to translate back. Nothing is trimmed:
+ * the leading whitespace is the author's (SPEC INV-5).
+ */
 const render = (source: string): void => {
   if (!surfaceEl) return;
   surfaceEl.replaceChildren(
-    ...source.split(/\n\s*\n/).map((block) => {
+    ...splitBlocks(source).map((block) => {
       const p = document.createElement("p");
-      p.textContent = block.trim();
+      p.textContent = block;
       return p;
     }),
   );
@@ -356,10 +369,7 @@ const render = (source: string): void => {
 };
 
 const readSurface = (): string =>
-  [...(surfaceEl?.children ?? [])]
-    .map((node) => node.textContent?.trim() ?? "")
-    .filter((block) => block.length > 0)
-    .join("\n\n");
+  [...(surfaceEl?.children ?? [])].map((node) => node.textContent ?? "").join("\n\n");
 
 const measureParagraphs = (): void => {
   const height = surfaceEl?.scrollHeight ?? 1;
@@ -787,7 +797,7 @@ const selectedBlocks = (): { ids: string[]; text: string } => {
     ids: blocks.map(
       (node) => `${activeChapter.id}:b${[...surfaceEl.children].indexOf(node)}`,
     ),
-    text: blocks.map((node) => node.textContent?.trim() ?? "").join("\n\n"),
+    text: blocks.map((node) => node.textContent ?? "").join("\n\n"),
   };
 };
 
