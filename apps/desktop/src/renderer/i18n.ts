@@ -176,6 +176,39 @@ export const dict = {
   },
 
   "list.join": { zh: "、", en: ", " },
+  "conflict.title": {
+    zh: "这个文件在别处被改过了",
+    en: "This file was changed somewhere else",
+  },
+  "conflict.body": {
+    zh: "自本次打开以来，磁盘上的内容变了。两个版本都在，由你决定留哪一个。",
+    en: "The file on disk changed since this session opened it. Both versions exist; you decide which stays.",
+  },
+  // Distinct labels: identical ones are ambiguous under a screen reader, in
+  // keyboard focus, and in the memory of what you just pressed.
+  "conflict.mine": { zh: "留下我这边的", en: "Keep mine" },
+  "conflict.theirs": { zh: "留下磁盘上的", en: "Keep the file's" },
+  // Parallel phrasing, both naming the action and the loss. An asymmetric pair
+  // makes one option read as gentler than it is.
+  "conflict.mineCost": {
+    zh: "写入磁盘，覆盖别处那次改动",
+    en: "Writes to disk, discarding the other edit",
+  },
+  "conflict.theirsCost": {
+    zh: "载入磁盘内容，丢弃本次未保存的输入",
+    en: "Loads the file, discarding what you typed",
+  },
+  "conflict.later": { zh: "先不决定", en: "Decide later" },
+  "conflict.postponed": {
+    zh: "还没保存。你这边的文字仍在编辑器里。",
+    en: "Not saved. Your text is still in the editor.",
+  },
+  "conflict.mineLabel": { zh: "我这边（未保存）", en: "Mine, unsaved" },
+  "conflict.theirsLabel": { zh: "磁盘上的", en: "On disk" },
+  "conflict.stillChanging": {
+    zh: "文件还在被改动，没有保存。请先看一眼那个文件。",
+    en: "The file is still changing; nothing was saved. Take a look at it first.",
+  },
   "files.noTrashHere": {
     zh: "这个位置没有回收站，此处无法安全删除。",
     en: "This location has no trash, so nothing here can be deleted safely.",

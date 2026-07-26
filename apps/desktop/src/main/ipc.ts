@@ -11,11 +11,13 @@ import {
   sendManifest,
 } from "@refrain/agent";
 import {
+  type ChangedUnderneath,
   commitDecisionBatch,
   currentText,
   describeEditsForAgent,
   type Edit,
   editsBetween,
+  type FileStamp,
   loadProject,
   loadWorkspace,
   type Proposal,
@@ -27,6 +29,7 @@ import {
   type TextHead,
   type Verdict,
   VerdictLedger,
+  writeChapter,
 } from "@refrain/core";
 import type { Workspace as FileWorkspace } from "@refrain/fs";
 import type { Dialog, IpcMain } from "electron";
@@ -40,6 +43,15 @@ interface Workbench {
   readonly host: AgentHost;
   readonly ledger: VerdictLedger;
   readonly heads: Map<string, TextHead>;
+  /**
+   * Where each chapter lives, and what its file looked like when read.
+   *
+   * Two jobs. It lets a save compare against the disk instead of trusting the
+   * cached head — a chapter edited in another editor used to be overwritten
+   * without a word. And it removes a `loadProject` from the save path, which
+   * re-read every chapter in the project each time (#41).
+   */
+  readonly onDisk: Map<string, { path: string; stamp?: FileStamp }>;
   readonly proposals: Map<string, Proposal>;
   readonly agents: Agent[];
   /**
@@ -72,6 +84,7 @@ const openWorkbench = (root: string): Workbench => {
     host: new AgentHost(stateDir, [new FileChannelAdapter(stateDir)]),
     ledger: new VerdictLedger(join(stateDir, "verdicts.db")),
     heads: new Map(),
+    onDisk: new Map(),
     proposals: new Map(),
     agents: [],
   };
@@ -159,8 +172,14 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
   /** Several roots at once: a folder kept empty for tidiness locks out nothing. */
   ipc.handle("project:load-workspace", (_e, roots: string[]) => {
     const workspace = loadWorkspace(roots);
-    for (const chapter of workspace.chapters)
-      openWorkbench(chapter.root).heads.set(chapter.title, chapter.head);
+    for (const chapter of workspace.chapters) {
+      const workbench = openWorkbench(chapter.root);
+      workbench.heads.set(chapter.title, chapter.head);
+      workbench.onDisk.set(chapter.title, {
+        path: chapter.path,
+        ...(chapter.stamp === undefined ? {} : { stamp: chapter.stamp }),
+      });
+    }
     return workspace.chapters.map((c) => ({
       title: c.title,
       text: currentText(c.head),
@@ -200,7 +219,18 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     return project.chapters.map((c) => ({ title: c.title, text: currentText(c.head) }));
   });
 
+  /**
+   * Save a chapter, refusing if the file changed underneath.
+   *
+   * The refusal is the point. Before it, RefRain trusted its own cached head
+   * as the truth about the disk, so a chapter the author had edited in another
+   * editor was silently overwritten on the next keystroke-triggered save. The
+   * file is the truth (SPEC axiom 1); when this process has fallen behind it,
+   * a person has to decide, and the outcome carries the disk's text so the
+   * interface can show them both.
+   */
   ipc.handle("project:save", (_e, root: string, title: string, text: string) => {
+    const workbench = openWorkbench(root);
     const head: TextHead = {
       id: `${title}@${Date.now()}`,
       blocks: text
@@ -210,9 +240,39 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
         .map((t, i) => ({ id: `${title}:b${i}`, text: t })),
       cause: "author edit",
     };
-    openWorkbench(root).heads.set(title, head);
-    saveChapter(loadProject(root), title, head);
-    return true;
+
+    const known = workbench.onDisk.get(title);
+    const outcome = known
+      ? writeChapter(known.path, head, known.stamp)
+      : saveChapter(loadProject(root), title, head);
+
+    if (!outcome.ok) return outcome satisfies ChangedUnderneath;
+
+    workbench.heads.set(title, head);
+    if (known) workbench.onDisk.set(title, { path: known.path, stamp: outcome.stamp });
+    return { ok: true as const };
+  });
+
+  /**
+   * Take the file as it now is, discarding this session's unsaved text.
+   *
+   * The other half of the refusal above: an author who is told their file moved
+   * on needs a way to accept that rather than only a way to be blocked.
+   */
+  ipc.handle("project:reload-chapter", (_e, root: string, title: string) => {
+    const workbench = openWorkbench(root);
+    const known = workbench.onDisk.get(title);
+    if (!known) return { ok: false as const, reason: "unknown chapter" };
+
+    const chapter = loadProject(root).chapters.find((c) => c.title === title);
+    if (!chapter) return { ok: false as const, reason: "no longer on disk" };
+
+    workbench.heads.set(title, chapter.head);
+    workbench.onDisk.set(title, {
+      path: chapter.path,
+      ...(chapter.stamp === undefined ? {} : { stamp: chapter.stamp }),
+    });
+    return { ok: true as const, text: currentText(chapter.head) };
   });
 
   /**

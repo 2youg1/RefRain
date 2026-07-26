@@ -160,6 +160,12 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-render.ts
 
+      # An outside edit is the one moment two versions of the manuscript exist.
+      # This asserts the dialog shows both and that neither wins on its own.
+      - name: an outside edit offers a real choice
+        working-directory: apps/desktop
+        run: bun scripts/verify-conflict.ts
+
       # The About page carried a hand-typed "0.1.2" for a whole release. This
       # reads the rendered text and compares it with package.json.
       - name: the About page states this version and links to this project

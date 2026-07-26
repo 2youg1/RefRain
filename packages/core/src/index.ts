@@ -20,13 +20,21 @@ export type { MemoEntry } from "./memo.ts";
 export { appendMemos, carryForward, readMemos } from "./memo.ts";
 export type { Persona, PersonaCarry } from "./persona.ts";
 export { carriesOn, PRESETS, renderPersona } from "./persona.ts";
-export type { Chapter, Root, Workspace } from "./project.ts";
+export type {
+  ChangedUnderneath,
+  Chapter,
+  FileStamp,
+  Root,
+  Workspace,
+  WriteOutcome,
+} from "./project.ts";
 export {
   describeRoot,
   loadProject,
   loadWorkspace,
   saveChapter,
   serializeChapter,
+  stampOf,
   writeChapter,
 } from "./project.ts";
 export { serializeVerdicts } from "./reply.ts";
