@@ -86,7 +86,7 @@ Adapters are tiered by what the harness can prove, not by preference:
 | **L1** | Command. RefRain launches your harness and collects the result. |
 | **L2** | Session. The harness reports its model, effort, and token usage, and RefRain relays them verbatim. |
 
-L0, L1, and the first L2 adapter (Claude Code) ship today; the remaining L2 adapters follow. A harness at any tier is a harness that works — the tier says how much RefRain can tell you about what it did, not whether it runs.
+L0 and L1 ship today. The Claude Code adapter also parses the CLI's model and token report, but remains labeled L1 until a real installed session and compaction signal pass the §6.5 contract. A harness at any tier is a harness that works — the tier says how much RefRain can prove, not whether it runs.
 
 ## Building
 
@@ -96,7 +96,7 @@ bun run native     # the platform binary
 cd apps/desktop && ./make.sh && bun x electron-builder --linux AppImage
 ```
 
-Windows, macOS, and Linux binaries are produced by the `gate` workflow, which builds and tests the native layer on each platform before anything else runs.
+The `gate` workflow builds and tests the native layer on every supported platform. Tags run `release.yml`, which packages Windows x64, Linux x64, macOS arm64, and macOS x64 before one job publishes the five installers.
 
 ## Verification
 

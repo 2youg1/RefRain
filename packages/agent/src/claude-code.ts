@@ -11,12 +11,12 @@ import type {
 } from "./types.ts";
 
 /**
- * L2 adapter for Claude Code (SPEC 6.1).
+ * Command adapter for Claude Code (SPEC 6.1).
  *
- * L1 launches a command and learns nothing about what it cost. L2 reads the
- * harness's own report, which is the difference between "we do not lie about
- * tokens" and "we tell you what the harness told us" — the second half of the
- * transparency this application promises.
+ * A command adapter may read fields the CLI happens to report without claiming
+ * a trusted session. L2 additionally requires the real-session and compaction
+ * evidence in §6.5; until then, these counts are an honest extra capability on
+ * an L1 launch path.
  *
  * Claude Code's `--output-format json` returns one object on stdout carrying
  * `usage`, `session_id`, `num_turns`, and `total_cost_usd`. The cost field is
@@ -75,7 +75,9 @@ const readUsage = (usage: ClaudeResult["usage"]): TokenUsage | undefined => {
 
 export class ClaudeCodeAdapter implements HarnessAdapter {
   readonly id = "claude-code";
-  readonly tier = "L2" as const;
+  // Usage parsing is implemented, but §6.5 requires a real session and a
+  // compaction signal before this adapter may claim L2.
+  readonly tier = "L1" as const;
 
   private readonly running = new Map<string, Bun.Subprocess>();
   private readonly reports = new Map<string, ClaudeResult>();
