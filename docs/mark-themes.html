@@ -1,0 +1,185 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<title>mark · 主题换色</title><style>
+body{margin:0;background:#e9e5dd;font-family:"PingFang SC",-apple-system,sans-serif;padding:44px}
+h1{font-family:"Songti SC",serif;font-weight:500;font-size:23px;margin:0 0 6px;color:#22201d}
+p{font-size:13px;line-height:1.9;color:#57534c;max-width:640px;margin:8px 0 30px}
+.g{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+.c{background:var(--bg);color:var(--ink);border:1px solid rgba(0,0,0,.09);
+  padding:26px 18px 16px;display:flex;flex-direction:column;align-items:center;gap:14px}
+.small{display:flex;align-items:center;gap:8px;opacity:.9}
+.small span{font-family:ui-monospace,monospace;font-size:9px;opacity:.55}
+.ct{font-family:ui-monospace,monospace;font-size:9px;opacity:.45;margin-top:-6px}
+.nm{font-family:"Songti SC",serif;font-size:14px;letter-spacing:.06em;opacity:.75}
+</style></head><body>
+<h1>同一个文件,八种主题</h1>
+<p>描边取 <code>currentColor</code>,朱线取 <code>--role-pending</code>——两者都没有写死颜色,
+所以一个 SVG 服务全部主题,明暗都不用另存。最后一格是暗色主题。朱线对底色一律 ≥3:1——它是「此处需要人」的信号,看不见即功能失效,故用实测而非目测定色。</p>
+<div class="g">
+  <div class="c" style="--bg:#f6f3ee;--ink:#22201d;--role-pending:#a8422f">
+    <div class="big"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="96" height="96"
+     fill="none" role="img" aria-label="RefRain">
+  <g stroke="currentColor" stroke-width="1.6">
+    <path d="M10 11v26" stroke-width="3.2"/>
+    <path d="M13.6 11v26" stroke-width="1"/>
+    <path d="M23 13l-3.5 13M31 13l-3.5 13M39 13l-3.5 13"/>
+  </g>
+  <path d="M18 33h23" stroke="var(--role-pending, #a8422f)" stroke-width="2"/>
+</svg>
+</div>
+    <div class="small"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16"
+     shape-rendering="crispEdges" role="img" aria-label="RefRain">
+  <rect x="2" y="2" width="2" height="12" fill="currentColor"/>
+  <rect x="4.6" y="2" width="1" height="12" fill="currentColor"/>
+  <path d="M9.5 5L8.5 9M13 5L12 9" stroke="currentColor" stroke-width="1.6" fill="none"/>
+  <rect x="8" y="11" width="6" height="1.4" fill="currentColor"/>
+</svg>
+<span>16px</span></div>
+    <div class="nm">墨</div><div class="ct">朱/底 5.4 · 朱/墨 2.7</div>
+  </div>
+  <div class="c" style="--bg:#efe9df;--ink:#3a352e;--role-pending:#8c6a4f">
+    <div class="big"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="96" height="96"
+     fill="none" role="img" aria-label="RefRain">
+  <g stroke="currentColor" stroke-width="1.6">
+    <path d="M10 11v26" stroke-width="3.2"/>
+    <path d="M13.6 11v26" stroke-width="1"/>
+    <path d="M23 13l-3.5 13M31 13l-3.5 13M39 13l-3.5 13"/>
+  </g>
+  <path d="M18 33h23" stroke="var(--role-pending, #a8422f)" stroke-width="2"/>
+</svg>
+</div>
+    <div class="small"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16"
+     shape-rendering="crispEdges" role="img" aria-label="RefRain">
+  <rect x="2" y="2" width="2" height="12" fill="currentColor"/>
+  <rect x="4.6" y="2" width="1" height="12" fill="currentColor"/>
+  <path d="M9.5 5L8.5 9M13 5L12 9" stroke="currentColor" stroke-width="1.6" fill="none"/>
+  <rect x="8" y="11" width="6" height="1.4" fill="currentColor"/>
+</svg>
+<span>16px</span></div>
+    <div class="nm">侘</div><div class="ct">朱/底 4.1 · 朱/墨 2.5</div>
+  </div>
+  <div class="c" style="--bg:#f2efe8;--ink:#2e2c28;--role-pending:#7d8471">
+    <div class="big"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="96" height="96"
+     fill="none" role="img" aria-label="RefRain">
+  <g stroke="currentColor" stroke-width="1.6">
+    <path d="M10 11v26" stroke-width="3.2"/>
+    <path d="M13.6 11v26" stroke-width="1"/>
+    <path d="M23 13l-3.5 13M31 13l-3.5 13M39 13l-3.5 13"/>
+  </g>
+  <path d="M18 33h23" stroke="var(--role-pending, #a8422f)" stroke-width="2"/>
+</svg>
+</div>
+    <div class="small"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16"
+     shape-rendering="crispEdges" role="img" aria-label="RefRain">
+  <rect x="2" y="2" width="2" height="12" fill="currentColor"/>
+  <rect x="4.6" y="2" width="1" height="12" fill="currentColor"/>
+  <path d="M9.5 5L8.5 9M13 5L12 9" stroke="currentColor" stroke-width="1.6" fill="none"/>
+  <rect x="8" y="11" width="6" height="1.4" fill="currentColor"/>
+</svg>
+<span>16px</span></div>
+    <div class="nm">砂</div><div class="ct">朱/底 3.4 · 朱/墨 3.6</div>
+  </div>
+  <div class="c" style="--bg:#f5f0e1;--ink:#1a3055;--role-pending:#d4553a">
+    <div class="big"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="96" height="96"
+     fill="none" role="img" aria-label="RefRain">
+  <g stroke="currentColor" stroke-width="1.6">
+    <path d="M10 11v26" stroke-width="3.2"/>
+    <path d="M13.6 11v26" stroke-width="1"/>
+    <path d="M23 13l-3.5 13M31 13l-3.5 13M39 13l-3.5 13"/>
+  </g>
+  <path d="M18 33h23" stroke="var(--role-pending, #a8422f)" stroke-width="2"/>
+</svg>
+</div>
+    <div class="small"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16"
+     shape-rendering="crispEdges" role="img" aria-label="RefRain">
+  <rect x="2" y="2" width="2" height="12" fill="currentColor"/>
+  <rect x="4.6" y="2" width="1" height="12" fill="currentColor"/>
+  <path d="M9.5 5L8.5 9M13 5L12 9" stroke="currentColor" stroke-width="1.6" fill="none"/>
+  <rect x="8" y="11" width="6" height="1.4" fill="currentColor"/>
+</svg>
+<span>16px</span></div>
+    <div class="nm">濤</div><div class="ct">朱/底 3.6 · 朱/墨 3.2</div>
+  </div>
+  <div class="c" style="--bg:#faf9f7;--ink:#3d4a5c;--role-pending:#b06f6d">
+    <div class="big"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="96" height="96"
+     fill="none" role="img" aria-label="RefRain">
+  <g stroke="currentColor" stroke-width="1.6">
+    <path d="M10 11v26" stroke-width="3.2"/>
+    <path d="M13.6 11v26" stroke-width="1"/>
+    <path d="M23 13l-3.5 13M31 13l-3.5 13M39 13l-3.5 13"/>
+  </g>
+  <path d="M18 33h23" stroke="var(--role-pending, #a8422f)" stroke-width="2"/>
+</svg>
+</div>
+    <div class="small"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16"
+     shape-rendering="crispEdges" role="img" aria-label="RefRain">
+  <rect x="2" y="2" width="2" height="12" fill="currentColor"/>
+  <rect x="4.6" y="2" width="1" height="12" fill="currentColor"/>
+  <path d="M9.5 5L8.5 9M13 5L12 9" stroke="currentColor" stroke-width="1.6" fill="none"/>
+  <rect x="8" y="11" width="6" height="1.4" fill="currentColor"/>
+</svg>
+<span>16px</span></div>
+    <div class="nm">韶</div><div class="ct">朱/底 3.7 · 朱/墨 2.3</div>
+  </div>
+  <div class="c" style="--bg:#f7f5f1;--ink:#2f3330;--role-pending:#5c7a5e">
+    <div class="big"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="96" height="96"
+     fill="none" role="img" aria-label="RefRain">
+  <g stroke="currentColor" stroke-width="1.6">
+    <path d="M10 11v26" stroke-width="3.2"/>
+    <path d="M13.6 11v26" stroke-width="1"/>
+    <path d="M23 13l-3.5 13M31 13l-3.5 13M39 13l-3.5 13"/>
+  </g>
+  <path d="M18 33h23" stroke="var(--role-pending, #a8422f)" stroke-width="2"/>
+</svg>
+</div>
+    <div class="small"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16"
+     shape-rendering="crispEdges" role="img" aria-label="RefRain">
+  <rect x="2" y="2" width="2" height="12" fill="currentColor"/>
+  <rect x="4.6" y="2" width="1" height="12" fill="currentColor"/>
+  <path d="M9.5 5L8.5 9M13 5L12 9" stroke="currentColor" stroke-width="1.6" fill="none"/>
+  <rect x="8" y="11" width="6" height="1.4" fill="currentColor"/>
+</svg>
+<span>16px</span></div>
+    <div class="nm">桦</div><div class="ct">朱/底 4.4 · 朱/墨 2.7</div>
+  </div>
+  <div class="c" style="--bg:#fbf7f4;--ink:#4a4340;--role-pending:#c07359">
+    <div class="big"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="96" height="96"
+     fill="none" role="img" aria-label="RefRain">
+  <g stroke="currentColor" stroke-width="1.6">
+    <path d="M10 11v26" stroke-width="3.2"/>
+    <path d="M13.6 11v26" stroke-width="1"/>
+    <path d="M23 13l-3.5 13M31 13l-3.5 13M39 13l-3.5 13"/>
+  </g>
+  <path d="M18 33h23" stroke="var(--role-pending, #a8422f)" stroke-width="2"/>
+</svg>
+</div>
+    <div class="small"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16"
+     shape-rendering="crispEdges" role="img" aria-label="RefRain">
+  <rect x="2" y="2" width="2" height="12" fill="currentColor"/>
+  <rect x="4.6" y="2" width="1" height="12" fill="currentColor"/>
+  <path d="M9.5 5L8.5 9M13 5L12 9" stroke="currentColor" stroke-width="1.6" fill="none"/>
+  <rect x="8" y="11" width="6" height="1.4" fill="currentColor"/>
+</svg>
+<span>16px</span></div>
+    <div class="nm">霞</div><div class="ct">朱/底 3.4 · 朱/墨 2.7</div>
+  </div>
+  <div class="c" style="--bg:#1a1815;--ink:#f2ede4;--role-pending:#e2604a">
+    <div class="big"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="96" height="96"
+     fill="none" role="img" aria-label="RefRain">
+  <g stroke="currentColor" stroke-width="1.6">
+    <path d="M10 11v26" stroke-width="3.2"/>
+    <path d="M13.6 11v26" stroke-width="1"/>
+    <path d="M23 13l-3.5 13M31 13l-3.5 13M39 13l-3.5 13"/>
+  </g>
+  <path d="M18 33h23" stroke="var(--role-pending, #a8422f)" stroke-width="2"/>
+</svg>
+</div>
+    <div class="small"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16"
+     shape-rendering="crispEdges" role="img" aria-label="RefRain">
+  <rect x="2" y="2" width="2" height="12" fill="currentColor"/>
+  <rect x="4.6" y="2" width="1" height="12" fill="currentColor"/>
+  <path d="M9.5 5L8.5 9M13 5L12 9" stroke="currentColor" stroke-width="1.6" fill="none"/>
+  <rect x="8" y="11" width="6" height="1.4" fill="currentColor"/>
+</svg>
+<span>16px</span></div>
+    <div class="nm">暗</div><div class="ct">朱/底 5.1 · 朱/墨 3.0</div>
+  </div></div></body></html>

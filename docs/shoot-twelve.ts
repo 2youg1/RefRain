@@ -1,0 +1,10 @@
+import { chromium } from "playwright";
+import { join } from "node:path";
+const docs = import.meta.dir;
+const b = await chromium.launch();
+const p = await b.newPage({ viewportSize: { width: 1240, height: 1500 }, deviceScaleFactor: 2 });
+await p.goto("file://" + join(docs, "logo-twelve.html"));
+await p.waitForTimeout(400);
+await p.screenshot({ path: join(docs, "preview-shots", "logo-twelve.png"), fullPage: true });
+await b.close();
+console.log("twelve ok");

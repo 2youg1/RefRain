@@ -1,0 +1,10 @@
+import { chromium } from "playwright";
+import { join } from "node:path";
+const docs = import.meta.dir;
+const b = await chromium.launch();
+const p = await b.newPage({ viewportSize: { width: 1180, height: 1400 }, deviceScaleFactor: 2 });
+await p.goto("file://" + join(docs, "logo.html"));
+await p.waitForTimeout(400);
+await p.screenshot({ path: join(docs, "preview-shots", "logo.png"), fullPage: true });
+await b.close();
+console.log("logo shot ok");

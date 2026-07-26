@@ -6,6 +6,7 @@
 
 ## Changelog
 
+- 2026-07-26 v0.1.3 — The file layer (§13) and display matching (§14). A native Rust crate, `packages/fs`, holds traversal, search, sort, and a delete that goes to the system trash; it is the only package carrying a platform binary. Motion and hairlines derive from the panel's measured refresh rate and scale factor rather than from constants. Q8 opened for the cross-volume trash failure measured on Linux.
 - 2026-07-26 v0.1.2 — Renamed RefRain. Cool default palette (§4.4). Edit record, multi-root workspace, command palette as sole entrance, eighteen typographic controls, bundled OFL faces. Q5 opened for the header alignment defect.
 - 2026-07-26 v0.1.1 — M0 landed. Toolchain findings recorded in §4.3; prototype absorbed into `core`; Q1 closed.
 - 2026-07-26 v0.1.0 — First draft: form, domain language, module boundaries, Verdict Ledger protocol, harness tiers, M0 gates.
@@ -537,6 +538,44 @@ Accept: the tier table is re-verified in a real environment; a clean machine pas
 
 ---
 
+## 13 · The file layer
+
+`packages/fs` is a Rust crate exposed through N-API. It exists because four operations sit on the interaction path and JavaScript cannot make them fast enough: a parallel directory walk, SIMD substring search, a linear sort over contiguous memory, and a recoverable delete that has no JavaScript binding on any platform.
+
+**Measured on this machine** — a 20,000-file tree, warm cache, p50 over ten runs:
+
+| Operation | p50 | p95 |
+|---|---:|---:|
+| Scan 20,000 files | 10.38 ms | 11.33 ms |
+| Sort by name, natural order | 0.80 ms | 0.94 ms |
+| Substring search | 6.66 ms | 8.22 ms |
+| Subsequence search | 7.71 ms | 10.24 ms |
+| CJK search | 5.88 ms | 6.99 ms |
+| Page 200 rows | 0.13 ms | 0.17 ms |
+
+Each fits inside a 120 Hz frame budget of 8.3 ms, except the scan, which runs once per open.
+
+### 13.1 Rules
+
+1. **The index stays in Rust.** The renderer receives the page it can display. Shipping 20,000 entries across the bridge per keystroke is the cost this layer exists to remove.
+2. **Every mutating call passes through `Guard::admit`.** It resolves the canonical path, so `../` and a symlink out of the tree are refused by one test rather than two. It refuses the Source Backup, paths outside every root, and names Windows would mangle — on every platform, so a manuscript survives being copied between machines.
+3. **Delete goes to the system trash.** `IFileOperation` on Windows, `NSFileManager` on macOS, freedesktop.org on Linux. There is no permanent variant at any layer, and `bun run verify:trash-only` fails the build if one appears.
+4. **A failed trash leaves the file.** Measured on Linux: a workspace on a volume without a writable trash directory cannot delete recoverably. The operation fails, the file stays, and the interface names it.
+5. **The editor does not depend on the file layer.** A machine without a platform binary keeps opening, editing, saving, and reviewing; it loses the browser and is told which platform lacks a build.
+6. **Names are folded once, during the walk.** Folding per keystroke allocates once per entry per character typed.
+7. **Search offsets are character offsets.** A byte offset lands mid-character in any CJK name and underlines the wrong glyph.
+8. **Numbers sort as numbers.** `chapter-10` follows `chapter-9`. Lexicographic order is wrong for every numbered manuscript, which is most of them.
+
+## 14 · Display matching
+
+Two facts about the panel change how the application draws, and neither is knowable at build time.
+
+**Refresh rate.** A 165 Hz panel has a 6.06 ms frame budget, a 60 Hz panel 16.67 ms. Durations are expressed in frames of the measured rate: eight frames is 133 ms at 60 Hz and 48 ms at 165 Hz, and both read as the same gesture. Electron reports 0 Hz on some Linux compositors and in virtual displays; 60 is the safe reading, because scheduling work a panel cannot show drops frames the user does see.
+
+**Pixel density.** A hairline is `1 / scaleFactor` CSS pixels — one device pixel. At 300% scaling a 1px border is a blurry three-pixel smear, and the manuscript's ruled baseline grid is made of hairlines.
+
+The profile is per window, not per application: dragging from a laptop panel to a desktop monitor retargets the budget. The main process measures; the renderer applies. A second opinion about the frame budget would be a second source of truth.
+
 ## 12 · Open questions
 
 | # | Question | Status |
@@ -544,5 +583,8 @@ Accept: the tier table is re-verified in a real environment; a clean machine pas
 | Q1 | Product and repository name | Closed — `RefRain`, chosen 2026-07-26. A reference and a refrain; the default theme is 雨. |
 | Q2 | May a human and an agent edit the same file concurrently? (Leaning: the file is read-only to the human while an agent works on it) | Open |
 | Q3 | UI for cross-session multi-agent dialogue orchestration | Needs design |
-| Q4 | Does the Verdict Ledger's retrieval interface ship in v1? | Open |
+| Q4 | Does the Verdict Ledger's retrieval interface ship in v1? | Closed — yes, as `search` over stated reasoning. An earlier answer also promised a compiled taste profile; that was withdrawn. Reducing scattered verdicts to "what this writer wants" is inference, and an application that makes no network calls and holds no model cannot perform it. The ledger informs a persona the author writes; it does not write one. |
+| Q7 | An agent's identity is authored, not inferred — a `Persona` the writer edits, with per-agent control over whether it travels every round, only the first, or never. One harness and one model therefore yield several collaborators, distinguished by brief rather than by runtime binding. | Closed — 2026-07-26 |
+| Q6 | Does a proposal-level `accept` with no slice verdicts mean "take all of it" or "take none of it"? Today it means none — `rebuildReplacement` counts an unjudged slice as rejected, so the batch reports `ok: true` and changes nothing. Conservative and safe, but a user who clicks Accept and sees no change will read it as a bug. | Open — needs a product call |
+| Q8 | A workspace on a volume whose root is not writable cannot have a trash directory created, so the delete fails and the file stays. Measured on Linux with a workspace under `/tmp` while the user's home is on another mount. The failure is correct — falling back to a permanent delete would break the promise the layer exists for — but a writer who meets it has no way to delete from inside the application. Options: offer to move the file to a trash the user can write to, or say plainly that this volume has none. | Open — needs a product call |
 | Q5 | The chapter header will not share the manuscript's left edge — it stays at the pane edge regardless of width, `align-self`, or a wrapper element, while the sheet centres correctly. Measured by `apps/desktop/scripts/capture.ts`, which warns rather than fails. | Open |

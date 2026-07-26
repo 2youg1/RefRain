@@ -1,99 +1,123 @@
 # RefRain
 
-**A local writing workbench where every agent edit is a proposal you can refuse — and your refusal is data.**
+A local writing workbench where every agent edit is a reviewable proposal, and the manuscript stays in human hands.
 
-*[中文 README](README.zh-CN.md)* · *[Download for Windows](https://github.com/kaile9/refrain/releases/latest)*
+[简体中文](README.zh-CN.md) · GPL-3.0-only
 
 ---
 
-A *refrain* is the line a song returns to. To *refrain* is to hold back. And a *ref* is what you consult when you want to be sure. The name carries all three, because the work does: you return to the manuscript, you withhold assent until you have read the proposal, and the record of what you decided is there to consult later.
+## What it is
 
-## Why you would use this
+Write in Markdown. Send a passage to whichever coding agent you already run — Claude Code, Codex, Pi, Kimi, or your own script. What comes back is **a proposal, not an edit**: you read it sentence by sentence, take what earns its place, reject the rest, and say why. Your reasons are saved, replayable, and sent back with the next request.
 
-Start with what it refuses to do.
+Three axioms, in priority order:
 
-**It will not write into your manuscript.** Agents produce proposals. A human click merges one. There is no auto-accept, no background merge, no YOLO mode — and no setting, flag, or plugin that creates one. If you have ever run an agent over a chapter and then spent an hour finding what it quietly changed, this is the entire reason this project exists.
+1. **Files are truth.** Markdown on disk, editable and git-trackable without this application ever running.
+2. **Proposals are data.** An agent's edit is a reviewable object, not an accomplished fact.
+3. **Verdicts are replies.** Accept, reject, revise, annotate — all serialized back to the agent.
 
-**It will not phone home.** The application process makes no outbound network requests. No account, no telemetry, no auto-update, no crash reporting. Every model call happens inside your own harness, under your own credentials. You can verify this with a firewall, which is why the claim is worth stating this way.
+## The Verdict Ledger
 
-**It will not estimate your bill.** No prices, no cost projections, no "you have used 40% of your budget." Token counts are reported exactly as your harness reports them, tagged `actual`, `estimated`, or `unknown`. When a harness reports nothing, you see *unknown* rather than a plausible-looking zero.
+Every judgment about agent output — accept, reject, accept-with-changes, and **why** — is first-class data: persisted, searchable, accumulating.
 
-**It will not spend tokens you did not authorize.** No background summarisation, no automatic context enrichment, no helpful pre-fetching. Every run appears in a manifest you approve before it is sent, and nothing is silently trimmed to save you money.
+Existing tools treat a verdict as a transient UI event. Click accept, and the reasoning evaporates. Persisting it produces three things nothing else offers:
 
-**It will not lock up your work.** Markdown files on disk, readable and git-trackable without this application. Delete the app tomorrow and your manuscript is intact.
-
-**It will not stop working when the agents do.** With every harness disconnected, this is still a complete writing application: open, edit, search, save, undo.
-
-What remains after those refusals is a workbench that shows you exactly what an agent proposes, lets you accept it, rewrite it, or throw it out with a reason — and keeps the reason.
-
-## The ledger
-
-Every judgment you make — accept, reject, accept-with-changes, and **why** — is stored, searchable, and replayable. Other tools treat a verdict as a UI event: you click accept and the reasoning evaporates. Keeping it produces three things nothing else offers.
-
-**Reply.** Your verdict becomes part of the next prompt. The agent learns why the last draft was refused, in your words.
-
-**Taste.** Accumulated verdicts are a sample of your judgment. No training required, only retrieval.
-
-**Provenance.** A finished work can show which sentence you wrote, which an agent proposed, and which an agent proposed and you revised.
+- **Reply.** The verdict becomes part of the next prompt. The agent learns why the last draft was rejected.
+- **Taste.** Accumulated verdicts are a sample of this author's judgment — no training required, only retrieval.
+- **Audit.** A finished work can show which sentence a human wrote, which an agent proposed, and which an agent proposed and a human revised.
 
 Editors go stale. Harnesses turn over yearly. The ledger does neither.
 
-## One entrance
+## What it will not do
 
-There is no permanent toolbar. **Ctrl K** reaches every command; panels open on demand and close on Escape. What stays on screen is the manuscript.
+Building any of these is a defect, not a missing feature:
 
-**Ctrl Enter** enters Zen: the text and its rest, with typewriter scrolling so the line you are writing stays near the middle of the screen rather than sinking to the bottom edge.
+- **No network.** The application process makes no outbound requests. No API keys, no accounts, no telemetry, no auto-update. Every model call happens inside your own harness.
+- **No auto-merge.** No YOLO mode, no auto-accept, no background merge, no agent self-adjudication. No setting, flag, or plugin bypasses a human click.
+- **No billing math.** No prices, no cost estimates. Token counts are reported exactly as the harness reports them, tagged `actual` / `estimated` / `unknown`. When the harness says nothing, the interface says unknown.
+- **No permanent delete.** Deletion goes to the system trash — `IFileOperation` on Windows, `NSFileManager` on macOS, freedesktop.org on Linux. There is no permanent variant at any layer, and CI fails if one appears.
 
-## Typography
+## Speed
 
-Eighteen controls — face, size, weight, leading, tracking, word spacing, measure, first-line indent, paragraph spacing, alignment, margins, ruled lines, line numbers, and more. Chinese and Latin faces are set separately, values can be typed as well as dragged, and your own installed fonts are listed and searchable.
+The file layer is a Rust crate (`packages/fs`) reached through N-API. It exists because four operations sit on the interaction path and JavaScript cannot make them fast enough.
 
-Five typefaces ship with the application under the SIL Open Font License, so it renders identically on every machine: **Chiron Sung HK** sets the Chinese, **Antic Didone** the display, **Jost** and **Murecho** the interface, **Courier Prime** the monospace.
+Measured on a 20,000-file tree, warm cache, p50 over ten runs:
 
-The ruled lines land one pixel under the glyphs, per paragraph. That sounds like a detail until you see the alternative: a grid painted on the container drifts out of step wherever paragraph spacing is not a whole number of line boxes, and the rules end up through the middle of the characters. `scripts/verify-grid.ts` measures it on every build.
+| Operation | p50 | p95 |
+|---|---:|---:|
+| Scan 20,000 files | 10.38 ms | 11.33 ms |
+| Sort by name, natural order | 0.80 ms | 0.94 ms |
+| Substring search | 6.66 ms | 8.22 ms |
+| Subsequence search | 7.71 ms | 10.24 ms |
+| CJK search | 5.88 ms | 6.99 ms |
+| Page 200 rows | 0.13 ms | 0.17 ms |
 
-**Breathing** dims every paragraph but the one under your cursor. Not the blackout that focus modes use — in long-form work the surrounding text is what you are writing against.
+Every interactive operation fits inside a 120 Hz frame budget of 8.3 ms. The index stays in Rust; the renderer receives only the rows it can display, so a 20,000-entry workspace puts about forty rows in the DOM.
 
-## Agents
+Numbers sort as a reader reads them — `chapter-10` follows `chapter-9`. Search offsets are character offsets, so a Chinese filename highlights the glyph you typed rather than a byte in the middle of it.
 
-Any harness works. The floor is the **file channel**: the application writes `request.md`, you hand it to anything at all — a terminal agent, a web chat, a colleague — and paste the reply into `result.md`. No command, no configuration, no network.
+## The display
 
-Above that, a **command adapter** automates any harness with a command-line entry point, and the agent panel tells you whether it is actually reachable rather than storing a command and letting you discover the mistake an hour later.
+Two facts about your monitor change how the application draws, and neither is knowable at build time.
 
-| Harness | Tier | Entry point |
-|---|---|---|
-| Codex | L2 | `codex app-server --stdio` |
-| Claude Code | L2 | Agent SDK `query()` |
-| Pi | L2 | RPC over stdio |
-| Kimi Code | L2 | node-sdk `KimiHarness` |
-| Hermes | L1+ | TUI Gateway JSON-RPC |
-| Anything else | L0 | the file channel |
+**Refresh rate.** Durations are expressed in frames of the measured rate. Eight frames is 133 ms at 60 Hz and 48 ms at 165 Hz — the same gesture on either panel, rather than motion quantised to whichever display the developer owned. Dragging a window between monitors retargets it.
 
-## What changed, and putting it back
+**Pixel density.** A hairline is one device pixel, not one CSS pixel. At 300% scaling a 1px border is a blurry three-pixel smear, and this application's ruled baseline grid is made of hairlines.
 
-Every edit you make is recorded as an addressable change. Revert any one of them without disturbing the others, revert the lot, or attach your own note to a change and send the whole account to an agent so it works against the current text rather than the version it last saw.
-
-## Install
-
-Download the installer from [Releases](https://github.com/kaile9/refrain/releases/latest). Windows x64.
-
-Then open a folder of Markdown files, or drop one onto the window. Several folders can be open at once, and a single file can be opened without adopting its neighbours.
-
-## Build from source
+## Getting started
 
 ```bash
 bun install
-bun run gate                    # format, typecheck, test
-cd apps/desktop && ./make.sh    # renderer, main, preload
-bun x electron dist/main/main.cjs
+bun run native     # builds the Rust file layer for this platform
+bun run dev
 ```
 
-## Two origins
+`bun run native` needs a Rust toolchain and a system C compiler. On a machine without `cc`, `source scripts/native-env.sh` first — it points cargo at Zig, which ships a complete C toolchain in one archive.
 
-**[md2prompt](https://github.com/kaile9/md2prompt)** proved the half that mattered: that a human should see exactly what goes to a model and exactly what comes back. RefRain inverts the direction — the manuscript is the fixed point and the agent's output is the thing under review.
+A project is a plain folder of Markdown files. Open one, and `Ctrl K` brings up every command.
 
-**[apostle-skills](https://github.com/kaile9/apostle-skills)** supplied the discipline. `apostle-artifacts-loops` gave the delegation rules: single-use identifiers, retries that never overwrite, disk artefacts as the meeting point between processes. `apostle-constitutio` gave the two-way zero trust — an agent's self-report is never taken as evidence of what it did.
+## Harness support
+
+Adapters are tiered by what the harness can prove, not by preference:
+
+| Tier | What it means |
+|---|---|
+| **L0** | File channel. The agent reads `request.md` and writes `result.md`. Works with anything that can read and write a file. |
+| **L1** | Command. RefRain launches your harness and collects the result. |
+| **L2** | Session. The harness reports its model, effort, and token usage, and RefRain relays them verbatim. |
+
+Today L0 and L1 ship; L2 adapters are the next milestone. A harness at any tier is a harness that works — the tier says how much RefRain can tell you about what it did, not whether it runs.
+
+## Building
+
+```bash
+bun run gate       # fmt:check → check → test, all three green or it does not land
+bun run native     # the platform binary
+cd apps/desktop && ./make.sh && bun x electron-builder --linux AppImage
+```
+
+Windows, macOS, and Linux binaries are produced by the `gate` workflow, which builds and tests the native layer on each platform before anything else runs.
+
+## Verification
+
+Green assertions are not correctness. Beyond the unit tests:
+
+- `bun run verify:no-network` — no outbound request reaches the application process
+- `bun run verify:trash-only` — no permanent delete exists at any layer
+- `bun run verify:gate` — the type gate is provably capable of failing
+- `apps/desktop/scripts/verify-files.ts` — the file browser is measured as rendered: a windowed list, columns whose headers sit over their own values, a hairline that is one device pixel
+- `apps/desktop/scripts/verify-grid.ts` — ruled lines land under the glyphs, not through them
+- `e2e/ime` — Windows + Microsoft Pinyin, four shells, real `SendInput` typing. Required before any Electron upgrade.
+
+## Documentation
+
+| Document | What it holds |
+|---|---|
+| [`SPEC.md`](SPEC.md) | The authoritative design baseline. When the code disagrees, the code changes. |
+| [`AGENTS.md`](AGENTS.md) | How to work in this repository: invariants, style, gates. |
+| [`docs/STATUS.md`](docs/STATUS.md) | Current state, known defects, what is unverified. |
+| [`docs/TEST-MATRIX.md`](docs/TEST-MATRIX.md) | Every test that exists and every one that should. |
 
 ## Licence
 
-Not yet chosen. Bundled typefaces are under the SIL Open Font License; their licences travel with them in `apps/desktop/src/renderer/fonts/`.
+GPL-3.0-only. A writing tool that reads your manuscript should be one you can read back.

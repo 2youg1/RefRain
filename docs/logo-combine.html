@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>RefRain · 07 × 04 结合</title>
+<style>
+  :root{
+    --paper:#f4f1ec; --card:#fbf9f6; --ink:#22201d; --ink-soft:#57534c;
+    --faint:#8d887f; --rule:#ddd8cf; --seal:#a8422f;
+    --serif:"Songti SC","Noto Serif CJK SC","Source Han Serif SC",serif;
+    --sans:"PingFang SC","Noto Sans CJK SC",-apple-system,sans-serif;
+    --mono:"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
+    padding:56px 52px 110px;-webkit-font-smoothing:antialiased}
+  h1{font-family:var(--serif);font-weight:500;font-size:29px;letter-spacing:.06em;margin:0 0 7px}
+  .sub{font-family:var(--mono);font-size:10.5px;letter-spacing:.2em;color:var(--faint)}
+  .intro{font-size:13.5px;line-height:2;color:var(--ink-soft);max-width:700px;margin:20px 0 0}
+  .band{font-family:var(--mono);font-size:10px;letter-spacing:.16em;color:var(--faint);
+    margin:52px 0 18px;padding-top:16px;border-top:1px solid var(--rule)}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:24px}
+  .item{background:var(--card);border:1px solid var(--rule);display:flex;flex-direction:column}
+  .stage{height:210px;display:flex;align-items:center;justify-content:center;
+    border-bottom:1px solid var(--rule)}
+  .stage.dk{background:#1a1815}
+  .meta{padding:18px 20px 20px}
+  .no{font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:var(--seal)}
+  .nm{font-family:var(--serif);font-size:17px;letter-spacing:.04em;margin:5px 0 8px}
+  .ds{font-size:12.5px;line-height:1.9;color:var(--ink-soft)}
+  .sizes{display:flex;gap:22px;align-items:flex-end;margin-top:15px;padding-top:13px;
+    border-top:1px solid var(--rule)}
+  .sz{display:flex;flex-direction:column;align-items:center;gap:7px}
+  .sz span{font-family:var(--mono);font-size:9px;color:var(--faint)}
+</style>
+</head>
+<body>
+
+<h1>07 斜雨 × 04 反复</h1>
+<div class="sub">FOUR WAYS TO COMBINE</div>
+<p class="intro">
+两者有个天然接口:<strong>反复记号是两道竖线夹住一段,而斜雨正好可以当那一段</strong>。
+合起来说的是——这一段建议落下来了,要不要再走一遍,由你决定。
+每格给三档尺寸:大稿、24 像素、16 像素实际大小。<br>竖线一律<strong>一粗一细、贴紧</strong>——两根等宽等距的竖条在界面里是暂停键,而真正的乐谱反复号本就不等重,照记谱法画反而避开了这个误读。
+</p>
+
+<div class="band">四个变体</div>
+<div class="grid">
+
+  <!-- A：完整反复号夹斜雨 -->
+  <div class="item">
+    <div class="stage">
+      <svg width="150" height="150" viewBox="0 0 48 48" fill="none">
+        <line x1="8"  y1="11" x2="8"  y2="37" stroke="#22201d" stroke-width="3.2"/>
+        <line x1="11.6" y1="11" x2="11.6" y2="37" stroke="#22201d" stroke-width="1"/>
+        <line x1="20" y1="14" x2="17" y2="26" stroke="#22201d" stroke-width="1.5"/>
+        <line x1="27" y1="14" x2="24" y2="26" stroke="#22201d" stroke-width="1.5"/>
+        <line x1="34" y1="14" x2="31" y2="26" stroke="#22201d" stroke-width="1.5"/>
+        <line x1="16" y1="33" x2="36" y2="33" stroke="#a8422f" stroke-width="1.8"/>
+        <line x1="40.4" y1="11" x2="40.4" y2="37" stroke="#22201d" stroke-width="1"/>
+        <line x1="44" y1="11" x2="44" y2="37" stroke="#22201d" stroke-width="3.2"/>
+      </svg>
+    </div>
+    <div class="meta">
+      <div class="no">A</div>
+      <div class="nm">全括</div>
+      <div class="ds">两侧都是反复号,雨与纸面被完整括起来。最完整,也最像乐谱——识别成音乐软件的风险最高。</div>
+      <div class="sizes">
+        <div class="sz">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <rect x="2" y="5" width="1.6" height="14" fill="#22201d"/>
+            <rect x="4.4" y="5" width=".7" height="14" fill="#22201d"/>
+            <path d="M10 7 L8.6 13 M14 7 L12.6 13" stroke="#22201d" stroke-width="1.1"/>
+            <rect x="8" y="16" width="8" height="1.2" fill="#a8422f"/>
+            <rect x="18.6" y="5" width=".8" height="14" fill="#22201d"/>
+            <rect x="20.4" y="5" width="1.6" height="14" fill="#22201d"/>
+          </svg><span>24</span>
+        </div>
+        <div class="sz">
+          <svg width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">
+            <rect x="1" y="3" width="2" height="10" fill="#22201d"/>
+            <path d="M7 5 L6 9 M10 5 L9 9" stroke="#22201d" stroke-width="1"/>
+            <rect x="5" y="11" width="6" height="1" fill="#a8422f"/>
+            <rect x="13" y="3" width="2" height="10" fill="#22201d"/>
+          </svg><span>16</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- B：单侧反复号 -->
+  <div class="item">
+    <div class="stage">
+      <svg width="150" height="150" viewBox="0 0 48 48" fill="none">
+        <line x1="10" y1="11" x2="10" y2="37" stroke="#22201d" stroke-width="3.2"/>
+        <line x1="13.6" y1="11" x2="13.6" y2="37" stroke="#22201d" stroke-width="1"/>
+        <line x1="23" y1="13" x2="19.5" y2="26" stroke="#22201d" stroke-width="1.6"/>
+        <line x1="31" y1="13" x2="27.5" y2="26" stroke="#22201d" stroke-width="1.6"/>
+        <line x1="39" y1="13" x2="35.5" y2="26" stroke="#22201d" stroke-width="1.6"/>
+        <line x1="18" y1="33" x2="41" y2="33" stroke="#a8422f" stroke-width="2"/>
+      </svg>
+    </div>
+    <div class="meta">
+      <div class="no">B</div>
+      <div class="nm">起段</div>
+      <div class="ds">只留左侧反复号,右侧敞开。乐谱里这是「从这里重来」的起点;敞口也意味着还没结束。</div>
+      <div class="sizes">
+        <div class="sz">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <rect x="3" y="5" width="1.8" height="14" fill="#22201d"/>
+            <rect x="5.4" y="5" width=".7" height="14" fill="#22201d"/>
+            <path d="M11.5 7 L10 13.5 M15.5 7 L14 13.5 M19.5 7 L18 13.5"
+                  stroke="#22201d" stroke-width="1.2"/>
+            <rect x="9" y="16.5" width="12" height="1.4" fill="#a8422f"/>
+          </svg><span>24</span>
+        </div>
+        <div class="sz">
+          <svg width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">
+            <rect x="2" y="3" width="2" height="10" fill="#22201d"/>
+            <path d="M8 4 L6.8 9 M12 4 L10.8 9" stroke="#22201d" stroke-width="1.1"/>
+            <rect x="6" y="11" width="8" height="1.4" fill="#a8422f"/>
+          </svg><span>16</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- C：反复号的两点做成雨 -->
+  <div class="item">
+    <div class="stage">
+      <svg width="150" height="150" viewBox="0 0 48 48" fill="none">
+        <line x1="11" y1="10" x2="11" y2="38" stroke="#22201d" stroke-width="3.4"/>
+        <line x1="14.8" y1="10" x2="14.8" y2="38" stroke="#22201d" stroke-width="1"/>
+        <line x1="24" y1="14" x2="21" y2="24" stroke="#22201d" stroke-width="2.2" stroke-linecap="round"/>
+        <line x1="33" y1="14" x2="30" y2="24" stroke="#22201d" stroke-width="2.2" stroke-linecap="round"/>
+        <line x1="19" y1="32" x2="38" y2="32" stroke="#a8422f" stroke-width="2"/>
+      </svg>
+    </div>
+    <div class="meta">
+      <div class="no">C</div>
+      <div class="nm">两点</div>
+      <div class="ds">反复号本有两个点,这里把点拉成两道斜雨。构件最少,16 像素下最经得起缩——我推荐这个。</div>
+      <div class="sizes">
+        <div class="sz">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <rect x="3.5" y="4" width="2" height="16" fill="#22201d"/>
+            <rect x="6.2" y="4" width=".8" height="16" fill="#22201d"/>
+            <path d="M13 7.5 L11.4 13" stroke="#22201d" stroke-width="1.8" stroke-linecap="round"/>
+            <path d="M18 7.5 L16.4 13" stroke="#22201d" stroke-width="1.8" stroke-linecap="round"/>
+            <rect x="10" y="16" width="10" height="1.6" fill="#a8422f"/>
+          </svg><span>24</span>
+        </div>
+        <div class="sz">
+          <svg width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">
+            <rect x="2" y="2" width="2" height="12" fill="#22201d"/>
+            <rect x="4.6" y="2" width="1" height="12" fill="#22201d"/>
+            <path d="M9.5 5 L8.5 9" stroke="#22201d" stroke-width="1.6"/>
+            <path d="M13 5 L12 9" stroke="#22201d" stroke-width="1.6"/>
+            <rect x="8" y="11" width="6" height="1.4" fill="#a8422f"/>
+          </svg><span>16</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- D：朱色反复号 -->
+  <div class="item">
+    <div class="stage dk">
+      <svg width="150" height="150" viewBox="0 0 48 48" fill="none">
+        <line x1="24" y1="12" x2="20.5" y2="25" stroke="#f2ede4" stroke-width="1.7"/>
+        <line x1="32" y1="12" x2="28.5" y2="25" stroke="#f2ede4" stroke-width="1.7"/>
+        <line x1="40" y1="12" x2="36.5" y2="25" stroke="#f2ede4" stroke-width="1.7"/>
+        <line x1="19" y1="32" x2="42" y2="32" stroke="#e2604a" stroke-width="2"/>
+        <line x1="9"  y1="10" x2="9"  y2="38" stroke="#f2ede4" stroke-width="3.4"/>
+        <line x1="13" y1="10" x2="13" y2="38" stroke="#f2ede4" stroke-width="1"/>
+      </svg>
+    </div>
+    <div class="meta">
+      <div class="no">D</div>
+      <div class="nm">暗色版</div>
+      <div class="ds">C 的暗色版,不是第四个候选。朱始终留在横线上——落点的颜色在明暗两套里必须是同一个意思,否则颜色就不再承担语义。</div>
+      <div class="sizes">
+        <div class="sz">
+          <svg width="24" height="24" viewBox="0 0 24 24" style="background:#1a1815">
+            <path d="M13 7 L11.4 13 M17.5 7 L15.9 13 M22 7 L20.4 13"
+                  stroke="#f2ede4" stroke-width="1.3" fill="none"/>
+            <rect x="10" y="16" width="12" height="1.4" fill="#e2604a"/>
+            <rect x="2" y="4" width="2" height="16" fill="#f2ede4"/>
+            <rect x="4.8" y="4" width=".8" height="16" fill="#f2ede4"/>
+          </svg><span>24 · 反色</span>
+        </div>
+        <div class="sz">
+          <svg width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges"
+               style="background:#1a1815">
+            <path d="M9 4 L7.8 9 M13 4 L11.8 9" stroke="#f2ede4" stroke-width="1.1" fill="none"/>
+            <rect x="7" y="11" width="7" height="1.3" fill="#e2604a"/>
+            <rect x="2" y="2" width="2" height="12" fill="#f2ede4"/>
+          </svg><span>16 · 反色</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
