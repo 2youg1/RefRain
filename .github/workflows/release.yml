@@ -75,18 +75,23 @@ jobs:
           files: apps/desktop/release/*.exe
           generate_release_notes: true
           body: |
-            **First runnable build. Windows x64.**
+            **Windows x64.**
 
-            Download the installer below, run it, and open a folder of Markdown
-            files as a project.
+            Download the installer, run it, then open or drop a folder of
+            Markdown files.
 
-            What works: writing, selecting a range and queuing a task, the send
-            manifest, the file channel to any agent, freezing a result into
-            proposals, judging slice by slice with a stated reason, committing a
-            decision batch, and the ledger.
+            One entrance: **Ctrl K** reaches every command. Nothing else stands
+            open — the manuscript is what remains on screen.
+
+            **Ctrl Enter** enters Zen: the text and its rest, with typewriter
+            scrolling so the line you are writing stays near the middle.
+
+            Five typefaces ship with the application under the SIL Open Font
+            License — Chiron Sung HK sets the Chinese — and the typography sheet
+            exposes face, size, weight, leading, tracking, word spacing,
+            measure, indent, paragraph spacing, alignment, margins, and ruled
+            lines. Your own font library is reachable by name.
 
             The application makes no network requests, has no accounts, and
             never merges anything without a click. Token counts display exactly
             what a harness reports, and unknown when it reports nothing.
-
-            Please report anything that breaks — this build wants real use.
