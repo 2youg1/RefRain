@@ -68,7 +68,7 @@ Most test effort belongs in `packages/core`. Adapters use contract tests against
 
 The `e2e/ime` gate (Windows + MS Pinyin, four shells, real `SendInput` typing) runs in CI as the `ime-gate` workflow. Locally: `e2e/ime/scripts/prepare.ps1` once, then `e2e/ime/driver/drive.ps1 -Shell e43`, then `node e2e/ime/driver/analyze.js` and `node e2e/ime/driver/assert.js`. It seizes the real mouse and keyboard while running.
 
-Tags run the release matrix on Windows x64, Linux x64, macOS arm64, and macOS x64. Each runner builds and tests its own N-API binary before packaging. The matrix uploads installers; one final job publishes five files: NSIS, AppImage, deb, and two DMGs. A release is incomplete until that GitHub Actions run is green and all five files exist.
+Tags run the v0.1.4 release on Windows x64 only. The runner builds and tests its own N-API binary before packaging, launches a real Electron window, and publishes one NSIS installer. A release is incomplete until that GitHub Actions run is green and the installer exists.
 
 ## Pull requests
 

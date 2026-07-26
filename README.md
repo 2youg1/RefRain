@@ -103,10 +103,10 @@ L0 and L1 ship today. The Claude Code adapter also parses the CLI's model and to
 ```bash
 bun run gate       # fmt:check → check → test, all three green or it does not land
 bun run native     # the platform binary
-cd apps/desktop && ./make.sh && bun x electron-builder --linux AppImage
+cd apps/desktop && ./make.sh && bun x electron-builder --win --x64
 ```
 
-The `gate` workflow builds and tests the native layer on every supported platform. Tags run `release.yml`, which packages Windows x64, Linux x64, macOS arm64, and macOS x64 before one job publishes the five installers.
+The `gate` workflow builds and tests the native layer on every platform covered by ordinary CI. For 0.1.4, a tag runs `release.yml` on Windows x64 and publishes one NSIS installer after the real window launch check passes.
 
 ## Verification
 
@@ -132,3 +132,7 @@ Green assertions are not correctness. Beyond the unit tests:
 ## Licence
 
 GPL-3.0-only. A writing tool that reads your manuscript should be one you can read back.
+
+> “有些前沿AI实验室做出了出色的Code应用，却没有任何一家实验室做出了优秀的Work，你猜为什么呢？So FUCK all XX-Work，用RefRain搭配优秀的Code享受前沿模型带来的便利与开源社区的智慧”
+>
+> — 2youg1

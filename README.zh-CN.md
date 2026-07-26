@@ -103,10 +103,10 @@ bun run dev
 ```bash
 bun run gate       # fmt:check → check → test，三道全绿才算数
 bun run native     # 平台二进制
-cd apps/desktop && ./make.sh && bun x electron-builder --linux AppImage
+cd apps/desktop && ./make.sh && bun x electron-builder --win --x64
 ```
 
-`gate` workflow 在每个支持的平台构建并测试原生层。tag 触发 `release.yml`，分别打包 Windows x64、Linux x64、macOS arm64 与 macOS x64，再由一个 job 发布五个安装包。
+`gate` workflow 仍在普通 CI 中构建并测试各平台原生层。0.1.4 的 tag 只在 Windows x64 运行 `release.yml`；真实窗口启动检查通过后，发布一个 NSIS 安装包。
 
 ## 验证
 
@@ -132,3 +132,7 @@ cd apps/desktop && ./make.sh && bun x electron-builder --linux AppImage
 ## 许可
 
 GPL-3.0-only。一个会读你稿子的写作工具，应当是你也能读回去的。
+
+> “有些前沿AI实验室做出了出色的Code应用，却没有任何一家实验室做出了优秀的Work，你猜为什么呢？So FUCK all XX-Work，用RefRain搭配优秀的Code享受前沿模型带来的便利与开源社区的智慧”
+>
+> — 2youg1
