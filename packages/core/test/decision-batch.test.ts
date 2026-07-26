@@ -94,6 +94,21 @@ describe("rebuilding a replacement from slice verdicts", () => {
 });
 
 describe("Decision Batch", () => {
+  test.failing("a whole-Proposal accept cannot succeed without changing the manuscript", () => {
+    const whole: Verdict = {
+      id: "v-whole",
+      proposalId: onB2.id,
+      kind: "accept",
+      baseline: onB2.baseline,
+      decidedAt: "2026-07-26T00:00:00.000Z",
+    };
+
+    const result = commitDecisionBatch(head(), [onB2], [whole]);
+    const changed = result.ok && currentText(result.head) !== currentText(head());
+
+    expect(result.ok === false || changed).toBe(true);
+  });
+
   test("committing one proposal produces a single new Text Head", () => {
     const result = commitDecisionBatch(head(), [onB2], acceptAll(onB2));
 
@@ -115,6 +130,40 @@ describe("Decision Batch", () => {
     if (!result.ok) return;
     expect(currentText(result.head)).toContain("剑没有松。");
     expect(currentText(result.head)).toContain("剑尖没有动。");
+  });
+
+  test.failing("a Verdict for an unknown Proposal refuses the batch", () => {
+    const unknown: Verdict = {
+      id: "v-unknown",
+      proposalId: "missing",
+      kind: "reject",
+      baseline: "rev0",
+      decidedAt: "2026-07-26T00:00:00.000Z",
+    };
+
+    expect(commitDecisionBatch(head(), [onB2], [unknown]).ok).toBe(false);
+  });
+
+  test.failing("opposite Verdicts on one Review Slice refuse hidden last-write-wins", () => {
+    const slice = sliceProposal(onB2).find((entry) => entry.kind !== "same")!;
+    const result = commitDecisionBatch(
+      head(),
+      [onB2],
+      [
+        verdict(onB2, slice.id, "accept"),
+        { ...verdict(onB2, slice.id, "reject"), id: "v-opposite" },
+      ],
+    );
+
+    expect(result.ok).toBe(false);
+  });
+
+  test.failing("accept-modified without finalText refuses the batch", () => {
+    const slice = sliceProposal(onB2).find((entry) => entry.kind === "ins")!;
+
+    expect(
+      commitDecisionBatch(head(), [onB2], [verdict(onB2, slice.id, "accept-modified")]).ok,
+    ).toBe(false);
   });
 
   test("competing proposals on one scope refuse the batch rather than picking a winner", () => {

@@ -40,6 +40,32 @@ describe("Agent Host queue", () => {
     expect(host.runs()).toHaveLength(0);
   });
 
+  test.failing("a restarted host never reuses an existing Run id or workspace", async () => {
+    const first = new AgentHost(root);
+    first.register(agent()).enqueue(task());
+    const [run1] = await first.send();
+    writeFileSync(run1!.requestPath, "old request", "utf8");
+
+    const restarted = new AgentHost(root);
+    restarted.register(agent()).enqueue(task({ id: "t2" }));
+    const [run2] = await restarted.send();
+
+    expect(run2?.id).toBe("run2");
+    expect(await Bun.file(run1!.requestPath).text()).toBe("old request");
+    expect(run2?.workspace).not.toBe(run1?.workspace);
+  });
+
+  test.failing("a dispatch preflight failure preserves the whole queue and starts nothing", async () => {
+    const host = new AgentHost(root);
+    host.register(agent());
+    host.enqueue(task());
+    host.enqueue(task({ id: "t2", agentId: "missing" }));
+
+    expect(host.send()).rejects.toThrow(/no agent registered/);
+    expect(host.pending().map((entry) => entry.id)).toEqual(["t1", "t2"]);
+    expect(host.runs()).toEqual([]);
+  });
+
   test("the send manifest states run count, binding, scopes, and prompt", () => {
     const host = new AgentHost(root);
     host.register(agent());
@@ -129,6 +155,50 @@ describe("L0 file channel", () => {
     expect(host.commentsFor(run!.id)).toHaveLength(1);
   });
 
+  test.failing("a replacement for an invented scope fails instead of disappearing", async () => {
+    const host = new AgentHost(root, [new FileChannelAdapter(root)]);
+    host.register(agent()).enqueue(task());
+    const [run] = await host.send();
+
+    writeFileSync(
+      run!.resultPath,
+      `# Agent reply\n\n<agent-result version="1"><replacement scope="invented">甲</replacement></agent-result>`,
+    );
+
+    expect(host.collect(run!.id)).rejects.toThrow(/unknown scope invented/);
+    expect(run!.state).toBe("failed");
+  });
+
+  test.failing("an invented comment target is discarded without destroying a valid Proposal", async () => {
+    const host = new AgentHost(root, [new FileChannelAdapter(root)]);
+    host.register(agent()).enqueue(task());
+    const [run] = await host.send();
+
+    writeFileSync(
+      run!.resultPath,
+      `# Agent reply\n\n<agent-result version="1"><replacement scope="s1">乙</replacement><comments><comment target="invented">不属于任何边界</comment></comments></agent-result>`,
+    );
+
+    expect(await host.collect(run!.id)).toHaveLength(1);
+    expect(host.commentsFor(run!.id)).toEqual([]);
+    expect(run!.state).toBe("completed");
+  });
+
+  test.failing("invalid UTF-8 is rejected before a Proposal can freeze", async () => {
+    const host = new AgentHost(root);
+    host.register(agent()).enqueue(task());
+    const [run] = await host.send();
+    const prefix = Buffer.from(
+      '# Agent reply\n\n<agent-result version="1"><replacement scope="s1">',
+      "utf8",
+    );
+    const suffix = Buffer.from("</replacement></agent-result>", "utf8");
+    writeFileSync(run!.resultPath, Buffer.concat([prefix, Buffer.from([0xc3, 0x28]), suffix]));
+
+    expect(host.collect(run!.id)).rejects.toThrow(/invalid UTF-8/);
+    expect(run!.state).toBe("failed");
+  });
+
   test("an invalid artifact is refused and kept for diagnosis", async () => {
     const adapter = new FileChannelAdapter(root);
     const host = new AgentHost(root, [adapter]);
@@ -140,6 +210,22 @@ describe("L0 file channel", () => {
 
     expect(host.collect(run!.id)).rejects.toThrow(/dtd-forbidden/);
     expect(host.runs()[0]?.state).not.toBe("completed");
+  });
+
+  test.failing("L0 cancellation cannot rewrite a completed Run", async () => {
+    const adapter = new FileChannelAdapter(root);
+    const host = new AgentHost(root, [adapter]);
+    host.register(agent()).enqueue(task());
+    const [run] = await host.send();
+    writeFileSync(
+      run!.resultPath,
+      '# Agent reply\n\n<agent-result version="1"><memo>done</memo></agent-result>',
+    );
+    await host.collect(run!.id);
+
+    await adapter.cancel(run!);
+
+    expect(run!.state).toBe("completed");
   });
 
   test("token usage from a harness that reports nothing is unknown, never zero", async () => {

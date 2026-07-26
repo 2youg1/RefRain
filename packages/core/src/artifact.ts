@@ -19,9 +19,32 @@ export interface AgentComment {
   readonly text: string;
 }
 
+/**
+ * What the agent chose to remember from this run.
+ *
+ * Written by the agent, not compiled by the app — which is why it can exist at
+ * all. This application makes no network calls and holds no model, so it
+ * cannot induce a working memory from a pile of verdicts; the only party
+ * present with that capacity is the agent itself, at the moment it still has
+ * the full context in hand.
+ *
+ * Its value is continuity across a discontinuity. A session that gets cloned,
+ * compacted, or replaced loses its native context, and the successor picks up
+ * the memo instead of starting from nothing. The author can read it, edit it,
+ * and refuse it, because an agent's account of its own work is a claim rather
+ * than evidence.
+ */
+export interface AgentMemo {
+  /** Free prose: what this agent now believes about the manuscript and the author. */
+  readonly text: string;
+  /** Optional label, so several runs' memos stay tellable apart. */
+  readonly topic?: string;
+}
+
 export interface AgentResult {
   readonly replacements: readonly AgentReplacement[];
   readonly comments: readonly AgentComment[];
+  readonly memos: readonly AgentMemo[];
 }
 
 export type ArtifactErrorCode =
@@ -157,6 +180,7 @@ export const parseAgentResult = (artifact: string): ParseResult<AgentResult> => 
 
   const replacements: AgentReplacement[] = [];
   const comments: AgentComment[] = [];
+  const memos: AgentMemo[] = [];
   const seen = new Set<string>();
 
   for (const element of scanned.value) {
@@ -182,8 +206,14 @@ export const parseAgentResult = (artifact: string): ParseResult<AgentResult> => 
       continue;
     }
 
+    if (element.name === "memo") {
+      const topic = element.attrs.get("topic");
+      memos.push({ text: content(element.body), ...(topic === undefined ? {} : { topic }) });
+      continue;
+    }
+
     return fail("unknown-element", `<${element.name}>`);
   }
 
-  return { ok: true, value: { replacements, comments } };
+  return { ok: true, value: { replacements, comments, memos } };
 };

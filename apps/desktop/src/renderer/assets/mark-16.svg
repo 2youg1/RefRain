@@ -1,0 +1,18 @@
+<!--
+  RefRain mark at 16px — the tray and tab-strip size.
+
+  Not a scaled copy. Three rain strokes need sub-pixel gaps at this size and
+  merge into a wedge, so there are two; the seal is gone because macOS renders
+  tray icons as templates and strips colour, which would remove the only thing
+  that distinguishes this mark.
+
+  Every edge lands on an integer coordinate. Rectangles rather than strokes:
+  a 1px stroke straddles its path and blurs across two pixel columns.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16"
+     shape-rendering="crispEdges" role="img" aria-label="RefRain">
+  <rect x="2" y="2" width="2" height="12" fill="currentColor"/>
+  <rect x="4.6" y="2" width="1" height="12" fill="currentColor"/>
+  <path d="M9.5 5L8.5 9M13 5L12 9" stroke="currentColor" stroke-width="1.6" fill="none"/>
+  <rect x="8" y="11" width="6" height="1.4" fill="currentColor"/>
+</svg>

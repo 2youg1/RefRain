@@ -32,6 +32,20 @@ export const DEFAULT_BINDINGS: Record<string, string> = {
   zoomReset: "Ctrl+0",
   undo: "Ctrl+Z",
   redo: "Ctrl+Y",
+
+  /*
+   * Verdict actions. Alt rather than Ctrl and never a bare letter: review
+   * happens with the manuscript in focus and often with an IME candidate
+   * window open, where a bare A would be a character, not a command.
+   */
+  verdictNext: "Alt+J",
+  verdictPrev: "Alt+K",
+  verdictAccept: "Alt+A",
+  verdictReject: "Alt+X",
+  verdictEdit: "Alt+E",
+  verdictToggleCheck: "Alt+S",
+  verdictCommit: "Alt+Enter",
+  verdictAcceptFormatting: "Alt+Shift+A",
 };
 
 /** Normalise an event into the same shape as a stored binding. */

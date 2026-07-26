@@ -13,6 +13,34 @@ const dist = join(here, "..", "dist");
 const built = existsSync(join(dist, "main", "main.cjs"));
 const whenBuilt = built ? describe : describe.skip;
 
+test.failing("the default gate cannot skip every desktop test on a clean checkout", () => {
+  const rootPackage = JSON.parse(
+    readFileSync(join(here, "..", "..", "..", "package.json"), "utf8"),
+  );
+
+  expect(rootPackage.scripts.gate).toMatch(/build|desktop/);
+});
+
+test.failing("an Electron version change triggers the Windows IME gate", () => {
+  const workflow = readFileSync(
+    join(here, "..", "..", "..", ".github", "workflows", "ime-gate.yml"),
+    "utf8",
+  );
+
+  expect(workflow).toContain("apps/desktop/package.json");
+  expect(workflow).toContain("bun.lock");
+});
+
+test.failing("the no-network gate scans every process that the application starts", () => {
+  const verifier = readFileSync(
+    join(here, "..", "..", "..", "scripts", "verify-no-network.ts"),
+    "utf8",
+  );
+
+  expect(verifier).toContain("packages/agent/src");
+  expect(verifier).toContain("apps/desktop/src/main");
+});
+
 /**
  * Build-shape checks. A packaged Electron app fails at launch for reasons no
  * unit test reaches: a CJS bundle under `"type": "module"`, an absolute asset

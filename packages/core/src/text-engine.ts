@@ -28,7 +28,10 @@ export const applyTextAction = (
   for (const block of head.blocks) {
     const change = replaced.get(block.id);
     if (change) {
-      if (change.text !== null) blocks.push({ id: `${block.id}~${sequence}`, text: change.text });
+      // The identifier survives a replacement: the words changed, the paragraph
+      // did not. Minting a new id here made every later reference — a queued
+      // proposal, a compensating undo — unable to find the block it names.
+      if (change.text !== null) blocks.push({ id: block.id, text: change.text });
       continue;
     }
     if (!consumed.has(block.id)) blocks.push(block);

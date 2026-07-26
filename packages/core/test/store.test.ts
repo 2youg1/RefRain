@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Verdict } from "../src/index.ts";
@@ -42,6 +42,26 @@ describe("files are truth", () => {
 
   test("a project with no chapters loads rather than throwing", () => {
     expect(loadProject(root).chapters).toEqual([]);
+  });
+
+  test.failing("a directory whose name ends in .md is ignored", () => {
+    mkdirSync(join(root, "notes.md"));
+    writeFileSync(join(root, "01.md"), "甲。\n");
+
+    expect(loadProject(root).chapters.map((chapter) => chapter.title)).toEqual(["01"]);
+  });
+
+  test.failing("a new chapter title cannot escape the project root", () => {
+    const outside = join(root, "..", "escaped.md");
+    const project = loadProject(root);
+    const head = { id: "h1", blocks: [{ id: "b1", text: "甲。" }], cause: "test" };
+
+    try {
+      expect(() => saveChapter(project, "../escaped", head)).toThrow(/invalid chapter title/);
+      expect(() => readFileSync(outside, "utf8")).toThrow();
+    } finally {
+      rmSync(outside, { force: true });
+    }
   });
 
   test("blocks carry stable identifiers across a reload", () => {
@@ -99,6 +119,16 @@ describe("Verdict Ledger", () => {
     ledger.record(verdict({ id: "b", reason: "语气不对" }));
 
     expect(ledger.search("节奏").map((v) => v.id)).toEqual(["a"]);
+    ledger.close();
+  });
+
+  test.failing("a duplicate Verdict id cannot rewrite the original audit record", () => {
+    const ledger = new VerdictLedger(join(root, "ledger.db"));
+    const original = verdict({ id: "fixed", reason: "原来的理由" });
+    ledger.record(original);
+    ledger.record({ ...original, kind: "reject", reason: "后来改写" });
+
+    expect(ledger.all()).toEqual([original]);
     ledger.close();
   });
 
