@@ -2,7 +2,7 @@
 
 Five typefaces ship inside the application so it renders identically on every
 machine. **They are licensed separately from RefRain itself** — the SIL Open
-Font License, not the AGPL — and their terms travel with the font files.
+Font License, not the GPL — and their terms travel with the font files.
 
 The OFL permits bundling, redistribution, and modification. It requires that
 the fonts not be sold on their own and that derivatives under a reserved name

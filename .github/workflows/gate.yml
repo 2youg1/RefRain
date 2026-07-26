@@ -171,6 +171,14 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-themes.ts
 
+      # Removing a middle paragraph, saving, then reverting must put it back
+      # where it was. The block identities that make this possible are invisible
+      # to a unit test of the pure function: only the rendered interface exercises
+      # the IPC round trip that used to renumber them.
+      - name: a saved removal reverts to its own position
+        working-directory: apps/desktop
+        run: bun scripts/verify-revert.ts
+
       # Chapter titles are only labels; two workspace roots may contain the same
       # one. Selection, display, and save must stay bound to the absolute path.
       - name: duplicate chapter titles stay isolated across roots
