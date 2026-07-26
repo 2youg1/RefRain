@@ -17,6 +17,7 @@ import type { TextHead } from "../src/index.ts";
 import {
   type AtomicWriteCheckpoint,
   loadProject,
+  readChapterFile,
   replaceFileAtomically,
   saveChapter,
   stampOf,
@@ -152,6 +153,23 @@ describe("a chapter is not overwritten when the file moved on", () => {
 
       expect(outcome.ok).toBe(true);
       expect(readFileSync(path, "utf8")).toBe("回来的一句。\n");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("a read error is not mistaken for a missing chapter", () => {
+    const { root, cleanup } = scratch();
+    try {
+      const path = join(root, "第一章.md");
+      writeFileSync(path, "原来的一句。\n", "utf8");
+      const expected = stampOf(path);
+      rmSync(path);
+      mkdirSync(path);
+
+      expect(() => readChapterFile(path)).toThrow();
+      expect(() => writeChapter(path, headOf("这边仍在写。"), expected)).toThrow();
+      expect(existsSync(`${path}.writing`)).toBe(false);
     } finally {
       cleanup();
     }

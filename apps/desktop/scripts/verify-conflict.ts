@@ -31,6 +31,7 @@ const server = Bun.serve({
 
 const MINE = "我这边写的一句，还没有保存。\n\n第二段也是我写的。";
 const THEIRS = "别处改写过的一句，长度也不一样。\n\n第二段被换掉了。";
+const DURING_SAVE = "保存等待时继续写的字。";
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -42,14 +43,15 @@ await page.addInitScript(`
   window.__calls = [];
   window.refrain = {
     openProject: async () => "/p",
-    loadProject: async () => [{ title: "01", text: ${JSON.stringify(MINE)} }],
+    loadProject: async () => [{ id: "01.md", title: "01", text: ${JSON.stringify(MINE)} }],
     loadWorkspace: async () => [
-      { title: "01", text: ${JSON.stringify(MINE)}, root: "/p", path: "/p/01.md" },
+      { id: "01.md", title: "01", text: ${JSON.stringify(MINE)}, root: "/p", path: "/p/01.md" },
     ],
     createProject: async () => null, pathFor: () => "", resolveDrop: async () => null,
     fullscreen: async () => true,
     saveChapter: async (root, title, text) => {
       window.__calls.push(["save", title, text]);
+      await new Promise((resolve) => setTimeout(resolve, 200));
       return { ok: false, reason: "changed-underneath", path: "/p/01.md",
                onDisk: ${JSON.stringify(THEIRS)} };
     },
@@ -99,7 +101,8 @@ await page.keyboard.press("End");
 await page.keyboard.type("追加的一句。");
 await page.waitForTimeout(300);
 await page.keyboard.press("Control+s");
-await page.waitForTimeout(600);
+await page.keyboard.type(DURING_SAVE);
+await page.waitForTimeout(700);
 
 const dialog = page.locator(".conflict");
 if ((await dialog.count()) === 0) {
@@ -114,6 +117,11 @@ if ((await dialog.count()) === 0) {
     failures.push("the dialog does not show this session's text");
   if (!shown.includes("别处改写过的一句"))
     failures.push("the dialog does not show the file's text");
+  const focusInside = await page.evaluate(() => {
+    const active = document.activeElement;
+    return active instanceof HTMLElement && document.querySelector(".conflict")?.contains(active);
+  });
+  if (!focusInside) failures.push("the conflict dialog did not take keyboard focus");
 
   // One action per version, each under the version it keeps. A reversed
   // mapping on an irreversible choice loses work to muscle memory.
@@ -171,8 +179,27 @@ if ((await dialog.count()) === 0) {
 
   await page.screenshot({ path: join(root, "shots", "conflict.png") });
 
-  // Taking the file's version replaces the surface with it. That action sits
-  // under the right-hand pane, which is the file's.
+  // Text entered while save was waiting was never part of the displayed local
+  // version. The first click may refresh the choice, but cannot discard text the
+  // author had not yet seen in the dialog.
+  await page.locator(".versions section:nth-child(2) .choose").click();
+  await page.waitForTimeout(500);
+  if ((await page.locator(".conflict").count()) !== 1)
+    throw new Error("an old conflict choice discarded text entered while save was waiting");
+  const refreshed = (await page.locator(".conflict").innerText()).replace(/\s+/g, "");
+  if (!refreshed.includes(DURING_SAVE))
+    failures.push("the refreshed local version omits text entered while save was waiting");
+  const stillLocal = (await page.locator(".manuscript").innerText()).replace(/\s+/g, "");
+  if (!stillLocal.includes(DURING_SAVE))
+    failures.push("refreshing the conflict erased text entered while save was waiting");
+  const afterRefresh: [string, ...string[]][] = JSON.parse(
+    await page.evaluate("JSON.stringify(window.__calls)"),
+  );
+  if (afterRefresh.some(([kind]) => kind === "resolve"))
+    failures.push("the stale choice reached conflict resolution before showing the latest text");
+
+  // Taking the file's version now replaces the surface: the refreshed dialog
+  // has shown every local character that this choice will discard.
   await page.locator(".versions section:nth-child(2) .choose").click();
   await page.waitForTimeout(400);
   if ((await page.locator(".conflict").count()) !== 0)
@@ -188,8 +215,8 @@ if ((await dialog.count()) === 0) {
     failures.push("taking the file did not use the atomic conflict-resolution channel");
   if (afterChoice.some(([kind]) => kind === "reload"))
     failures.push("taking the file used the obsolete reload-then-save path");
-  if (afterChoice.filter(([kind]) => kind === "save").length !== 1)
-    failures.push("a conflict choice started a second ordinary save");
+  if (afterChoice.filter(([kind]) => kind === "save").length !== 2)
+    failures.push("the latest local version was not rechecked exactly once before resolution");
 }
 
 await browser.close();

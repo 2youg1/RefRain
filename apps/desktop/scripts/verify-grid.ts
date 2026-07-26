@@ -32,7 +32,7 @@ const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 await page.addInitScript(`window.refrain = {
   openProject: async () => "/p",
-  loadProject: async () => [{ title: "01", text: ${JSON.stringify(LONG)} }],
+  loadProject: async () => [{ id: "01.md", title: "01", text: ${JSON.stringify(LONG)} }],
   createProject: async () => null, pathFor: () => "", resolveDrop: async () => null,
   fullscreen: async () => true, saveChapter: async () => true, listAgents: async () => [],
   addAgent: async () => ({}), enqueue: async () => true, manifest: async () => [], send: async () => [],

@@ -19,10 +19,10 @@ const api = {
   revertAll: (text: string, edits: unknown[]) =>
     ipcRenderer.invoke("edits:revert-all", text, edits),
   describeEdits: (edits: unknown[]) => ipcRenderer.invoke("edits:describe", edits),
-  resolveConflict: (root: string, title: string, choice: "mine" | "disk") =>
-    ipcRenderer.invoke("project:resolve-conflict", root, title, choice),
-  saveChapter: (root: string, title: string, text: string) =>
-    ipcRenderer.invoke("project:save", root, title, text),
+  resolveConflict: (root: string, chapterId: string, choice: "mine" | "disk") =>
+    ipcRenderer.invoke("project:resolve-conflict", root, chapterId, choice),
+  saveChapter: (root: string, chapterId: string, text: string) =>
+    ipcRenderer.invoke("project:save", root, chapterId, text),
 
   /**
    * A dropped File carries no path in a sandboxed renderer; `webUtils` is

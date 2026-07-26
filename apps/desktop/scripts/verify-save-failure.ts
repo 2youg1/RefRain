@@ -22,7 +22,7 @@ const pageErrors: string[] = [];
 page.on("pageerror", (error) => pageErrors.push(error.message));
 await page.addInitScript(`
   localStorage.clear();
-  const chapter = { title: "01", text: "盘上的正文。", root: "/work", path: "/work/01.md" };
+  const chapter = { id: "01.md", title: "01", text: "盘上的正文。", root: "/work", path: "/work/01.md" };
   window.refrain = {
     openProject: async () => "/work",
     openFile: async () => null,

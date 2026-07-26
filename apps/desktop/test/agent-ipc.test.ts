@@ -27,10 +27,10 @@ const call = async (channel: string, ...args: unknown[]) => {
 const task = (id: string, agentId: string) => ({
   id,
   agentId,
-  baseline: "01@current",
+  baseline: "01.md@current",
   prompt: "改写这一段。",
   contextScope: [],
-  editScopes: [{ id: "s1", blockIds: ["01:b0"], text: "原文。" }],
+  editScopes: [{ id: "s1", blockIds: ["01.md:b0"], text: "原文。" }],
 });
 
 const waitForRuns = async (root: string, count: number) => {
@@ -158,7 +158,7 @@ const preparedDecision = async (root: string) => {
   return {
     path,
     payload: {
-      chapter: "01",
+      chapter: "01.md",
       verdicts: proposal.slices
         .filter((slice) => slice.kind !== "same")
         .map((slice, index) => ({
