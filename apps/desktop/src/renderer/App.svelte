@@ -358,6 +358,9 @@ const say = (message: string): void => {
  */
 const render = (source: string): void => {
   if (!surfaceEl) return;
+  // Replacing the children mid-composition tears out the node the input method
+  // is composing into, which discards the candidate and moves the caret.
+  if (composing) return;
   surfaceEl.replaceChildren(
     ...splitBlocks(source).map((block) => {
       const p = document.createElement("p");
@@ -378,7 +381,41 @@ const measureParagraphs = (): void => {
   );
 };
 
+/*
+ * Composition.
+ *
+ * Typing Chinese, Japanese or Korean goes through an input method: the
+ * characters on screen are a candidate, not yet the author's text, until the
+ * method commits them. Nothing here knew that. Ctrl+S mid-composition wrote
+ * the half-formed pinyin to disk as if it were prose, and any `render()` that
+ * arrived during composition replaced the surface out from under the input
+ * method, which drops the composition and leaves the caret somewhere else.
+ *
+ * For a tool whose first language is Chinese this is the heaviest defect in
+ * the experience layer, and it cost nothing to have: the browser announces
+ * both edges of a composition, and the whole fix is to wait for the far one.
+ */
+let composing = false;
+/** A save asked for mid-composition, honoured once the text is really text. */
+let saveAfterComposition = false;
+
+const onCompositionStart = (): void => {
+  composing = true;
+};
+
+const onCompositionEnd = (): void => {
+  composing = false;
+  onEdit();
+  if (!saveAfterComposition) return;
+  saveAfterComposition = false;
+  void save();
+};
+
 const onEdit = (): void => {
+  // Mid-composition the surface holds a candidate. Reading it back would
+  // record uncommitted keystrokes as the manuscript and mark it dirty against
+  // text the author has not chosen yet.
+  if (composing) return;
   text = readSurface();
   saved = false;
 };
@@ -487,6 +524,14 @@ const newChapter = (kind: AskKind = "chapter"): void => {
 const save = async (): Promise<void> => {
   const chapter = activeChapter;
   if (!chapter) return;
+
+  // Ctrl+S during composition used to commit the candidate as if the author
+  // had chosen it. The save is not refused, only deferred to the moment the
+  // text becomes text.
+  if (composing) {
+    saveAfterComposition = true;
+    return;
+  }
 
   // Snapshot before awaiting. Typing during the write used to leave `saved`
   // true over text that had never reached disk, and recorded an edit against
@@ -670,12 +715,21 @@ const commit = async (verdicts: VerdictView[]): Promise<void> => {
   if (proposals.length === 0) sheet = null;
 };
 
-/** Wrap the selection in a Markdown mark, the way an editor expects. */
+/**
+ * Wrap the selection in a Markdown mark, the way an editor expects.
+ *
+ * The selection has to be inside the manuscript. Without that check, Ctrl+B
+ * with the caret in the review panel called `deleteContents` on nodes Svelte
+ * owns, tearing out part of a panel the framework still believed it was
+ * rendering — and the marks were inserted into text that is not the
+ * manuscript. `selectedBlocks` already guarded this; this did not.
+ */
 const format = (mark: "bold" | "italic" | "strike" | "code"): void => {
   const wrap = { bold: "**", italic: "*", strike: "~~", code: "`" }[mark];
   const sel = window.getSelection();
-  if (!sel || sel.rangeCount === 0) return;
+  if (!sel || sel.rangeCount === 0 || !surfaceEl) return;
   const range = sel.getRangeAt(0);
+  if (!surfaceEl.contains(range.commonAncestorContainer)) return;
   const chosen = range.toString();
   if (chosen.length === 0) return;
   range.deleteContents();
@@ -924,6 +978,8 @@ const onScroll = (): void => {
             spellcheck="false"
             bind:this={surfaceEl}
             oninput={onEdit}
+            oncompositionstart={onCompositionStart}
+            oncompositionend={onCompositionEnd}
             onmouseup={captureSelection}
             onkeyup={captureSelection}
             oncontextmenu={(e) => {
