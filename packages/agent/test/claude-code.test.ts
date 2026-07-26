@@ -152,7 +152,7 @@ describe("Claude Code adapter", () => {
     expect(adapter.sessionId()).toBe("session-abc");
   });
 
-  test("accumulates a total across runs while keeping the latest turn separate", async () => {
+  test("never labels a locally accumulated total as actual", async () => {
     const adapter = new ClaudeCodeAdapter(stubClaude(report()));
     const host = new AgentHost(root, [adapter]);
     host
@@ -167,11 +167,10 @@ describe("Claude Code adapter", () => {
     if (usage.kind !== "actual") throw new Error("expected actual usage");
 
     expect(usage.value.currentTurn?.output).toBe(4);
-    expect(usage.value.total?.output).toBe(8);
-    expect(usage.value.total?.inputCacheCreation).toBe(34159 * 2);
+    expect(usage.value.total).toBeUndefined();
   });
 
-  test("attributes usage to one run, so a proposal can carry what it cost", async () => {
+  test("attributes the harness token report to one run", async () => {
     const adapter = new ClaudeCodeAdapter(stubClaude(report()));
     const host = new AgentHost(root, [adapter]);
     host.register(agent).enqueue(task);

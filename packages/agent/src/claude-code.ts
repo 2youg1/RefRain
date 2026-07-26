@@ -243,26 +243,10 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
   usage(): Capability<SessionUsage> {
     const latest = [...this.reports.values()].at(-1);
     const turn = readUsage(latest?.usage);
-    if (!turn) return { kind: "unknown" };
-
-    const total = [...this.reports.values()].reduce<TokenUsage>(
-      (running, report) => {
-        const each = readUsage(report.usage);
-        if (!each) return running;
-        return {
-          inputOther: running.inputOther + each.inputOther,
-          output: running.output + each.output,
-          inputCacheRead: running.inputCacheRead + each.inputCacheRead,
-          inputCacheCreation: running.inputCacheCreation + each.inputCacheCreation,
-        };
-      },
-      { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 },
-    );
-
-    return { kind: "actual", value: { currentTurn: turn, total } };
+    return turn ? { kind: "actual", value: { currentTurn: turn } } : { kind: "unknown" };
   }
 
-  /** Usage for one run, so the interface can attribute a cost to its proposal. */
+  /** Usage for one run, so a Proposal can carry its harness token report. */
   usageFor(runId: string): Capability<SessionUsage> {
     const turn = readUsage(this.reports.get(runId)?.usage);
     return turn ? { kind: "actual", value: { currentTurn: turn } } : { kind: "unknown" };
