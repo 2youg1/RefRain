@@ -83,6 +83,7 @@ let runOwner = $state<string | null>(null);
 let refusal = $state<{ reason: string; detail: string[] } | null>(null);
 let notice = $state<string | null>(null);
 let surfaceEl = $state<HTMLElement | null>(null);
+let conflictEl = $state<HTMLElement | null>(null);
 let scrollEl = $state<HTMLElement | null>(null);
 
 /*
@@ -400,7 +401,7 @@ const newChapter = async (): Promise<void> => {
   const name = prompt(t("chapter.new"));
   if (!name?.trim()) return;
   const title = name.trim();
-  await api().saveChapter(owner, title, "");
+  await api().saveChapter(owner, `${title}.md`, "");
   await reload();
   select(
     chapters.find((chapter) => chapter.root === owner && chapter.title === title)?.path ?? null,
@@ -416,13 +417,14 @@ const save = async (): Promise<void> => {
   // characters that were never saved.
   const written = text;
   try {
-    const outcome = await api().saveChapter(chapter.root, chapter.title, written);
+    const outcome = await api().saveChapter(chapter.root, chapter.id, written);
 
     // The file moved on: someone else wrote to it since this session read it.
     // Nothing is decided here — the author is shown both and chooses. Silently
     // winning would destroy an edit they made somewhere else.
     if (!outcome.ok) {
       conflict = {
+        id: chapter.id,
         title: chapter.title,
         root: chapter.root,
         mine: written,
@@ -446,6 +448,7 @@ const save = async (): Promise<void> => {
 
 /** An unresolved disagreement between this session and the disk (#49). */
 let conflict = $state<{
+  id: string;
   title: string;
   root: string;
   mine: string;
@@ -453,11 +456,45 @@ let conflict = $state<{
   path: string;
 } | null>(null);
 
+$effect(() => {
+  const dialog = conflictEl;
+  if (!conflict || !dialog) return;
+  const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  queueMicrotask(() => dialog.querySelector<HTMLElement>("button")?.focus());
+  return () => {
+    queueMicrotask(() => {
+      if (previous?.isConnected) previous.focus();
+      else surfaceEl?.focus();
+    });
+  };
+});
+
+const trapConflictFocus = (event: KeyboardEvent): void => {
+  if (event.key !== "Tab" || !conflictEl) return;
+  const controls = [...conflictEl.querySelectorAll<HTMLElement>("button:not([disabled])")];
+  const first = controls[0];
+  const last = controls.at(-1);
+  if (!first || !last) return;
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+};
+
 /** Resolve exactly the two versions currently visible in the conflict dialog. */
 const resolveConflict = async (choice: "mine" | "disk"): Promise<void> => {
   const pending = conflict;
   if (!pending) return;
-  const outcome = await api().resolveConflict(pending.root, pending.title, choice);
+  if (active === pending.path && text !== pending.mine) {
+    conflict = null;
+    await save();
+    if (conflict) say(t("conflict.stillChanging"));
+    return;
+  }
+  const outcome = await api().resolveConflict(pending.root, pending.id, choice);
 
   if (!outcome.ok) {
     saved = false;
@@ -531,7 +568,7 @@ const commit = async (verdicts: VerdictView[]): Promise<void> => {
   const chapter = activeChapter;
   if (!chapter) return;
   refusal = null;
-  const result = await api().commit(chapter.root, { chapter: chapter.title, verdicts });
+  const result = await api().commit(chapter.root, { chapter: chapter.id, verdicts });
   if (!result.ok) {
     refusal = { reason: result.reason, detail: result.detail };
     return;
@@ -670,7 +707,7 @@ const selectedBlocks = (): { ids: string[]; text: string } => {
 
   return {
     ids: blocks.map(
-      (node) => `${activeChapter.title}:b${[...surfaceEl.children].indexOf(node)}`,
+      (node) => `${activeChapter.id}:b${[...surfaceEl.children].indexOf(node)}`,
     ),
     text: blocks.map((node) => node.textContent?.trim() ?? "").join("\n\n"),
   };
@@ -840,7 +877,7 @@ const onScroll = (): void => {
 <Sheet open={sheet === "dispatch"} title={t("dispatch.title")} onClose={() => (sheet = null)}>
   <Dispatch
     root={activeChapter?.root ?? root}
-    chapter={activeChapter?.title ?? null}
+    chapter={activeChapter?.id ?? null}
     {selection}
     {scope}
     {runs}
@@ -949,7 +986,14 @@ const onScroll = (): void => {
 -->
 {#if conflict}
   <div class="conflict-scrim">
-    <div class="conflict" role="alertdialog" aria-label={t("conflict.title")}>
+    <div
+      class="conflict"
+      role="alertdialog"
+      tabindex="-1"
+      aria-label={t("conflict.title")}
+      bind:this={conflictEl}
+      onkeydown={trapConflictFocus}
+    >
       <h2>{t("conflict.title")}</h2>
       <p class="path">{conflict.path}</p>
       <p class="why">{t("conflict.body")}</p>

@@ -22,7 +22,7 @@ const pageErrors: string[] = [];
 page.on("pageerror", (error) => pageErrors.push(error.message));
 await page.addInitScript(`
   localStorage.clear();
-  const chapter = { title: "01", text: "等待 Agent 的正文。", root: "/work", path: "/work/01.md" };
+  const chapter = { id: "01.md", title: "01", text: "等待 Agent 的正文。", root: "/work", path: "/work/01.md" };
   let queued = false;
   let sent = false;
   let reads = 0;

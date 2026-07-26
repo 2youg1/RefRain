@@ -21,7 +21,13 @@ const server = Bun.serve({
 });
 
 const CHAPTERS = [
-  { title: "01-夜行", root: "/p", path: "/p/01.md", text: "黑暗中有人问。\n\n声音很熟。" },
+  {
+    id: "01.md",
+    title: "01-夜行",
+    root: "/p",
+    path: "/p/01.md",
+    text: "黑暗中有人问。\n\n声音很熟。",
+  },
 ];
 
 const browser = await chromium.launch();

@@ -23,8 +23,8 @@ await page.addInitScript(`
   window.__calls = [];
   window.__openCount = 0;
   const chapters = [
-    { title: "01", text: "第一个根的正文。", root: "/a", path: "/a/01.md" },
-    { title: "01", text: "第二个根的正文。", root: "/b", path: "/b/01.md" },
+    { id: "01.md", title: "01", text: "第一个根的正文。", root: "/a", path: "/a/01.md" },
+    { id: "01.md", title: "01", text: "第二个根的正文。", root: "/b", path: "/b/01.md" },
   ];
   window.refrain = {
     openProject: async () => ["/a", "/b"][window.__openCount++] ?? null,
@@ -95,7 +95,7 @@ try {
     JSON.parse(JSON.stringify((window as unknown as { __calls: unknown[] }).__calls)),
   );
   const last = calls.at(-1);
-  if (last?.[1] !== "/b" || last[2] !== "01" || !last[3]?.includes("第二个根"))
+  if (last?.[1] !== "/b" || last[2] !== "01.md" || !last[3]?.includes("第二个根"))
     throw new Error(`saving /b/01.md targeted the wrong chapter: ${JSON.stringify(calls)}`);
 
   console.log("PASS  duplicate chapter titles stay isolated by file path across workspace roots");

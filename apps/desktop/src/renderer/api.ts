@@ -3,6 +3,7 @@
  * process launch, the ledger — lives in the main process behind these channels.
  */
 export interface ChapterView {
+  id: string;
   title: string;
   text: string;
   root: string;
@@ -104,7 +105,7 @@ interface RefRainApi {
    */
   saveChapter(
     root: string,
-    title: string,
+    chapterId: string,
     text: string,
   ): Promise<
     { ok: true } | { ok: false; reason: "changed-underneath"; path: string; onDisk: string }
@@ -112,7 +113,7 @@ interface RefRainApi {
   /** Resolves only the two versions the conflict dialog displayed. */
   resolveConflict(
     root: string,
-    title: string,
+    chapterId: string,
     choice: "mine" | "disk",
   ): Promise<
     { ok: true; text: string } | { ok: false; reason: string; path?: string; onDisk?: string }

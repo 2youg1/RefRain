@@ -19,6 +19,7 @@ mkdirSync(shots, { recursive: true });
 
 const CHAPTERS = [
   {
+    id: "01-夜行.md",
     title: "01-夜行",
     root: "/home/author/novel",
     path: "/home/author/novel/01-夜行.md",
@@ -33,12 +34,14 @@ const CHAPTERS = [
 她没有答。答什么都像是认了。`,
   },
   {
+    id: "02.md",
     title: "02-旧账",
     root: "/home/author/novel",
     path: "/home/author/novel/02.md",
     text: "第二章还没有开始写。",
   },
   {
+    id: "附录.md",
     title: "附录",
     root: "/home/author/notes",
     path: "/home/author/notes/附录.md",

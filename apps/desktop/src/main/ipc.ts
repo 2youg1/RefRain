@@ -163,24 +163,24 @@ const filesFor = async (
   }
 };
 
-const headFor = (root: string, title: string): TextHead => {
+const headFor = (root: string, chapterId: string): TextHead => {
   const workbench = openWorkbench(root);
-  const cached = workbench.heads.get(title);
+  const cached = workbench.heads.get(chapterId);
   if (cached) return cached;
 
-  const chapter = loadProject(root).chapters.find((c) => c.title === title);
-  if (!chapter) throw new Error(`no chapter ${title}`);
-  workbench.heads.set(title, chapter.head);
+  const chapter = loadProject(root).chapters.find((candidate) => candidate.id === chapterId);
+  if (!chapter) throw new Error(`no chapter ${chapterId}`);
+  workbench.heads.set(chapterId, chapter.head);
   return chapter.head;
 };
 
-const chapterHead = (title: string, text: string, cause: string): TextHead => ({
-  id: `${title}@${Date.now()}`,
+const chapterHead = (chapterId: string, text: string, cause: string): TextHead => ({
+  id: `${chapterId}@${Date.now()}`,
   blocks: text
     .split(/\n\s*\n/)
     .map((block) => block.trim())
     .filter((block) => block.length > 0)
-    .map((block, index) => ({ id: `${title}:b${index}`, text: block })),
+    .map((block, index) => ({ id: `${chapterId}:b${index}`, text: block })),
   cause,
 });
 
@@ -227,13 +227,14 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     const workspace = loadWorkspace(roots);
     for (const chapter of workspace.chapters) {
       const workbench = openWorkbench(chapter.root);
-      workbench.heads.set(chapter.title, chapter.head);
-      workbench.onDisk.set(chapter.title, {
+      workbench.heads.set(chapter.id, chapter.head);
+      workbench.onDisk.set(chapter.id, {
         path: chapter.path,
         ...(chapter.stamp === undefined ? {} : { stamp: chapter.stamp }),
       });
     }
     return workspace.chapters.map((c) => ({
+      id: c.id,
       title: c.title,
       text: currentText(c.head),
       root: c.root,
@@ -269,13 +270,14 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     const project = loadProject(root);
     const workbench = openWorkbench(root);
     for (const chapter of project.chapters) {
-      workbench.heads.set(chapter.title, chapter.head);
-      workbench.onDisk.set(chapter.title, {
+      workbench.heads.set(chapter.id, chapter.head);
+      workbench.onDisk.set(chapter.id, {
         path: chapter.path,
         ...(chapter.stamp === undefined ? {} : { stamp: chapter.stamp }),
       });
     }
     return project.chapters.map((chapter) => ({
+      id: chapter.id,
       title: chapter.title,
       text: currentText(chapter.head),
       root: chapter.root,
@@ -293,17 +295,17 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
    * a person has to decide, and the outcome carries the disk's text so the
    * interface can show them both.
    */
-  ipc.handle("project:save", (_e, root: string, title: string, text: string) => {
+  ipc.handle("project:save", (_e, root: string, chapterId: string, text: string) => {
     const workbench = openWorkbench(root);
-    const head = chapterHead(title, text, "author edit");
+    const head = chapterHead(chapterId, text, "author edit");
 
-    const known = workbench.onDisk.get(title);
+    const known = workbench.onDisk.get(chapterId);
     const outcome = known
       ? writeChapter(known.path, head, known.stamp)
-      : saveChapter(loadProject(root), title, head);
+      : saveChapter(loadProject(root), chapterId, head);
 
     if (!outcome.ok) {
-      workbench.conflicts.set(title, {
+      workbench.conflicts.set(chapterId, {
         path: outcome.path,
         mine: text,
         onDisk: outcome.onDisk,
@@ -312,15 +314,15 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
       return outcome satisfies ChangedUnderneath;
     }
 
-    workbench.conflicts.delete(title);
-    workbench.heads.set(title, head);
-    workbench.onDisk.set(title, { path: outcome.path, stamp: outcome.stamp });
+    workbench.conflicts.delete(chapterId);
+    workbench.heads.set(chapterId, head);
+    workbench.onDisk.set(chapterId, { path: outcome.path, stamp: outcome.stamp });
     return { ok: true as const };
   });
 
-  ipc.handle("project:resolve-conflict", (_e, root: string, title: string, choice: unknown) => {
+  ipc.handle("project:resolve-conflict", (_e, root: string, chapterId: string, choice: unknown) => {
     const workbench = openWorkbench(root);
-    const pending = workbench.conflicts.get(title);
+    const pending = workbench.conflicts.get(chapterId);
     if (!pending) return { ok: false as const, reason: "no pending conflict" };
     if (choice !== "mine" && choice !== "disk")
       return { ok: false as const, reason: "invalid conflict choice" };
@@ -329,7 +331,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
       if (actual === undefined)
         return { ok: false as const, reason: "chapter no longer exists on disk" };
       if (actual.stamp.digest !== pending.stamp.digest) {
-        workbench.conflicts.set(title, {
+        workbench.conflicts.set(chapterId, {
           path: pending.path,
           mine: pending.mine,
           onDisk: actual.text,
@@ -343,17 +345,17 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
           stamp: actual.stamp,
         };
       }
-      const head = chapterHead(title, pending.onDisk, "author accepted an external edit");
-      workbench.conflicts.delete(title);
-      workbench.heads.set(title, head);
-      workbench.onDisk.set(title, { path: pending.path, stamp: pending.stamp });
+      const head = chapterHead(chapterId, pending.onDisk, "author accepted an external edit");
+      workbench.conflicts.delete(chapterId);
+      workbench.heads.set(chapterId, head);
+      workbench.onDisk.set(chapterId, { path: pending.path, stamp: pending.stamp });
       return { ok: true as const, text: pending.onDisk };
     }
 
-    const head = chapterHead(title, pending.mine, "author resolved an external edit");
+    const head = chapterHead(chapterId, pending.mine, "author resolved an external edit");
     const outcome = writeChapter(pending.path, head, pending.stamp);
     if (!outcome.ok) {
-      workbench.conflicts.set(title, {
+      workbench.conflicts.set(chapterId, {
         path: outcome.path,
         mine: pending.mine,
         onDisk: outcome.onDisk,
@@ -362,9 +364,9 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
       return outcome;
     }
 
-    workbench.conflicts.delete(title);
-    workbench.heads.set(title, head);
-    workbench.onDisk.set(title, { path: pending.path, stamp: outcome.stamp });
+    workbench.conflicts.delete(chapterId);
+    workbench.heads.set(chapterId, head);
+    workbench.onDisk.set(chapterId, { path: pending.path, stamp: outcome.stamp });
     return { ok: true as const, text: pending.mine };
   });
 

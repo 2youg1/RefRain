@@ -1,6 +1,15 @@
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { basename, dirname, extname, join } from "node:path";
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
+import { basename, dirname, extname, join, relative } from "node:path";
 import { replaceFileAtomically } from "./atomic-file.ts";
 import type { TextHead } from "./domain.ts";
 
@@ -35,9 +44,18 @@ export interface ChapterFileSnapshot {
 }
 
 export const readChapterFile = (path: string): ChapterFileSnapshot | undefined => {
+  let file: number;
   try {
-    const bytes = readFileSync(path);
-    const info = statSync(path);
+    file = openSync(path, "r");
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")
+      return undefined;
+    throw error;
+  }
+
+  try {
+    const bytes = readFileSync(file);
+    const info = fstatSync(file);
     return {
       text: bytes.toString("utf8"),
       stamp: {
@@ -46,14 +64,16 @@ export const readChapterFile = (path: string): ChapterFileSnapshot | undefined =
         digest: createHash("sha256").update(bytes).digest("hex"),
       },
     };
-  } catch {
-    return undefined;
+  } finally {
+    closeSync(file);
   }
 };
 
 export const stampOf = (path: string): FileStamp | undefined => readChapterFile(path)?.stamp;
 
 export interface Chapter {
+  /** Portable identity inside the Root, including the extension. */
+  readonly id: string;
   readonly title: string;
   readonly path: string;
   readonly root: string;
@@ -120,21 +140,24 @@ const pathForNewChapter = (root: string, title: string): string => {
  * from the edit onward, which is exactly when a proposal should be flagged as
  * drifted rather than silently reattached.
  */
-const parseChapter = (root: string, path: string, markdown: string): Chapter => {
+const parseChapter = (root: string, path: string, snapshot: ChapterFileSnapshot): Chapter => {
   const title = basename(path, extname(path));
-  const stamp = stampOf(path);
+  const id = relative(root, path)
+    .split(/[/\\]+/)
+    .join("/");
   return {
+    id,
     title,
     path,
     root,
-    ...(stamp === undefined ? {} : { stamp }),
+    stamp: snapshot.stamp,
     head: {
       id: `${path}@load`,
-      blocks: markdown
+      blocks: snapshot.text
         .split(BLOCK_SEPARATOR)
         .map((text) => text.trim())
         .filter((text) => text.length > 0)
-        .map((text, index) => ({ id: `${title}:b${index}`, text })),
+        .map((text, index) => ({ id: `${id}:b${index}`, text })),
       cause: "loaded from disk",
     },
   };
@@ -142,9 +165,8 @@ const parseChapter = (root: string, path: string, markdown: string): Chapter => 
 
 const chaptersUnder = (root: Root): Chapter[] => {
   if (root.single) {
-    return existsSync(root.path)
-      ? [parseChapter(dirname(root.path), root.path, readFileSync(root.path, "utf8"))]
-      : [];
+    const snapshot = readChapterFile(root.path);
+    return snapshot === undefined ? [] : [parseChapter(dirname(root.path), root.path, snapshot)];
   }
 
   if (!existsSync(root.path)) return [];
@@ -152,9 +174,10 @@ const chaptersUnder = (root: Root): Chapter[] => {
     .filter((entry) => entry.isFile() && MARKDOWN.has(extname(entry.name).toLowerCase()))
     .map((entry) => entry.name)
     .sort()
-    .map((name) => {
+    .flatMap((name) => {
       const path = join(root.path, name);
-      return parseChapter(root.path, path, readFileSync(path, "utf8"));
+      const snapshot = readChapterFile(path);
+      return snapshot === undefined ? [] : [parseChapter(root.path, path, snapshot)];
     });
 };
 
@@ -230,10 +253,17 @@ export const writeChapter = (path: string, head: TextHead, expected?: FileStamp)
 
 export const saveChapter = (
   project: { root: string; chapters: readonly Chapter[] },
-  title: string,
+  idOrTitle: string,
   head: TextHead,
   expected?: FileStamp,
 ): WriteOutcome => {
-  const chapter = project.chapters.find((chapter) => chapter.title === title);
+  const chapter = project.chapters.find(
+    (candidate) => candidate.id === idOrTitle || candidate.title === idOrTitle,
+  );
+  const extension = extname(idOrTitle);
+  const title =
+    chapter === undefined && extension === ".md" && basename(idOrTitle) === idOrTitle
+      ? basename(idOrTitle, extension)
+      : idOrTitle;
   return writeChapter(chapter?.path ?? pathForNewChapter(project.root, title), head, expected);
 };
