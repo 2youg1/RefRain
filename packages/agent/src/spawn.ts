@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
 
@@ -146,10 +146,11 @@ export const launch = ({ argv, cwd, env, input }: Launch): Launched => {
       // on Unix because a harness that traps SIGTERM would otherwise outlive
       // the cancel the author asked for.
       if (process.platform === "win32" && child.pid !== undefined) {
-        spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
+        const killed = spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
           stdio: "ignore",
           windowsHide: true,
-        }).on("error", () => child.kill());
+        });
+        if (killed.error && child.exitCode === null) child.kill();
         return;
       }
       // Negative pid signals the group. It can fail if the group is already
