@@ -14,12 +14,16 @@
     "gate": "bun run fmt:check && bun run check && bun test",
     "verify:gate": "bun scripts/verify-gate.ts",
     "verify:no-network": "bun scripts/verify-no-network.ts",
+    "verify:trash-only": "bun scripts/verify-trash-only.ts",
+    "native": "cd packages/fs && cargo build --release && bun run scripts/build.ts",
     "check:svelte": "cd apps/desktop && bun scripts/check-svelte.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.5",
     "@types/bun": "latest",
+    "mermaid": "^11.16.0",
     "playwright": "^1.62.0",
     "typescript": "7.0.2"
-  }
+  },
+  "license": "GPL-3.0-only"
 }
