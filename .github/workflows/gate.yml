@@ -188,6 +188,59 @@ jobs:
           path: packages/fs/bench-result.txt
           retention-days: 30
 
+  # The packaging configuration is only exercised on the day someone ships.
+  # Three defects in it — an executable name illegal in a path, a desktop entry
+  # under the wrong key, and a schema field that does not exist — each surfaced
+  # only by running the packager, and each would have blocked a release.
+  #
+  # `--dir` stops before compression: the schema is validated, the app is laid
+  # out, and the native binary's presence in resources is checked, in a fraction
+  # of the time a full AppImage takes.
+  package:
+    needs: native
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: refrain-fs-linux-x64
+          path: packages/fs
+
+      - run: bun install --frozen-lockfile
+
+      - name: build the desktop app
+        working-directory: apps/desktop
+        run: ./make.sh
+
+      - name: the packaging configuration is valid and the app lays out
+        working-directory: apps/desktop
+        run: bun x electron-builder --linux --publish never --dir
+
+      # A packaged app whose file layer is missing starts, opens a project, and
+      # silently has no browser — the degradation path working correctly for
+      # entirely the wrong reason.
+      - name: the native binary travels with the app
+        working-directory: apps/desktop
+        run: |
+          found=$(find release -name 'refrain-fs.*.node' | head -1)
+          if [ -z "$found" ]; then
+            echo "the platform binary is not in the packaged resources" >&2
+            find release -maxdepth 3 -type d >&2
+            exit 1
+          fi
+          echo "packaged: $found"
+
+      # electron-builder only warns when the icon is missing and ships
+      # Electron's default one, which reaches a user as a released application
+      # wearing another project's mark.
+      - name: the application carries its own icon
+        working-directory: apps/desktop
+        run: test -s build/icon.png
+
   # The gate must be provably capable of failing. A misconfigured tsconfig or a
   # piped command turns `check` into a no-op that reports success forever.
   gate-bites:
