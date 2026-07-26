@@ -16,6 +16,10 @@ bun build src/main/preload.ts --target=node --outdir=dist/main --format=cjs --ex
 mv -f dist/main/main.js dist/main/main.cjs
 mv -f dist/main/preload.js dist/main/preload.cjs
 
+# The main process is bundled for Node; a Bun global in it is a runtime crash
+# that no test can see. This shipped once already.
+bun scripts/verify-no-bun.ts
+
 # core targets two runtimes; this proves the Node branch of the SQLite adapter,
 # which `bun test` cannot reach.
 bun build scripts/node-ledger-check.ts --target=node --outdir=dist/checks --format=cjs

@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { scaffold } from "./file-channel.ts";
+import { after, type Launched, launch } from "./spawn.ts";
 import type { Agent, Capability, HarnessAdapter, ReviewTask, Run, SessionUsage } from "./types.ts";
 
 export interface CommandAdapterConfig {
@@ -27,7 +28,7 @@ const TIMED_OUT = Symbol("timed-out");
 
 export class CommandAdapter implements HarnessAdapter {
   readonly tier = "L1" as const;
-  private readonly running = new Map<string, Bun.Subprocess>();
+  private readonly running = new Map<string, Launched>();
   private readonly settled = new Map<string, Promise<void>>();
 
   constructor(private readonly config: CommandAdapterConfig) {}
@@ -47,16 +48,15 @@ export class CommandAdapter implements HarnessAdapter {
         .replaceAll("{prompt}", task.prompt),
     );
 
-    // `Bun.spawn` throws synchronously when the binary does not exist, which is
-    // what lets the Host put the task back on the queue: a run that never
-    // started must not leave a workspace or a queue entry behind.
+    // Output is drained from the moment the process starts. A harness that
+    // writes past the pipe buffer before anyone reads blocks on its own write,
+    // and the parent then waits forever for an exit that cannot come.
     this.running.set(
       run.id,
-      Bun.spawn(argv, {
+      launch({
+        argv,
         cwd: this.config.cwd ?? run.workspace,
-        env: { ...process.env, ...this.config.env },
-        stdout: "ignore",
-        stderr: "ignore",
+        env: this.config.env,
       }),
     );
   }
@@ -84,9 +84,11 @@ export class CommandAdapter implements HarnessAdapter {
     if (!child) return;
 
     const timeout = this.config.timeoutMs;
-    const exited = timeout
-      ? await Promise.race([child.exited, Bun.sleep(timeout).then(() => TIMED_OUT)])
+    const timer = timeout ? after(timeout) : undefined;
+    const exited = timer
+      ? await Promise.race([child.exited, timer.promise.then(() => TIMED_OUT)])
       : await child.exited;
+    timer?.cancel();
 
     if (exited === TIMED_OUT) {
       child.kill();
