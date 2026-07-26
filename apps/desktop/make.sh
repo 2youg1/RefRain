@@ -22,4 +22,12 @@ bun build scripts/node-ledger-check.ts --target=node --outdir=dist/checks --form
 mv -f dist/checks/node-ledger-check.js dist/checks/node-ledger-check.cjs
 node dist/checks/node-ledger-check.cjs
 
+# electron-builder only warns when the icon is missing and ships the default
+# Electron one, which reaches a user as a released application wearing another
+# project's mark. The icon is committed; this catches its removal.
+if [ ! -s build/icon.png ]; then
+  echo "MISSING build/icon.png — run 'bun scripts/make-icon.ts'" >&2
+  exit 1
+fi
+
 echo "BUILD_OK"
