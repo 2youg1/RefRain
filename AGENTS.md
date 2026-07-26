@@ -29,7 +29,7 @@ Violating any of these is a bug, not a style preference.
 3. **No billing math.** Never display prices or cost estimates. Report token counts exactly as the harness reports them, tagged `actual` / `estimated` / `unknown`. When unavailable, show unknown.
 4. **Source Backup is never written to.**
 5. **`packages/core` has no DOM and near-zero dependencies.** `packages/agent` is the only surface touching a harness; protocol drift stops there. `apps/desktop` holds windowing and packaging only.
-6. **The editor core is framework-free.** ProseMirror owns the DOM; Svelte owns the shell. No framework code on the IME path.
+6. **The editor core is framework-free.** The manuscript is a `contenteditable` holding paragraph elements, driven directly rather than through Svelte's reactivity — no framework code sits on the IME path. ProseMirror goes underneath in v0.2, under the same rule.
 
 ## Style
 
