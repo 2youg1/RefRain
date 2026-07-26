@@ -12,8 +12,45 @@ import { DEFAULTS, type TypeSettings } from "./typography.ts";
  * want them when a key has to be renamed or migrated.
  */
 
-export type Theme = "rain" | "kozo" | "ink";
-export type Surface = "opaque" | "translucent" | "glass";
+/**
+ * Seven themes, each belonging to a time of day (see themes.css).
+ *
+ * Day and night are not one palette and its inverse: inverting a day palette
+ * gives a screen turned inside out, not a page under a lamp. So the five day
+ * themes and the two night themes are drawn separately, and switching between
+ * them is a change of hour rather than a change of polarity.
+ */
+export type Theme = "tou" | "kasumi" | "kare" | "hayashi" | "seiji" | "sumi" | "shigure";
+
+export const THEMES: readonly { id: Theme; label: `theme.${Theme}`; mode: "day" | "night" }[] = [
+  { id: "tou", label: "theme.tou", mode: "day" },
+  { id: "kasumi", label: "theme.kasumi", mode: "day" },
+  { id: "kare", label: "theme.kare", mode: "day" },
+  { id: "hayashi", label: "theme.hayashi", mode: "day" },
+  { id: "seiji", label: "theme.seiji", mode: "day" },
+  { id: "sumi", label: "theme.sumi", mode: "night" },
+  { id: "shigure", label: "theme.shigure", mode: "night" },
+];
+/**
+ * How much sits between the author and what is behind the window.
+ *
+ * Four distances on one image — a wet day seen from indoors. 晴 is not looking
+ * out; 靄 is through vapour; 傘 is from under a clear umbrella; 硝子 is
+ * through the glass, clearest and furthest.
+ */
+export type Surface = "sei" | "moya" | "kasa" | "garasu";
+
+/**
+ * The four steps in order, so the settings panel renders them rather than
+ * re-listing them. Re-listing is how the panel came to offer three options
+ * while this file declared four.
+ */
+export const SURFACES: readonly { id: Surface; label: `set.${Surface}` }[] = [
+  { id: "sei", label: "set.sei" },
+  { id: "moya", label: "set.moya" },
+  { id: "kasa", label: "set.kasa" },
+  { id: "garasu", label: "set.garasu" },
+];
 export type SheetStyle = "none" | "hairline" | "paper";
 export type Layout = "page" | "canvas";
 
@@ -52,8 +89,8 @@ const read = <T>(key: string, fallback: T): T => {
 
 export const loadPreferences = (): Preferences => ({
   lang: read<Lang>(KEY.lang, "zh"),
-  theme: read<Theme>(KEY.theme, "rain"),
-  surface: read<Surface>(KEY.surface, "opaque"),
+  theme: read<Theme>(KEY.theme, "tou"),
+  surface: read<Surface>(KEY.surface, "sei"),
   sheet: read<SheetStyle>(KEY.sheet, "none"),
   layout: read<Layout>(KEY.layout, "page"),
   icon: read<string | null>(KEY.icon, null),
