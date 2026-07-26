@@ -273,3 +273,11 @@ jobs:
       # asserted, so adding a permanent delete fails here before review.
       - name: delete goes to the trash, everywhere
         run: bun run verify:trash-only
+
+      # This release found three defects in the packaging configuration, an
+      # icon CI never generated, and a verification script that had been
+      # failing unnoticed — every one of them a check that existed with nothing
+      # running it. A check nobody runs reads as coverage while asserting
+      # nothing, and one of them invented a defect that reached SPEC.
+      - name: every gate has a path that runs it
+        run: bun run verify:gates-run
