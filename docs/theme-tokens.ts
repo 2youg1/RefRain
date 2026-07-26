@@ -296,6 +296,7 @@ const derive = (t: Theme): Record<string, Oklch> => {
     source: [night ? 0.712 : 0.476, 0.078, 232],
     "source-wash": [pL + up * 0.012, 0.024, 232],
     pending: [sL + (night ? 0.1 : 0), sC, sH],
+    "pending-wash": [pL + up * 0.012, Math.min(0.052, sC * 0.3), sH],
     // The pale end of each accent, for gradients and large washes. Decorative
     // only: nothing legible sits on these, so they are exempt from the text
     // floor — which is exactly why the seal itself must not be pushed here.
@@ -420,6 +421,23 @@ const block = (t: Theme): string => {
       out.push(
         `  --${name}: oklch(${trim(c[0], 3)} ${trim(c[1], 4)} ${trim(c[2], 1)}); /* ${hex(c)} */`,
       );
+
+    /*
+     * The semantic layer, aliased onto the hues above.
+     *
+     * `roles.ts` names five roles and builds `var(--role-pending)` from them,
+     * but nothing ever emitted that name — so `Files.svelte` asked for
+     * `--role-pending-wash`, got nothing, and the selected row in a list whose
+     * purpose is selecting rows drew no selection at all. `mark.svg` fell back
+     * to a hardcoded orange, which is why the application icon and the seal in
+     * the interface could not agree on a colour.
+     *
+     * Aliases rather than a second set of values: one authority per hue, and a
+     * role is a promise about meaning that must hold across all eight themes.
+     */
+    out.push("");
+    for (const role of ["pending", "accepted", "refused", "agent", "source"])
+      out.push(`  --role-${role}: var(--${role});`, `  --role-${role}-wash: var(--${role}-wash);`);
   }
   out.push("}");
   return out.join("\n");
