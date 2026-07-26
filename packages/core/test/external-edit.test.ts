@@ -1,15 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  utimesSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -108,14 +100,14 @@ describe("a chapter is not overwritten when the file moved on", () => {
       expect(stale).toBeDefined();
 
       writeFileSync(path, "乙说：不可。\n", "utf8");
-      const seconds = (stale?.modifiedMs ?? 0) / 1000;
-      utimesSync(path, seconds, seconds);
-      expect(stampOf(path)).toMatchObject({
-        modifiedMs: stale?.modifiedMs,
-        bytes: stale?.bytes,
-      });
+      const edited = stampOf(path);
+      expect(edited?.bytes).toBe(stale?.bytes);
+      const staleWithCurrentMetadata =
+        stale && edited
+          ? { ...stale, modifiedMs: edited.modifiedMs, bytes: edited.bytes }
+          : undefined;
 
-      const outcome = writeChapter(path, headOf("这边仍在写。"), stale);
+      const outcome = writeChapter(path, headOf("这边仍在写。"), staleWithCurrentMetadata);
 
       expect(outcome.ok).toBe(false);
       expect(readFileSync(path, "utf8")).toBe("乙说：不可。\n");
