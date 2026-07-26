@@ -125,7 +125,10 @@
   --manuscript-size: 17px;
   --manuscript-leading: 1.95;
   --manuscript-tracking: 0.01em;
-  --manuscript-measure: 34em;
+  --manuscript-measure: 30em;
+  /* Fallback for the pixel width the renderer computes; without it `min()`
+   * resolves against an undefined value and silently falls back to 100%. */
+  --column-width: 654px;
 
   /*
    * Shadows carry the paper's hue rather than neutral black, which is what

@@ -94,6 +94,16 @@ $effect(() => {
   style.setProperty("--manuscript-tracking", `${type.tracking}em`);
   style.setProperty("--manuscript-word-spacing", `${type.wordSpacing}em`);
   style.setProperty("--manuscript-measure", `${type.measure}em`);
+  /*
+   * The column's width as an absolute length.
+   *
+   * `measure` is em, which resolves against whichever element reads it — so
+   * the header at one font size and the manuscript at another produced two
+   * different widths from the same variable, and centring them gave two
+   * different left edges. One pixel value, shared, removes the whole class of
+   * bug.
+   */
+  style.setProperty("--column-width", `${type.measure * type.size * type.zoom + 144}px`);
   style.setProperty("--manuscript-indent", `${type.indent}em`);
   style.setProperty("--manuscript-align", type.align);
   style.setProperty("--paragraph-spacing", String(type.paragraphSpacing));
@@ -461,7 +471,6 @@ const onScroll = (): void => {
       />
 
       {#if !zen && active}
-        <div class="bar-rail">
           <header class="bar">
           <span class="title">{active ?? t("chapter.none")}</span>
           <div class="right">
@@ -482,7 +491,6 @@ const onScroll = (): void => {
             {/if}
           </div>
           </header>
-        </div>
       {/if}
 
       <div class="scroll" class:zen bind:this={scrollEl} onscroll={onScroll}>
@@ -952,19 +960,26 @@ h1 {
  * against the same width and land on the same left edge. Checked by
  * `scripts/verify-anchor.ts`, which fails when they drift.
  */
-.bar-rail {
-  box-sizing: border-box;
-  width: min(calc(var(--manuscript-measure) + 9rem + 4rem), 100%);
-  margin: 0 auto;
-  padding: 0 2rem;
-  position: relative;
-  z-index: 1;
-}
-
+/*
+ * The header carries its own geometry and matches the sheet exactly.
+ *
+ * `align-self: center` rather than `margin: auto`: `.writing` is a flex
+ * column, so its children stretch to full width by default and an auto margin
+ * has nothing left to distribute. That is why the header stayed pinned to the
+ * pane's edge through several attempts to centre it.
+ *
+ * The width comes from `--column-width`, a pixel value computed once, because
+ * `measure` is em and resolves differently at each element's own font size —
+ * one variable, two widths, two left edges.
+ */
 .bar {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
+  box-sizing: border-box;
+  align-self: center;
+  flex: none;
+  width: min(var(--column-width), calc(100% - 6rem));
   padding: 0.9rem 4.5rem 0.7rem;
   border-bottom: 1px solid var(--rule);
   position: relative;
@@ -1028,7 +1043,7 @@ h1 {
  * to the right and the application reads as stuck to one edge.
  */
 .sheet-surface {
-  width: min(calc(var(--manuscript-measure) + 9rem), calc(100% - 2rem));
+  width: min(var(--column-width), calc(100% - 2rem));
   margin: 0 auto;
   position: relative;
   z-index: 1;

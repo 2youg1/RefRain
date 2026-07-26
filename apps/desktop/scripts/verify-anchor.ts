@@ -61,11 +61,21 @@ await page.goto(`http://localhost:${server.port}`);
 await page.waitForTimeout(900);
 
 // The header exists only with a chapter open — which is the state it has to
-// align in. Click the first one and wait for it to render.
+// align in. Measuring the empty screen measures nothing.
+const chapterCount = await page.locator("nav .chapter").count();
+console.log(`fixture: ${chapterCount} chapter(s) in the rail`);
+if (chapterCount === 0) {
+  const debug = await page.evaluate(() => ({
+    welcome: document.querySelector(".welcome") !== null,
+    roots: localStorage.getItem("refrain.roots"),
+    railHtml: document.querySelector("nav.rail")?.innerHTML.slice(0, 200) ?? "(no rail)",
+  }));
+  console.error("fixture did not open a project:", JSON.stringify(debug, null, 2));
+}
 await page
   .locator("nav .chapter")
   .first()
-  .click({ timeout: 5000 })
+  .click()
   .catch(() => {});
 await page.waitForTimeout(700);
 
