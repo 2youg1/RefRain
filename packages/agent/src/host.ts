@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type AgentComment, type Proposal, parseAgentResult } from "@recension/core";
+import { type AgentComment, type Proposal, parseAgentResult } from "@refrain/core";
 import { FileChannelAdapter } from "./file-channel.ts";
 import type { Agent, HarnessAdapter, ReviewTask, Run } from "./types.ts";
 

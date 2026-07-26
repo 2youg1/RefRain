@@ -1,5 +1,5 @@
 {
-  "name": "@recension/agent",
+  "name": "@refrain/agent",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -7,6 +7,6 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@recension/core": "workspace:*"
+    "@refrain/core": "workspace:*"
   }
 }

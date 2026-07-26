@@ -8,9 +8,9 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { VerdictLedger } from "@recension/core";
+import { VerdictLedger } from "@refrain/core";
 
-const root = mkdtempSync(join(tmpdir(), "recension-node-"));
+const root = mkdtempSync(join(tmpdir(), "refrain-node-"));
 
 try {
   const ledger = new VerdictLedger(join(root, "verdicts.db"));

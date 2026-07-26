@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { Agent, ReviewTask } from "@recension/agent";
-import { AgentHost, CommandAdapter, FileChannelAdapter, sendManifest } from "@recension/agent";
+import type { Agent, ReviewTask } from "@refrain/agent";
+import { AgentHost, CommandAdapter, FileChannelAdapter, sendManifest } from "@refrain/agent";
 import {
   commitDecisionBatch,
   currentText,
@@ -14,7 +14,7 @@ import {
   type TextHead,
   type Verdict,
   VerdictLedger,
-} from "@recension/core";
+} from "@refrain/core";
 import type { Dialog, IpcMain } from "electron";
 
 /**
@@ -35,7 +35,7 @@ const openWorkbench = (root: string): Workbench => {
   const existing = workbenches.get(root);
   if (existing) return existing;
 
-  const stateDir = join(root, ".recension");
+  const stateDir = join(root, ".refrain");
   mkdirSync(stateDir, { recursive: true });
 
   const workbench: Workbench = {
@@ -89,6 +89,52 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     }
   });
 
+  ipc.handle("project:open-file", async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ["openFile"],
+      filters: [{ name: "Markdown", extensions: ["md", "markdown", "mdown", "txt"] }],
+      title: "Open a file",
+    });
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+
+  /** Several roots at once: a folder kept empty for tidiness locks out nothing. */
+  ipc.handle("project:load-workspace", (_e, roots: string[]) => {
+    const workspace = loadWorkspace(roots);
+    for (const chapter of workspace.chapters)
+      openWorkbench(chapter.root).heads.set(chapter.title, chapter.head);
+    return workspace.chapters.map((c) => ({
+      title: c.title,
+      text: currentText(c.head),
+      root: c.root,
+      path: c.path,
+    }));
+  });
+
+  const asHead = (text: string): TextHead => ({
+    id: `mem@${Date.now()}`,
+    blocks: text
+      .split(/\n\s*\n/)
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0)
+      .map((t, i) => ({ id: `b${i}`, text: t })),
+    cause: "in memory",
+  });
+
+  ipc.handle("edits:between", (_e, before: string, after: string) =>
+    editsBetween(asHead(before), asHead(after)),
+  );
+
+  ipc.handle("edits:revert", (_e, text: string, edit: Edit) =>
+    currentText(revertEdit(asHead(text), edit)),
+  );
+
+  ipc.handle("edits:revert-all", (_e, text: string, edits: Edit[]) =>
+    currentText(revertAll(asHead(text), edits)),
+  );
+
+  ipc.handle("edits:describe", (_e, edits: Edit[]) => describeEditsForAgent(edits));
+
   ipc.handle("project:load", (_e, root: string) => {
     const project = loadProject(root);
     const workbench = openWorkbench(root);
@@ -111,7 +157,98 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     return true;
   });
 
+  /**
+   * Faces installed on this machine.
+   *
+   * Chromium knows them but exposes no API, so they are read from the platform:
+   * the registry on Windows, fontconfig elsewhere. Failure returns an empty
+   * list rather than throwing — the bundled faces still work.
+   */
+  ipc.handle("fonts:list", async () => {
+    try {
+      if (process.platform === "win32") {
+        const child = Bun.spawn(
+          [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            "Add-Type -AssemblyName System.Drawing; " +
+              "(New-Object System.Drawing.Text.InstalledFontCollection).Families | " +
+              "ForEach-Object { $_.Name }",
+          ],
+          { stdout: "pipe", stderr: "ignore" },
+        );
+        const text = await new Response(child.stdout).text();
+        return [
+          ...new Set(
+            text
+              .split(/\r?\n/)
+              .map((s) => s.trim())
+              .filter(Boolean),
+          ),
+        ].sort();
+      }
+
+      const child = Bun.spawn(["fc-list", "--format", "%{family[0]}\\n"], {
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      const text = await new Response(child.stdout).text();
+      return [
+        ...new Set(
+          text
+            .split("\n")
+            .map((s) => s.trim())
+            .filter(Boolean),
+        ),
+      ].sort();
+    } catch {
+      return [];
+    }
+  });
+
   ipc.handle("agent:list", (_e, root: string) => openWorkbench(root).agents);
+
+  /**
+   * Ask a harness whether it is actually reachable.
+   *
+   * Storing a command without ever running it tells the author nothing: they
+   * discover the mistake when a run fails silently an hour later. This spawns
+   * the command's first token with a version flag and reports what came back.
+   */
+  ipc.handle("agent:probe", async (_e, root: string, id: string) => {
+    const agent = openWorkbench(root).agents.find((a) => a.id === id);
+    if (!agent) return { ok: false, detail: "unknown agent" };
+    if (agent.binding.harness === "file") return { ok: true };
+
+    const [program] = agent.binding.harness.replace(/^command:/, "").split(/\s+/);
+    if (!program) return { ok: false, detail: "no command configured" };
+
+    try {
+      const child = Bun.spawn([program, "--version"], { stdout: "pipe", stderr: "pipe" });
+      const code = await Promise.race([
+        child.exited,
+        new Promise<number>((resolve) => setTimeout(() => resolve(-1), 4000)),
+      ]);
+      if (code === -1) {
+        child.kill();
+        return { ok: false, detail: "timed out after 4s" };
+      }
+      const version = (await new Response(child.stdout).text()).trim().split("\n")[0];
+      return code === 0
+        ? { ok: true, detail: version || undefined }
+        : { ok: false, detail: `exited ${code}` };
+    } catch (error) {
+      return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  ipc.handle("agent:remove", (_e, root: string, id: string) => {
+    const workbench = openWorkbench(root);
+    const index = workbench.agents.findIndex((a) => a.id === id);
+    if (index >= 0) workbench.agents.splice(index, 1);
+    return true;
+  });
 
   ipc.handle("agent:add", (_e, root: string, name: string, command: string) => {
     const workbench = openWorkbench(root);

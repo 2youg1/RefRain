@@ -1,6 +1,6 @@
-appId: studio.luciole.recension
-productName: Recension
-copyright: Recension contributors
+appId: studio.luciole.refrain
+productName: RefRain
+copyright: RefRain contributors
 
 directories:
   output: release
@@ -18,11 +18,11 @@ win:
   target:
     - target: nsis
       arch: [x64]
-  artifactName: Recension-${version}-windows-x64-Setup.${ext}
+  artifactName: RefRain-${version}-windows-x64-Setup.${ext}
 
 nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
   deleteAppDataOnUninstall: false
-  artifactName: Recension-${version}-windows-x64-Setup.${ext}
+  artifactName: RefRain-${version}-windows-x64-Setup.${ext}

@@ -5,18 +5,20 @@
  * export runtime values, and because these belong to the document rather than
  * to the panel that edits them.
  *
- * Units are the ones typographers use — points for size, multiples of the size
- * for leading, ems for tracking — rather than the pixels a browser works in.
+ * Chinese and Latin faces are set separately: a stack that satisfies both at
+ * once satisfies neither, and an author who has a favourite Song face rarely
+ * wants its bundled Latin companion.
  */
 export interface TypeSettings {
-  family: "serif" | "sans" | "mono" | "display" | "custom";
-  customFamily: string;
+  cjkFamily: string;
+  latinFamily: string;
   size: number;
   weight: number;
   leading: number;
   tracking: number;
   wordSpacing: number;
   measure: number;
+  /** In characters, the way Chinese typesetting states it. */
   indent: number;
   paragraphSpacing: number;
   align: "left" | "justify";
@@ -24,17 +26,23 @@ export interface TypeSettings {
   marginBottom: number;
   grid: boolean;
   gridEvery: number;
+  lineNumbers: boolean;
+  /** Dim every paragraph but the one being written. */
+  breathe: boolean;
+  progress: "gradient" | "solid" | "minimap" | "off";
+  progressPlace: "top" | "right";
+  zoom: number;
 }
 
 export const DEFAULTS: TypeSettings = {
-  family: "serif",
-  customFamily: "",
+  cjkFamily: "Chiron Sung HK",
+  latinFamily: "Antic Didone",
   size: 17,
   weight: 400,
   leading: 1.95,
   tracking: 0.01,
   wordSpacing: 0,
-  measure: 34,
+  measure: 30,
   indent: 0,
   paragraphSpacing: 1,
   align: "left",
@@ -42,7 +50,16 @@ export const DEFAULTS: TypeSettings = {
   marginBottom: 50,
   grid: false,
   gridEvery: 1,
+  lineNumbers: false,
+  breathe: false,
+  progress: "gradient",
+  progressPlace: "top",
+  zoom: 1,
 };
+
+/** The faces this application ships, always present regardless of the machine. */
+export const BUNDLED_CJK = ["Chiron Sung HK", "Murecho"];
+export const BUNDLED_LATIN = ["Antic Didone", "Jost", "Courier Prime"];
 
 /**
  * Measure a typeface's own line height instead of assuming a ratio.
@@ -60,4 +77,31 @@ export const measureFontLine = (family: string, size: number): number => {
   const ratio = probe.getBoundingClientRect().height / size;
   probe.remove();
   return ratio;
+};
+
+/**
+ * Does this machine actually have the face?
+ *
+ * `document.fonts.check` answers true for any family the system can substitute
+ * for, so it cannot detect a fallback. Rendering the same glyph under each
+ * family and comparing pixels can: two typefaces cannot produce an identical
+ * bitmap.
+ */
+export const fontIsPresent = (family: string): boolean => {
+  const fingerprint = (stack: string): string => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 48;
+    canvas.height = 48;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return "";
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, 48, 48);
+    ctx.fillStyle = "#000";
+    ctx.font = `36px ${stack}`;
+    ctx.textBaseline = "top";
+    ctx.fillText("剑Rg", 2, 2);
+    return canvas.toDataURL().slice(-80);
+  };
+
+  return fingerprint(`"${family}", monospace`) !== fingerprint("monospace");
 };

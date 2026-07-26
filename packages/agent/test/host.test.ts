@@ -7,7 +7,7 @@ import { AgentHost, FileChannelAdapter, sendManifest } from "../src/index.ts";
 
 let root = "";
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "recension-agent-"));
+  root = mkdtempSync(join(tmpdir(), "refrain-agent-"));
 });
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });

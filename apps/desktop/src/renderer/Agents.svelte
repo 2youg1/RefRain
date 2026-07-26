@@ -1,137 +1,369 @@
 <script lang="ts">
-import type { AgentView } from "./api.ts";
+  
+  import type { AgentView } from "./api.ts";
 import { api } from "./api.ts";
-import type { Key } from "./i18n.ts";
+  import type { Key } from "./i18n.ts";
 
-interface Props {
-  root: string | null;
-  t: (key: Key) => string;
-}
+  interface Props {
+    root: string | null;
+    t: (key: Key) => string;
+  }
 
-const { root, t }: Props = $props();
+  const { root, t }: Props = $props();
 
-let agents = $state<AgentView[]>([]);
-let name = $state("");
-let command = $state("");
+  type Status = "ready" | "checking" | "unreachable" | "file";
 
-$effect(() => {
-  if (root)
+  interface AgentRow extends AgentView {
+    status: Status;
+    detail?: string;
+  }
+
+  let agents = $state<AgentRow[]>([]);
+  let adding = $state(false);
+  let name = $state("");
+  let command = $state("");
+  let checking = $state<string | null>(null);
+
+  $effect(() => {
+    if (!root) return;
     void api()
       .listAgents(root)
-      .then((list) => (agents = list));
-});
+      .then((list) => {
+        agents = list.map((agent) => ({
+          ...agent,
+          status: agent.binding.harness === "file" ? "file" : "checking",
+        }));
+        for (const agent of agents) if (agent.status === "checking") void probe(agent.id);
+      });
+  });
 
-const add = async (): Promise<void> => {
-  if (!root || name.trim().length === 0) return;
-  const agent = await api().addAgent(root, name.trim(), command.trim());
-  agents = [...agents, agent];
-  name = "";
-  command = "";
-};
+  /**
+   * Ask the harness whether it is actually there.
+   *
+   * A configuration screen that only stores a command tells the author nothing:
+   * they find out it was wrong when a run silently fails an hour later. The
+   * check runs the command's own version flag and reports what came back.
+   */
+  const probe = async (id: string): Promise<void> => {
+    if (!root) return;
+    checking = id;
+    const result = await api().probeAgent(root, id);
+    agents = agents.map((agent) =>
+      agent.id === id
+        ? {
+            ...agent,
+            status: result.ok ? "ready" : "unreachable",
+            ...(result.detail === undefined ? {} : { detail: result.detail }),
+          }
+        : agent,
+    );
+    checking = null;
+  };
+
+  const add = async (): Promise<void> => {
+    if (!root || name.trim().length === 0) return;
+    const agent = await api().addAgent(root, name.trim(), command.trim());
+    agents = [
+      ...agents,
+      { ...agent, status: command.trim().length === 0 ? "file" : "checking" },
+    ];
+    if (command.trim().length > 0) void probe(agent.id);
+    name = "";
+    command = "";
+    adding = false;
+  };
+
+  const remove = async (id: string): Promise<void> => {
+    if (!root) return;
+    await api().removeAgent(root, id);
+    agents = agents.filter((agent) => agent.id !== id);
+  };
+
+  const statusKey = (status: Status): Key => `agents.${status}` as Key;
+
+  /** Ready-made entries for the harnesses whose interfaces are documented. */
+  const presets: { name: string; command: string }[] = [
+    { name: "codex", command: "codex exec --file {request} --output {result}" },
+    { name: "claude", command: "claude -p --output-format text {prompt} > {result}" },
+    { name: "kimi", command: "kimi run --input {request} --output {result}" },
+    { name: "pi", command: "pi run --file {request} --out {result}" },
+  ];
 </script>
 
 <div class="agents">
-  {#if agents.length === 0}
-    <p class="empty">{t("agents.none")}</p>
-  {:else}
-    <ul>
-      {#each agents as agent (agent.id)}
-        <li>
-          <span class="name">{agent.name}</span>
-          <span class="binding">
-            {agent.binding.harness.startsWith("command:")
-              ? agent.binding.harness.slice(8)
-              : t("agents.fileChannel")}
-          </span>
-        </li>
-      {/each}
-    </ul>
+  {#if agents.length === 0 && !adding}
+    <div class="empty">
+      <p>{t("agents.none")}</p>
+      <p class="quiet">{t("agents.fileExplains")}</p>
+    </div>
   {/if}
 
-  <div class="new">
-    <div class="field">
-      <span class="label">{t("agents.name")}</span>
-      <input bind:value={name} placeholder="kimi" spellcheck="false" />
-    </div>
+  {#each agents as agent (agent.id)}
+    <article class="agent">
+      <div class="head">
+        <span class="dot {agent.status}" class:pulsing={checking === agent.id}></span>
+        <span class="name">{agent.name}</span>
+        <span class="status">{t(statusKey(agent.status))}</span>
+        <button class="remove" onclick={() => remove(agent.id)} aria-label={t("agents.remove")}>
+          ✕
+        </button>
+      </div>
 
-    <div class="field">
-      <span class="label">{t("agents.command")}</span>
-      <input bind:value={command} placeholder={t("agents.placeholderCmd")} spellcheck="false" />
-      <p class="hint">{t("agents.commandHint")}</p>
-    </div>
+      <p class="binding">
+        {agent.binding.harness === "file"
+          ? t("agents.fileChannel")
+          : agent.binding.harness.replace(/^command:/, "")}
+      </p>
 
-    <button class="primary" onclick={add} disabled={name.trim().length === 0}>
-      {t("agents.add")}
-    </button>
-  </div>
+      {#if agent.detail}
+        <p class="detail">{agent.detail}</p>
+      {/if}
+
+      {#if agent.status !== "file"}
+        <button class="recheck" onclick={() => probe(agent.id)}>{t("agents.recheck")}</button>
+      {/if}
+    </article>
+  {/each}
+
+  {#if adding}
+    <div class="new">
+      <div class="field">
+        <span class="label">{t("agents.name")}</span>
+        <input bind:value={name} placeholder="kimi" spellcheck="false" />
+      </div>
+
+      <div class="field">
+        <span class="label">{t("agents.command")}</span>
+        <input bind:value={command} placeholder={t("agents.placeholderCmd")} spellcheck="false" />
+        <p class="hint">{t("agents.commandHint")}</p>
+      </div>
+
+      <div class="presets">
+        <span class="label">{t("agents.presets")}</span>
+        <div class="chips">
+          {#each presets as preset (preset.name)}
+            <button
+              onclick={() => {
+                name = preset.name;
+                command = preset.command;
+              }}>{preset.name}</button
+            >
+          {/each}
+          <button
+            onclick={() => {
+              command = "";
+            }}>{t("agents.fileChannel")}</button
+          >
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="primary" onclick={add} disabled={name.trim().length === 0}>
+          {t("agents.add")}
+        </button>
+        <button onclick={() => (adding = false)}>{t("review.cancel")}</button>
+      </div>
+    </div>
+  {:else}
+    <button class="open-new" onclick={() => (adding = true)}>＋ {t("agents.connect")}</button>
+  {/if}
 </div>
 
 <style>
   .agents {
     display: flex;
     flex-direction: column;
-    gap: 1.6rem;
+    gap: 0.9rem;
   }
 
   .empty {
+    padding: 0.5rem 0 0.2rem;
+  }
+
+  .empty p {
     font-family: var(--serif);
-    color: var(--ink-faint);
-    line-height: 1.9;
-    padding: 0.5rem 0;
+    color: var(--ink-soft);
+    line-height: 1.95;
   }
 
-  ul {
-    list-style: none;
-    border-top: 1px solid var(--rule);
+  .quiet {
+    margin-top: 0.6rem;
+    font-family: var(--sans) !important;
+    font-size: var(--step--1);
+    color: var(--ink-faint) !important;
   }
 
-  li {
+  .agent {
+    padding: 0.7rem 0.8rem;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+  }
+
+  .head {
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    padding: 0.6rem 0;
-    border-bottom: 1px solid var(--rule);
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  /* Connection state, stated as a colour before it is stated in words. */
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex: none;
+  }
+
+  .dot.ready {
+    background: var(--accepted);
+  }
+
+  .dot.file {
+    background: var(--ink-ghost);
+  }
+
+  .dot.unreachable {
+    background: var(--refused);
+  }
+
+  .dot.checking {
+    background: var(--seal);
+  }
+
+  .dot.pulsing {
+    animation: pulse 1.1s ease-in-out infinite;
   }
 
   .name {
     font-family: var(--serif);
+    font-size: var(--step-0);
   }
 
-  .binding {
+  .status {
+    font-size: var(--step--2);
+    color: var(--ink-faint);
+  }
+
+  .remove {
+    margin-left: auto;
+    font-size: var(--step--2);
+    color: var(--ink-ghost);
+  }
+
+  .remove:hover {
+    color: var(--refused);
+  }
+
+  .binding,
+  .detail {
     font-family: var(--mono);
     font-size: var(--step--2);
     color: var(--ink-faint);
+    margin-top: 0.35rem;
+    word-break: break-all;
+    line-height: 1.65;
+  }
+
+  .detail {
+    color: var(--refused);
+  }
+
+  .recheck {
+    margin-top: 0.4rem;
+    font-size: var(--step--2);
+    color: var(--ink-ghost);
+  }
+
+  .recheck:hover {
+    color: var(--seal);
   }
 
   .new {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 0.9rem;
+    padding: 0.9rem;
+    background: var(--paper);
+    border: 1px solid var(--rule-strong);
+    border-radius: 3px;
   }
 
   .field {
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
+    gap: 0.35rem;
   }
 
   .hint {
     font-size: var(--step--2);
     color: var(--ink-faint);
-    line-height: 1.75;
+    line-height: 1.7;
+  }
+
+  .presets {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+
+  .chips button {
+    padding: 0.25rem 0.55rem;
+    font-size: var(--step--2);
+    font-family: var(--mono);
+    border: 1px solid var(--rule-strong);
+    border-radius: 2px;
+    color: var(--ink-soft);
+  }
+
+  .chips button:hover {
+    border-color: var(--seal);
+    color: var(--seal);
+  }
+
+  .actions {
+    display: flex;
+    gap: 0.4rem;
+  }
+
+  .actions button {
+    padding: 0.45rem 0.9rem;
+    font-size: var(--step--1);
+    border: 1px solid var(--rule-strong);
+    border-radius: 2px;
+    color: var(--ink-soft);
   }
 
   .primary {
-    align-self: flex-start;
-    padding: 0.5rem 1.1rem;
     background: var(--ink);
     color: var(--paper-raised);
-    border-radius: 2px;
-    font-size: var(--step--1);
+    border-color: var(--ink) !important;
   }
 
   .primary:disabled {
     background: var(--rule-strong);
     cursor: not-allowed;
+  }
+
+  .open-new {
+    align-self: flex-start;
+    font-size: var(--step--1);
+    color: var(--ink-faint);
+    padding: 0.4rem 0;
+  }
+
+  .open-new:hover {
+    color: var(--seal);
+  }
+
+  @keyframes pulse {
+    50% {
+      opacity: 0.3;
+    }
   }
 </style>

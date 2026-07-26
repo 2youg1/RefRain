@@ -30,7 +30,7 @@ const LONG =
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-await page.addInitScript(`window.recension = {
+await page.addInitScript(`window.refrain = {
   openProject: async () => "/p",
   loadProject: async () => [{ title: "01", text: ${JSON.stringify(LONG)} }],
   createProject: async () => null, pathFor: () => "", resolveDrop: async () => null,
