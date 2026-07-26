@@ -55,7 +55,7 @@ describe("Agent Host queue", () => {
     expect(run2?.workspace).not.toBe(run1?.workspace);
   });
 
-  test.failing("a dispatch preflight failure preserves the whole queue and starts nothing", async () => {
+  test("a dispatch preflight failure preserves the whole queue and starts nothing", async () => {
     const host = new AgentHost(root);
     host.register(agent());
     host.enqueue(task());

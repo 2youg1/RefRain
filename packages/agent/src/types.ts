@@ -85,4 +85,18 @@ export interface HarnessAdapter {
   cancel(run: Run): Promise<void>;
   usage(): Capability<SessionUsage>;
   effectiveModel(): Capability<string>;
+
+  /**
+   * Resolve when the harness has finished with this run.
+   *
+   * Optional because the file channel has nothing to wait on — an agent writes
+   * `result.md` whenever it likes, and there is no process whose exit means
+   * anything. An adapter that launches something implements this so the Host
+   * can reclaim the run without knowing which adapter it is talking to.
+   *
+   * `CommandAdapter` had this method from the start, but it was private to the
+   * class and no caller existed, so a dispatched run stayed dispatched forever
+   * and `collect` had to be triggered by hand.
+   */
+  awaitCompletion?(run: Run): Promise<void>;
 }
