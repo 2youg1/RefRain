@@ -850,14 +850,27 @@ const onScroll = (): void => {
  * `measure` is em and resolves differently at each element's own font size —
  * one variable, two widths, two left edges.
  */
+/*
+ * SPEC Q5. The header and the manuscript must hang from one line.
+ *
+ * They drifted 289px because three differences stacked: the header capped its
+ * width at `100% - 6rem` while the sheet used `100% - 2rem`, one centred with
+ * `align-self` and the other with `margin: auto`, and the header sits outside
+ * `.scroll` so it never paid that element's 2rem padding. Matching only one of
+ * the three — which earlier attempts did — leaves the other two.
+ *
+ * `--column-slot` is the single width both resolve against, and the header now
+ * carries `.scroll`'s horizontal padding itself so both measure from the same
+ * origin.
+ */
 .bar {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   box-sizing: border-box;
-  align-self: center;
   flex: none;
-  width: min(var(--column-width), calc(100% - 6rem));
+  width: var(--column-slot);
+  margin: 0 auto;
   padding: 0.9rem 4.5rem 0.7rem;
   border-bottom: 1px solid var(--rule);
   position: relative;
@@ -909,6 +922,16 @@ const onScroll = (): void => {
   padding: 1.4rem 2rem 2rem;
 }
 
+/*
+ * The width both the header and the sheet resolve against. `.scroll` subtracts
+ * its own 2rem of horizontal padding before the sheet sees the space, so the
+ * header — which sits outside it — has to subtract the same amount to land on
+ * the same left edge.
+ */
+.writing {
+  --column-slot: min(var(--column-width), calc(100% - 6rem));
+}
+
 /* Zen recentres: with no rail there is no left edge to anchor to. */
 .scroll.zen .sheet-surface {
   margin: 0 auto;
@@ -921,7 +944,7 @@ const onScroll = (): void => {
  * to the right and the application reads as stuck to one edge.
  */
 .sheet-surface {
-  width: min(var(--column-width), calc(100% - 2rem));
+  width: var(--column-slot);
   margin: 0 auto;
   position: relative;
   z-index: 1;

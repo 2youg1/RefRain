@@ -60,8 +60,27 @@ await page.addInitScript(`
 await page.goto(`http://localhost:${server.port}`);
 await page.waitForTimeout(900);
 
-// The header exists only with a chapter open — which is the state it has to
-// align in. Measuring the empty screen measures nothing.
+/*
+ * The workspace loads on an explicit action rather than on mount, so seeding
+ * `refrain.roots` alone lands on the blank screen and the header never exists.
+ * "打开文件夹" is the command a person uses; `openProject` in the stub returns
+ * the fixture root, so this drives the same path the application really takes.
+ */
+await page.keyboard.press("Control+k");
+await page.waitForTimeout(300);
+await page.locator("nav.menu input").fill("文件夹");
+await page.waitForTimeout(300);
+const opener = page.locator("nav.menu button.row").first();
+if ((await opener.count()) > 0) await opener.click();
+await page.waitForTimeout(900);
+
+/*
+ * The header renders only with a chapter open, and `Progress.svelte` also
+ * carries a `.bar` class. With no chapter the old selector silently measured
+ * the progress rule instead — which is the whole of the 289px "drift" recorded
+ * as SPEC Q5. The count is asserted, not logged, so an empty fixture fails
+ * rather than reporting a defect that is not there.
+ */
 const chapterCount = await page.locator("nav .chapter").count();
 console.log(`fixture: ${chapterCount} chapter(s) in the rail`);
 if (chapterCount === 0) {
@@ -70,7 +89,10 @@ if (chapterCount === 0) {
     roots: localStorage.getItem("refrain.roots"),
     railHtml: document.querySelector("nav.rail")?.innerHTML.slice(0, 200) ?? "(no rail)",
   }));
-  console.error("fixture did not open a project:", JSON.stringify(debug, null, 2));
+  console.error("FAIL  the fixture opened no project:", JSON.stringify(debug, null, 2));
+  await browser.close();
+  server.stop();
+  process.exit(1);
 }
 await page
   .locator("nav .chapter")
@@ -88,7 +110,8 @@ const report = await page.evaluate(() => {
   };
   const rail = document.querySelector(".bar-rail");
   return {
-    bar: box(".bar"),
+    // `header.bar`, not `.bar`: Progress.svelte uses the same class name.
+    bar: box("header.bar"),
     barRail: box(".bar-rail"),
     sheet: box(".sheet-surface"),
     measure: getComputedStyle(document.documentElement).getPropertyValue("--manuscript-measure"),
