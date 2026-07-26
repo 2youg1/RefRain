@@ -8,10 +8,14 @@ export type {
   ParseResult,
 } from "./artifact.ts";
 export { parseAgentResult } from "./artifact.ts";
+export type { AtomicWriteCheckpoint, AtomicWriteObserver } from "./atomic-file.ts";
+export { replaceFileAtomically } from "./atomic-file.ts";
 export type { ChangeClass } from "./change-class.ts";
 export { classifyChange, classifyProposal } from "./change-class.ts";
 export type { BatchRefusal, DecisionBatchResult } from "./decision-batch.ts";
 export { commitDecisionBatch, rebuildReplacement } from "./decision-batch.ts";
+export type { DecisionRecovery } from "./decision-commit.ts";
+export { persistDecisionCommit, recoverDecisionCommit } from "./decision-commit.ts";
 export type { Block, BlockId, RevisionId, TextChange, TextHead, TextHeadId } from "./domain.ts";
 export type { Edit, EditKind } from "./edits.ts";
 export { describeEditsForAgent, editsBetween, revertAll, revertEdit } from "./edits.ts";
@@ -23,6 +27,7 @@ export { carriesOn, PRESETS, renderPersona } from "./persona.ts";
 export type {
   ChangedUnderneath,
   Chapter,
+  ChapterFileSnapshot,
   FileStamp,
   Root,
   Workspace,
@@ -32,6 +37,7 @@ export {
   describeRoot,
   loadProject,
   loadWorkspace,
+  readChapterFile,
   saveChapter,
   serializeChapter,
   stampOf,

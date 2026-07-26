@@ -71,7 +71,7 @@ describe("freezing is terminal", () => {
 });
 
 describe("compaction", () => {
-  test.failing("compaction labels lineage unverifiable without freezing the session", () => {
+  test("compaction labels lineage unverifiable without freezing the session", () => {
     const s = freeze(recordUsage(session(), 1_000), "compaction");
 
     expect(s.state).toBe("active");

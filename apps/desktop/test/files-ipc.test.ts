@@ -15,7 +15,7 @@
  */
 
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { closeWorkbenches, registerHandlers } from "../src/main/ipc.ts";
@@ -117,6 +117,203 @@ test("a mutating call on an unavailable layer changes nothing and says why", asy
     closeWorkbenches();
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("loading through IPC remembers enough to refuse an external overwrite", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-ipc-save-"));
+  const path = join(root, "01.md");
+  try {
+    writeFileSync(path, "盘上的第一版。\n", "utf8");
+    await call("project:load", root);
+    writeFileSync(path, "另一个编辑器写下了更长的第二版。\n", "utf8");
+
+    const outcome = (await call("project:save", root, "01", "RefRain 里的版本。")) as {
+      ok: boolean;
+      reason?: string;
+      onDisk?: string;
+    };
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      reason: "changed-underneath",
+      onDisk: "另一个编辑器写下了更长的第二版。\n",
+    });
+    expect(readFileSync(path, "utf8")).toBe("另一个编辑器写下了更长的第二版。\n");
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an interrupted write is reported without replacing either file", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-ipc-interrupted-"));
+  const path = join(root, "01.md");
+  const temporary = `${path}.writing`;
+  try {
+    writeFileSync(path, "权威正文。\n", "utf8");
+    writeFileSync(temporary, "强杀前同步完的候选正文。\n", "utf8");
+    await call("project:load", root);
+
+    await expect(call("project:save", root, "01", "窗口里的未保存正文。")).rejects.toThrow();
+
+    expect(readFileSync(path, "utf8")).toBe("权威正文。\n");
+    expect(readFileSync(temporary, "utf8")).toBe("强杀前同步完的候选正文。\n");
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a newly created chapter becomes protected after its first save", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-ipc-new-"));
+  const path = join(root, "新章.md");
+  try {
+    expect(await call("project:save", root, "新章", "第一版。")).toMatchObject({ ok: true });
+    writeFileSync(path, "另一个编辑器接着写了第二版。\n", "utf8");
+
+    const outcome = (await call("project:save", root, "新章", "RefRain 里的第三版。")) as {
+      ok: boolean;
+      reason?: string;
+      onDisk?: string;
+    };
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      reason: "changed-underneath",
+      onDisk: "另一个编辑器接着写了第二版。\n",
+    });
+    expect(readFileSync(path, "utf8")).toBe("另一个编辑器接着写了第二版。\n");
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a conflict choice cannot overwrite a newer disk version the author never saw", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-ipc-conflict-"));
+  const path = join(root, "01.md");
+  try {
+    writeFileSync(path, "最初版本。\n", "utf8");
+    await call("project:load", root);
+    writeFileSync(path, "冲突框展示的版本。\n", "utf8");
+    await call("project:save", root, "01", "我保留的版本。");
+    writeFileSync(path, "冲突框出现后写入的新版本。\n", "utf8");
+
+    const outcome = (await call("project:resolve-conflict", root, "01", "mine")) as {
+      ok: boolean;
+      reason?: string;
+      onDisk?: string;
+    };
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      reason: "changed-underneath",
+      onDisk: "冲突框出现后写入的新版本。\n",
+    });
+    expect(readFileSync(path, "utf8")).toBe("冲突框出现后写入的新版本。\n");
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("keeping the displayed local version commits it once when the disk stays put", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-ipc-keep-"));
+  const path = join(root, "01.md");
+  try {
+    writeFileSync(path, "最初版本。\n", "utf8");
+    await call("project:load", root);
+    writeFileSync(path, "冲突框展示的磁盘版本。\n", "utf8");
+    await call("project:save", root, "01", "我明确保留的版本。");
+
+    const outcome = (await call("project:resolve-conflict", root, "01", "mine")) as {
+      ok: boolean;
+      text?: string;
+    };
+
+    expect(outcome).toEqual({ ok: true, text: "我明确保留的版本。" });
+    expect(readFileSync(path, "utf8")).toBe("我明确保留的版本。\n");
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("taking the displayed disk version changes no file bytes", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-ipc-take-"));
+  const path = join(root, "01.md");
+  try {
+    writeFileSync(path, "最初版本。\n", "utf8");
+    await call("project:load", root);
+    writeFileSync(path, "冲突框展示的磁盘版本。\n", "utf8");
+    await call("project:save", root, "01", "未采用的本地版本。");
+
+    const outcome = (await call("project:resolve-conflict", root, "01", "disk")) as {
+      ok: boolean;
+      text?: string;
+    };
+
+    expect(outcome).toEqual({ ok: true, text: "冲突框展示的磁盘版本。\n" });
+    expect(readFileSync(path, "utf8")).toBe("冲突框展示的磁盘版本。\n");
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("taking disk also refuses a newer version the conflict dialog never showed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-ipc-retake-"));
+  const path = join(root, "01.md");
+  try {
+    writeFileSync(path, "最初版本。\n", "utf8");
+    await call("project:load", root);
+    writeFileSync(path, "冲突框展示的版本。\n", "utf8");
+    await call("project:save", root, "01", "未采用的本地版本。");
+    writeFileSync(path, "冲突框出现后写入的新版本。\n", "utf8");
+
+    const outcome = (await call("project:resolve-conflict", root, "01", "disk")) as {
+      ok: boolean;
+      reason?: string;
+      onDisk?: string;
+    };
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      reason: "changed-underneath",
+      onDisk: "冲突框出现后写入的新版本。\n",
+    });
+    expect(readFileSync(path, "utf8")).toBe("冲突框出现后写入的新版本。\n");
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an unknown conflict choice is rejected instead of being treated as keep-mine", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-ipc-choice-"));
+  const path = join(root, "01.md");
+  try {
+    writeFileSync(path, "最初版本。\n", "utf8");
+    await call("project:load", root);
+    writeFileSync(path, "另一个编辑器的版本。\n", "utf8");
+    await call("project:save", root, "01", "本地版本。");
+
+    const outcome = (await call("project:resolve-conflict", root, "01", "anything")) as {
+      ok: boolean;
+      reason?: string;
+    };
+
+    expect(outcome).toEqual({ ok: false, reason: "invalid conflict choice" });
+    expect(readFileSync(path, "utf8")).toBe("另一个编辑器的版本。\n");
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an external edit has one atomic resolution channel", () => {
+  expect(handlers.has("project:resolve-conflict")).toBe(true);
+  expect(handlers.has("project:reload-chapter")).toBe(false);
 });
 
 test("the editor channels do not depend on the file layer", () => {

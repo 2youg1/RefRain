@@ -35,9 +35,9 @@ const THEIRS = "别处改写过的一句，长度也不一样。\n\n第二段被
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 
-// The bridge is stubbed whole, and `saveChapter` refuses the way main does when
-// the file has moved on. `reloadChapter` records that it was called, so the
-// assertions can tell the two actions apart by what each one asked for.
+// The bridge is stubbed whole. `saveChapter` refuses the way main does when the
+// file has moved on; `resolveConflict` is the only operation allowed after the
+// author chooses. The old reload-then-save pair remains as a tripwire.
 await page.addInitScript(`
   window.__calls = [];
   window.refrain = {
@@ -52,6 +52,10 @@ await page.addInitScript(`
       window.__calls.push(["save", title, text]);
       return { ok: false, reason: "changed-underneath", path: "/p/01.md",
                onDisk: ${JSON.stringify(THEIRS)} };
+    },
+    resolveConflict: async (root, title, choice) => {
+      window.__calls.push(["resolve", title, choice]);
+      return { ok: true, text: choice === "disk" ? ${JSON.stringify(THEIRS)} : ${JSON.stringify(MINE)} };
     },
     reloadChapter: async (root, title) => {
       window.__calls.push(["reload", title]);
@@ -176,6 +180,16 @@ if ((await dialog.count()) === 0) {
   const surface = (await page.locator(".manuscript").innerText()).replace(/\s+/g, "");
   if (!surface.includes("别处改写过的一句"))
     failures.push("taking the file's version did not reach the editor");
+
+  const afterChoice: [string, ...string[]][] = JSON.parse(
+    await page.evaluate("JSON.stringify(window.__calls)"),
+  );
+  if (!afterChoice.some(([kind, , choice]) => kind === "resolve" && choice === "disk"))
+    failures.push("taking the file did not use the atomic conflict-resolution channel");
+  if (afterChoice.some(([kind]) => kind === "reload"))
+    failures.push("taking the file used the obsolete reload-then-save path");
+  if (afterChoice.filter(([kind]) => kind === "save").length !== 1)
+    failures.push("a conflict choice started a second ordinary save");
 }
 
 await browser.close();

@@ -54,6 +54,7 @@ const t = $derived(translator(lang));
 /** Several roots, so an empty folder for tidiness does not lock out the manuscripts. */
 let roots = $state<string[]>(saved0.roots);
 let chapters = $state<ChapterView[]>([]);
+/** The active chapter's absolute path; titles are not unique across workspace roots. */
 let active = $state<string | null>(null);
 let text = $state("");
 let saved = $state(true);
@@ -77,6 +78,8 @@ let edits = $state<EditView[]>([]);
 let proposals = $state<ProposalView[]>([]);
 let comments = $state<{ target: string; text: string }[]>([]);
 let runs = $state<RunView[]>([]);
+/** The project that owns the visible Run list; chapter titles cannot identify it. */
+let runOwner = $state<string | null>(null);
 let refusal = $state<{ reason: string; detail: string[] } | null>(null);
 let notice = $state<string | null>(null);
 let surfaceEl = $state<HTMLElement | null>(null);
@@ -109,17 +112,7 @@ let visibleRows = $state(40);
 let display = $state<DisplayProfile>(FALLBACK);
 
 const root = $derived(roots[0] ?? null);
-
-/**
- * The root that owns a chapter.
- *
- * `root` is the first workspace and is right for anything workspace-shaped
- * (the file browser, the agent roster). It is wrong for anything
- * chapter-shaped: a chapter in the second root saved against `roots[0]`
- * created a same-named file in the wrong project and reported success.
- */
-const rootOf = (title: string | null): string | null =>
-  chapters.find((c) => c.title === title)?.root ?? root;
+const activeChapter = $derived(chapters.find((chapter) => chapter.path === active) ?? null);
 
 // Every durable choice is written back the moment it changes; the storage
 // keys and the CSS custom properties both live in preferences.ts.
@@ -151,6 +144,45 @@ $effect(() =>
     applyProfile(profile, document.documentElement);
   }),
 );
+
+/*
+ * Opening collaboration restores the project's visible Run history. A reload
+ * used to recover the Host on disk but leave the panel empty until another send.
+ */
+$effect(() => {
+  const owner = sheet === "dispatch" ? (activeChapter?.root ?? root) : null;
+  if (!owner) return;
+  let current = true;
+  runOwner = owner;
+  void api()
+    .runs(owner)
+    .then((next) => {
+      if (current && runOwner === owner) runs = next;
+    })
+    .catch(() => undefined);
+  return () => {
+    current = false;
+  };
+});
+
+/*
+ * Only in-flight Runs poll. Terminal state stops the effect, so ordinary editing
+ * and an idle panel do no background work. The owner is captured to keep two
+ * workspace roots from replacing each other's status list.
+ */
+$effect(() => {
+  const owner = runOwner;
+  if (!owner || !runs.some((run) => run.state === "dispatched")) return;
+  const timer = setTimeout(() => {
+    void api()
+      .runs(owner)
+      .then((next) => {
+        if (runOwner === owner) runs = next;
+      })
+      .catch(() => undefined);
+  }, 400);
+  return () => clearTimeout(timer);
+});
 
 /**
  * Open the browser, scanning on first use.
@@ -335,7 +367,7 @@ const reload = async (): Promise<void> => {
     return select(null);
   }
   chapters = await api().loadWorkspace(roots);
-  if (!chapters.some((c) => c.title === active)) select(chapters[0]?.title ?? null);
+  if (!chapters.some((chapter) => chapter.path === active)) select(chapters[0]?.path ?? null);
 };
 
 const createProject = async (): Promise<void> => {
@@ -343,59 +375,73 @@ const createProject = async (): Promise<void> => {
   if (chosen) await addRoot(chosen);
 };
 
-const select = (title: string | null): void => {
+const select = (path: string | null): void => {
   // Unsaved text used to disappear here: `render()` overwrote the surface with
   // the newly selected chapter and the old paragraphs were simply gone. The
   // manuscript is the one thing this application may never lose, so the switch
   // saves first rather than asking.
-  if (!saved && active !== null && active !== title) {
-    void save().then(() => selectNow(title));
+  if (!saved && active !== null && active !== path) {
+    void save().then(() => selectNow(path));
     return;
   }
-  selectNow(title);
+  selectNow(path);
 };
 
-const selectNow = (title: string | null): void => {
-  active = title;
-  text = chapters.find((c) => c.title === title)?.text ?? "";
+const selectNow = (path: string | null): void => {
+  active = path;
+  text = chapters.find((chapter) => chapter.path === path)?.text ?? "";
   saved = true;
   edits = [];
   queueMicrotask(() => render(text));
 };
-
 const newChapter = async (): Promise<void> => {
-  if (!root) return;
+  const owner = activeChapter?.root ?? roots[0];
+  if (!owner) return;
   const name = prompt(t("chapter.new"));
   if (!name?.trim()) return;
-  await api().saveChapter(root, name.trim(), "");
+  const title = name.trim();
+  await api().saveChapter(owner, title, "");
   await reload();
-  select(name.trim());
+  select(
+    chapters.find((chapter) => chapter.root === owner && chapter.title === title)?.path ?? null,
+  );
 };
 
 const save = async (): Promise<void> => {
-  const title = active;
-  const owner = rootOf(title);
-  if (!owner || !title) return;
+  const chapter = activeChapter;
+  if (!chapter) return;
 
   // Snapshot before awaiting. Typing during the write used to leave `saved`
   // true over text that had never reached disk, and recorded an edit against
   // characters that were never saved.
   const written = text;
-  const previous = chapters.find((c) => c.title === title)?.text ?? "";
-  const outcome = await api().saveChapter(owner, title, written);
+  try {
+    const outcome = await api().saveChapter(chapter.root, chapter.title, written);
 
-  // The file moved on: someone else wrote to it since this session read it.
-  // Nothing is decided here — the author is shown both and chooses. Silently
-  // winning would destroy an edit they made somewhere else.
-  if (!outcome.ok) {
-    conflict = { title, root: owner, mine: written, theirs: outcome.onDisk, path: outcome.path };
-    return;
+    // The file moved on: someone else wrote to it since this session read it.
+    // Nothing is decided here — the author is shown both and chooses. Silently
+    // winning would destroy an edit they made somewhere else.
+    if (!outcome.ok) {
+      conflict = {
+        title: chapter.title,
+        root: chapter.root,
+        mine: written,
+        theirs: outcome.onDisk,
+        path: outcome.path,
+      };
+      return;
+    }
+
+    const recorded = await api().editsBetween(chapter.text, written);
+    edits = [...edits, ...recorded];
+    chapters = chapters.map((entry) =>
+      entry.path === chapter.path ? { ...entry, text: written } : entry,
+    );
+    if (text === written && active === chapter.path) saved = true;
+  } catch (error) {
+    saved = false;
+    say(error instanceof Error ? error.message : String(error));
   }
-
-  const recorded = await api().editsBetween(previous, written);
-  edits = [...edits, ...recorded];
-  chapters = chapters.map((c) => (c.title === title ? { ...c, text: written } : c));
-  if (text === written && active === title) saved = true;
 };
 
 /** An unresolved disagreement between this session and the disk (#49). */
@@ -407,37 +453,37 @@ let conflict = $state<{
   path: string;
 } | null>(null);
 
-/** Take the file as it now is; this session's unsaved text is discarded. */
-const takeTheirs = async (): Promise<void> => {
+/** Resolve exactly the two versions currently visible in the conflict dialog. */
+const resolveConflict = async (choice: "mine" | "disk"): Promise<void> => {
   const pending = conflict;
-  conflict = null;
   if (!pending) return;
-  const outcome = await api().reloadChapter(pending.root, pending.title);
-  if (!outcome.ok) return say(outcome.reason);
-  chapters = chapters.map((c) => (c.title === pending.title ? { ...c, text: outcome.text } : c));
-  if (active === pending.title) {
+  const outcome = await api().resolveConflict(pending.root, pending.title, choice);
+
+  if (!outcome.ok) {
+    saved = false;
+    if (outcome.onDisk !== undefined && outcome.path !== undefined) {
+      conflict = { ...pending, theirs: outcome.onDisk, path: outcome.path };
+      say(t("conflict.stillChanging"));
+    } else {
+      conflict = null;
+      say(outcome.reason);
+    }
+    return;
+  }
+
+  conflict = null;
+  chapters = chapters.map((chapter) =>
+    chapter.path === pending.path ? { ...chapter, text: outcome.text } : chapter,
+  );
+  if (active === pending.path) {
     text = outcome.text;
     render(outcome.text);
     saved = true;
   }
 };
 
-/**
- * Keep this session's text, writing over the other edit.
- *
- * Reloads first so the stamp is current, then saves. The other version is not
- * lost silently — the author has just been shown it and chosen.
- */
-const keepMine = async (): Promise<void> => {
-  const pending = conflict;
-  conflict = null;
-  if (!pending) return;
-  await api().reloadChapter(pending.root, pending.title);
-  const outcome = await api().saveChapter(pending.root, pending.title, pending.mine);
-  if (!outcome.ok) return say(t("conflict.stillChanging"));
-  chapters = chapters.map((c) => (c.title === pending.title ? { ...c, text: pending.mine } : c));
-  if (active === pending.title) saved = true;
-};
+const takeTheirs = async (): Promise<void> => resolveConflict("disk");
+const keepMine = async (): Promise<void> => resolveConflict("mine");
 
 const revert = async (id: string): Promise<void> => {
   const edit = edits.find((e) => e.id === id);
@@ -461,34 +507,40 @@ const setZen = async (on: boolean): Promise<void> => {
 };
 
 const collect = async (runId: string): Promise<void> => {
-  if (!root) return;
+  const owner = runOwner ?? activeChapter?.root ?? root;
+  if (!owner) return;
   try {
-    const result = await api().collect(root, runId);
+    const result = await api().collect(owner, runId);
     proposals = [...proposals, ...result.proposals];
     comments = [...comments, ...result.comments];
     sheet = "review";
   } catch (error) {
     say(String(error));
   }
-  runs = await api().runs(root);
+  runs = await api().runs(owner);
 };
 
 const commit = async (verdicts: VerdictView[]): Promise<void> => {
-  const owner = rootOf(active);
-  if (!owner || !active) return;
   // The main process merges against its own head. With unsaved text in the
   // editor that head is stale, and `result.text` would overwrite characters
   // the author had just typed.
-  if (!saved) await save();
+  if (!saved) {
+    await save();
+    if (!saved) return;
+  }
+  const chapter = activeChapter;
+  if (!chapter) return;
   refusal = null;
-  const result = await api().commit(owner, { chapter: active, verdicts });
+  const result = await api().commit(chapter.root, { chapter: chapter.title, verdicts });
   if (!result.ok) {
     refusal = { reason: result.reason, detail: result.detail };
     return;
   }
   text = result.text;
   render(result.text);
-  chapters = chapters.map((c) => (c.title === active ? { ...c, text: result.text } : c));
+  chapters = chapters.map((entry) =>
+    entry.path === chapter.path ? { ...entry, text: result.text } : entry,
+  );
   proposals = proposals.filter((p) => !verdicts.some((v) => v.proposalId === p.id));
   saved = true;
   if (proposals.length === 0) sheet = null;
@@ -609,7 +661,7 @@ const onDrop = async (event: DragEvent): Promise<void> => {
  */
 const selectedBlocks = (): { ids: string[]; text: string } => {
   const selected = window.getSelection();
-  if (!selected || selected.rangeCount === 0 || !surfaceEl || !active)
+  if (!selected || selected.rangeCount === 0 || !surfaceEl || !activeChapter)
     return { ids: [], text: "" };
 
   const range = selected.getRangeAt(0);
@@ -617,7 +669,9 @@ const selectedBlocks = (): { ids: string[]; text: string } => {
   const blocks = touched.length > 0 ? touched : [];
 
   return {
-    ids: blocks.map((node) => `${active}:b${[...surfaceEl.children].indexOf(node)}`),
+    ids: blocks.map(
+      (node) => `${activeChapter.title}:b${[...surfaceEl.children].indexOf(node)}`,
+    ),
     text: blocks.map((node) => node.textContent?.trim() ?? "").join("\n\n"),
   };
 };
@@ -700,7 +754,7 @@ const onScroll = (): void => {
 
       {#if !zen && active}
           <header class="bar">
-          <span class="title">{active ?? t("chapter.none")}</span>
+          <span class="title">{activeChapter?.title ?? t("chapter.none")}</span>
           <div class="right">
             {#if edits.length > 0}
               <button class="chip" onclick={() => (sheet = "edits")}>
@@ -785,14 +839,18 @@ const onScroll = (): void => {
 
 <Sheet open={sheet === "dispatch"} title={t("dispatch.title")} onClose={() => (sheet = null)}>
   <Dispatch
-    {root}
-    chapter={active}
+    root={activeChapter?.root ?? root}
+    chapter={activeChapter?.title ?? null}
     {selection}
     {scope}
     {runs}
     {t}
     onDispatched={async () => {
-      if (root) runs = await api().runs(root);
+      const owner = activeChapter?.root ?? root;
+      if (owner) {
+        runOwner = owner;
+        runs = await api().runs(owner);
+      }
     }}
     onCollect={collect}
   />
@@ -808,7 +866,7 @@ const onScroll = (): void => {
     entries={fileEntries}
     total={fileTotal}
     unavailable={fileUnavailable}
-    active={chapters.find((c) => c.title === active)?.path ?? null}
+    {active}
     order={fileOrder}
     descending={fileDescending}
     query={fileQuery}
@@ -819,7 +877,7 @@ const onScroll = (): void => {
       // `window.open`, took the chapter title as a URL, and was denied by the
       // window-open handler. Clicking a file appeared to do nothing at all.
       const chapter = chapters.find((c) => c.path === entry.path);
-      if (chapter) select(chapter.title);
+      if (chapter) select(chapter.path);
     }}
     onQuery={searchFiles}
     onSort={sortFiles}

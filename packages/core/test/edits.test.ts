@@ -83,7 +83,7 @@ describe("reverting", () => {
     expect(currentText(reverted)).toContain("剑尖没有动。");
   });
 
-  test.failing("reverting a removed middle block restores its original position", () => {
+  test("reverting a removed middle block restores its original position", () => {
     const after = head([
       ["b1", "黑暗中有人问。"],
       ["b3", "剑尖垂下去。"],
@@ -135,7 +135,7 @@ describe("telling an agent what changed", () => {
     expect(describeEditsForAgent(edits)).toContain("<note>语气要更冷</note>");
   });
 
-  test.failing("an author's note cannot inject a second request", () => {
+  test("an author's note cannot inject a second request", () => {
     const edits: Edit[] = [
       {
         id: "e1",

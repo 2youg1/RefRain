@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type AgentComment, appendMemos, type Proposal, parseAgentResult } from "@refrain/core";
 import { FileChannelAdapter } from "./file-channel.ts";
+import { type HostState, readHostState, type StoredRun, writeHostState } from "./host-state.ts";
 import type { Agent, HarnessAdapter, ReviewTask, Run } from "./types.ts";
 
 /** What the author sees before one click sends everything (SPEC 3.2). */
@@ -36,10 +37,69 @@ export class AgentHost {
   constructor(
     private readonly root: string,
     private readonly adapters: readonly HarnessAdapter[] = [new FileChannelAdapter(root)],
-  ) {}
+  ) {
+    this.restore(readHostState(root));
+  }
+
+  private restore(state: HostState): void {
+    this.sequence = state.sequence;
+    this.queue.push(...state.queue);
+    for (const scopeId of state.drifted) this.drifted.add(scopeId);
+    for (const stored of state.runs) {
+      const workspace = join(this.root, "runs", stored.id);
+      const run: Run = {
+        id: stored.id,
+        taskId: stored.task.id,
+        agentId: stored.task.agentId,
+        baseline: stored.task.baseline,
+        workspace,
+        requestPath: join(workspace, "request.md"),
+        resultPath: join(workspace, "result.md"),
+        state: stored.state,
+      };
+      this.dispatched.push(run);
+      this.tasks.set(run.id, stored.task);
+      this.comments.set(run.id, [...stored.comments]);
+      if (stored.state === "completed" || stored.proposals.length > 0)
+        this.proposals.set(run.id, [...stored.proposals]);
+      if (stored.failure !== undefined) this.failures.set(run.id, stored.failure);
+    }
+  }
+
+  private storedRun(run: Run): StoredRun | undefined {
+    const task = this.tasks.get(run.id);
+    if (!task) return undefined;
+    const failure = this.failures.get(run.id);
+    return {
+      id: run.id,
+      state: run.state,
+      task,
+      ...(failure === undefined ? {} : { failure }),
+      comments: this.comments.get(run.id) ?? [],
+      proposals: this.proposals.get(run.id) ?? [],
+    };
+  }
+
+  private persist(): void {
+    writeHostState(this.root, {
+      version: 1,
+      sequence: this.sequence,
+      queue: this.queue,
+      runs: this.dispatched.flatMap((run) => {
+        const stored = this.storedRun(run);
+        return stored === undefined ? [] : [stored];
+      }),
+      drifted: [...this.drifted],
+    });
+  }
 
   register(agent: Agent): this {
     this.agents.set(agent.id, agent);
+    return this;
+  }
+
+  unregister(agentId: string): this {
+    this.agents.delete(agentId);
     return this;
   }
 
@@ -51,6 +111,12 @@ export class AgentHost {
 
   enqueue(task: ReviewTask): this {
     this.queue.push(task);
+    try {
+      this.persist();
+    } catch (error) {
+      this.queue.pop();
+      throw error;
+    }
     return this;
   }
 
@@ -71,9 +137,20 @@ export class AgentHost {
    * belongs to the human, who alone knows whether the change matters.
    */
   noteManuscriptChange(blockId: string, _text: string): void {
+    const added: string[] = [];
     for (const task of this.queue)
       for (const scope of task.editScopes)
-        if (scope.blockIds.includes(blockId)) this.drifted.add(scope.id);
+        if (scope.blockIds.includes(blockId) && !this.drifted.has(scope.id)) {
+          this.drifted.add(scope.id);
+          added.push(scope.id);
+        }
+    if (added.length === 0) return;
+    try {
+      this.persist();
+    } catch (error) {
+      for (const scopeId of added) this.drifted.delete(scopeId);
+      throw error;
+    }
   }
 
   isDrifted(scopeId: string): boolean {
@@ -94,17 +171,16 @@ export class AgentHost {
       if (!agent) throw new Error(`no agent registered for task ${task.id}`);
 
       const adapter = [...this.extraAdapters, ...this.adapters].find(
-        (a) => a.id === agent.binding.harness,
+        (candidate) => candidate.id === agent.binding.harness,
       );
       if (!adapter) throw new Error(`no adapter for harness ${agent.binding.harness}`);
 
       return { task, agent, adapter };
     });
+    if (resolved.length === 0) return [];
 
-    const started: Run[] = [];
     const queued = this.queue.splice(0);
-
-    for (const { task, agent, adapter } of resolved) {
+    const planned = resolved.map(({ task, agent, adapter }) => {
       const id = `run${++this.sequence}`;
       const workspace = join(this.root, "runs", id);
       const run: Run = {
@@ -117,37 +193,44 @@ export class AgentHost {
         resultPath: join(workspace, "result.md"),
         state: "dispatched",
       };
-
-      try {
-        await adapter.dispatch(run, task, agent);
-      } catch (error) {
-        // The launch failed, so this run never existed. Everything queued goes
-        // back, including the tasks that had already started — the author asked
-        // for one dispatch, and a half-sent batch is not one.
-        this.sequence -= 1;
-        for (const dispatchedRun of started) {
-          await this.adapterFor.get(dispatchedRun.id)?.cancel(dispatchedRun);
-          this.dispatched.splice(this.dispatched.indexOf(dispatchedRun), 1);
-          this.tasks.delete(dispatchedRun.id);
-          this.adapterFor.delete(dispatchedRun.id);
-        }
-        this.queue.push(...queued);
-        throw error;
-      }
-
       this.dispatched.push(run);
       this.tasks.set(id, task);
       this.adapterFor.set(id, adapter);
-      started.push(run);
+      return { task, agent, adapter, run };
+    });
 
-      // Follow the run to its end without blocking the dispatch of the rest.
-      // Before this existed a launched run stayed `dispatched` forever and the
-      // author had to know to press collect — the harness finishing was not an
-      // event the application could see.
-      if (adapter.awaitCompletion) this.watch(run, adapter);
+    try {
+      // The intent reaches disk before a harness can start. A crash therefore
+      // leaves an explainable dispatched Run rather than an unowned process.
+      this.persist();
+      for (const { task, agent, adapter, run } of planned) await adapter.dispatch(run, task, agent);
+    } catch (error) {
+      for (const { adapter, run } of planned)
+        if (run.workspace) await adapter.cancel(run).catch(() => undefined);
+      const plannedIds = new Set(planned.map(({ run }) => run.id));
+      this.dispatched.splice(
+        0,
+        this.dispatched.length,
+        ...this.dispatched.filter((run) => !plannedIds.has(run.id)),
+      );
+      for (const id of plannedIds) {
+        this.tasks.delete(id);
+        this.adapterFor.delete(id);
+        this.watching.delete(id);
+        this.failures.delete(id);
+        this.comments.delete(id);
+        this.proposals.delete(id);
+      }
+      this.queue.push(...queued);
+      this.persist();
+      throw error;
     }
 
-    return started;
+    // Do not watch an early run until the whole one-click batch has launched.
+    // Otherwise a fast first process can freeze material that a later launch
+    // failure then tries to roll back.
+    for (const { adapter, run } of planned) if (adapter.awaitCompletion) this.watch(run, adapter);
+    return planned.map(({ run }) => run);
   }
 
   private readonly tasks = new Map<string, ReviewTask>();
@@ -173,6 +256,11 @@ export class AgentHost {
         if (run.state === "dispatched") {
           run.state = "failed";
           this.failures.set(run.id, String(error));
+          try {
+            this.persist();
+          } catch (persistenceError) {
+            this.failures.set(run.id, `${String(error)}; state was not saved: ${persistenceError}`);
+          }
         }
         return;
       }
@@ -191,12 +279,17 @@ export class AgentHost {
       try {
         await this.collect(run.id);
       } catch (error) {
-        // Mark it failed, not just remember why. Recording the reason without
-        // leaving `dispatched` left the run in flight forever: a harness that
-        // exited cleanly without writing a result produced a row that never
-        // finished and never failed, and the author had nothing to press.
-        run.state = "failed";
-        this.failures.set(run.id, String(error));
+        // `collect` may already have signed a terminal failure. A late error —
+        // including a rejected retry — cannot rewrite that reason or state.
+        if (run.state === "dispatched") {
+          run.state = "failed";
+          this.failures.set(run.id, String(error));
+          try {
+            this.persist();
+          } catch (persistenceError) {
+            this.failures.set(run.id, `${String(error)}; state was not saved: ${persistenceError}`);
+          }
+        }
       }
     })();
 
@@ -204,6 +297,17 @@ export class AgentHost {
   }
 
   private readonly failures = new Map<string, string>();
+
+  private fail(run: Run, reason: string): never {
+    if (run.state === "dispatched") run.state = "failed";
+    this.failures.set(run.id, reason);
+    try {
+      this.persist();
+    } catch (error) {
+      this.failures.set(run.id, `${reason}; state was not saved: ${error}`);
+    }
+    throw new Error(reason);
+  }
 
   /** Why a run failed, for the interface to show verbatim. */
   failureFor(runId: string): string | undefined {
@@ -231,43 +335,55 @@ export class AgentHost {
    * from a validated artifact (SPEC 3.1 rule 3).
    */
   async collect(runId: string): Promise<readonly Proposal[]> {
-    // Idempotent: the Host collects automatically when a launched harness
-    // exits, and the author may press collect afterwards. Parsing twice would
-    // append the memo twice and mint a second set of Proposals for one run.
-    const frozen = this.proposals.get(runId);
-    if (frozen) return frozen;
-
-    const run = this.dispatched.find((r) => r.id === runId);
+    const run = this.dispatched.find((candidate) => candidate.id === runId);
     const task = this.tasks.get(runId);
     if (!run || !task) throw new Error(`unknown run ${runId}`);
-    if (!existsSync(run.resultPath)) throw new Error(`run ${runId} has written no result yet`);
 
-    const parsed = parseAgentResult(readFileSync(run.resultPath, "utf8"));
-    if (!parsed.ok) {
-      run.state = "failed";
-      throw new Error(`${parsed.error.code}: ${parsed.error.detail}`);
+    // Idempotent across automatic collection, a button press, and a restart.
+    const frozen = this.proposals.get(runId);
+    if (frozen) return frozen;
+    if (run.state !== "dispatched")
+      throw new Error(`run ${runId} is already ${run.state}; late material cannot change it`);
+    if (!existsSync(run.resultPath)) this.fail(run, `run ${runId} has written no result yet`);
+
+    let source: string;
+    try {
+      source = new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(run.resultPath));
+    } catch {
+      this.fail(run, `run ${runId} wrote invalid UTF-8`);
     }
+    const parsed = parseAgentResult(source);
+    if (!parsed.ok) this.fail(run, `${parsed.error.code}: ${parsed.error.detail}`);
 
-    this.comments.set(runId, [...parsed.value.comments]);
-    appendMemos(this.root, run.agentId, runId, parsed.value.memos);
-    run.state = "completed";
-
-    const proposals = parsed.value.replacements.flatMap((replacement) => {
-      const scope = task.editScopes.find((s) => s.id === replacement.scope);
-      if (!scope) return [];
-      return [
-        {
-          id: `${runId}:${scope.id}`,
-          runId,
-          baseline: run.baseline,
-          scope: { id: scope.id, blockIds: scope.blockIds },
-          before: scope.text,
-          after: replacement.text,
-        } satisfies Proposal,
-      ];
+    const scopes = new Map(task.editScopes.map((scope) => [scope.id, scope]));
+    const proposals = parsed.value.replacements.map((replacement) => {
+      const scope = scopes.get(replacement.scope);
+      if (!scope) this.fail(run, `unknown scope ${replacement.scope} in run ${runId}`);
+      return {
+        id: `${runId}:${scope.id}`,
+        runId,
+        baseline: run.baseline,
+        scope: { id: scope.id, blockIds: scope.blockIds },
+        before: scope.text,
+        after: replacement.text,
+      } satisfies Proposal;
     });
+    const comments = parsed.value.comments.filter((comment) => scopes.has(comment.target));
 
+    // Memo append is idempotent by Run ID. It happens before the snapshot so a
+    // crash can safely retry the whole collection without duplicating memory.
+    appendMemos(this.root, run.agentId, runId, parsed.value.memos);
+    this.comments.set(runId, comments);
     this.proposals.set(runId, proposals);
+    run.state = "completed";
+    try {
+      this.persist();
+    } catch (error) {
+      run.state = "dispatched";
+      this.comments.delete(runId);
+      this.proposals.delete(runId);
+      throw error;
+    }
     return proposals;
   }
 

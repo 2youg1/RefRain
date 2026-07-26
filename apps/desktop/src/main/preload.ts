@@ -19,8 +19,8 @@ const api = {
   revertAll: (text: string, edits: unknown[]) =>
     ipcRenderer.invoke("edits:revert-all", text, edits),
   describeEdits: (edits: unknown[]) => ipcRenderer.invoke("edits:describe", edits),
-  reloadChapter: (root: string, title: string) =>
-    ipcRenderer.invoke("project:reload-chapter", root, title),
+  resolveConflict: (root: string, title: string, choice: "mine" | "disk") =>
+    ipcRenderer.invoke("project:resolve-conflict", root, title, choice),
   saveChapter: (root: string, title: string, text: string) =>
     ipcRenderer.invoke("project:save", root, title, text),
 

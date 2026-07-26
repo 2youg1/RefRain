@@ -160,6 +160,24 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-render.ts
 
+      # Chapter titles are only labels; two workspace roots may contain the same
+      # one. Selection, display, and save must stay bound to the absolute path.
+      - name: duplicate chapter titles stay isolated across roots
+        working-directory: apps/desktop
+        run: bun scripts/verify-multi-root.ts
+
+      # Disk failure must not turn a rejected save into invisible data loss or an
+      # unhandled renderer rejection. The author's current text stays dirty.
+      - name: a failed save remains visible and recoverable
+        working-directory: apps/desktop
+        run: bun scripts/verify-save-failure.ts
+
+      # A command may fail after the send IPC has already returned. The panel
+      # must refresh the terminal state and its reason without a second click.
+      - name: a slow run failure reaches the open panel
+        working-directory: apps/desktop
+        run: bun scripts/verify-run-refresh.ts
+
       # An outside edit is the one moment two versions of the manuscript exist.
       # This asserts the dialog shows both and that neither wins on its own.
       - name: an outside edit offers a real choice

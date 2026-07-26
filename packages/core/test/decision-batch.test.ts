@@ -94,7 +94,7 @@ describe("rebuilding a replacement from slice verdicts", () => {
 });
 
 describe("Decision Batch", () => {
-  test.failing("a whole-Proposal accept cannot succeed without changing the manuscript", () => {
+  test("a whole-Proposal accept cannot succeed without changing the manuscript", () => {
     const whole: Verdict = {
       id: "v-whole",
       proposalId: onB2.id,
@@ -132,7 +132,7 @@ describe("Decision Batch", () => {
     expect(currentText(result.head)).toContain("剑尖没有动。");
   });
 
-  test.failing("a Verdict for an unknown Proposal refuses the batch", () => {
+  test("a Verdict for an unknown Proposal refuses the batch", () => {
     const unknown: Verdict = {
       id: "v-unknown",
       proposalId: "missing",
@@ -144,7 +144,7 @@ describe("Decision Batch", () => {
     expect(commitDecisionBatch(head(), [onB2], [unknown]).ok).toBe(false);
   });
 
-  test.failing("opposite Verdicts on one Review Slice refuse hidden last-write-wins", () => {
+  test("opposite Verdicts on one Review Slice refuse hidden last-write-wins", () => {
     const slice = sliceProposal(onB2).find((entry) => entry.kind !== "same")!;
     const result = commitDecisionBatch(
       head(),
@@ -158,7 +158,7 @@ describe("Decision Batch", () => {
     expect(result.ok).toBe(false);
   });
 
-  test.failing("accept-modified without finalText refuses the batch", () => {
+  test("accept-modified without finalText refuses the batch", () => {
     const slice = sliceProposal(onB2).find((entry) => entry.kind === "ins")!;
 
     expect(

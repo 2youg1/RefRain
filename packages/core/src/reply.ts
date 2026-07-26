@@ -1,4 +1,5 @@
 import type { Verdict } from "./verdict.ts";
+import { cdata, xmlText } from "./xml.ts";
 
 /**
  * Serialize verdicts into the reply stream an agent reads (SPEC 7.3).
@@ -6,16 +7,6 @@ import type { Verdict } from "./verdict.ts";
  * Ordering is the author's decision order and never a map iteration order:
  * a stable prefix is what lets agent-side prompt caching hit across rounds.
  */
-
-/**
- * CDATA cannot nest and has no escape character. The standard technique is to
- * close the section, emit the literal `]]>` as text, and reopen — so agent text
- * discussing this very format cannot break out of it.
- */
-const cdata = (text: string): string => `<![CDATA[${text.replaceAll("]]>", "]]]]><![CDATA[>")}]]>`;
-
-const xmlText = (text: string): string =>
-  text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
 export const serializeVerdicts = (verdicts: readonly Verdict[]): string => {
   const entries = verdicts.map((verdict, index) => {

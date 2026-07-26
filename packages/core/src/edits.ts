@@ -1,5 +1,6 @@
 import type { Block, TextHead } from "./domain.ts";
 import { applyTextAction } from "./text-engine.ts";
+import { cdata, xmlText } from "./xml.ts";
 
 /**
  * The record of what the author changed.
@@ -20,6 +21,8 @@ export interface Edit {
   readonly before?: string;
   /** Absent for a removal. */
   readonly after?: string;
+  /** The original successor of a removed block, so undo restores its position. */
+  readonly nextBlockId?: string;
   readonly at: string;
   /** The author's own account of why. Travels to the agent with the edit. */
   readonly note?: string;
@@ -65,7 +68,13 @@ const align = (before: readonly Block[], after: readonly Block[]): Edit[] => {
       i++;
       j++;
     } else if (at(i + 1, j) > at(i, j + 1)) {
-      emit({ kind: "remove", blockId: left.id, before: left.text });
+      const nextBlockId = before[i + 1]?.id;
+      emit({
+        kind: "remove",
+        blockId: left.id,
+        before: left.text,
+        ...(nextBlockId === undefined ? {} : { nextBlockId }),
+      });
       i++;
     } else {
       emit({ kind: "insert", blockId: right.id, after: right.text });
@@ -74,7 +83,13 @@ const align = (before: readonly Block[], after: readonly Block[]): Edit[] => {
   }
   while (i < before.length) {
     const left = before[i++] as Block;
-    emit({ kind: "remove", blockId: left.id, before: left.text });
+    const nextBlockId = before[i]?.id;
+    emit({
+      kind: "remove",
+      blockId: left.id,
+      before: left.text,
+      ...(nextBlockId === undefined ? {} : { nextBlockId }),
+    });
   }
   while (j < after.length) {
     const right = after[j++] as Block;
@@ -106,7 +121,10 @@ export const revertEdit = (head: TextHead, edit: Edit): TextHead => {
     return applyTextAction(head, [{ blockIds: [edit.blockId], text: null }], `revert(${edit.id})`);
 
   // A removal is restored by putting the block back where it was.
-  const index = head.blocks.findIndex((b) => b.id === edit.blockId);
+  const index =
+    edit.nextBlockId === undefined
+      ? head.blocks.length
+      : head.blocks.findIndex((block) => block.id === edit.nextBlockId);
   const blocks = [...head.blocks];
   blocks.splice(index === -1 ? blocks.length : index, 0, {
     id: edit.blockId,
@@ -118,12 +136,6 @@ export const revertEdit = (head: TextHead, edit: Edit): TextHead => {
 /** Undo a whole session's worth of edits, newest first so indices stay valid. */
 export const revertAll = (head: TextHead, edits: readonly Edit[]): TextHead =>
   [...edits].reverse().reduce(revertEdit, head);
-
-/**
- * CDATA cannot nest and has no escape character. Close the section, emit the
- * literal, reopen — so prose about this format cannot break out of it.
- */
-const cdata = (text: string): string => `<![CDATA[${text.replaceAll("]]>", "]]]]><![CDATA[>")}]]>`;
 
 /**
  * What the author changed, in the form an agent reads.
@@ -139,7 +151,7 @@ export const describeEditsForAgent = (edits: readonly Edit[]): string => {
     const lines = [`<edit n="${index + 1}" kind="${edit.kind}">`];
     if (edit.before !== undefined) lines.push(`  <before>${cdata(edit.before)}</before>`);
     if (edit.after !== undefined) lines.push(`  <after>${cdata(edit.after)}</after>`);
-    if (edit.note !== undefined) lines.push(`  <note>${edit.note}</note>`);
+    if (edit.note !== undefined) lines.push(`  <note>${xmlText(edit.note)}</note>`);
     lines.push("</edit>");
     return lines.join("\n");
   });

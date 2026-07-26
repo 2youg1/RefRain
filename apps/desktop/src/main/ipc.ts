@@ -21,6 +21,9 @@ import {
   loadProject,
   loadWorkspace,
   type Proposal,
+  persistDecisionCommit,
+  readChapterFile,
+  recoverDecisionCommit,
   revertAll,
   revertEdit,
   saveChapter,
@@ -29,10 +32,12 @@ import {
   type TextHead,
   type Verdict,
   VerdictLedger,
+  type WriteOutcome,
   writeChapter,
 } from "@refrain/core";
 import type { Workspace as FileWorkspace } from "@refrain/fs";
 import type { Dialog, IpcMain } from "electron";
+import { parseCommandLine } from "./command-line.ts";
 import { registerFileHandlers } from "./files-ipc.ts";
 import { type RosterEntry, readRoster, writeRoster } from "./roster.ts";
 
@@ -40,6 +45,13 @@ import { type RosterEntry, readRoster, writeRoster } from "./roster.ts";
  * The main process owns state; the renderer only presents and accepts input
  * (SPEC 5.2 rule 6). One workbench per project root, created on first touch.
  */
+interface PendingConflict {
+  readonly path: string;
+  readonly mine: string;
+  readonly onDisk: string;
+  readonly stamp: FileStamp;
+}
+
 interface Workbench {
   readonly host: AgentHost;
   readonly ledger: VerdictLedger;
@@ -53,7 +65,11 @@ interface Workbench {
    * re-read every chapter in the project each time (#41).
    */
   readonly onDisk: Map<string, { path: string; stamp?: FileStamp }>;
+  /** A choice may govern only the two versions the conflict dialog displayed. */
+  readonly conflicts: Map<string, PendingConflict>;
   readonly proposals: Map<string, Proposal>;
+  /** An interrupted Decision Batch that disk evidence could not resolve safely. */
+  commitRecovery?: string;
   /**
    * The roster, mirrored to `.refrain/agents.json`.
    *
@@ -103,13 +119,17 @@ const openWorkbench = (root: string): Workbench => {
     host.register(entry.agent);
   }
 
+  const ledger = new VerdictLedger(join(stateDir, "verdicts.db"));
+  const recovery = recoverDecisionCommit(stateDir, ledger);
   const workbench: Workbench = {
     host,
-    ledger: new VerdictLedger(join(stateDir, "verdicts.db")),
+    ledger,
     heads: new Map(),
     onDisk: new Map(),
+    conflicts: new Map(),
     proposals: new Map(),
     roster,
+    ...(recovery.ok ? {} : { commitRecovery: recovery.detail ?? "Decision Batch recovery failed" }),
   };
   workbenches.set(root, workbench);
   return workbench;
@@ -153,6 +173,16 @@ const headFor = (root: string, title: string): TextHead => {
   workbench.heads.set(title, chapter.head);
   return chapter.head;
 };
+
+const chapterHead = (title: string, text: string, cause: string): TextHead => ({
+  id: `${title}@${Date.now()}`,
+  blocks: text
+    .split(/\n\s*\n/)
+    .map((block) => block.trim())
+    .filter((block) => block.length > 0)
+    .map((block, index) => ({ id: `${title}:b${index}`, text: block })),
+  cause,
+});
 
 export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
   ipc.handle("project:open", async () => {
@@ -238,8 +268,19 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
   ipc.handle("project:load", (_e, root: string) => {
     const project = loadProject(root);
     const workbench = openWorkbench(root);
-    for (const chapter of project.chapters) workbench.heads.set(chapter.title, chapter.head);
-    return project.chapters.map((c) => ({ title: c.title, text: currentText(c.head) }));
+    for (const chapter of project.chapters) {
+      workbench.heads.set(chapter.title, chapter.head);
+      workbench.onDisk.set(chapter.title, {
+        path: chapter.path,
+        ...(chapter.stamp === undefined ? {} : { stamp: chapter.stamp }),
+      });
+    }
+    return project.chapters.map((chapter) => ({
+      title: chapter.title,
+      text: currentText(chapter.head),
+      root: chapter.root,
+      path: chapter.path,
+    }));
   });
 
   /**
@@ -254,48 +295,77 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
    */
   ipc.handle("project:save", (_e, root: string, title: string, text: string) => {
     const workbench = openWorkbench(root);
-    const head: TextHead = {
-      id: `${title}@${Date.now()}`,
-      blocks: text
-        .split(/\n\s*\n/)
-        .map((t) => t.trim())
-        .filter((t) => t.length > 0)
-        .map((t, i) => ({ id: `${title}:b${i}`, text: t })),
-      cause: "author edit",
-    };
+    const head = chapterHead(title, text, "author edit");
 
     const known = workbench.onDisk.get(title);
     const outcome = known
       ? writeChapter(known.path, head, known.stamp)
       : saveChapter(loadProject(root), title, head);
 
-    if (!outcome.ok) return outcome satisfies ChangedUnderneath;
+    if (!outcome.ok) {
+      workbench.conflicts.set(title, {
+        path: outcome.path,
+        mine: text,
+        onDisk: outcome.onDisk,
+        stamp: outcome.stamp,
+      });
+      return outcome satisfies ChangedUnderneath;
+    }
 
+    workbench.conflicts.delete(title);
     workbench.heads.set(title, head);
-    if (known) workbench.onDisk.set(title, { path: known.path, stamp: outcome.stamp });
+    workbench.onDisk.set(title, { path: outcome.path, stamp: outcome.stamp });
     return { ok: true as const };
   });
 
-  /**
-   * Take the file as it now is, discarding this session's unsaved text.
-   *
-   * The other half of the refusal above: an author who is told their file moved
-   * on needs a way to accept that rather than only a way to be blocked.
-   */
-  ipc.handle("project:reload-chapter", (_e, root: string, title: string) => {
+  ipc.handle("project:resolve-conflict", (_e, root: string, title: string, choice: unknown) => {
     const workbench = openWorkbench(root);
-    const known = workbench.onDisk.get(title);
-    if (!known) return { ok: false as const, reason: "unknown chapter" };
+    const pending = workbench.conflicts.get(title);
+    if (!pending) return { ok: false as const, reason: "no pending conflict" };
+    if (choice !== "mine" && choice !== "disk")
+      return { ok: false as const, reason: "invalid conflict choice" };
+    if (choice === "disk") {
+      const actual = readChapterFile(pending.path);
+      if (actual === undefined)
+        return { ok: false as const, reason: "chapter no longer exists on disk" };
+      if (actual.stamp.digest !== pending.stamp.digest) {
+        workbench.conflicts.set(title, {
+          path: pending.path,
+          mine: pending.mine,
+          onDisk: actual.text,
+          stamp: actual.stamp,
+        });
+        return {
+          ok: false as const,
+          reason: "changed-underneath" as const,
+          path: pending.path,
+          onDisk: actual.text,
+          stamp: actual.stamp,
+        };
+      }
+      const head = chapterHead(title, pending.onDisk, "author accepted an external edit");
+      workbench.conflicts.delete(title);
+      workbench.heads.set(title, head);
+      workbench.onDisk.set(title, { path: pending.path, stamp: pending.stamp });
+      return { ok: true as const, text: pending.onDisk };
+    }
 
-    const chapter = loadProject(root).chapters.find((c) => c.title === title);
-    if (!chapter) return { ok: false as const, reason: "no longer on disk" };
+    const head = chapterHead(title, pending.mine, "author resolved an external edit");
+    const outcome = writeChapter(pending.path, head, pending.stamp);
+    if (!outcome.ok) {
+      workbench.conflicts.set(title, {
+        path: outcome.path,
+        mine: pending.mine,
+        onDisk: outcome.onDisk,
+        stamp: outcome.stamp,
+      });
+      return outcome;
+    }
 
-    workbench.heads.set(title, chapter.head);
-    workbench.onDisk.set(title, {
-      path: chapter.path,
-      ...(chapter.stamp === undefined ? {} : { stamp: chapter.stamp }),
-    });
-    return { ok: true as const, text: currentText(chapter.head) };
+    workbench.conflicts.delete(title);
+    workbench.heads.set(title, head);
+    workbench.onDisk.set(title, { path: pending.path, stamp: outcome.stamp });
+    return { ok: true as const, text: pending.mine };
   });
 
   /**
@@ -371,11 +441,11 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
    * the command's first token with a version flag and reports what came back.
    */
   ipc.handle("agent:probe", async (_e, root: string, id: string) => {
-    const agent = openWorkbench(root).roster.find((entry) => entry.agent.id === id)?.agent;
-    if (!agent) return { ok: false, detail: "unknown agent" };
-    if (agent.binding.harness === "file") return { ok: true };
+    const entry = openWorkbench(root).roster.find((candidate) => candidate.agent.id === id);
+    if (!entry) return { ok: false, detail: "unknown agent" };
+    if (entry.agent.binding.harness === "file") return { ok: true };
 
-    const [program] = agent.binding.harness.replace(/^command:/, "").split(/\s+/);
+    const program = entry.template?.[0];
     if (!program) return { ok: false, detail: "no command configured" };
 
     try {
@@ -402,26 +472,31 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
 
   ipc.handle("agent:remove", (_e, root: string, id: string) => {
     const workbench = openWorkbench(root);
-    const index = workbench.roster.findIndex((entry) => entry.agent.id === id);
-    if (index >= 0) workbench.roster.splice(index, 1);
-    writeRoster(join(root, ".refrain"), workbench.roster);
+    if (!workbench.roster.some((entry) => entry.agent.id === id)) return false;
+    const next = workbench.roster.filter((entry) => entry.agent.id !== id);
+    writeRoster(join(root, ".refrain"), next);
+    workbench.host.unregister(id);
+    workbench.roster.splice(0, workbench.roster.length, ...next);
     return true;
   });
 
   ipc.handle("agent:add", (_e, root: string, name: string, command: string) => {
     const workbench = openWorkbench(root);
-    const harness = command.trim().length > 0 ? `command:${name}` : "file";
+    const id = randomUUID();
+    const template = command.trim().length > 0 ? parseCommandLine(command) : undefined;
+    const harness = template === undefined ? "file" : `command:${id}`;
     const agent: Agent = {
-      id: randomUUID(),
+      id,
       name,
       binding: { harness, model: "unspecified", reasoningEffort: "unspecified" },
     };
-    const template = harness === "file" ? undefined : command.split(/\s+/);
+    const entry = { agent, ...(template === undefined ? {} : { template }) };
+    const next = [...workbench.roster, entry];
+    writeRoster(join(root, ".refrain"), next);
     if (template !== undefined)
       workbench.host.addAdapter(new CommandAdapter({ id: harness, template }));
     workbench.host.register(agent);
-    workbench.roster.push({ agent, ...(template === undefined ? {} : { template }) });
-    writeRoster(join(root, ".refrain"), workbench.roster);
+    workbench.roster.push(entry);
     return agent;
   });
 
@@ -474,7 +549,12 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     "review:commit",
     (_e, root: string, payload: { chapter: string; verdicts: Verdict[] }) => {
       const workbench = openWorkbench(root);
+      if (workbench.commitRecovery)
+        return { ok: false, reason: "recovery-required", detail: [workbench.commitRecovery] };
       const head = headFor(root, payload.chapter);
+      const known = workbench.onDisk.get(payload.chapter);
+      if (!known?.stamp)
+        return { ok: false, reason: "chapter-not-loaded", detail: [payload.chapter] };
       const staged = [...new Set(payload.verdicts.map((v) => v.proposalId))].flatMap((id) => {
         const proposal = workbench.proposals.get(id);
         return proposal ? [proposal] : [];
@@ -483,10 +563,25 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
       const result = commitDecisionBatch(head, staged, payload.verdicts);
       if (!result.ok) return { ok: false, reason: result.reason, detail: result.detail };
 
-      for (const verdict of result.verdicts) workbench.ledger.record(verdict);
-      workbench.heads.set(payload.chapter, result.head);
-      saveChapter(loadProject(root), payload.chapter, result.head);
+      let written: WriteOutcome;
+      try {
+        written = persistDecisionCommit(
+          join(root, ".refrain"),
+          known.path,
+          known.stamp,
+          result.head,
+          result.verdicts,
+          workbench.ledger,
+        );
+      } catch (error) {
+        const recovery = recoverDecisionCommit(join(root, ".refrain"), workbench.ledger);
+        if (!recovery.ok) workbench.commitRecovery = recovery.detail ?? String(error);
+        throw error;
+      }
+      if (!written.ok) return { ok: false, reason: written.reason, detail: [written.path] };
 
+      workbench.heads.set(payload.chapter, result.head);
+      workbench.onDisk.set(payload.chapter, { path: written.path, stamp: written.stamp });
       return { ok: true, text: currentText(result.head) };
     },
   );

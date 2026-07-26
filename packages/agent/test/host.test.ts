@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Agent, ReviewTask } from "../src/index.ts";
@@ -40,7 +40,7 @@ describe("Agent Host queue", () => {
     expect(host.runs()).toHaveLength(0);
   });
 
-  test.failing("a restarted host never reuses an existing Run id or workspace", async () => {
+  test("a restarted host never reuses an existing Run id or workspace", async () => {
     const first = new AgentHost(root);
     first.register(agent()).enqueue(task());
     const [run1] = await first.send();
@@ -97,6 +97,27 @@ describe("Agent Host queue", () => {
 
     expect(sendManifest(host)[0]?.drifted).toEqual(["s1"]);
     expect(host.pending()).toHaveLength(1);
+  });
+
+  test("queue, runs, frozen Proposals, and comments survive a restart", async () => {
+    const first = new AgentHost(root);
+    first.register(agent()).enqueue(task());
+    const [run] = await first.send();
+    writeFileSync(
+      run!.resultPath,
+      '# Agent reply\n\n<agent-result version="1"><replacement scope="s1">剑没有松。</replacement><comments><comment target="s1">保留冷意。</comment></comments></agent-result>',
+    );
+    const frozen = await first.collect(run!.id);
+    first.enqueue(task({ id: "t2" }));
+
+    const restarted = new AgentHost(root);
+
+    expect(restarted.pending().map((entry) => entry.id)).toEqual(["t2"]);
+    expect(restarted.runs()).toEqual([expect.objectContaining({ id: "run1", state: "completed" })]);
+    expect(await restarted.collect("run1")).toEqual(frozen);
+    expect(restarted.commentsFor("run1")).toEqual([
+      expect.objectContaining({ target: "s1", text: "保留冷意。" }),
+    ]);
   });
 });
 
@@ -155,7 +176,7 @@ describe("L0 file channel", () => {
     expect(host.commentsFor(run!.id)).toHaveLength(1);
   });
 
-  test.failing("a replacement for an invented scope fails instead of disappearing", async () => {
+  test("a replacement for an invented scope fails instead of disappearing", async () => {
     const host = new AgentHost(root, [new FileChannelAdapter(root)]);
     host.register(agent()).enqueue(task());
     const [run] = await host.send();
@@ -169,7 +190,7 @@ describe("L0 file channel", () => {
     expect(run!.state).toBe("failed");
   });
 
-  test.failing("an invented comment target is discarded without destroying a valid Proposal", async () => {
+  test("an invented comment target is discarded without destroying a valid Proposal", async () => {
     const host = new AgentHost(root, [new FileChannelAdapter(root)]);
     host.register(agent()).enqueue(task());
     const [run] = await host.send();
@@ -184,7 +205,7 @@ describe("L0 file channel", () => {
     expect(run!.state).toBe("completed");
   });
 
-  test.failing("invalid UTF-8 is rejected before a Proposal can freeze", async () => {
+  test("invalid UTF-8 is rejected before a Proposal can freeze", async () => {
     const host = new AgentHost(root);
     host.register(agent()).enqueue(task());
     const [run] = await host.send();
@@ -212,7 +233,7 @@ describe("L0 file channel", () => {
     expect(host.runs()[0]?.state).not.toBe("completed");
   });
 
-  test.failing("L0 cancellation cannot rewrite a completed Run", async () => {
+  test("L0 cancellation cannot rewrite a completed Run", async () => {
     const adapter = new FileChannelAdapter(root);
     const host = new AgentHost(root, [adapter]);
     host.register(agent()).enqueue(task());
@@ -269,7 +290,21 @@ describe("L0 file channel", () => {
 
     expect(run!.state).toBe("failed");
     // And the reason is kept, so the interface can say what went wrong.
-    expect(host.failureFor(run!.id)).toContain("no result");
+    const failure = host.failureFor(run!.id);
+    expect(failure).toContain("no result");
+
+    mkdirSync(run!.workspace, { recursive: true });
+    writeFileSync(
+      run!.resultPath,
+      '# Agent reply\n\n<agent-result version="1"><replacement scope="s1">迟到的正文。</replacement></agent-result>',
+    );
+    await expect(host.collect(run!.id)).rejects.toThrow(/already failed/);
+    expect(run!.state).toBe("failed");
+    expect(host.failureFor(run!.id)).toBe(failure);
+
+    const restarted = new AgentHost(root);
+    expect(restarted.runs()).toEqual([expect.objectContaining({ id: run!.id, state: "failed" })]);
+    expect(restarted.failureFor(run!.id)).toContain("no result");
   });
 
   test("token usage from a harness that reports nothing is unknown, never zero", async () => {

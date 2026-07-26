@@ -6,11 +6,9 @@
  * recall the original conversation afterwards, so the application can no
  * longer prove the context it is talking to is the one it started with.
  *
- * Hence the hard rule: reaching the threshold, or a compaction event of any
- * kind, freezes the session permanently. Raising the threshold afterwards does
- * not thaw it, because the threshold was never the thing that broke — the
- * lineage was. Work continues on a derived agent, which is honest about being
- * a different one.
+ * Reaching the threshold freezes the session. Compaction instead marks its
+ * lineage unverifiable: the author may continue after seeing that fact, because
+ * RefRain does not turn uncertainty into an automatic product decision.
  *
  * Dispatch is decided on *projected* usage rather than current usage: by the
  * time current usage crosses a threshold, the tokens are already spent.
@@ -95,15 +93,15 @@ export const canDispatch = (session: SessionState, run: RunEstimate): DispatchVe
     : { ok: true };
 };
 
-export const freeze = (session: SessionState, because: FreezeCause): SessionState => ({
-  ...session,
-  state: "frozen",
-  frozenBecause: because,
-  frozenAt: new Date().toISOString(),
-  // Compaction is what makes the lineage unprovable; a threshold stop happens
-  // before the context is touched, so the record is still intact.
-  lineageVerifiable: because === "threshold" ? session.lineageVerifiable : false,
-});
+export const freeze = (session: SessionState, because: FreezeCause): SessionState =>
+  because === "compaction"
+    ? { ...session, lineageVerifiable: false }
+    : {
+        ...session,
+        state: "frozen",
+        frozenBecause: because,
+        frozenAt: new Date().toISOString(),
+      };
 
 /** Permitted while active, and deliberately powerless once frozen. */
 export const raiseThreshold = (session: SessionState, threshold: number): SessionState =>

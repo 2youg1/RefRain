@@ -1,13 +1,7 @@
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
+import { replaceFileAtomically } from "./atomic-file.ts";
 import type { TextHead } from "./domain.ts";
 
 /**
@@ -25,23 +19,39 @@ import type { TextHead } from "./domain.ts";
 /**
  * What a file looked like when this application last agreed with it.
  *
- * Size as well as mtime: a filesystem with one-second mtime granularity — and
- * several still have it — cannot distinguish two edits inside the same second,
- * but it can hardly ever produce the same byte count as well.
+ * The digest decides identity. Size and mtime remain because they explain what
+ * changed, but neither can prove equality: an editor can preserve both while
+ * replacing every byte.
  */
 export interface FileStamp {
   readonly modifiedMs: number;
   readonly bytes: number;
+  readonly digest: string;
 }
 
-export const stampOf = (path: string): FileStamp | undefined => {
+export interface ChapterFileSnapshot {
+  readonly text: string;
+  readonly stamp: FileStamp;
+}
+
+export const readChapterFile = (path: string): ChapterFileSnapshot | undefined => {
   try {
+    const bytes = readFileSync(path);
     const info = statSync(path);
-    return { modifiedMs: info.mtimeMs, bytes: info.size };
+    return {
+      text: bytes.toString("utf8"),
+      stamp: {
+        modifiedMs: info.mtimeMs,
+        bytes: bytes.byteLength,
+        digest: createHash("sha256").update(bytes).digest("hex"),
+      },
+    };
   } catch {
     return undefined;
   }
 };
+
+export const stampOf = (path: string): FileStamp | undefined => readChapterFile(path)?.stamp;
 
 export interface Chapter {
   readonly title: string;
@@ -71,6 +81,38 @@ export interface Workspace {
 
 const BLOCK_SEPARATOR = /\n\s*\n/;
 const MARKDOWN = new Set([".md", ".markdown", ".mdown", ".txt"]);
+const ILLEGAL_CHAPTER_CHARACTER = /[<>:"/\\|?*]/;
+const WINDOWS_DEVICE = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
+const SOURCE_BACKUP_DIR = ".refrain-source";
+
+const namesSourceBackup = (path: string): boolean =>
+  path.split(/[/\\]+/).some((part) => part.toLowerCase() === SOURCE_BACKUP_DIR);
+
+/** Source Backup has no write path, even when opened directly or reached through a symlink. */
+const assertMutableChapterPath = (path: string): void => {
+  let parent = dirname(path);
+  try {
+    parent = realpathSync(parent);
+  } catch {
+    // A new directory has no resolved form yet; its literal path still carries
+    // enough information to refuse a Source Backup component.
+  }
+  if (namesSourceBackup(path) || namesSourceBackup(parent))
+    throw new Error(`Source Backup is never written to: ${path}`);
+};
+
+const pathForNewChapter = (root: string, title: string): string => {
+  if (
+    title.length === 0 ||
+    title.includes("\0") ||
+    ILLEGAL_CHAPTER_CHARACTER.test(title) ||
+    title.endsWith(".") ||
+    title.endsWith(" ") ||
+    WINDOWS_DEVICE.test(title)
+  )
+    throw new Error(`invalid chapter title: ${title}`);
+  return join(root, `${title}.md`);
+};
 
 /**
  * Block identity is derived from position, so a reload of unchanged text yields
@@ -106,8 +148,9 @@ const chaptersUnder = (root: Root): Chapter[] => {
   }
 
   if (!existsSync(root.path)) return [];
-  return readdirSync(root.path)
-    .filter((name) => MARKDOWN.has(extname(name).toLowerCase()))
+  return readdirSync(root.path, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && MARKDOWN.has(extname(entry.name).toLowerCase()))
+    .map((entry) => entry.name)
     .sort()
     .map((name) => {
       const path = join(root.path, name);
@@ -141,9 +184,13 @@ export interface ChangedUnderneath {
   readonly path: string;
   /** What is on disk right now, so the interface can offer to show it. */
   readonly onDisk: string;
+  /** The exact disk version shown to the author; conflict resolution is a CAS against it. */
+  readonly stamp: FileStamp;
 }
 
-export type WriteOutcome = { readonly ok: true; readonly stamp: FileStamp } | ChangedUnderneath;
+export type WriteOutcome =
+  | { readonly ok: true; readonly path: string; readonly stamp: FileStamp }
+  | ChangedUnderneath;
 
 /**
  * Write a chapter, unless someone else wrote it first.
@@ -160,27 +207,25 @@ export type WriteOutcome = { readonly ok: true; readonly stamp: FileStamp } | Ch
  * this application is creating.
  */
 export const writeChapter = (path: string, head: TextHead, expected?: FileStamp): WriteOutcome => {
+  assertMutableChapterPath(path);
   if (expected !== undefined) {
-    const actual = stampOf(path);
+    const actual = readChapterFile(path);
     // A file that has since vanished is not a conflict — the author moved or
     // deleted it, and writing it back is what they asked for by saving.
-    if (
-      actual !== undefined &&
-      (actual.modifiedMs !== expected.modifiedMs || actual.bytes !== expected.bytes)
-    )
+    if (actual !== undefined && actual.stamp.digest !== expected.digest)
       return {
         ok: false,
         reason: "changed-underneath",
         path,
-        onDisk: readFileSync(path, "utf8"),
+        onDisk: actual.text,
+        stamp: actual.stamp,
       };
   }
 
-  mkdirSync(dirname(path), { recursive: true });
-  const temporary = `${path}.writing`;
-  writeFileSync(temporary, serializeChapter(head), "utf8");
-  renameSync(temporary, path);
-  return { ok: true, stamp: stampOf(path) ?? { modifiedMs: Date.now(), bytes: 0 } };
+  replaceFileAtomically(path, serializeChapter(head));
+  const stamp = stampOf(path);
+  if (stamp === undefined) throw new Error(`chapter vanished after save: ${path}`);
+  return { ok: true, path, stamp };
 };
 
 export const saveChapter = (
@@ -189,6 +234,6 @@ export const saveChapter = (
   head: TextHead,
   expected?: FileStamp,
 ): WriteOutcome => {
-  const chapter = project.chapters.find((c) => c.title === title);
-  return writeChapter(chapter?.path ?? join(project.root, `${title}.md`), head, expected);
+  const chapter = project.chapters.find((chapter) => chapter.title === title);
+  return writeChapter(chapter?.path ?? pathForNewChapter(project.root, title), head, expected);
 };
