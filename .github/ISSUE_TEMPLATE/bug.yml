@@ -1,0 +1,74 @@
+name: Bug report
+description: Something behaves differently from what SPEC.md says it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        `SPEC.md` is the design baseline. If the code disagrees with it, that
+        is a bug and this is the right form. If SPEC itself looks wrong, open
+        a Discussion instead — that is a design question, not a defect.
+
+        Known limits are listed in `ROADMAP.md` under "Known limits". Unsigned
+        releases, the in-memory agent roster, and Claude Code being L1 are all
+        recorded there and do not need a new issue.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: From the About panel, or the release you downloaded.
+      placeholder: v0.1.3
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows x64
+        - macOS Apple silicon
+        - macOS Intel
+        - Linux x64
+        - Built from source
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: What did you do
+      description: >
+        The steps, in order. A manuscript that triggers it is worth more than a
+        description of one — attach it if you can share it.
+      placeholder: |
+        1. Open a folder with two chapters
+        2. Type in chapter one without saving
+        3. Click chapter two in the sidebar
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have happened
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+      description: >
+        If any text was lost or changed without your consent, say so first —
+        that outranks everything else in this tracker.
+    validations:
+      required: true
+
+  - type: textarea
+    id: harness
+    attributes:
+      label: Harness, if the bug involves an agent
+      description: Which one, how it is configured, and what the agent panel reports.
+      placeholder: Claude Code, command `claude`, panel says "connected".

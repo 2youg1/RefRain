@@ -69,7 +69,7 @@ flowchart TB
     M2 -->|是| M4
     M4 --> L
     M4 -->|正文已变，下一轮| W1
-    L -.->|"summarizeTaste()<br/>跨会话累积"| R1
+    L -.->|"作者查阅后自行修订 persona"| R1
 
     classDef human fill:#f7e9e4,stroke:#a8422f,stroke-width:2.5px,color:#22201d
     classDef machine fill:#f0ece5,stroke:#a8a49b,color:#22201d
@@ -91,10 +91,10 @@ flowchart TB
 顺序即缓存策略。稳定的在前，每轮变的在后。
 
 ```
-<taste>                    ← 跨会话累积，几乎不变
-  <refused>形容词太多</refused>
-  <rewrote note="去掉修饰">雾散了。</rewrote>
-</taste>
+<persona>                  ← 作者手写的身份，跨会话不变
+  你是文字编辑。删掉不承载信息的修饰，
+  保留作者的句读习惯。
+</persona>
 
 <manuscript>…</manuscript>   ← 仅 carry=full 时出现
 
@@ -135,7 +135,9 @@ flowchart TB
 <agent-result version="1">
   <replacement scope="b7">改写后的文字</replacement>
   <replacement scope="b19">另一段的改写</replacement>
-  <comment scope="b7">这里我拿不准，原文的「停」可能是有意的。</comment>
+  <comments>
+    <comment target="b7">这里我拿不准，原文的「停」可能是有意的。</comment>
+  </comments>
 </agent-result>
 ```
 

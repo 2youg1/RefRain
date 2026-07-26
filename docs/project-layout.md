@@ -18,6 +18,9 @@
 ├── 资料/                       ← 你自己建的任何目录，软件不管
 │   └── 年表.md                    Agent 可读（Context Scope 授权后）
 │
+├── .refrain-source/            ← Source Backup：原件，任何一层都不写入
+│   └── 第一章.md                 （守卫已就位，创建时机待定）
+│
 └── .refrain/                   ← 软件状态。可整个删除，正文不受影响
     │
     ├── verdicts.db             ← Verdict Ledger：每次裁决＋理由（SQLite/WAL）
@@ -27,9 +30,7 @@
     │   └── 结构读者.md
     │
     ├── agents.json             ← Agent 名册：身份、Runtime Binding、注入档位
-    │
-    ├── source/                 ← Source Backup：建项目时的原件，永不写入
-    │   └── 第一章.md
+    │                             （设计如此；当前实现只在内存里，重启即失）
     │
     └── runs/                   ← 每个 Run 一个目录，软件从不自动删
         ├── run1/
@@ -47,7 +48,7 @@
 | 路径 | 谁写 | 谁读 | 说明 |
 |---|---|---|---|
 | `*.md`(根下) | **只有人** | 人、Agent | 正文。Agent 永远只读 |
-| `.refrain/source/` | 建项目时一次 | 人 | 原件。**任何情况下不写入** |
+| `.refrain-source/` | 尚未由软件创建 | 人 | 原件。**任何情况下不写入**；守卫已就位（`guard.rs` 的 `SOURCE_BACKUP_DIR`），创建时机待定 |
 | `.refrain/runs/<id>/request.md` | 软件 | Agent | 前两节由软件生成,所以来源可核验 |
 | `.refrain/runs/<id>/result.md` | **Agent** | 软件 | Agent 唯一的写入口 |
 | `.refrain/memos/*.md` | Agent 追加 | 人、后继 Agent | 人可编辑、可删除 |

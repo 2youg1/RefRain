@@ -1,6 +1,6 @@
 # SPEC — Design Baseline
 
-> v0.1.0 · 2026-07-26 · This file is the authoritative design baseline.
+> v0.1.3 · 2026-07-26 · This file is the authoritative design baseline.
 > When an implementation disagrees with this document, change the implementation.
 > Append a Changelog line for every edit. Never rewrite history silently.
 
