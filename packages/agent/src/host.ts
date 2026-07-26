@@ -80,11 +80,16 @@ export class AgentHost {
     return this.drifted.has(scopeId);
   }
 
-  /** One click, one consolidated dispatch. Every queued task leaves together. */
+  /**
+   * One click, one consolidated dispatch. Every queued task leaves together.
+   *
+   * Preflight runs over the whole queue before anything starts. A queue that
+   * fails halfway used to leave the author with some tasks dispatched, some
+   * gone, and no way to tell which — so the checks that can be made without
+   * spending anything are made first, and a failure leaves the queue intact.
+   */
   async send(): Promise<readonly Run[]> {
-    const started: Run[] = [];
-
-    for (const task of this.queue.splice(0)) {
+    const resolved = this.queue.map((task) => {
       const agent = this.agents.get(task.agentId);
       if (!agent) throw new Error(`no agent registered for task ${task.id}`);
 
@@ -93,6 +98,13 @@ export class AgentHost {
       );
       if (!adapter) throw new Error(`no adapter for harness ${agent.binding.harness}`);
 
+      return { task, agent, adapter };
+    });
+
+    const started: Run[] = [];
+    const queued = this.queue.splice(0);
+
+    for (const { task, agent, adapter } of resolved) {
       const id = `run${++this.sequence}`;
       const workspace = join(this.root, "runs", id);
       const run: Run = {
@@ -106,16 +118,107 @@ export class AgentHost {
         state: "dispatched",
       };
 
-      await adapter.dispatch(run, task, agent);
+      try {
+        await adapter.dispatch(run, task, agent);
+      } catch (error) {
+        // The launch failed, so this run never existed. Everything queued goes
+        // back, including the tasks that had already started — the author asked
+        // for one dispatch, and a half-sent batch is not one.
+        this.sequence -= 1;
+        for (const dispatchedRun of started) {
+          await this.adapterFor.get(dispatchedRun.id)?.cancel(dispatchedRun);
+          this.dispatched.splice(this.dispatched.indexOf(dispatchedRun), 1);
+          this.tasks.delete(dispatchedRun.id);
+          this.adapterFor.delete(dispatchedRun.id);
+        }
+        this.queue.push(...queued);
+        throw error;
+      }
+
       this.dispatched.push(run);
       this.tasks.set(id, task);
+      this.adapterFor.set(id, adapter);
       started.push(run);
+
+      // Follow the run to its end without blocking the dispatch of the rest.
+      // Before this existed a launched run stayed `dispatched` forever and the
+      // author had to know to press collect — the harness finishing was not an
+      // event the application could see.
+      if (adapter.awaitCompletion) this.watch(run, adapter);
     }
 
     return started;
   }
 
   private readonly tasks = new Map<string, ReviewTask>();
+  private readonly adapterFor = new Map<string, HarnessAdapter>();
+  private readonly watching = new Map<string, Promise<void>>();
+
+  /**
+   * Wait for one run and record what happened.
+   *
+   * The promise is kept so a caller can await a specific run — tests need a
+   * deterministic point to observe, and a UI wants to know when a run is worth
+   * collecting. Failures are recorded on the run rather than thrown: a rejected
+   * promise nobody is awaiting becomes an unhandled rejection, which in
+   * Electron's main process takes the window with it.
+   */
+  private watch(run: Run, adapter: HarnessAdapter): void {
+    const settled = (async () => {
+      try {
+        await adapter.awaitCompletion?.(run);
+      } catch (error) {
+        // A terminal state is final. A late failure must not rewrite a run the
+        // author already cancelled, or one that already produced a result.
+        if (run.state === "dispatched") {
+          run.state = "failed";
+          this.failures.set(run.id, String(error));
+        }
+        return;
+      }
+
+      /*
+       * The harness exited cleanly, so the result is read now rather than when
+       * the author happens to press collect. Freezing here is what moves the
+       * run out of `dispatched` — and `collect` stays idempotent, so pressing
+       * it afterwards returns the same Proposals rather than parsing twice.
+       *
+       * A malformed artifact marks the run failed and keeps the reason. It is
+       * not thrown: nobody is awaiting this promise, and an unhandled rejection
+       * in Electron's main process takes the window with it.
+       */
+      if (run.state !== "dispatched") return;
+      try {
+        await this.collect(run.id);
+      } catch (error) {
+        this.failures.set(run.id, String(error));
+      }
+    })();
+
+    this.watching.set(run.id, settled);
+  }
+
+  private readonly failures = new Map<string, string>();
+
+  /** Why a run failed, for the interface to show verbatim. */
+  failureFor(runId: string): string | undefined {
+    return this.failures.get(runId);
+  }
+
+  /**
+   * Resolve once the harness has finished with this run.
+   *
+   * Returns immediately for adapters with nothing to wait on, so a caller does
+   * not have to know which tier it is dealing with.
+   */
+  async settled(runId: string): Promise<void> {
+    await this.watching.get(runId);
+  }
+
+  /** Resolve once every dispatched run has finished. */
+  async allSettled(): Promise<void> {
+    await Promise.all([...this.watching.values()]);
+  }
 
   /**
    * Freeze a completed Result Artifact into Proposals. An invalid artifact
@@ -123,6 +226,12 @@ export class AgentHost {
    * from a validated artifact (SPEC 3.1 rule 3).
    */
   async collect(runId: string): Promise<readonly Proposal[]> {
+    // Idempotent: the Host collects automatically when a launched harness
+    // exits, and the author may press collect afterwards. Parsing twice would
+    // append the memo twice and mint a second set of Proposals for one run.
+    const frozen = this.proposals.get(runId);
+    if (frozen) return frozen;
+
     const run = this.dispatched.find((r) => r.id === runId);
     const task = this.tasks.get(runId);
     if (!run || !task) throw new Error(`unknown run ${runId}`);
@@ -138,7 +247,7 @@ export class AgentHost {
     appendMemos(this.root, run.agentId, runId, parsed.value.memos);
     run.state = "completed";
 
-    return parsed.value.replacements.flatMap((replacement) => {
+    const proposals = parsed.value.replacements.flatMap((replacement) => {
       const scope = task.editScopes.find((s) => s.id === replacement.scope);
       if (!scope) return [];
       return [
@@ -152,7 +261,12 @@ export class AgentHost {
         } satisfies Proposal,
       ];
     });
+
+    this.proposals.set(runId, proposals);
+    return proposals;
   }
+
+  private readonly proposals = new Map<string, readonly Proposal[]>();
 
   agentFor(id: string): Agent | undefined {
     return this.agents.get(id);

@@ -49,7 +49,7 @@ describe("command adapter", () => {
     expect((await host.collect(run!.id))[0]).toMatchObject({ after: "剑没有松。" });
   });
 
-  test.failing("the host observes command completion without an adapter-specific call", async () => {
+  test("the host observes command completion without an adapter-specific call", async () => {
     const adapter = new CommandAdapter({
       id: "command",
       template: ["sh", "-c", 'printf \'%s\' "$REPLY" > "{result}"'],
@@ -80,7 +80,7 @@ describe("command adapter", () => {
     expect(run!.state).toBe("failed");
   });
 
-  test.failing("a timed-out harness is killed and reaches failed", async () => {
+  test("a timed-out harness is killed and reaches failed", async () => {
     const adapter = new CommandAdapter({
       id: "command",
       template: ["sh", "-c", "sleep 5"],
@@ -109,7 +109,7 @@ describe("command adapter", () => {
     expect(run!.state).toBe("cancelled");
   });
 
-  test.failing("cancelling after completion cannot rewrite the terminal state", async () => {
+  test("cancelling after completion cannot rewrite the terminal state", async () => {
     const adapter = new CommandAdapter({
       id: "command",
       template: ["sh", "-c", 'printf \'%s\' "$REPLY" > "{result}"'],
@@ -126,7 +126,7 @@ describe("command adapter", () => {
     expect(run?.state).toBe("completed");
   });
 
-  test.failing("a command that cannot launch returns its task to the pending queue", async () => {
+  test("a command that cannot launch returns its task to the pending queue", async () => {
     const adapter = new CommandAdapter({
       id: "command",
       template: ["refrain-command-does-not-exist"],
