@@ -1,5 +1,6 @@
 <script lang="ts">
 import Agents from "./Agents.svelte";
+import Ask from "./Ask.svelte";
 import type { ChapterView, EditView, ProposalView, RootView, RunView, VerdictView } from "./api.ts";
 import { api } from "./api.ts";
 import ContextMenu from "./ContextMenu.svelte";
@@ -427,17 +428,50 @@ const selectNow = (path: string | null): void => {
   edits = [];
   queueMicrotask(() => render(text));
 };
-const newChapter = async (): Promise<void> => {
-  const owner = activeChapter?.root ?? roots[0];
-  if (!owner) return;
-  const name = prompt(t("chapter.new"));
-  if (!name?.trim()) return;
-  const title = name.trim();
-  await api().saveChapter(owner, `${title}.md`, "");
+/*
+ * Asking for a name.
+ *
+ * `window.prompt` is disabled in Electron, so every entrance to this — the
+ * rail button, the palette, Ctrl+N, and the empty page — pressed a button that
+ * did nothing. The Ask primitive replaces it, and carries the duplicate check
+ * this never had: `saveChapter` would have written straight over a chapter of
+ * the same name.
+ */
+type AskKind = "chapter" | "material";
+let asking = $state<{ kind: AskKind; rootPath: string } | null>(null);
+
+const titlesIn = (rootPath: string, role: "chapter" | "material"): string[] =>
+  chapters.filter((c) => c.root === rootPath && c.role === role).map((c) => c.title);
+
+const refuseName = (value: string): string | null => {
+  if (asking === null) return null;
+  // The file layer refuses these on every platform, so a manuscript survives
+  // being copied to a machine whose rules are stricter than its author's.
+  if (/[<>:"/\\|?*]/.test(value) || value.endsWith(".") || value.endsWith(" "))
+    return t("chapter.badName");
+  if (titlesIn(asking.rootPath, asking.kind === "chapter" ? "chapter" : "material").includes(value))
+    return t("chapter.taken");
+  return null;
+};
+
+const createNamed = async (title: string): Promise<void> => {
+  const request = asking;
+  asking = null;
+  if (!request) return;
+
+  // Material lives under a folder of its own; a chapter sits at the top level,
+  // which is what makes it part of the sequence (SPEC Q11).
+  const id = request.kind === "chapter" ? `${title}.md` : `${t("rail.materialDir")}/${title}.md`;
+  const outcome = await api().saveChapter(request.rootPath, id, "");
+  if (!outcome.ok) return say(outcome.reason ?? t("chapter.createFailed"));
+
   await reload();
-  select(
-    chapters.find((chapter) => chapter.root === owner && chapter.title === title)?.path ?? null,
-  );
+  select(chapters.find((chapter) => chapter.id === id)?.path ?? null);
+};
+
+const newChapter = (kind: AskKind = "chapter"): void => {
+  const owner = activeChapter?.root ?? roots[0];
+  if (owner) asking = { kind, rootPath: owner };
 };
 
 const save = async (): Promise<void> => {
@@ -649,7 +683,8 @@ const commands = $derived<Command[]>([
   { id: "open", label: "cmd.open", group: "group.project", keys: bindings.open, run: () => void addRoot() },
   { id: "openFile", label: "cmd.openFile", group: "group.project", run: () => void openFile() },
   { id: "create", label: "cmd.create", group: "group.project", run: () => void createProject() },
-  { id: "chapter", label: "cmd.newChapter", group: "group.project", keys: bindings.newChapter, run: () => void newChapter(), when: () => root !== null },
+  { id: "chapter", label: "cmd.newChapter", group: "group.project", keys: bindings.newChapter, run: () => newChapter("chapter"), when: () => root !== null },
+  { id: "material", label: "cmd.newMaterial", group: "group.project", run: () => newChapter("material"), when: () => root !== null },
   { id: "save", label: "cmd.save", group: "group.write", keys: bindings.save, run: () => void save(), when: () => active !== null },
   { id: "files", label: "cmd.files", group: "group.project", run: () => void openFiles(), when: () => root !== null },
   { id: "edits", label: "cmd.edits", group: "group.write", keys: bindings.edits, run: () => (sheet = "edits"), when: () => root !== null },
@@ -679,7 +714,7 @@ const onKeydown = (event: KeyboardEvent): void => {
 
   const handlers: Record<string, () => void> = {
     open: () => void addRoot(),
-    newChapter: () => void newChapter(),
+    newChapter: () => newChapter("chapter"),
     save: () => void save(),
     zen: () => void setZen(!zen),
     settings: () => openSettings("appearance"),
@@ -818,7 +853,7 @@ const onScroll = (): void => {
         onSelect={select}
         onAddRoot={() => void addRoot()}
         onRemoveRoot={(path) => void removeRoot(path)}
-        onNewChapter={() => void newChapter()}
+        onNewChapter={() => newChapter("chapter")}
         onPaletteOpen={() => (paletteOpen = true)}
         onPaletteClose={() => (paletteOpen = false)}
       />
@@ -860,7 +895,7 @@ const onScroll = (): void => {
           {#if !active}
             <div class="blank">
               <p>{t("chapter.pickOne")}</p>
-              <button onclick={() => void newChapter()}>
+              <button onclick={() => newChapter("chapter")}>
                 {t("cmd.newChapter").replace("…", "")}
               </button>
             </div>
@@ -1095,6 +1130,17 @@ const onScroll = (): void => {
     </div>
   </div>
 {/if}
+
+<Ask
+  open={asking !== null}
+  title={t(asking?.kind === "material" ? "material.new" : "chapter.new")}
+  hint={t(asking?.kind === "material" ? "material.newHint" : "chapter.newHint")}
+  confirm="agents.add"
+  {t}
+  validate={refuseName}
+  onSubmit={(name) => void createNamed(name)}
+  onCancel={() => (asking = null)}
+/>
 
 <style>
 .shell.dragging {
