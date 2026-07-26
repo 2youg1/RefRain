@@ -28,6 +28,7 @@ const TIMED_OUT = Symbol("timed-out");
 export class CommandAdapter implements HarnessAdapter {
   readonly tier = "L1" as const;
   private readonly running = new Map<string, Bun.Subprocess>();
+  private readonly settled = new Map<string, Promise<void>>();
 
   constructor(private readonly config: CommandAdapterConfig) {}
 
@@ -54,8 +55,8 @@ export class CommandAdapter implements HarnessAdapter {
       Bun.spawn(argv, {
         cwd: this.config.cwd ?? run.workspace,
         env: { ...process.env, ...this.config.env },
-        stdout: "pipe",
-        stderr: "pipe",
+        stdout: "ignore",
+        stderr: "ignore",
       }),
     );
   }
@@ -68,7 +69,17 @@ export class CommandAdapter implements HarnessAdapter {
    * would lose the distinction between a tool that broke and a decision the
    * writer made.
    */
-  async awaitCompletion(run: Run): Promise<void> {
+  awaitCompletion(run: Run): Promise<void> {
+    const existing = this.settled.get(run.id);
+    if (existing) return existing;
+
+    const settling = this.settle(run);
+    settling.catch(() => undefined);
+    this.settled.set(run.id, settling);
+    return settling;
+  }
+
+  private async settle(run: Run): Promise<void> {
     const child = this.running.get(run.id);
     if (!child) return;
 
@@ -77,13 +88,15 @@ export class CommandAdapter implements HarnessAdapter {
       ? await Promise.race([child.exited, Bun.sleep(timeout).then(() => TIMED_OUT)])
       : await child.exited;
 
-    this.running.delete(run.id);
-
     if (exited === TIMED_OUT) {
       child.kill();
+      await child.exited;
+      this.running.delete(run.id);
       if (run.state === "dispatched") run.state = "failed";
       throw new Error(`${this.id} exceeded ${timeout}ms for run ${run.id}`);
     }
+
+    this.running.delete(run.id);
 
     if (run.state !== "dispatched") return;
     // Narrowed by the timeout branch above, but stated so the exit code cannot
@@ -106,7 +119,7 @@ export class CommandAdapter implements HarnessAdapter {
     if (run.state !== "dispatched") return;
     run.state = "cancelled";
     this.running.get(run.id)?.kill();
-    this.running.delete(run.id);
+    await this.awaitCompletion(run).catch(() => undefined);
   }
 
   /**

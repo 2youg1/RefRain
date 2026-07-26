@@ -12,12 +12,14 @@
  */
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { binaryName, type Workspace as WorkspaceType } from "../src/index.ts";
 
-const ROOT = "/tmp/refrain-fs-contract";
-const OUTSIDE = "/tmp/refrain-fs-outside";
+const TEMP = realpathSync(tmpdir());
+const ROOT = join(TEMP, "refrain-fs-contract");
+const OUTSIDE = join(TEMP, "refrain-fs-outside");
 const BACKUP = ".refrain-source";
 
 const built = existsSync(join(import.meta.dir, "..", binaryName()));
@@ -145,7 +147,7 @@ it("moves a file and reports where it landed", () => {
   const from = join(ROOT, "chapter-2.md");
   const to = join(ROOT, "part-one", "chapter-2.md");
 
-  expect(workspace.move(from, to)).toBe(to);
+  expect(realpathSync(workspace.move(from, to))).toBe(realpathSync(to));
   expect(existsSync(to)).toBe(true);
   expect(existsSync(from)).toBe(false);
 

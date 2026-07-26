@@ -137,7 +137,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
         `${readFileSync(run.requestPath, "utf8")}\n\nWrite your reply to ${run.resultPath}`,
       ),
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "ignore",
     });
 
     this.running.set(run.id, child);
@@ -176,6 +176,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
     if (exited === TIMED_OUT) {
       child.kill();
       await child.exited;
+      if (child.stdout instanceof ReadableStream) await child.stdout.cancel();
       this.running.delete(run.id);
       if (run.state === "dispatched") run.state = "failed";
       throw new Error(`claude-code exceeded ${timeout}ms for run ${run.id}`);
@@ -232,7 +233,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
     if (run.state !== "dispatched") return;
     run.state = "cancelled";
     this.running.get(run.id)?.kill();
-    this.running.delete(run.id);
+    await this.awaitCompletion(run).catch(() => undefined);
   }
 
   /**
