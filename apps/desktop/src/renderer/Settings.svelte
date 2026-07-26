@@ -2,6 +2,7 @@
   
   import type { Snippet } from "svelte";
 import type { Key, Lang } from "./i18n.ts";
+import { SURFACES, type Surface } from "./preferences.ts";
 
   export type Section =
     | "appearance"
@@ -23,7 +24,7 @@ import type { Key, Lang } from "./i18n.ts";
     lang: Lang;
     version: string;
     theme: "rain" | "kozo" | "ink";
-    surface: "opaque" | "translucent" | "glass";
+    surface: Surface;
     sheet: "none" | "hairline" | "paper";
     layout: "page" | "canvas";
     t: (key: Key) => string;
@@ -31,7 +32,7 @@ import type { Key, Lang } from "./i18n.ts";
     onSection: (next: Section) => void;
     onLang: (next: Lang) => void;
     onTheme: (next: "rain" | "kozo" | "ink") => void;
-    onSurface: (next: "opaque" | "translucent" | "glass") => void;
+    onSurface: (next: Surface) => void;
     onSheet: (next: "none" | "hairline" | "paper") => void;
     onLayout: (next: "page" | "canvas") => void;
     onIcon: (dataUrl: string | null) => void;
@@ -111,15 +112,11 @@ import type { Key, Lang } from "./i18n.ts";
       <div class="field">
         <span class="label">{t("set.surface")}</span>
         <div class="segmented">
-          <button class:on={surface === "opaque"} onclick={() => onSurface("opaque")}>
-            {t("set.opaque")}
-          </button>
-          <button class:on={surface === "translucent"} onclick={() => onSurface("translucent")}>
-            {t("set.translucent")}
-          </button>
-          <button class:on={surface === "glass"} onclick={() => onSurface("glass")}>
-            {t("set.glass")}
-          </button>
+          {#each SURFACES as step (step.id)}
+            <button class:on={surface === step.id} onclick={() => onSurface(step.id)}>
+              {t(step.label)}
+            </button>
+          {/each}
         </div>
         <p class="hint">{t("set.surfaceHint")}</p>
       </div>
