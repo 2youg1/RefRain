@@ -228,6 +228,50 @@ describe("L0 file channel", () => {
     expect(run!.state).toBe("completed");
   });
 
+  /**
+   * A harness can exit 0 without writing anything — a wrapper that swallowed an
+   * error, a command whose flags were wrong, a model that replied in chat and
+   * never touched the file. The Host recorded why it could not collect but left
+   * the run in `dispatched`, so it sat in flight forever: never finished, never
+   * failed, nothing for the author to press.
+   */
+  test("a harness that exits cleanly without a result fails the run, not hangs it", async () => {
+    const adapter = new (class {
+      readonly id = "silent";
+      readonly tier = "L1" as const;
+      async dispatch(): Promise<void> {
+        // Writes no result, which is the whole point.
+      }
+      async awaitCompletion(): Promise<void> {
+        // Exits cleanly.
+      }
+      async cancel(): Promise<void> {
+        // Nothing to stop; the contract still requires the method.
+      }
+      usage() {
+        return { kind: "unknown" } as const;
+      }
+      effectiveModel() {
+        return { kind: "unknown" } as const;
+      }
+    })();
+
+    const host = new AgentHost(root, [adapter]);
+    host.register({
+      id: "a1",
+      name: "silent",
+      binding: { harness: "silent", model: "m", reasoningEffort: "e" },
+    });
+    host.enqueue({ ...task(), agentId: "a1" });
+
+    const [run] = await host.send();
+    await host.settled(run!.id);
+
+    expect(run!.state).toBe("failed");
+    // And the reason is kept, so the interface can say what went wrong.
+    expect(host.failureFor(run!.id)).toContain("no result");
+  });
+
   test("token usage from a harness that reports nothing is unknown, never zero", async () => {
     const adapter = new FileChannelAdapter(root);
 

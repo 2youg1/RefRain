@@ -51,6 +51,14 @@ export interface RunView {
   state: string;
   resultPath: string;
   agentId: string;
+  /**
+   * Why it failed, verbatim from the harness or the artifact parser.
+   *
+   * Present only on a failed run. Shown rather than summarised: a
+   * misconfigured command or a malformed reply is diagnosed by its own words,
+   * and "the run failed" tells an author nothing they can act on.
+   */
+  failure?: string;
 }
 
 export interface VerdictView {

@@ -191,6 +191,11 @@ export class AgentHost {
       try {
         await this.collect(run.id);
       } catch (error) {
+        // Mark it failed, not just remember why. Recording the reason without
+        // leaving `dispatched` left the run in flight forever: a harness that
+        // exited cleanly without writing a result produced a row that never
+        // finished and never failed, and the author had nothing to press.
+        run.state = "failed";
         this.failures.set(run.id, String(error));
       }
     })();
