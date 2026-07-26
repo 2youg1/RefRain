@@ -4,7 +4,36 @@
 
 ---
 
-## Shipped — v0.1.3
+## Shipped — v0.1.5
+
+Windows x64. One author, several local folders, any harness, chapterised
+Markdown.
+
+This release is about the manuscript surviving contact with the application.
+
+**Bytes you did not write stay as you left them.** Opening a file and saving it
+with no edit at all used to lose bytes: the ideographic indent that opens a
+Chinese paragraph was deleted on load, a fenced code block was cut in two by
+the blank line inside it, and consecutive blank lines collapsed. A file now
+parses into blocks that remember where they sit in the original, and saving
+replaces only the ranges whose text actually changed. This is a lower bound,
+not lossless Markdown — a paragraph you rewrite is rewritten — and it is
+enforced by `verify:roundtrip` over twenty corpora.
+
+**Typing Chinese waits for the input method.** The renderer had no notion of
+composition, so Ctrl+S mid-word wrote half-formed pinyin to disk as prose, and
+a redraw arriving during composition tore out the node the input method was
+composing into. A save asked for mid-composition is now deferred, not refused.
+The surface also stopped collapsing whitespace, so an indent is visible as an
+indent.
+
+**Saving a long book costs what the change costs.** A 40,000-block manuscript
+threw `RangeError: Out of memory` on any save, because the alignment table is
+allocated before anything is compared. Correcting one character in a 20,000
+block manuscript took 5.2 seconds; it now takes 5.5 milliseconds, and 100,000
+blocks complete in every mutation shape that used to crash.
+
+## Shipped earlier — v0.1.3
 
 Windows x64, Linux x64, macOS arm64 and x64. One author, several local folders,
 any harness, chapterised Markdown.
@@ -87,8 +116,10 @@ session, not a claim in a table.
 **Selective undo at scale.** A compensating action against the first of 10,000
 disjoint edits, without replaying the history.
 
-**A diff that scales.** The current LCS allocates an n×m matrix, which a
-100,000-block manuscript cannot afford. Hirschberg or Myers.
+**Lossless Markdown, not only the lower bound.** v0.1.5 guarantees that bytes
+you did not edit come back unchanged. The stronger promise — that a paragraph
+you *did* rewrite also round-trips through every Markdown construct — needs a
+real document model, and belongs with the editor core rather than before it.
 
 ## Not planned
 

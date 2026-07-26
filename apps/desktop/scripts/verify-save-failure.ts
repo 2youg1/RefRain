@@ -22,13 +22,15 @@ const pageErrors: string[] = [];
 page.on("pageerror", (error) => pageErrors.push(error.message));
 await page.addInitScript(`
   localStorage.clear();
-  const chapter = { id: "01.md", title: "01", text: "盘上的正文。", root: "/work", path: "/work/01.md" };
+  const root = { id: "r-work", path: "/work", name: "work", kind: "folder" };
+  const chapter = { id: "01.md", title: "01", text: "盘上的正文。", root: "/work",
+    rootId: "r-work", role: "chapter", path: "/work/01.md" };
   window.refrain = {
     openProject: async () => "/work",
     openFile: async () => null,
     createProject: async () => null,
     loadProject: async () => [chapter],
-    loadWorkspace: async () => [chapter],
+    loadWorkspace: async () => ({ roots: [root], chapters: [chapter] }),
     saveChapter: async () => { throw new Error("simulated disk failure"); },
     resolveConflict: async () => ({ ok: false, reason: "not expected" }),
     pathFor: () => "",

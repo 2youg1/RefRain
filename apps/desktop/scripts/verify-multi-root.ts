@@ -22,16 +22,25 @@ await page.addInitScript(`
   localStorage.clear();
   window.__calls = [];
   window.__openCount = 0;
+  const roots = [
+    { id: "r-a", path: "/a", name: "a", kind: "folder" },
+    { id: "r-b", path: "/b", name: "b", kind: "folder" },
+  ];
   const chapters = [
-    { id: "01.md", title: "01", text: "第一个根的正文。", root: "/a", path: "/a/01.md" },
-    { id: "01.md", title: "01", text: "第二个根的正文。", root: "/b", path: "/b/01.md" },
+    { id: "01.md", title: "01", text: "第一个根的正文。", root: "/a", rootId: "r-a",
+      role: "chapter", path: "/a/01.md" },
+    { id: "01.md", title: "01", text: "第二个根的正文。", root: "/b", rootId: "r-b",
+      role: "chapter", path: "/b/01.md" },
   ];
   window.refrain = {
     openProject: async () => ["/a", "/b"][window.__openCount++] ?? null,
     openFile: async () => null,
     createProject: async () => null,
     loadProject: async () => [],
-    loadWorkspace: async (roots) => chapters.filter((chapter) => roots.includes(chapter.root)),
+    loadWorkspace: async (open) => ({
+      roots: roots.filter((root) => open.includes(root.path)),
+      chapters: chapters.filter((chapter) => open.includes(chapter.root)),
+    }),
     saveChapter: async (root, title, text) => {
       window.__calls.push(["save", root, title, text]);
       return { ok: true, edits: [] };
