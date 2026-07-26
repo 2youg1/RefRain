@@ -22,11 +22,39 @@ import type { TextHead } from "./domain.ts";
  * neighbours.
  */
 
+/**
+ * What a file looked like when this application last agreed with it.
+ *
+ * Size as well as mtime: a filesystem with one-second mtime granularity — and
+ * several still have it — cannot distinguish two edits inside the same second,
+ * but it can hardly ever produce the same byte count as well.
+ */
+export interface FileStamp {
+  readonly modifiedMs: number;
+  readonly bytes: number;
+}
+
+export const stampOf = (path: string): FileStamp | undefined => {
+  try {
+    const info = statSync(path);
+    return { modifiedMs: info.mtimeMs, bytes: info.size };
+  } catch {
+    return undefined;
+  }
+};
+
 export interface Chapter {
   readonly title: string;
   readonly path: string;
   readonly root: string;
   readonly head: TextHead;
+  /**
+   * What the file looked like when it was read.
+   *
+   * Carried so a later save can tell whether anyone else wrote to it in the
+   * meantime. Absent only for a chapter that does not exist on disk yet.
+   */
+  readonly stamp?: FileStamp;
 }
 
 export interface Root {
@@ -52,10 +80,12 @@ const MARKDOWN = new Set([".md", ".markdown", ".mdown", ".txt"]);
  */
 const parseChapter = (root: string, path: string, markdown: string): Chapter => {
   const title = basename(path, extname(path));
+  const stamp = stampOf(path);
   return {
     title,
     path,
     root,
+    ...(stamp === undefined ? {} : { stamp }),
     head: {
       id: `${path}@load`,
       blocks: markdown
@@ -104,23 +134,61 @@ export const loadProject = (root: string): { root: string; chapters: readonly Ch
 export const serializeChapter = (head: TextHead): string =>
   `${head.blocks.map((b) => b.text).join("\n\n")}\n`;
 
+/** A refusal, not an exception: the caller has to ask a person what to do. */
+export interface ChangedUnderneath {
+  readonly ok: false;
+  readonly reason: "changed-underneath";
+  readonly path: string;
+  /** What is on disk right now, so the interface can offer to show it. */
+  readonly onDisk: string;
+}
+
+export type WriteOutcome = { readonly ok: true; readonly stamp: FileStamp } | ChangedUnderneath;
+
 /**
- * Written through a temp file and renamed, so a crash mid-write leaves the
- * previous chapter intact rather than a truncated one. The manuscript is the
- * one thing this application must never damage.
+ * Write a chapter, unless someone else wrote it first.
+ *
+ * Two separate promises. The temp-file-and-rename keeps a crash mid-write from
+ * leaving a truncated chapter — that was already here. What is new is the
+ * comparison against `expected`: without it, a file edited in another editor
+ * was silently overwritten on the next save, because this application's own
+ * cached head was treated as the truth about the disk. The file is the truth
+ * (SPEC axiom 1), and a caller that has not looked recently must be told so
+ * rather than allowed to win.
+ *
+ * Passing no `expected` writes unconditionally, which is correct for a file
+ * this application is creating.
  */
-export const writeChapter = (path: string, head: TextHead): void => {
+export const writeChapter = (path: string, head: TextHead, expected?: FileStamp): WriteOutcome => {
+  if (expected !== undefined) {
+    const actual = stampOf(path);
+    // A file that has since vanished is not a conflict — the author moved or
+    // deleted it, and writing it back is what they asked for by saving.
+    if (
+      actual !== undefined &&
+      (actual.modifiedMs !== expected.modifiedMs || actual.bytes !== expected.bytes)
+    )
+      return {
+        ok: false,
+        reason: "changed-underneath",
+        path,
+        onDisk: readFileSync(path, "utf8"),
+      };
+  }
+
   mkdirSync(dirname(path), { recursive: true });
   const temporary = `${path}.writing`;
   writeFileSync(temporary, serializeChapter(head), "utf8");
   renameSync(temporary, path);
+  return { ok: true, stamp: stampOf(path) ?? { modifiedMs: Date.now(), bytes: 0 } };
 };
 
 export const saveChapter = (
   project: { root: string; chapters: readonly Chapter[] },
   title: string,
   head: TextHead,
-): void => {
+  expected?: FileStamp,
+): WriteOutcome => {
   const chapter = project.chapters.find((c) => c.title === title);
-  writeChapter(chapter?.path ?? join(project.root, `${title}.md`), head);
+  return writeChapter(chapter?.path ?? join(project.root, `${title}.md`), head, expected);
 };

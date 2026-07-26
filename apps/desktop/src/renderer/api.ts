@@ -88,7 +88,24 @@ interface RefRainApi {
   /** Opens one of this project's own pages in the system browser. */
   openProjectUrl(url: string): Promise<boolean>;
   loadProject(root: string): Promise<ChapterView[]>;
-  saveChapter(root: string, title: string, text: string): Promise<boolean>;
+  /**
+   * Saves, unless the file changed underneath.
+   *
+   * A refusal carries the disk's text, because the author has to choose between
+   * two versions and cannot do that without seeing the other one.
+   */
+  saveChapter(
+    root: string,
+    title: string,
+    text: string,
+  ): Promise<
+    { ok: true } | { ok: false; reason: "changed-underneath"; path: string; onDisk: string }
+  >;
+  /** Takes the file as it now is, discarding this session's unsaved text. */
+  reloadChapter(
+    root: string,
+    title: string,
+  ): Promise<{ ok: true; text: string } | { ok: false; reason: string }>;
   listAgents(root: string): Promise<AgentView[]>;
   addAgent(root: string, name: string, command: string): Promise<AgentView>;
   enqueue(root: string, task: unknown): Promise<boolean>;

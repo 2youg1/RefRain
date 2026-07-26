@@ -382,11 +382,61 @@ const save = async (): Promise<void> => {
   // characters that were never saved.
   const written = text;
   const previous = chapters.find((c) => c.title === title)?.text ?? "";
-  await api().saveChapter(owner, title, written);
+  const outcome = await api().saveChapter(owner, title, written);
+
+  // The file moved on: someone else wrote to it since this session read it.
+  // Nothing is decided here — the author is shown both and chooses. Silently
+  // winning would destroy an edit they made somewhere else.
+  if (!outcome.ok) {
+    conflict = { title, root: owner, mine: written, theirs: outcome.onDisk, path: outcome.path };
+    return;
+  }
+
   const recorded = await api().editsBetween(previous, written);
   edits = [...edits, ...recorded];
   chapters = chapters.map((c) => (c.title === title ? { ...c, text: written } : c));
   if (text === written && active === title) saved = true;
+};
+
+/** An unresolved disagreement between this session and the disk (#49). */
+let conflict = $state<{
+  title: string;
+  root: string;
+  mine: string;
+  theirs: string;
+  path: string;
+} | null>(null);
+
+/** Take the file as it now is; this session's unsaved text is discarded. */
+const takeTheirs = async (): Promise<void> => {
+  const pending = conflict;
+  conflict = null;
+  if (!pending) return;
+  const outcome = await api().reloadChapter(pending.root, pending.title);
+  if (!outcome.ok) return say(outcome.reason);
+  chapters = chapters.map((c) => (c.title === pending.title ? { ...c, text: outcome.text } : c));
+  if (active === pending.title) {
+    text = outcome.text;
+    render(outcome.text);
+    saved = true;
+  }
+};
+
+/**
+ * Keep this session's text, writing over the other edit.
+ *
+ * Reloads first so the stamp is current, then saves. The other version is not
+ * lost silently — the author has just been shown it and chosen.
+ */
+const keepMine = async (): Promise<void> => {
+  const pending = conflict;
+  conflict = null;
+  if (!pending) return;
+  await api().reloadChapter(pending.root, pending.title);
+  const outcome = await api().saveChapter(pending.root, pending.title, pending.mine);
+  if (!outcome.ok) return say(t("conflict.stillChanging"));
+  chapters = chapters.map((c) => (c.title === pending.title ? { ...c, text: pending.mine } : c));
+  if (active === pending.title) saved = true;
 };
 
 const revert = async (id: string): Promise<void> => {
@@ -834,6 +884,58 @@ const onScroll = (): void => {
 {/if}
 
 <!--
+  An outside edit (#49). Modal by necessity, not by habit: two versions of the
+  author's own writing exist and only they can say which one is the manuscript.
+  Both texts are shown, because a choice between things you cannot see is not a
+  choice. Nothing is written until a button is pressed.
+-->
+{#if conflict}
+  <div class="conflict-scrim">
+    <div class="conflict" role="alertdialog" aria-label={t("conflict.title")}>
+      <h2>{t("conflict.title")}</h2>
+      <p class="path">{conflict.path}</p>
+      <p class="why">{t("conflict.body")}</p>
+      <!--
+        Each action sits under the version it keeps. They used to be reversed
+        against the panes — left button taking the right pane — which on an
+        irreversible choice is how a person loses work to muscle memory.
+      -->
+      <div class="versions">
+        <section>
+          <span class="label">{t("conflict.mineLabel")}</span>
+          <pre>{conflict.mine}</pre>
+          <span class="cost">{t("conflict.mineCost")}</span>
+          <button class="choose" onclick={() => void keepMine()}>{t("conflict.mine")}</button>
+        </section>
+        <section>
+          <span class="label">{t("conflict.theirsLabel")}</span>
+          <pre>{conflict.theirs}</pre>
+          <span class="cost">{t("conflict.theirsCost")}</span>
+          <button class="choose" onclick={() => void takeTheirs()}>{t("conflict.theirs")}</button>
+        </section>
+      </div>
+      <!--
+        A way out that decides nothing. The file is not yet overwritten and the
+        editor still holds the author's text, so leaving the question open is a
+        legitimate answer — they may want to look at the file first.
+      -->
+      <div class="conflict-actions">
+        <button
+          class="quiet"
+          onclick={() => {
+            conflict = null;
+            // Still unsaved, and the author has to know: the indicator would
+            // otherwise sit on "saved" over text that never reached disk.
+            saved = false;
+            say(t("conflict.postponed"));
+          }}>{t("conflict.later")}</button
+        >
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!--
   SPEC Q8. Not a toast: it waits for an answer, because the file is still
   sitting where the author tried to delete it and they need to decide. The
   offer names the other volume rather than doing anything silently.
@@ -1183,6 +1285,143 @@ const onScroll = (): void => {
 
 .writing:hover .zen-hint {
   opacity: 1;
+}
+
+/*
+ * An outside edit. The only modal in the application, because it is the only
+ * moment where two versions of the manuscript exist and the software genuinely
+ * cannot choose. The scrim is there to stop the author typing into a document
+ * whose identity is unresolved.
+ */
+.conflict-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  background: color-mix(in oklab, var(--ink) 34%, transparent);
+  backdrop-filter: blur(2px);
+}
+
+.conflict {
+  width: min(56rem, 92vw);
+  max-height: 86vh;
+  overflow: auto;
+  padding: 1.4rem 1.5rem 1.2rem;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  box-shadow: var(--shadow-float);
+}
+
+.conflict h2 {
+  font-family: var(--serif);
+  font-size: var(--step-1);
+  font-weight: 500;
+}
+
+.conflict .path {
+  font-family: var(--mono);
+  font-size: var(--step--2);
+  color: var(--ink-faint);
+  margin-top: 0.3rem;
+  overflow-wrap: anywhere;
+}
+
+.conflict .why {
+  font-size: var(--step--1);
+  color: var(--ink-soft);
+  line-height: 1.8;
+  margin-top: 0.7rem;
+}
+
+.versions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.versions pre {
+  margin-top: 0.35rem;
+  padding: 0.7rem 0.8rem;
+  max-height: 40vh;
+  overflow: auto;
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  font-family: var(--serif);
+  font-size: var(--step--1);
+  line-height: 1.85;
+  /* The author's own prose: wrap it as prose, not as code. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+}
+
+/*
+ * A filled button, not a coloured word. These two carry an irreversible choice,
+ * and text-only actions read as links: no hit area a hand can aim at, and no
+ * hover or focus to confirm which one is under the cursor.
+ */
+.versions .choose {
+  display: block;
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.8rem;
+  background: var(--seal);
+  color: var(--paper);
+  border-radius: 3px;
+  font-size: var(--step--1);
+  font-weight: 600;
+}
+
+.versions .choose:hover {
+  background: var(--seal-bright);
+}
+
+.versions .choose:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/*
+ * What it costs, above the button that costs it. Below, the reading order was
+ * action-then-consequence — the eye reached the button first and the loss
+ * afterwards. Held at --ink-soft rather than --ink-faint because this is the
+ * sentence that stops an author destroying their own work.
+ */
+.versions .cost {
+  display: block;
+  margin-top: 0.6rem;
+  font-size: var(--step--1);
+  color: var(--ink-soft);
+  line-height: 1.65;
+}
+
+.conflict-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1.1rem;
+}
+
+.conflict-actions .quiet {
+  font-size: var(--step--1);
+  color: var(--ink-faint);
+  text-decoration: underline;
+  text-underline-offset: 0.24em;
+  text-decoration-thickness: 1.5px;
+  text-decoration-color: color-mix(in oklab, var(--ink-faint) 45%, transparent);
+}
+
+.conflict-actions .quiet:hover {
+  color: var(--ink);
+}
+
+@media (max-width: 720px) {
+  .versions {
+    grid-template-columns: 1fr;
+  }
 }
 
 /*
