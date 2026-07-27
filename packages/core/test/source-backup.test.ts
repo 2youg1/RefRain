@@ -56,9 +56,13 @@ describe("the Source Backup", () => {
     expect(readFileSync(join(root, SOURCE_BACKUP_DIR, "01.md"), "utf8")).toBe("原文。\n");
   });
 
-  test("an empty folder gets no backup rather than an empty one", () => {
+  test("an empty adopted folder never turns later RefRain text into an original", () => {
     const root = scratch();
     expect(takeSourceBackup(root).kind).toBe("nothing-to-copy");
+    expect(existsSync(join(root, SOURCE_BACKUP_DIR))).toBe(false);
+
+    writeFileSync(join(root, "01.md"), "在 RefRain 内新写的。\n");
+    expect(takeSourceBackup(root).kind).toBe("already-present");
     expect(existsSync(join(root, SOURCE_BACKUP_DIR))).toBe(false);
   });
 

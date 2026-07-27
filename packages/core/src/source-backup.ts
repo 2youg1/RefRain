@@ -16,13 +16,15 @@
  * second copy would record the application's own edits as if they were the
  * author's.
  */
-import { cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 /** Matches `SOURCE_BACKUP_DIR` in `guard.rs` and `project.ts`. */
 export const SOURCE_BACKUP_DIR = ".refrain-source";
 
 const MANIFEST = "taken.json";
+const EMPTY_ADOPTION_DIR = ".refrain";
+const EMPTY_ADOPTION_FILE = "source-backup.json";
 
 export interface BackupOutcome {
   readonly kind: "taken" | "already-present" | "nothing-to-copy" | "refused";
@@ -55,7 +57,9 @@ const manuscriptsUnder = (dir: string): string[] => {
  */
 export const takeSourceBackup = (root: string): BackupOutcome => {
   const backup = join(root, SOURCE_BACKUP_DIR);
-  if (existsSync(join(backup, MANIFEST))) return { kind: "already-present", files: 0 };
+  const emptyAdoption = join(root, EMPTY_ADOPTION_DIR, EMPTY_ADOPTION_FILE);
+  if (existsSync(join(backup, MANIFEST)) || existsSync(emptyAdoption))
+    return { kind: "already-present", files: 0 };
 
   let manuscripts: string[];
   try {
@@ -64,7 +68,21 @@ export const takeSourceBackup = (root: string): BackupOutcome => {
     return { kind: "refused", files: 0, reason: `无法读取项目内容：${String(error)}` };
   }
 
-  if (manuscripts.length === 0) return { kind: "nothing-to-copy", files: 0 };
+  if (manuscripts.length === 0) {
+    const staged = `${emptyAdoption}.writing`;
+    try {
+      mkdirSync(dirname(emptyAdoption), { recursive: true });
+      writeFileSync(
+        staged,
+        `${JSON.stringify({ adopted: new Date().toISOString(), source: "nothing-to-copy" }, null, 2)}\n`,
+        { flush: true },
+      );
+      renameSync(staged, emptyAdoption);
+    } catch (error) {
+      return { kind: "refused", files: 0, reason: `无法记录项目初始状态：${String(error)}` };
+    }
+    return { kind: "nothing-to-copy", files: 0 };
+  }
 
   try {
     mkdirSync(backup, { recursive: true });

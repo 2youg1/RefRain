@@ -32,6 +32,8 @@ export interface RootView {
 export interface WorkspaceView {
   roots: RootView[];
   chapters: ChapterView[];
+  /** Safety copies that could not be taken; editing remains available, but never silently. */
+  warnings?: string[];
 }
 
 export interface EditView {
