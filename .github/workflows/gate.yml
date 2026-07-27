@@ -233,6 +233,19 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-save-blocks-switch.ts
 
+      # The audit predicted Chromium would store Shift+Enter as `<br>` and lose
+      # it through textContent. The current engine uses a text-node newline; pin
+      # the actual save contract so either future DOM shape must preserve it.
+      - name: a soft line break reaches disk as one newline
+        working-directory: apps/desktop
+        run: bun scripts/verify-soft-break.ts
+
+      # Playwright cannot emulate Electron's webUtils path conversion, but the
+      # File-to-resolveDrop-to-Root chain after it must not be a silent no-op.
+      - name: a dropped path enters Root adoption
+        working-directory: apps/desktop
+        run: bun scripts/verify-drop.ts
+
       # `agents.json` travels with the project, and opening the Agents screen
       # probes every agent — which runs the binary. Reading someone else's
       # writing project executed their choice of program.
