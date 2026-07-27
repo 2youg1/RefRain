@@ -12,12 +12,26 @@ const { root, t }: Props = $props();
 
 let verdicts = $state<VerdictView[]>([]);
 let reply = $state<string | null>(null);
+/** Why the ledger is unreadable, when it is. Distinct from "no verdicts yet". */
+let unavailable = $state<string | null>(null);
 
 $effect(() => {
-  if (root)
-    void api()
-      .ledger(root)
-      .then((all) => (verdicts = all));
+  if (!root) return;
+  void api()
+    .ledger(root)
+    .then((answer) => {
+      if (answer.ok) {
+        verdicts = answer.verdicts;
+        unavailable = null;
+        return;
+      }
+      verdicts = [];
+      unavailable = answer.detail;
+    })
+    .catch((error: unknown) => {
+      verdicts = [];
+      unavailable = error instanceof Error ? error.message : String(error);
+    });
 });
 
 const showReply = async (proposalId: string): Promise<void> => {
@@ -26,10 +40,39 @@ const showReply = async (proposalId: string): Promise<void> => {
 };
 
 const kindKey = (kind: VerdictView["kind"]): Key => `kind.${kind}` as Key;
+
+/**
+ * The moment the author decided, in the author's own clock.
+ *
+ * `decidedAt` is stored as an ISO instant, which is right for a record, and
+ * slicing its first sixteen characters showed the author UTC — so a judgment
+ * made at nine in the evening in Tokyo read as noon. The stored value is
+ * untouched and travels in `datetime` for anything reading the markup.
+ */
+const when = (iso: string): string => {
+  const at = new Date(iso);
+  return Number.isNaN(at.getTime())
+    ? iso
+    : at.toLocaleString(undefined, {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+};
 </script>
 
 <div class="ledger">
-  {#if verdicts.length === 0}
+  {#if unavailable}
+    <!-- An empty list read the same as a ledger that would not open, and the
+         two call for opposite responses: one means start judging, the other
+         means the judgments are not being kept. -->
+    <div class="unavailable">
+      <p>{t("ledger.unavailable")}</p>
+      <code class="cause">{unavailable}</code>
+    </div>
+  {:else if verdicts.length === 0}
     <p class="empty">{t("ledger.empty")}</p>
   {:else}
     <p class="count label">{verdicts.length} {t("ledger.count")}</p>
@@ -41,7 +84,7 @@ const kindKey = (kind: VerdictView["kind"]): Key => `kind.${kind}` as Key;
           <button class="ref" onclick={() => showReply(verdict.proposalId)}>
             {verdict.sliceId ?? verdict.proposalId}
           </button>
-          <time>{verdict.decidedAt.slice(0, 16).replace("T", " ")}</time>
+          <time datetime={verdict.decidedAt}>{when(verdict.decidedAt)}</time>
         </header>
 
         {#if verdict.finalText}
@@ -69,6 +112,33 @@ const kindKey = (kind: VerdictView["kind"]): Key => `kind.${kind}` as Key;
 {/if}
 
 <style>
+  .unavailable {
+    display: grid;
+    gap: 0.6rem;
+    padding: 1rem 1.1rem;
+    border: 1px solid var(--rule-strong);
+    border-radius: 3px;
+    background: var(--paper-sunk);
+    color: var(--ink-soft);
+    font-size: var(--step--1);
+    line-height: 1.8;
+  }
+
+  .unavailable p {
+    margin: 0;
+  }
+
+  /* The cause is SQLite's own words, kept verbatim so it can be searched for. */
+  .unavailable .cause {
+    font-family: var(--mono);
+    font-size: var(--step--2);
+    padding: 0.45rem 0.6rem;
+    border-radius: 2px;
+    background: var(--paper);
+    color: var(--ink-faint);
+    overflow-wrap: anywhere;
+  }
+
   .empty {
     font-family: var(--serif);
     color: var(--ink-faint);

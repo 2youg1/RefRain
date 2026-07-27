@@ -181,12 +181,14 @@ test("a rejected manuscript write records no Verdict and can be retried", async 
 
     await expect(call("review:commit", root, payload)).rejects.toThrow();
     expect(readFileSync(path, "utf8")).toBe("原文。\n");
-    expect(await call("ledger:all", root)).toEqual([]);
+    expect(await call("ledger:all", root)).toEqual({ ok: true, verdicts: [] });
 
     rmSync(`${path}.writing`, { recursive: true });
     expect(await call("review:commit", root, payload)).toMatchObject({ ok: true });
     expect(readFileSync(path, "utf8")).toBe("新的正文。\n");
-    expect((await call("ledger:all", root)) as unknown[]).toHaveLength(payload.verdicts.length);
+    expect(((await call("ledger:all", root)) as { verdicts: unknown[] }).verdicts).toHaveLength(
+      payload.verdicts.length,
+    );
   } finally {
     closeWorkbenches();
     rmSync(root, { recursive: true, force: true });
@@ -204,7 +206,99 @@ test("a Decision Batch cannot overwrite an external edit", async () => {
       reason: "changed-underneath",
     });
     expect(readFileSync(path, "utf8")).toBe("另一个编辑器的新正文。\n");
-    expect(await call("ledger:all", root)).toEqual([]);
+    expect(await call("ledger:all", root)).toEqual({ ok: true, verdicts: [] });
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/*
+ * A ledger that will not open is a lost capability, not a lost project.
+ *
+ * Opening a project used to require opening SQLite first, and the constructor
+ * throws for two ordinary conditions: a state directory that cannot be written,
+ * and a `verdicts.db` left truncated by an earlier crash or duplicated by a
+ * syncing client. Nineteen of twenty-seven channels pass through that function
+ * and neither side caught the exception, so a damaged database turned opening,
+ * saving and judging into clicks that produced nothing at all.
+ */
+test("a corrupt ledger does not stop the project from opening", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-ledger-corrupt-"));
+  try {
+    mkdirSync(join(root, ".refrain"), { recursive: true });
+    writeFileSync(join(root, ".refrain", "verdicts.db"), "这不是一个数据库。\n", "utf8");
+    writeFileSync(join(root, "01.md"), "原文。\n", "utf8");
+
+    const workspace = (await call("project:load-workspace", [root])) as {
+      chapters: { id: string }[];
+    };
+    expect(workspace.chapters.map((chapter) => chapter.id)).toEqual(["01.md"]);
+
+    const saved = await call("project:save", root, "01.md", "改过的正文。");
+    expect(saved).toMatchObject({ ok: true });
+    expect(readFileSync(join(root, "01.md"), "utf8")).toBe("改过的正文。\n");
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an unavailable ledger says so rather than reading as empty", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-ledger-says-"));
+  try {
+    mkdirSync(join(root, ".refrain"), { recursive: true });
+    writeFileSync(join(root, ".refrain", "verdicts.db"), "坏掉的文件\n", "utf8");
+    writeFileSync(join(root, "01.md"), "原文。\n", "utf8");
+
+    const answer = (await call("ledger:all", root)) as { ok: boolean; detail?: string };
+    expect(answer.ok).toBe(false);
+    expect(answer.detail ?? "").not.toBe("");
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/*
+ * `agents.json` arrives with the project. Registering its command adapter on
+ * restore meant a probe — which runs the binary — was one screen away from
+ * anyone who opened a folder someone else had prepared.
+ */
+test("a command restored from the project file cannot run until it is trusted", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-trust-"));
+  try {
+    mkdirSync(join(root, ".refrain"), { recursive: true });
+    writeFileSync(
+      join(root, ".refrain", "agents.json"),
+      JSON.stringify([
+        {
+          id: "a1",
+          name: "别人的",
+          harness: "command:a1",
+          model: "unspecified",
+          reasoningEffort: "unspecified",
+          template: ["refrain-not-a-real-binary", "--version"],
+        },
+      ]),
+      "utf8",
+    );
+
+    const listed = (await call("agent:list", root)) as { id: string; trusted: boolean }[];
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.trusted).toBe(false);
+
+    expect(await call("agent:probe", root, "a1")).toMatchObject({
+      ok: false,
+      reason: "untrusted",
+    });
+
+    expect(await call("agent:trust", root, "a1")).toBe(true);
+    expect(((await call("agent:list", root)) as { trusted: boolean }[])[0]?.trusted).toBe(true);
+
+    // Consent survives a reopen: it is recorded in the project file.
+    closeWorkbenches();
+    expect(((await call("agent:list", root)) as { trusted: boolean }[])[0]?.trusted).toBe(true);
   } finally {
     closeWorkbenches();
     rmSync(root, { recursive: true, force: true });

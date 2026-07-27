@@ -4,6 +4,7 @@ import {
   type Dirent,
   existsSync,
   fstatSync,
+  mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
@@ -144,17 +145,37 @@ const assertMutableChapterPath = (path: string): void => {
     throw new Error(`Source Backup is never written to: ${path}`);
 };
 
+const isLegalSegment = (segment: string): boolean =>
+  segment.length > 0 &&
+  !segment.includes("\0") &&
+  !ILLEGAL_CHAPTER_CHARACTER.test(segment) &&
+  !segment.endsWith(".") &&
+  !segment.endsWith(" ") &&
+  !WINDOWS_DEVICE.test(segment);
+
+/**
+ * Where a new chapter goes, from a title or from a path inside the root.
+ *
+ * Material lives in a folder of its own, so the interface asks for
+ * `资料/年表.md` — and every such request failed. The separator made
+ * `basename(id) === id` false in the caller, the whole string arrived here as a
+ * title, and the illegal-character set contains the very separator that sent it
+ * down this branch. Creating material could not succeed at all, in either
+ * language, whether or not the folder already existed.
+ *
+ * So a title may now be several segments. Each is checked on its own — the same
+ * rules, applied where they mean something — and the parent is created. `..`
+ * fails `isLegalSegment` by ending in a dot, which is what keeps a nested id
+ * from climbing out of the root.
+ */
 const pathForNewChapter = (root: string, title: string): string => {
-  if (
-    title.length === 0 ||
-    title.includes("\0") ||
-    ILLEGAL_CHAPTER_CHARACTER.test(title) ||
-    title.endsWith(".") ||
-    title.endsWith(" ") ||
-    WINDOWS_DEVICE.test(title)
-  )
+  const segments = title.split(/[/\\]+/);
+  if (segments.length === 0 || !segments.every(isLegalSegment))
     throw new Error(`invalid chapter title: ${title}`);
-  return join(root, `${title}.md`);
+
+  const path = join(root, `${segments.join("/")}.md`);
+  mkdirSync(dirname(path), { recursive: true });
+  return path;
 };
 
 /**
@@ -385,10 +406,10 @@ export const saveChapter = (
   const chapter = project.chapters.find(
     (candidate) => candidate.id === idOrTitle || candidate.title === idOrTitle,
   );
+  // An id ends in `.md`; a title does not. Both may name a folder, because
+  // material lives in one — what decides is the extension, not whether a
+  // separator is present.
   const extension = extname(idOrTitle);
-  const title =
-    chapter === undefined && extension === ".md" && basename(idOrTitle) === idOrTitle
-      ? basename(idOrTitle, extension)
-      : idOrTitle;
+  const title = chapter === undefined && extension === ".md" ? idOrTitle.slice(0, -3) : idOrTitle;
   return writeChapter(chapter?.path ?? pathForNewChapter(project.root, title), head, expected);
 };
