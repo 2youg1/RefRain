@@ -17,7 +17,7 @@
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { launchBrowser } from "./browser.ts";
+import { BRIDGE_STUB, launchBrowser } from "./browser.ts";
 
 const desktop = dirname(dirname(fileURLToPath(import.meta.url)));
 const html = (await Bun.file(join(desktop, "dist", "renderer", "index.html")).text()).replace(
@@ -45,7 +45,8 @@ const bridge = `
 localStorage.setItem("refrain.roots", JSON.stringify(["/work"]));
 window.__probes = [];
 window.__trusted = [];
-window.refrain = {
+${BRIDGE_STUB}
+Object.assign(window.refrain, {
   openProject: async () => "/work",
   openFile: async () => null,
   createProject: async () => null,
@@ -78,7 +79,7 @@ window.refrain = {
   commit: async () => ({ ok: true, text: "" }), ledger: async () => [], reply: async () => "",
   displayProfile: async () => ({ refreshHz: 60, scaleFactor: 1, css: {} }),
   onDisplayChange: () => () => {}, fonts: async () => [], systemFonts: async () => [],
-};`;
+});`;
 
 const failures: string[] = [];
 const pageErrors: string[] = [];

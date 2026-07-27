@@ -8,7 +8,7 @@
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { launchBrowser } from "./browser.ts";
+import { BRIDGE_STUB, launchBrowser } from "./browser.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const html = (await Bun.file(join(root, "dist", "renderer", "index.html")).text()).replace(
@@ -34,7 +34,8 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 // to answer only the older `loadProject`, so the workspace came back empty,
 // no paragraph was ever rendered, and the gate measured nothing — while
 // exiting zero.
-await page.addInitScript(`window.refrain = {
+await page.addInitScript(`${BRIDGE_STUB}
+Object.assign(window.refrain, {
   openProject: async () => "/p", openFile: async () => null, createProject: async () => null,
   pathFor: () => "", resolveDrop: async () => null, fullscreen: async () => true,
   loadProject: async () => [], saveChapter: async () => ({ ok: true, edits: [] }),
@@ -49,7 +50,7 @@ await page.addInitScript(`window.refrain = {
   displayProfile: async () => ({ refreshHz: 60, scaleFactor: 1, css: {} }),
   onDisplayChange: () => {}, onCloseRequest: () => () => {},
   fonts: async () => [], systemFonts: async () => [],
-};`);
+});`);
 await page.goto(`http://localhost:${server.port}`);
 await page.waitForTimeout(400);
 

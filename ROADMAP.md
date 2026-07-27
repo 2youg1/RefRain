@@ -4,6 +4,56 @@
 
 ---
 
+## Shipped — v0.1.6
+
+The manuscript held up in v0.1.5. This release is about the evidence — the
+gates that were supposed to prove it, several of which were not proving
+anything.
+
+**A gate that stopped looking now says so.** Two invariant guards scanned by
+literal path. A refactor moved the code they watched, and both quietly degraded
+to `exit 0` — green forever, watching an empty set. They now count what they
+scanned and fail when the count is zero. A third script had never been called
+by any workflow at all: it had been failing unnoticed, and its symptom was
+written into the design baseline as a product defect. The gate list on disk and
+the gate list in CI are now compared by a gate.
+
+**Every stubbed bridge answers what the real one answers.** Twenty-one render
+gates each hand-wrote a stand-in for the preload bridge, and none was complete.
+A method a stub forgot was `undefined` at call time, so the component took its
+empty branch and the gate reported PASS on a screen no user would ever see. One
+gate failed exactly this way, and the failure read as a missing feature. The
+stubs now share one base, and a gate keeps the base level with preload.
+
+**The law is tested, not four examples of it.** SPEC §7.4 ends with an
+algebraic claim — merging disjoint proposals commutes — and 387 tests, every
+one an example, gave it no coverage. Four properties now generate the pairs
+instead of naming them. The fourth exists because the first three did not earn
+their green: disabling the conflict branch entirely left all three passing,
+since generating disjoint scopes by construction means never reaching it.
+
+**A moved sentence is not a formatting change.** The edit log aligned text one
+way and the review engine another, so a paragraph the author had reordered
+could be described as whitespace. Both now use the alignment the edit log
+already had, and an insertion chain lands in chain order rather than
+declaration order.
+
+**Typography and theme live in one place.** Chinese and Japanese were setting
+each other's stacks — a Japanese face was reaching Chinese text through a
+shared fallback. Each language now has its own stack, and the theme owns the
+paper: eight themes light the paper they are made of rather than a white that
+was the same in all of them.
+
+**A command that arrives with a project asks first.** A project could carry an
+agent definition, and opening it was enough to run that command. Trust is now
+granted per agent, and the harness receives what it needs and nothing it could
+leak.
+
+**Judgments survive the panel closing.** Staged verdicts lived inside a sheet
+that unmounts on Escape, so a reader who judged several slices and glanced back
+at the paragraph found an empty list on reopening. The same component cleared
+them before the merge it was asked to perform.
+
 ## Shipped — v0.1.5
 
 Windows x64. One author, several local folders, any harness, chapterised

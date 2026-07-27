@@ -17,7 +17,7 @@
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { launchBrowser } from "./browser.ts";
+import { BRIDGE_STUB, launchBrowser } from "./browser.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = dirname(here);
@@ -39,7 +39,8 @@ const bridge = `
   // a bridge that never got assigned looks exactly like a component that never
   // rendered.
   window.__ENTRIES = ${JSON.stringify(ENTRIES)};
-  window.refrain = {
+  ${BRIDGE_STUB}
+  Object.assign(window.refrain, {
     openProject: async () => null,
     openFile: async () => null,
     createProject: async () => null,
@@ -106,7 +107,7 @@ const bridge = `
       },
     }),
     onDisplayChange: () => () => {}, onCloseRequest: () => () => {},
-  };
+  });
   localStorage.setItem("refrain.roots", JSON.stringify(["/home/author/novel"]));
 `;
 

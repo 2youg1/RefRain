@@ -9,7 +9,7 @@
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { launchBrowser } from "./browser.ts";
+import { BRIDGE_STUB, launchBrowser } from "./browser.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const html = (await Bun.file(join(root, "dist", "renderer", "index.html")).text()).replace(
@@ -28,7 +28,8 @@ const server = Bun.serve({
 
 const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-await page.addInitScript(`window.refrain = {
+await page.addInitScript(`${BRIDGE_STUB}
+Object.assign(window.refrain, {
   openProject: async () => "/p", loadProject: async () => [], loadWorkspace: async () => [],
   createProject: async () => null, pathFor: () => "", resolveDrop: async () => null,
   fullscreen: async () => true, saveChapter: async () => ({ ok: true, edits: [] }),
@@ -38,7 +39,7 @@ await page.addInitScript(`window.refrain = {
   commit: async () => ({ ok: true, text: "" }), ledger: async () => [], reply: async () => "",
   displayProfile: async () => ({ refreshHz: 60, scaleFactor: 1, css: {} }),
   onDisplayChange: () => {}, onCloseRequest: () => () => {}, fonts: async () => [],
-};`);
+});`);
 await page.goto(`http://localhost:${server.port}`);
 await page.waitForTimeout(500);
 

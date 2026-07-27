@@ -1,6 +1,6 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { launchBrowser } from "./browser.ts";
+import { BRIDGE_STUB, launchBrowser } from "./browser.ts";
 
 const desktop = dirname(dirname(fileURLToPath(import.meta.url)));
 const html = (await Bun.file(join(desktop, "dist", "renderer", "index.html")).text()).replace(
@@ -32,7 +32,8 @@ await page.addInitScript(`
     { id: "01.md", title: "01", text: "第二个根的正文。", root: "/b", rootId: "r-b",
       role: "chapter", path: "/b/01.md" },
   ];
-  window.refrain = {
+  ${BRIDGE_STUB}
+  Object.assign(window.refrain, {
     openProject: async () => ["/a", "/b"][window.__openCount++] ?? null,
     openFile: async () => null,
     createProject: async () => null,
@@ -77,7 +78,7 @@ await page.addInitScript(`
       trash: async () => ({ ok: true, outcomes: [] }),
       trashViaHome: async () => ({ ok: true, path: "" }),
     },
-  };
+  });
 `);
 
 try {

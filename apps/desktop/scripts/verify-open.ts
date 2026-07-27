@@ -9,7 +9,7 @@
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { launchBrowser } from "./browser.ts";
+import { BRIDGE_STUB, launchBrowser } from "./browser.ts";
 
 const desktop = dirname(dirname(fileURLToPath(import.meta.url)));
 const html = (await Bun.file(join(desktop, "dist", "renderer", "index.html")).text()).replace(
@@ -39,7 +39,8 @@ const MATERIAL = "一九〇五年，年表里的一行。";
  * `chapter.root` against the root's path, those two differed, and nothing
  * matched. A stub that set them equal would let the old code pass.
  */
-const bridge = `window.refrain = {
+const bridge = `${BRIDGE_STUB}
+Object.assign(window.refrain, {
   openProject: async () => "/work",
   openFile: async () => "/elsewhere/essay.md",
   createProject: async () => null,
@@ -73,7 +74,7 @@ const bridge = `window.refrain = {
   commit: async () => ({ ok: true, text: "" }), ledger: async () => [], reply: async () => "",
   displayProfile: async () => ({ refreshHz: 60, scaleFactor: 1, css: {} }),
   onDisplayChange: () => {}, onCloseRequest: () => () => {}, fonts: async () => [],
-};`;
+});`;
 
 const failures: string[] = [];
 const browser = await launchBrowser();

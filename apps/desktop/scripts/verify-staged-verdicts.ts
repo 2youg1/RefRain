@@ -12,7 +12,7 @@
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { launchBrowser } from "./browser.ts";
+import { BRIDGE_STUB, launchBrowser } from "./browser.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const html = (await Bun.file(join(root, "dist", "renderer", "index.html")).text()).replace(
@@ -78,7 +78,8 @@ const DISPATCH_ENTRY = /^\s*(交给 Agent…|Send to an agent…)(\s|$)/;
 
 // One proposal with two judgable slices, and a commit that always refuses —
 // so the refusal path is exercised without needing a real merge to fail.
-await page.addInitScript(`window.refrain = {
+await page.addInitScript(`${BRIDGE_STUB}
+Object.assign(window.refrain, {
   openProject: async () => "/w", openFile: async () => null, createProject: async () => null,
   pathFor: () => "", resolveDrop: async () => null, fullscreen: async () => true,
   loadProject: async () => [], saveChapter: async () => ({ ok: true, edits: [] }),
@@ -108,7 +109,7 @@ await page.addInitScript(`window.refrain = {
   displayProfile: async () => ({ refreshHz: 60, scaleFactor: 1, css: {} }),
   onDisplayChange: () => {}, onCloseRequest: () => () => {},
   fonts: async () => [], systemFonts: async () => [],
-};`);
+});`);
 await page.goto(`http://localhost:${server.port}`);
 await page.waitForTimeout(400);
 

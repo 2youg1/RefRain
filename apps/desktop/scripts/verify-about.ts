@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { launchBrowser } from "./browser.ts";
+import { BRIDGE_STUB, launchBrowser } from "./browser.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -36,7 +36,8 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 // check which address a click actually asked for.
 await page.addInitScript(`
   window.__opened = [];
-  window.refrain = {
+  ${BRIDGE_STUB}
+  Object.assign(window.refrain, {
     openProject: async () => "/p",
     loadProject: async () => [{ id: "01.md", title: "01", text: "黑暗中有人问。" }],
     loadWorkspace: async () => [{ id: "01.md", title: "01", text: "黑暗中有人问。", root: "/p", path: "/p/01.md" }],
@@ -53,7 +54,7 @@ await page.addInitScript(`
       scan: async () => ({ total: 0, entries: [] }), page: async () => ({ total: 0, entries: [] }),
       search: async () => ({ total: 0, entries: [] }), sort: async () => true, trash: async () => ({ ok: true }),
     },
-  };
+  });
   localStorage.setItem("refrain.roots", JSON.stringify(["/p"]));
 `);
 

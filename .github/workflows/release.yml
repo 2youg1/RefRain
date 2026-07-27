@@ -166,6 +166,15 @@ jobs:
     permissions:
       contents: write
     steps:
+      # The notes are generated from ROADMAP.md, so this job needs the
+      # repository and a Bun to run the generator with — it previously needed
+      # neither, because the notes were a literal in this file.
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
       - uses: actions/download-artifact@v7
         with:
           pattern: refrain-*
@@ -183,53 +192,18 @@ jobs:
               print(f"{path.name}  {path.stat().st_size} bytes")
           PY
 
+            # The notes come from ROADMAP.md, not from a literal in this file. Two
+      # copies of the same paragraphs meant two places to update and one of
+      # them lost: this workflow announced "RefRain 0.1.5" while 0.1.6 was
+      # being tagged. The generator refuses a tag ROADMAP does not describe.
+      - name: build the release notes from ROADMAP
+        working-directory: apps/desktop
+        run: bun scripts/release-notes.ts "${{ github.ref_name }}" > "$RUNNER_TEMP/notes.md"
+
       # One job owns the Release. The build job uploads one verified Windows
       # installer; this job alone turns it into a public release asset.
       - uses: softprops/action-gh-release@v2
         with:
           files: release-assets/*
           generate_release_notes: true
-          body: |
-            RefRain 0.1.5 is available for **Windows x64**.
-
-            This release is about the manuscript surviving contact with the
-            application.
-
-            **Bytes you did not write stay as you left them.** Opening a file
-            and saving it with no edit at all used to lose bytes: the
-            ideographic indent that opens a Chinese paragraph was deleted on
-            load, a fenced code block was cut in two by the blank line inside
-            it, and consecutive blank lines collapsed. Twelve bytes of a
-            hundred and eighty-six, with the whole test suite green. A file now
-            parses into blocks that remember where they sit in the original,
-            and saving replaces only the ranges whose text actually changed.
-
-            **Typing Chinese waits for the input method.** Ctrl+S mid-word
-            wrote half-formed pinyin to disk as prose, and a redraw arriving
-            during composition tore out the node the input method was composing
-            into. A save asked for mid-composition is now deferred, not
-            refused. The surface also stopped collapsing whitespace, so an
-            indent is visible as an indent.
-
-            **Saving a long book costs what the change costs.** A
-            40,000-paragraph manuscript threw `RangeError: Out of memory` on
-            any save. Correcting one character in a 20,000-paragraph manuscript
-            took 5.2 seconds; it now takes 5.5 milliseconds, and 100,000
-            paragraphs complete in every shape of edit that used to crash.
-
-            Open or drop a folder of Markdown files. **Ctrl K** reaches every
-            command; **Ctrl Enter** enters Zen.
-
-            The application makes no network requests, has no accounts, and
-            never merges agent output without a human click. Token counts show
-            exactly what a harness reports, and unknown when it reports nothing.
-
-            The Windows IME gate (`e2e/ime`, Microsoft Pinyin through real
-            `SendInput`) has not been run against this build: it needs a real
-            desktop with an input method installed, which no hosted runner
-            provides. The composition fix above is checked by a headless gate
-            driving real `CompositionEvent`s, which is weaker evidence and is
-            not claimed as more.
-
-            This is an unsigned preview release. Windows SmartScreen may
-            therefore ask for an explicit confirmation.
+          body_path: ${{ runner.temp }}/notes.md
