@@ -109,7 +109,7 @@ try {
   await page.screenshot({ path: "/tmp/refrain-0.1.5-revert.png" });
   if (text.replace(/\n+/g, "\n\n").trim() !== "甲。\n\n乙。\n\n丙。")
     throw new Error(`wrong manuscript after revert: ${JSON.stringify(text)}`);
-  if (!calls.some((call) => call.join("|") === "revert|/work|01.md|e0-01.md:b1"))
+  if (!calls?.some((call) => call.join("|") === "revert|/work|01.md|e0-01.md:b1"))
     throw new Error(`wrong revert call: ${JSON.stringify(calls)}`);
   if (pageErrors.length > 0) throw new Error(`page errors: ${pageErrors.join("; ")}`);
   console.log("PASS  a saved middle-paragraph removal reverts through the rendered interface");

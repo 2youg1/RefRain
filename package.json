@@ -9,7 +9,10 @@
   "scripts": {
     "dev": "cd apps/desktop && bun run dev",
     "check": "tsc --noEmit && bun run check:desktop && bun run check:svelte",
-    "check:desktop": "cd apps/desktop && bun x tsc --noEmit -p tsconfig.json",
+    "check:desktop": "bun run check:main && bun run check:renderer && bun run check:scripts",
+    "check:main": "cd apps/desktop && bun x tsc --noEmit -p tsconfig.main.json",
+    "check:renderer": "cd apps/desktop && bun x tsc --noEmit -p tsconfig.renderer.json",
+    "check:scripts": "cd apps/desktop && bun x tsc --noEmit -p tsconfig.scripts.json",
     "fmt": "biome check --write .",
     "fmt:check": "biome check .",
     "test": "bun test",

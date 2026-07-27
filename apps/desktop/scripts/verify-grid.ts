@@ -189,7 +189,14 @@ if (!report.lines || report.lines.length < 2)
     `expected the sample paragraph to wrap onto at least two lines, saw ${report.lines?.length ?? 0}`,
   );
 
-const [first, second] = report.lines as { top: number; bottom: number }[];
+const lines = report.lines as { top: number; bottom: number }[];
+const [first, second] = lines;
+if (!first || !second) {
+  // Not `fail`: the checker cannot narrow through an awaited `never`, and both
+  // measurements are read a dozen lines below.
+  await teardown();
+  throw new Error(`FAIL  expected two measured lines, saw ${lines.length}`);
+}
 const gap = Math.round((second.top - first.bottom) * 10) / 10;
 const ruleAt = report.ruleAt ?? 0;
 
