@@ -12,6 +12,14 @@ export default defineConfig({
   plugins: [svelte()],
   // Relative base: the packaged app loads from file://, where absolute paths break.
   base: "./",
-  build: { outDir: "dist/renderer", emptyOutDir: true, target: "chrome150" },
+  build: {
+    outDir: "dist/renderer",
+    emptyOutDir: true,
+    target: "chrome150",
+    // Vite's modulepreload polyfill calls fetch(). RefRain emits one renderer
+    // chunk and loads from file://, so the polyfill adds network capability
+    // without serving any module this build needs.
+    modulePreload: { polyfill: false },
+  },
   server: { port: 5173, strictPort: true },
 });

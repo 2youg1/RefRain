@@ -37,9 +37,17 @@ test("the no-network gate scans every process that the application starts", () =
     join(here, "..", "..", "..", "scripts", "verify-no-network.ts"),
     "utf8",
   );
+  const policy = readFileSync(
+    join(here, "..", "..", "..", "scripts", "no-network-policy.ts"),
+    "utf8",
+  );
 
-  expect(verifier).toContain("packages/agent/src");
-  expect(verifier).toContain("apps/desktop/src/main");
+  expect(verifier).toContain("auditNoNetwork");
+  expect(policy).toContain("packages/agent/src");
+  expect(policy).toContain("apps/desktop/src/main");
+  expect(policy).toContain("dist/main/main.cjs");
+  expect(policy).toContain("dist/main/preload.cjs");
+  expect(policy).toContain("dist/renderer/");
 });
 
 test("packaging uses Node platform names for the native binary", () => {
