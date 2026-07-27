@@ -246,7 +246,14 @@ let openMaterial = $state<Record<string, boolean>>({});
   transition: opacity 140ms var(--ease);
 }
 
-.root:hover .drop-root {
+/*
+ * Revealed on hover, because a rail full of ✕ is a rail that invites a
+ * mis-click. But hover is a pointer fact: a keyboard user tabbing through the
+ * rail reached a button at opacity 0 and could not see where they were. The
+ * focus ring has nothing to draw around when the control is invisible.
+ */
+.root:hover .drop-root,
+.drop-root:focus-visible {
   opacity: 1;
 }
 

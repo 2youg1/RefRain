@@ -510,7 +510,18 @@ const openFile = async (): Promise<void> => {
   if (chosen) await addRoots([chosen]);
 };
 
+/**
+ * Removing a Root is not a delete, but it is not nothing either.
+ *
+ * The ✕ sat one mis-click away from emptying the rail, and the author's way
+ * back was to remember the folder's path and pick it again. Nothing on disk
+ * changes, so the offer says so — an author who reads "delete" and hesitates
+ * has been told the wrong thing.
+ */
+let droppingRoot = $state<string | null>(null);
+
 const removeRoot = async (path: string): Promise<void> => {
+  droppingRoot = null;
   roots = roots.filter((r) => r !== path);
   await reload();
 };
@@ -1116,7 +1127,7 @@ const onScroll = (): void => {
         {active}
         onSelect={select}
         onAddRoot={() => void addRoot()}
-        onRemoveRoot={(path) => void removeRoot(path)}
+        onRemoveRoot={(path) => (droppingRoot = path)}
         onNewChapter={() => newChapter("chapter")}
         onPaletteOpen={() => (paletteOpen = true)}
         onPaletteClose={() => (paletteOpen = false)}
@@ -1413,6 +1424,20 @@ const onScroll = (): void => {
     <div class="offer-actions">
       <button class="quiet" onclick={() => (trashOffer = [])}>{t("files.keepHere")}</button>
       <button class="go" onclick={() => void trashViaHome()}>{t("files.trashViaHome")}</button>
+    </div>
+  </div>
+{/if}
+
+{#if droppingRoot !== null}
+  <div class="offer" role="alertdialog" aria-label={t("root.drop")}>
+    <p>{t("root.drop")}</p>
+    <p class="paths">{droppingRoot}</p>
+    <p class="paths">{t("root.dropHint")}</p>
+    <div class="offer-actions">
+      <button class="quiet" onclick={() => (droppingRoot = null)}>{t("root.keep")}</button>
+      <button class="go" onclick={() => void removeRoot(droppingRoot ?? "")}>
+        {t("root.dropConfirm")}
+      </button>
     </div>
   </div>
 {/if}
