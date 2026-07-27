@@ -84,6 +84,8 @@ let menuAt = $state<{ x: number; y: number } | null>(null);
 
 let edits = $state<EditView[]>([]);
 let proposals = $state<ProposalView[]>([]);
+/** The chapter the collected Proposals were written against (SPEC §2, Edit Scope). */
+let proposalsFor = $state<string | null>(null);
 let comments = $state<{ target: string; text: string }[]>([]);
 let runs = $state<RunView[]>([]);
 /** The project that owns the visible Run list; chapter titles cannot identify it. */
@@ -580,6 +582,15 @@ const selectNow = (path: string | null): void => {
   text = chapters.find((chapter) => chapter.path === path)?.text ?? "";
   saved = true;
   edits = [];
+  // A Proposal is written against one chapter's blocks. Carrying it into
+  // another chapter offered the author a merge whose scope ids address text
+  // that is no longer on screen — the Review panel showed a rewrite of a
+  // paragraph they had navigated away from, as though it applied here.
+  if (path !== proposalsFor) {
+    proposals = [];
+    comments = [];
+    if (sheet === "review") sheet = null;
+  }
   queueMicrotask(() => render(text));
 };
 /*
@@ -823,6 +834,7 @@ const collect = async (runId: string): Promise<void> => {
     const result = await api().collect(owner, runId);
     proposals = [...proposals, ...result.proposals];
     comments = [...comments, ...result.comments];
+    proposalsFor = active;
     sheet = "review";
   } catch (error) {
     say(String(error));
