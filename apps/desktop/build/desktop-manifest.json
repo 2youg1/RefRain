@@ -3,18 +3,18 @@
   "files": [
     {
       "path": "dist/checks/node-ledger-check.cjs",
-      "bytes": 4262,
-      "sha256": "831bf82c75ac11eacf9427df11da9ec1faf34bdb0eff33570ec7ea83a0234f29"
+      "bytes": 5232,
+      "sha256": "92469dfc71ef128a26ca18dee843e74c5e7328418ed1d02f5d9cd3390af07e43"
     },
     {
       "path": "dist/main/main.cjs",
-      "bytes": 148164,
-      "sha256": "4eab1ec0e6a5ba04a21d45ada893a24ab3f18af8c8fd53757bebbf6dc1181269"
+      "bytes": 153052,
+      "sha256": "fab7447cb1c245707885e9dad6e2ef75d5f0631ecaf5f6ef7d186312ef5fbe07"
     },
     {
       "path": "dist/main/preload.cjs",
-      "bytes": 6236,
-      "sha256": "c4b954c4874f564d6977cbdd27c43f85924b8ceb95a2f8b4773ee21fb6079bd7"
+      "bytes": 6482,
+      "sha256": "823c57cde42c6a72de5ee56bfac0c154e74d9b87ed3c683493e00ff3ad57baae"
     },
     {
       "path": "dist/renderer/assets/AnticDidone-Bk4I4Inl.woff2",
@@ -57,19 +57,19 @@
       "sha256": "a3c02a9ae41b87b1811bc4aef6a1399b7a5c8349c947da1fd81b7671aa67ddc2"
     },
     {
-      "path": "dist/renderer/assets/index-CBUib6su.js",
-      "bytes": 152878,
-      "sha256": "31bab54d8c01346f375b483af9ab6c4fc7c7803a0c165429b45ffc1099e8495f"
-    },
-    {
       "path": "dist/renderer/assets/index-CTkqaqsY.css",
       "bytes": 62066,
       "sha256": "6d5a59d6631fbed6d2a907fea6815e886196d27787a45deba3535cee4295b355"
     },
     {
+      "path": "dist/renderer/assets/index-Dr5YgMme.js",
+      "bytes": 153264,
+      "sha256": "49b25a9c40deb53c0fe8d57e8f36c181af7f6b1751c76f6c6d88109952d04189"
+    },
+    {
       "path": "dist/renderer/index.html",
       "bytes": 620,
-      "sha256": "74dc0c36cdafe8fd4fea34ba6e4b904a18ec774ddd6339ca49367d9b643ef849"
+      "sha256": "23c1dd121ff6b41439a56bce61068b801530f051188600f0dee6292a36ed0a1a"
     }
   ]
 }

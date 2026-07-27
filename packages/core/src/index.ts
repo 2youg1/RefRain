@@ -45,6 +45,7 @@ export {
   revertAll,
   revertEdit,
 } from "./edits.ts";
+export type { KaraNote } from "./ledger.ts";
 export { VerdictLedger } from "./ledger.ts";
 export type { MemoEntry } from "./memo.ts";
 export { appendMemos, carryForward, readMemos } from "./memo.ts";

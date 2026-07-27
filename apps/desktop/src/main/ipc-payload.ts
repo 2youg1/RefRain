@@ -43,6 +43,9 @@ interface IpcArguments {
   "ledger:all": [root: string];
   "ledger:reply": [root: string, proposalId: string];
   "ledger:search": [root: string, fragment: string];
+  "ledger:note": [root: string, note: { text: string; chapterId?: string; blockId?: string }];
+  "ledger:notes": [root: string];
+  "ledger:drop-note": [root: string, id: string];
   "files:scan": [root: string, options: Record<string, unknown> | undefined];
   "files:page": [root: string, offset: number, limit: number];
   "files:search": [root: string, query: string, limit: number | undefined];
@@ -81,6 +84,9 @@ export type RootIpcChannel =
   | "ledger:all"
   | "ledger:reply"
   | "ledger:search"
+  | "ledger:note"
+  | "ledger:notes"
+  | "ledger:drop-note"
   | "files:scan"
   | "files:page"
   | "files:search"
@@ -302,6 +308,27 @@ const scanOptions: Decode<Record<string, unknown>> = (value, path) => {
   return held;
 };
 
+/**
+ * A 念頭寄存 note as the renderer offers it (SPEC Q12).
+ *
+ * The identifier and timestamp are the main process's to mint, not the
+ * renderer's: a note whose id came across the bridge could silently overwrite
+ * another, and a capture time supplied by the caller is a claim rather than a
+ * fact. Only the author's words and where they were standing cross.
+ */
+const karaNote: Decode<{ text: string; chapterId?: string; blockId?: string }> = (value, path) => {
+  const held = record(value, path, ["text", "chapterId", "blockId"]);
+  const written = text(held.text, `${path}.text`);
+  if (written.trim().length === 0) refuse(`${path}.text`, "is empty");
+  return {
+    text: written,
+    ...(held.chapterId === undefined
+      ? {}
+      : { chapterId: text(held.chapterId, `${path}.chapterId`) }),
+    ...(held.blockId === undefined ? {} : { blockId: text(held.blockId, `${path}.blockId`) }),
+  };
+};
+
 const rootedPair = (
   channel: string,
   values: unknown[],
@@ -389,6 +416,9 @@ const parsers = {
   "ledger:all": tuple(absolutePath),
   "ledger:reply": tuple(absolutePath, text),
   "ledger:search": tuple(absolutePath, text),
+  "ledger:note": tuple(absolutePath, karaNote),
+  "ledger:notes": tuple(absolutePath),
+  "ledger:drop-note": tuple(absolutePath, text),
   "files:scan": tuple(absolutePath, optional(scanOptions)),
   "files:page": tuple(absolutePath, integer(0), integer(0)),
   "files:search": tuple(absolutePath, text, optional(integer(0))),

@@ -920,6 +920,46 @@ export const registerHandlers = (
   });
 
   /*
+   * 念頭寄存 (SPEC Q12). A thought caught mid-sentence is a judgment about the
+   * work, so it lives in the ledger. When the ledger will not open the command
+   * is unavailable and says so — accepting a note into a place that cannot
+   * keep it loses it silently, which is worse than refusing to take one.
+   */
+  handlers.handleRoot(
+    "ledger:note",
+    (_e, root: string, note: { text: string; chapterId?: string; blockId?: string }) => {
+      const held = ledgerOf(root);
+      if (!("ledger" in held))
+        return { ok: false as const, reason: "ledger-unavailable", detail: held.detail };
+
+      const stored = {
+        id: randomUUID(),
+        text: note.text,
+        capturedAt: new Date().toISOString(),
+        ...(note.chapterId === undefined ? {} : { chapterId: note.chapterId }),
+        ...(note.blockId === undefined ? {} : { blockId: note.blockId }),
+      };
+      held.ledger.note(stored);
+      return { ok: true as const, note: stored };
+    },
+  );
+
+  handlers.handleRoot("ledger:notes", (_e, root: string) => {
+    const held = ledgerOf(root);
+    return "ledger" in held
+      ? { ok: true, notes: held.ledger.notes() }
+      : { ok: false, reason: "ledger-unavailable", detail: held.detail };
+  });
+
+  handlers.handleRoot("ledger:drop-note", (_e, root: string, id: string) => {
+    const held = ledgerOf(root);
+    if (!("ledger" in held))
+      return { ok: false as const, reason: "ledger-unavailable", detail: held.detail };
+    held.ledger.dropNote(id);
+    return { ok: true as const };
+  });
+
+  /*
    * Retrieval over stated reasoning. The ledger informs the author when they
    * revise an agent's persona; it does not compile one for them, which would
    * require an inference this application has no way to perform.
