@@ -4,15 +4,18 @@ import {
   type Dirent,
   existsSync,
   fstatSync,
-  mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
   realpathSync,
   statSync,
 } from "node:fs";
-import { basename, dirname, extname, join, relative } from "node:path";
-import { replaceFileAtomically } from "./atomic-file.ts";
+import { basename, dirname, extname, isAbsolute, join, relative, sep } from "node:path";
+import {
+  ownsInterruptedWrite,
+  recoverInterruptedWrite,
+  replaceFileAtomically,
+} from "./atomic-file.ts";
 import type { TextHead } from "./domain.ts";
 import { applyBlocks, blockPrefix, parseSource, splitBlocks } from "./roundtrip.ts";
 
@@ -122,6 +125,10 @@ export interface Root {
 export interface Workspace {
   readonly roots: readonly Root[];
   readonly chapters: readonly Chapter[];
+  /** Divergent `.writing` files preserved before any project writer opened. */
+  readonly recoveryEvidencePaths: readonly string[];
+  /** Residues that could not be recovered; healthy Roots still open. */
+  readonly recoveryWarnings: readonly string[];
 }
 
 const MARKDOWN = new Set([".md", ".markdown", ".mdown", ".txt"]);
@@ -143,6 +150,35 @@ const assertMutableChapterPath = (path: string): void => {
   }
   if (namesSourceBackup(path) || namesSourceBackup(parent))
     throw new Error(`Source Backup is never written to: ${path}`);
+};
+
+const isWithin = (root: string, candidate: string): boolean => {
+  const fromRoot = relative(root, candidate);
+  return (
+    fromRoot === "" ||
+    (fromRoot !== ".." && !fromRoot.startsWith(`..${sep}`) && !isAbsolute(fromRoot))
+  );
+};
+
+/** Resolve every existing component so a directory symlink cannot move a write outside its Root. */
+const assertChapterInsideRoot = (root: string, path: string): void => {
+  const canonicalRoot = realpathSync(root);
+  if (statSync(canonicalRoot).isFile()) {
+    if (!existsSync(path) || realpathSync(path) !== canonicalRoot)
+      throw new Error(`manuscript path is outside its file Root: ${path}`);
+    return;
+  }
+
+  let ancestor = dirname(path);
+  while (!existsSync(ancestor)) {
+    const parent = dirname(ancestor);
+    if (parent === ancestor) break;
+    ancestor = parent;
+  }
+  if (!isWithin(canonicalRoot, realpathSync(ancestor)))
+    throw new Error(`manuscript path is outside Root ${root}: ${path}`);
+  if (existsSync(path) && !isWithin(canonicalRoot, realpathSync(path)))
+    throw new Error(`manuscript path resolves outside Root ${root}: ${path}`);
 };
 
 const isLegalSegment = (segment: string): boolean =>
@@ -173,9 +209,7 @@ const pathForNewChapter = (root: string, title: string): string => {
   if (segments.length === 0 || !segments.every(isLegalSegment))
     throw new Error(`invalid chapter title: ${title}`);
 
-  const path = join(root, `${segments.join("/")}.md`);
-  mkdirSync(dirname(path), { recursive: true });
-  return path;
+  return join(root, `${segments.join("/")}.md`);
 };
 
 /**
@@ -216,6 +250,40 @@ const parseChapter = (
 /** Neither the Source Backup nor the application's own state is manuscript. */
 const RESERVED_DIR = new Set([SOURCE_BACKUP_DIR, ".refrain"]);
 
+const isSourceBackupPath = (path: string): boolean => {
+  if (namesSourceBackup(path)) return true;
+  try {
+    return namesSourceBackup(realpathSync(path));
+  } catch {
+    return false;
+  }
+};
+
+interface RecoveryReport {
+  readonly evidencePaths: string[];
+  readonly warnings: string[];
+}
+
+const recoverOwnedTarget = (target: string, report: RecoveryReport): void => {
+  try {
+    const result = recoverInterruptedWrite(target);
+    if (result.recoveryEvidencePath !== undefined)
+      report.evidencePaths.push(result.recoveryEvidencePath);
+  } catch (error) {
+    report.warnings.push(`Could not recover interrupted write ${target}: ${String(error)}`);
+  }
+};
+
+const STATE_TARGETS = ["host.json", "agents.json", "decision-commit.json"] as const;
+
+const recoverRootState = (root: Root, report: RecoveryReport): void => {
+  const state = join(root.path, ".refrain");
+  for (const name of STATE_TARGETS) recoverOwnedTarget(join(state, name), report);
+};
+
+const isManuscriptResidue = (name: string): boolean =>
+  name.endsWith(".writing") && isMarkdown(name.slice(0, -".writing".length));
+
 /** A chapter number is a number: 10 follows 9 rather than 1. */
 const FILE_ORDER = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
@@ -229,7 +297,13 @@ const isMarkdown = (name: string): boolean => MARKDOWN.has(extname(name).toLower
  * a subdirectory visible in the file browser, which walks the tree natively,
  * and unopenable in the editor, which did not.
  */
-const collect = (root: Root, dir: string, depth: number, into: Chapter[]): void => {
+const collect = (
+  root: Root,
+  dir: string,
+  depth: number,
+  into: Chapter[],
+  recovery?: RecoveryReport,
+): void => {
   let entries: Dirent[];
   try {
     entries = readdirSync(dir, { withFileTypes: true });
@@ -246,7 +320,15 @@ const collect = (root: Root, dir: string, depth: number, into: Chapter[]): void 
     const path = join(dir, name);
 
     if (entry.isDirectory()) {
-      collect(root, path, depth + 1, into);
+      // Hidden tool trees may contain files named `.writing`, but RefRain did
+      // not create them. They remain readable as material without granting the
+      // recovery sweep ownership of their names.
+      collect(root, path, depth + 1, into, name.startsWith(".") ? undefined : recovery);
+      continue;
+    }
+    if (entry.isFile() && recovery !== undefined && isManuscriptResidue(name)) {
+      const target = path.slice(0, -".writing".length);
+      if (ownsInterruptedWrite(target)) recoverOwnedTarget(target, recovery);
       continue;
     }
     if (!entry.isFile() || !isMarkdown(name)) continue;
@@ -257,10 +339,12 @@ const collect = (root: Root, dir: string, depth: number, into: Chapter[]): void 
   }
 };
 
-const chaptersUnder = (root: Root): Chapter[] => {
+const chaptersUnder = (root: Root, recovery?: RecoveryReport): Chapter[] => {
   if (root.missing) return [];
+  const canRecover = recovery !== undefined && !isSourceBackupPath(root.path);
 
   if (root.kind === "file") {
+    if (canRecover && ownsInterruptedWrite(root.path)) recoverOwnedTarget(root.path, recovery);
     const snapshot = readChapterFile(root.path);
     // A lone file is a chapter: it is the thing the writer opened. Its id is
     // taken against its own directory so it reads as a name rather than a path.
@@ -269,8 +353,9 @@ const chaptersUnder = (root: Root): Chapter[] => {
       : [parseChapter(root, dirname(root.path), root.path, "chapter", snapshot)];
   }
 
+  if (canRecover) recoverRootState(root, recovery);
   const found: Chapter[] = [];
-  collect(root, root.path, 0, found);
+  collect(root, root.path, 0, found, canRecover ? recovery : undefined);
   return found;
 };
 
@@ -314,7 +399,14 @@ export const describeRoot = (path: string): Root => {
  */
 export const loadWorkspace = (paths: readonly string[]): Workspace => {
   const roots = paths.map(describeRoot);
-  return { roots, chapters: roots.flatMap(chaptersUnder) };
+  const recovery: RecoveryReport = { evidencePaths: [], warnings: [] };
+  const chapters = roots.flatMap((root) => chaptersUnder(root, recovery));
+  return {
+    roots,
+    chapters,
+    recoveryEvidencePaths: recovery.evidencePaths,
+    recoveryWarnings: recovery.warnings,
+  };
 };
 
 /** Backwards-compatible single-root load, kept because tests and the L0 channel use it. */
@@ -334,21 +426,6 @@ export const loadProject = (root: string): { root: string; chapters: readonly Ch
 export const serializeChapter = (head: TextHead): string =>
   `${head.blocks.map((b) => b.text).join("\n\n")}\n`;
 
-/**
- * The bytes to write, preserving everything the author did not edit.
- *
- * The head carries block text and nothing about what stood between blocks, so
- * rebuilding a file from it alone flattened three blank lines into one and
- * dropped a missing final newline back in. Parsing the disk copy gives those
- * bytes back: unedited blocks land in their own ranges with their own
- * surroundings, and only the text that changed is text that changes.
- */
-const chapterBytes = (path: string, head: TextHead): string => {
-  const onDisk = readChapterFile(path);
-  if (onDisk === undefined) return serializeChapter(head);
-  return applyBlocks(parseSource(onDisk.text, blockPrefix(head.blocks)), head.blocks);
-};
-
 /** A refusal, not an exception: the caller has to ask a person what to do. */
 export interface ChangedUnderneath {
   readonly ok: false;
@@ -361,43 +438,115 @@ export interface ChangedUnderneath {
 }
 
 export type WriteOutcome =
-  | { readonly ok: true; readonly path: string; readonly stamp: FileStamp }
+  | {
+      readonly ok: true;
+      readonly path: string;
+      readonly stamp: FileStamp;
+      readonly recoveryEvidencePath?: string;
+    }
   | ChangedUnderneath;
 
-/**
- * Write a chapter, unless someone else wrote it first.
- *
- * Two separate promises. The temp-file-and-rename keeps a crash mid-write from
- * leaving a truncated chapter — that was already here. What is new is the
- * comparison against `expected`: without it, a file edited in another editor
- * was silently overwritten on the next save, because this application's own
- * cached head was treated as the truth about the disk. The file is the truth
- * (SPEC axiom 1), and a caller that has not looked recently must be told so
- * rather than allowed to win.
- *
- * Passing no `expected` writes unconditionally, which is correct for a file
- * this application is creating.
- */
-export const writeChapter = (path: string, head: TextHead, expected?: FileStamp): WriteOutcome => {
-  assertMutableChapterPath(path);
-  if (expected !== undefined) {
-    const actual = readChapterFile(path);
-    // A file that has since vanished is not a conflict — the author moved or
-    // deleted it, and writing it back is what they asked for by saving.
-    if (actual !== undefined && actual.stamp.digest !== expected.digest)
-      return {
+/** One exact byte plan shared by the decision intent and the canonical write. */
+export interface PreparedChapterWrite {
+  readonly ok: true;
+  readonly path: string;
+  readonly content: string;
+  readonly expected?: FileStamp;
+  readonly root?: string;
+}
+
+const changedSnapshot = (
+  path: string,
+  expected: FileStamp,
+  actual: ChapterFileSnapshot | undefined,
+): ChangedUnderneath | undefined => {
+  // A file that has since vanished is not a conflict — the author moved or
+  // deleted it, and writing it back is what they asked for by saving.
+  return actual === undefined || actual.stamp.digest === expected.digest
+    ? undefined
+    : {
         ok: false,
         reason: "changed-underneath",
         path,
         onDisk: actual.text,
         stamp: actual.stamp,
       };
-  }
+};
 
-  replaceFileAtomically(path, chapterBytes(path, head));
+const changedUnderneath = (path: string, expected: FileStamp): ChangedUnderneath | undefined =>
+  changedSnapshot(path, expected, readChapterFile(path));
+
+/**
+ * Freeze the bytes one decision intends to write.
+ *
+ * Rebuilding from the head alone flattens blank-line runs and line endings.
+ * Preparing once lets the Decision Batch hash the same BOM, CRLF and spacing
+ * that the file writer later commits instead of maintaining two serializers.
+ */
+export const prepareChapterWrite = (
+  path: string,
+  head: TextHead,
+  expected?: FileStamp,
+  root?: string,
+): PreparedChapterWrite | ChangedUnderneath => {
+  assertMutableChapterPath(path);
+  if (root !== undefined) assertChapterInsideRoot(root, path);
+  const onDisk = readChapterFile(path);
+  if (expected !== undefined) {
+    const changed = changedSnapshot(path, expected, onDisk);
+    if (changed !== undefined) return changed;
+  }
+  const content =
+    onDisk === undefined
+      ? serializeChapter(head)
+      : applyBlocks(parseSource(onDisk.text, blockPrefix(head.blocks)), head.blocks);
+  return {
+    ok: true,
+    path,
+    content,
+    ...(expected === undefined ? {} : { expected }),
+    ...(root === undefined ? {} : { root }),
+  };
+};
+
+/** Commit a prepared byte plan, rechecking the external-edit boundary first. */
+export const commitChapterWrite = (prepared: PreparedChapterWrite): WriteOutcome => {
+  const { path, expected, root } = prepared;
+  assertMutableChapterPath(path);
+  if (root !== undefined) assertChapterInsideRoot(root, path);
+  if (expected !== undefined) {
+    const changed = changedUnderneath(path, expected);
+    if (changed !== undefined) return changed;
+  }
+  if (root !== undefined) assertChapterInsideRoot(root, path);
+  const atomic = replaceFileAtomically(path, prepared.content);
   const stamp = stampOf(path);
   if (stamp === undefined) throw new Error(`chapter vanished after save: ${path}`);
-  return { ok: true, path, stamp };
+  return {
+    ok: true,
+    path,
+    stamp,
+    ...(atomic.recoveryEvidencePath === undefined
+      ? {}
+      : { recoveryEvidencePath: atomic.recoveryEvidencePath }),
+  };
+};
+
+/**
+ * Write a chapter, unless someone else wrote it first.
+ *
+ * The temp-file-and-rename keeps a crash mid-write from exposing a truncated
+ * chapter. The digest comparison refuses an edit already visible when the save
+ * begins. Passing no `expected` writes unconditionally for a new chapter.
+ */
+export const writeChapter = (
+  path: string,
+  head: TextHead,
+  expected?: FileStamp,
+  root?: string,
+): WriteOutcome => {
+  const prepared = prepareChapterWrite(path, head, expected, root);
+  return prepared.ok ? commitChapterWrite(prepared) : prepared;
 };
 
 export const saveChapter = (
@@ -414,5 +563,10 @@ export const saveChapter = (
   // separator is present.
   const extension = extname(idOrTitle);
   const title = chapter === undefined && extension === ".md" ? idOrTitle.slice(0, -3) : idOrTitle;
-  return writeChapter(chapter?.path ?? pathForNewChapter(project.root, title), head, expected);
+  return writeChapter(
+    chapter?.path ?? pathForNewChapter(project.root, title),
+    head,
+    expected,
+    project.root,
+  );
 };

@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { interruptedWriteMarkerPath } from "../src/atomic-file.ts";
 import { loadWorkspace } from "../src/project.ts";
 
 /**
@@ -21,6 +22,8 @@ import { loadWorkspace } from "../src/project.ts";
  */
 
 const scratch = (): string => mkdtempSync(join(tmpdir(), "refrain-roots-"));
+const markInterrupted = (target: string): void =>
+  writeFileSync(interruptedWriteMarkerPath(target), "refrain-atomic-write-v1\n", "utf8");
 
 test("a single file opened on its own belongs to itself, not to its folder", () => {
   const dir = scratch();
@@ -156,5 +159,101 @@ test("one unreadable root does not take the rest of the workspace down", () => {
     expect(workspace.roots.find((r) => r.missing)).toBeDefined();
   } finally {
     rmSync(good, { recursive: true, force: true });
+  }
+});
+
+test("opening a workspace preserves and reports a divergent interrupted write before loading", () => {
+  const dir = scratch();
+  const target = join(dir, "01.md");
+  const temporary = `${target}.writing`;
+  try {
+    writeFileSync(target, "权威正文。\n", "utf8");
+    writeFileSync(temporary, "中断时已经同步的候选稿。\n", "utf8");
+    markInterrupted(target);
+
+    const workspace = loadWorkspace([dir]);
+    const evidence = workspace.recoveryEvidencePaths[0];
+
+    expect(workspace.recoveryEvidencePaths).toHaveLength(1);
+    expect(workspace.chapters[0]?.head.blocks[0]?.text).toBe("权威正文。");
+    expect(readFileSync(target, "utf8")).toBe("权威正文。\n");
+    expect(readFileSync(evidence ?? "", "utf8")).toBe("中断时已经同步的候选稿。\n");
+    expect(existsSync(temporary)).toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("opening a workspace clears an identical interrupted write without raising a notice", () => {
+  const dir = scratch();
+  const target = join(dir, "01.md");
+  const temporary = `${target}.writing`;
+  try {
+    writeFileSync(target, "同一份正文。\n", "utf8");
+    writeFileSync(temporary, "同一份正文。\n", "utf8");
+    markInterrupted(target);
+
+    const workspace = loadWorkspace([dir]);
+
+    expect(workspace.recoveryEvidencePaths).toEqual([]);
+    expect(existsSync(temporary)).toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("opening the Source Backup never recovers or removes its interrupted writes", () => {
+  const dir = scratch();
+  const backup = join(dir, ".refrain-source");
+  const target = join(backup, "01.md");
+  const temporary = `${target}.writing`;
+  try {
+    mkdirSync(backup);
+    writeFileSync(target, "Source Backup。\n", "utf8");
+    writeFileSync(temporary, "不得处理。\n", "utf8");
+
+    const workspace = loadWorkspace([backup]);
+
+    expect(workspace.recoveryEvidencePaths).toEqual([]);
+    expect(readFileSync(temporary, "utf8")).toBe("不得处理。\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("opening a workspace leaves unrelated writing files and hidden tool residues untouched", () => {
+  const dir = scratch();
+  const ordinary = join(dir, "notes.writing");
+  const hidden = join(dir, ".git", "tool.md.writing");
+  try {
+    writeFileSync(join(dir, "notes"), "ordinary\n", "utf8");
+    writeFileSync(ordinary, "ordinary\n", "utf8");
+    mkdirSync(dirname(hidden), { recursive: true });
+    writeFileSync(hidden, "tool-owned\n", "utf8");
+
+    const workspace = loadWorkspace([dir]);
+
+    expect(workspace.recoveryEvidencePaths).toEqual([]);
+    expect(readFileSync(ordinary, "utf8")).toBe("ordinary\n");
+    expect(readFileSync(hidden, "utf8")).toBe("tool-owned\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("opening a workspace does not claim an unmarked Markdown writing file", () => {
+  const dir = scratch();
+  const target = join(dir, "01.md");
+  const temporary = `${target}.writing`;
+  try {
+    writeFileSync(target, "正文。\n", "utf8");
+    writeFileSync(temporary, "另一个工具的候选稿。\n", "utf8");
+
+    const workspace = loadWorkspace([dir]);
+
+    expect(workspace.recoveryEvidencePaths).toEqual([]);
+    expect(readFileSync(temporary, "utf8")).toBe("另一个工具的候选稿。\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
