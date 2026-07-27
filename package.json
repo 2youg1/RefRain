@@ -17,7 +17,7 @@
     "fmt:check": "biome check .",
     "test": "bun test",
     "gate": "bun run fmt:check && bun run check && bun run build:desktop && bun test",
-    "build:desktop": "cd apps/desktop && ./make.sh",
+    "build:desktop": "bun apps/desktop/scripts/build-desktop.ts",
     "verify:gate": "bun scripts/verify-gate.ts",
     "verify:no-network": "bun scripts/verify-no-network.ts",
     "verify:trash-only": "bun scripts/verify-trash-only.ts",
