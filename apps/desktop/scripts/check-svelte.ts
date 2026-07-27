@@ -12,14 +12,13 @@ import { Glob } from "bun";
 import { compile } from "svelte/compiler";
 
 /** Cosmetic warnings that do not indicate a defect in a desktop application. */
-const IGNORED = new Set([
-  "a11y_no_noninteractive_element_to_interactive_role",
-  "css_unused_selector",
-]);
+const IGNORED = new Set(["a11y_no_noninteractive_element_to_interactive_role"]);
 
 let failures = 0;
+let scanned = 0;
 
 for await (const file of new Glob("src/**/*.svelte").scan(".")) {
+  scanned++;
   const source = await Bun.file(file).text();
 
   try {
@@ -35,8 +34,17 @@ for await (const file of new Glob("src/**/*.svelte").scan(".")) {
   }
 }
 
+// A guard that scans a literal path reports success when the path stops
+// matching anything. Renaming src/ would have turned this into exit 0 forever.
+if (scanned === 0) {
+  console.error(
+    "FAIL  src/**/*.svelte matched no components — this guard is not looking at anything",
+  );
+  process.exit(1);
+}
+
 if (failures > 0) {
   console.error(`\nFAIL  ${failures} Svelte issue${failures === 1 ? "" : "s"}`);
   process.exit(1);
 }
-console.log("PASS  every Svelte component compiles cleanly");
+console.log(`PASS  ${scanned} Svelte components compile cleanly`);

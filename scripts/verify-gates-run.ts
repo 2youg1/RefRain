@@ -74,6 +74,17 @@ if (!ci.includes("cargo test")) {
   orphans.push("cargo test (the native file layer is never tested)");
 }
 
+// The CI side of this scan already guards against finding nothing. The gate
+// side did not: move or rename the script directories and both globs match
+// zero files, `orphans` stays empty, and this reports "checked 0" and passes —
+// the exact failure it was written to catch, turned on itself.
+if (checked.length === 0) {
+  console.error(
+    "FAIL  found no verification surfaces to check — the globs are looking in the wrong place",
+  );
+  process.exit(1);
+}
+
 console.log(`checked ${checked.length} verification surfaces`);
 
 if (orphans.length > 0) {
