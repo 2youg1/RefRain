@@ -11,7 +11,7 @@
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright";
+import { launchBrowser } from "./browser.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -33,7 +33,7 @@ const MINE = "我这边写的一句，还没有保存。\n\n第二段也是我�
 const THEIRS = "别处改写过的一句，长度也不一样。\n\n第二段被换掉了。";
 const DURING_SAVE = "保存等待时继续写的字。";
 
-const browser = await chromium.launch();
+const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 
 // The bridge is stubbed whole. `saveChapter` refuses the way main does when the

@@ -9,7 +9,7 @@
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright";
+import { launchBrowser } from "./browser.ts";
 
 const desktop = dirname(dirname(fileURLToPath(import.meta.url)));
 const html = (await Bun.file(join(desktop, "dist", "renderer", "index.html")).text()).replace(
@@ -76,7 +76,7 @@ const bridge = `window.refrain = {
 };`;
 
 const failures: string[] = [];
-const browser = await chromium.launch();
+const browser = await launchBrowser();
 
 // ── A single file opened on its own ──────────────────────────────
 {

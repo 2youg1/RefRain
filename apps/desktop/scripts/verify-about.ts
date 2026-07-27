@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright";
+import { launchBrowser } from "./browser.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -28,7 +28,7 @@ const server = Bun.serve({
   },
 });
 
-const browser = await chromium.launch();
+const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 
 // The bridge is stubbed whole: the renderer must never reach a real Electron

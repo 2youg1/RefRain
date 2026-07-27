@@ -1,6 +1,6 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright";
+import { launchBrowser } from "./browser.ts";
 
 const desktop = dirname(dirname(fileURLToPath(import.meta.url)));
 const html = (await Bun.file(join(desktop, "dist", "renderer", "index.html")).text()).replace(
@@ -16,7 +16,7 @@ const server = Bun.serve({
   },
 });
 
-const browser = await chromium.launch();
+const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 await page.addInitScript(`
   localStorage.clear();

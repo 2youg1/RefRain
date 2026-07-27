@@ -4,7 +4,7 @@
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright";
+import { launchBrowser } from "./browser.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const html = (await Bun.file(join(root, "dist", "renderer", "index.html")).text()).replace(
@@ -21,7 +21,7 @@ const server = Bun.serve({
   },
 });
 
-const browser = await chromium.launch();
+const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 await page.addInitScript(`window.refrain = {
   openProject: async () => "/p", loadProject: async () => [{ id: "01.md", title: "01", text: "黑暗中有人问。\\n\\n声音很熟，熟到她握剑的手松了半分。她想起十年前那个雨夜，那时他也是这样开口的。\\n\\n剑尖垂下去，抵住青石板。" }],

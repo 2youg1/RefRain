@@ -9,7 +9,7 @@
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright";
+import { launchBrowser } from "./browser.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const html = (await Bun.file(join(root, "dist", "renderer", "index.html")).text()).replace(
@@ -26,7 +26,7 @@ const server = Bun.serve({
   },
 });
 
-const browser = await chromium.launch();
+const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 await page.addInitScript(`window.refrain = {
   openProject: async () => "/p", loadProject: async () => [], loadWorkspace: async () => [],

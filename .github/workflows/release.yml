@@ -110,9 +110,14 @@ jobs:
         run: bun x playwright install chromium --only-shell
 
       # Composition and the author's whitespace, checked against the bundle
-      # that is about to be packaged rather than against source.
+      # that is about to be packaged rather than against source. The Linux gate
+      # runs this too; here it is the shipped bundle being checked, on the
+      # platform that ships. Given a longer window because a Windows runner
+      # cold-starting Chromium exceeded Playwright's default and failed a
+      # release for reasons that had nothing to do with the application.
       - name: Composition defers the save, and the indent is visible
         working-directory: apps/desktop
+        timeout-minutes: 15
         run: bun scripts/verify-composition.ts
 
       # Windows is the first supported desktop and the only hosted runner on
