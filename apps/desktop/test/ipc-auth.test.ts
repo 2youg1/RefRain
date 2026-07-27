@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { closeWorkbenches, registerHandlers } from "../src/main/ipc.ts";
+import { RootAuthority } from "../src/main/root-authority.ts";
 
 type Handler = (event: unknown, ...args: unknown[]) => unknown;
 
@@ -17,11 +18,14 @@ const trustedEvent = { sender, senderFrame: mainFrame };
 const noFrameEvent = { sender, senderFrame: null };
 const foreignFrameEvent = { sender, senderFrame: { isDestroyed: () => false } };
 
+const authorities = new WeakMap<Map<string, Handler>, RootAuthority>();
+
 const collectHandlers = (dialog?: {
   showOpenDialog?: () => Promise<{ canceled: boolean; filePaths: string[] }>;
   showSaveDialog?: () => Promise<{ canceled: boolean; filePath?: string }>;
 }) => {
   const handlers = new Map<string, Handler>();
+  const rootAuthority = new RootAuthority();
   registerHandlers(
     { handle: (channel: string, handler: Handler) => handlers.set(channel, handler) } as never,
     {
@@ -29,8 +33,14 @@ const collectHandlers = (dialog?: {
       showSaveDialog:
         dialog?.showSaveDialog ?? (async () => ({ canceled: true, filePath: undefined })),
     } as never,
+    rootAuthority,
   );
+  authorities.set(handlers, rootAuthority);
   return handlers;
+};
+
+const approve = (handlers: Map<string, Handler>, path: string): void => {
+  if (!authorities.get(handlers)?.approve(path)) throw new Error(`could not approve ${path}`);
 };
 
 const invoke = async (
@@ -88,10 +98,33 @@ test("an unopened root cannot enter files:scan or project:save", async () => {
   }
 });
 
+test("renderer-supplied workspace paths cannot grant their own Root authority", async () => {
+  const handlers = collectHandlers();
+  const root = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-self-sign-"));
+  try {
+    const workspace = (await invoke(handlers, trustedEvent, "project:load-workspace", [root])) as {
+      roots: unknown[];
+      warnings?: string[];
+    };
+
+    expect(workspace.roots).toEqual([]);
+    expect(workspace.warnings?.join("\n")).toMatch(/重新选择/);
+    expect(existsSync(join(root, ".refrain"))).toBe(false);
+    expect(existsSync(join(root, ".refrain-source"))).toBe(false);
+    await expect(
+      invoke(handlers, trustedEvent, "project:save", root, "new.md", "not authorised"),
+    ).rejects.toThrow(/opened root/i);
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("load-workspace normalizes and deduplicates roots before admitting later calls", async () => {
   const handlers = collectHandlers();
   const root = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-opened-"));
   try {
+    approve(handlers, root);
     const workspace = (await invoke(handlers, trustedEvent, "project:load-workspace", [
       root,
       `${root}${sep}.`,
@@ -115,6 +148,8 @@ test("loading a new workspace revokes a Root the author removed", async () => {
   const first = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-first-"));
   const second = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-second-"));
   try {
+    approve(handlers, first);
+    approve(handlers, second);
     await invoke(handlers, trustedEvent, "project:load-workspace", [first]);
     await expect(invoke(handlers, trustedEvent, "files:scan", first)).resolves.toBeDefined();
 
@@ -126,6 +161,31 @@ test("loading a new workspace revokes a Root the author removed", async () => {
     await expect(invoke(handlers, trustedEvent, "files:scan", second)).resolves.toBeDefined();
   } finally {
     closeWorkbenches();
+    rmSync(first, { recursive: true, force: true });
+    rmSync(second, { recursive: true, force: true });
+  }
+});
+
+test("retargeting an approved symlink revokes its Root authority", async () => {
+  const handlers = collectHandlers();
+  const parent = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-symlink-"));
+  const first = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-target-a-"));
+  const second = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-target-b-"));
+  const root = join(parent, "root");
+  try {
+    symlinkSync(first, root, process.platform === "win32" ? "junction" : "dir");
+    approve(handlers, root);
+    await invoke(handlers, trustedEvent, "project:load-workspace", [root]);
+
+    rmSync(root);
+    symlinkSync(second, root, process.platform === "win32" ? "junction" : "dir");
+    await expect(
+      invoke(handlers, trustedEvent, "project:save", root, "new.md", "must not cross"),
+    ).rejects.toThrow(/opened root/i);
+    expect(existsSync(join(second, "new.md"))).toBe(false);
+  } finally {
+    closeWorkbenches();
+    rmSync(parent, { recursive: true, force: true });
     rmSync(first, { recursive: true, force: true });
     rmSync(second, { recursive: true, force: true });
   }
@@ -150,7 +210,7 @@ test("load-workspace rejects malformed root lists without partially admitting th
   }
 });
 
-test("path pickers and the legacy project:load channel do not admit a root", async () => {
+test("a main-owned path choice grants a candidate, and workspace load makes it active", async () => {
   const root = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-candidate-"));
   const handlers = collectHandlers({
     showOpenDialog: async () => ({ canceled: false, filePaths: [root] }),
@@ -166,9 +226,14 @@ test("path pickers and the legacy project:load channel do not admit a root", asy
     await expect(invoke(handlers, trustedEvent, "project:load", root)).rejects.toThrow(
       /opened root/i,
     );
+
+    const workspace = (await invoke(handlers, trustedEvent, "project:load-workspace", [root])) as {
+      roots: { path: string }[];
+    };
+    expect(workspace.roots.map((entry) => entry.path)).toEqual([root]);
     await expect(
-      invoke(handlers, trustedEvent, "project:save", root, "new.md", "not authorised"),
-    ).rejects.toThrow(/opened root/i);
+      invoke(handlers, trustedEvent, "project:save", root, "new.md", "authorised"),
+    ).resolves.toMatchObject({ ok: true });
   } finally {
     closeWorkbenches();
     rmSync(root, { recursive: true, force: true });
@@ -198,6 +263,7 @@ test("a malformed Review Task never enters the Agent Host", async () => {
   const handlers = collectHandlers();
   const root = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-task-"));
   try {
+    approve(handlers, root);
     await invoke(handlers, trustedEvent, "project:load-workspace", [root]);
 
     await expect(
@@ -221,6 +287,7 @@ test("a file path outside its opened Root is rejected before the native layer", 
   const handlers = collectHandlers();
   const root = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-path-"));
   try {
+    approve(handlers, root);
     await invoke(handlers, trustedEvent, "project:load-workspace", [root]);
 
     await expect(

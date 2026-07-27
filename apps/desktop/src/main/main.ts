@@ -4,6 +4,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell } from "electr
 import { cssVariables, profileForBounds } from "./display.ts";
 import { closeWorkbenches, registerHandlers } from "./ipc.ts";
 import { mayOpenExternally, rendererMayNavigate } from "./navigation.ts";
+import { RootAuthority } from "./root-authority.ts";
 import { receiveSecondInstance, secondInstancePaths } from "./single-instance.ts";
 
 /**
@@ -157,16 +158,16 @@ const createWindow = (): BrowserWindow => {
  * it brings the existing window back and hands over the file or folder the OS
  * asked it to open.
  */
+let rootAuthority: RootAuthority | undefined;
 const primaryInstance = app.requestSingleInstanceLock();
 if (!primaryInstance) app.quit();
 else
   app.on("second-instance", (_event, argv) => {
     const window = BrowserWindow.getAllWindows()[0];
     if (!window) return;
-    receiveSecondInstance(
-      window,
-      secondInstancePaths(argv, process.execPath, app.getAppPath(), existsSync),
-    );
+    const paths = secondInstancePaths(argv, process.execPath, app.getAppPath(), existsSync);
+    for (const path of paths) rootAuthority?.approve(path);
+    receiveSecondInstance(window, paths);
   });
 
 if (primaryInstance)
@@ -176,7 +177,8 @@ if (primaryInstance)
     // a black strip of affordances that duplicated nothing the app offers.
     Menu.setApplicationMenu(null);
 
-    const handlers = registerHandlers(ipcMain, dialog);
+    rootAuthority = new RootAuthority(join(app.getPath("userData"), "roots.json"));
+    const handlers = registerHandlers(ipcMain, dialog, rootAuthority);
     registerWindowHandlers(handlers);
     const window = createWindow();
 

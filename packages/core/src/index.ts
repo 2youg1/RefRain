@@ -63,6 +63,7 @@ export type {
 export {
   commitChapterWrite,
   describeRoot,
+  isSourceBackupPath,
   loadProject,
   loadWorkspace,
   prepareChapterWrite,

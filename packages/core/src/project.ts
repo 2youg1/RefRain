@@ -251,7 +251,7 @@ const parseChapter = (
 /** Neither the Source Backup nor the application's own state is manuscript. */
 const RESERVED_DIR = new Set([SOURCE_BACKUP_DIR, ".refrain"]);
 
-const isSourceBackupPath = (path: string): boolean => {
+export const isSourceBackupPath = (path: string): boolean => {
   if (namesSourceBackup(path)) return true;
   try {
     return namesSourceBackup(realpathSync(path));

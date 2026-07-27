@@ -1,18 +1,25 @@
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import { type IpcArgs, type IpcChannel, parseIpcArgs, type RootIpcChannel } from "./ipc-payload.ts";
+import { RootAuthority } from "./root-authority.ts";
 
 type InvokeHandler<Args extends unknown[], Result> = (
   event: IpcMainInvokeEvent,
   ...args: Args
 ) => Result | Promise<Result>;
 
+interface OpenedWorkspace {
+  readonly roots: readonly { readonly path: string; readonly missing?: boolean }[];
+  readonly warnings?: readonly string[];
+}
+
 export interface IpcAuthority {
+  approveRoot(path: string): boolean;
   handle<C extends IpcChannel, Result>(channel: C, body: InvokeHandler<IpcArgs<C>, Result>): void;
   handleRoot<C extends RootIpcChannel, Result>(
     channel: C,
     body: InvokeHandler<IpcArgs<C>, Result>,
   ): void;
-  handleOpenRoots<Result>(
+  handleOpenRoots<Result extends OpenedWorkspace>(
     channel: "project:load-workspace",
     body: InvokeHandler<IpcArgs<"project:load-workspace">, Result>,
   ): void;
@@ -45,7 +52,10 @@ const assertMainFrame = (event: IpcMainInvokeEvent, channel: string): void => {
  * and every new channel inherited both capabilities unless its author happened
  * to remember local checks.
  */
-export const createIpcAuthority = (ipc: IpcMain): IpcAuthority => {
+export const createIpcAuthority = (
+  ipc: IpcMain,
+  rootAuthority = new RootAuthority(),
+): IpcAuthority => {
   const openedRoots = new Set<string>();
 
   const handle = <C extends IpcChannel, Result>(
@@ -66,27 +76,45 @@ export const createIpcAuthority = (ipc: IpcMain): IpcAuthority => {
     handle(channel, (event, ...args) => {
       const root = args[0];
       if (typeof root !== "string") return refuse(channel, "root parser returned a non-string");
-      if (!openedRoots.has(root)) refuse(channel, `root is not an opened root: ${root}`);
+      if (!openedRoots.has(root) || rootAuthority.status(root) !== "present")
+        refuse(channel, `root is not an opened root: ${root}`);
       return body(event, ...args);
     });
   };
 
-  const handleOpenRoots = <Result>(
+  const handleOpenRoots = <Result extends OpenedWorkspace>(
     channel: "project:load-workspace",
     body: InvokeHandler<IpcArgs<"project:load-workspace">, Result>,
   ): void => {
     handle(channel, async (event, roots) => {
       const unique = [...new Set(roots)];
-      const result = await body(event, unique);
-      // Open/create/drop only choose candidates in the real renderer flow. The
-      // workspace load is the first operation that proves all Roots can be
-      // described; replacing after it returns both avoids half-granted
-      // permissions and revokes a Root the author has removed.
+      const admitted = unique.filter((root) => rootAuthority.status(root) !== "denied");
+      const refused = unique.filter((root) => rootAuthority.status(root) === "denied");
+      const result = await body(event, admitted);
+
       openedRoots.clear();
-      for (const root of unique) openedRoots.add(root);
-      return result;
+      for (const root of result.roots) {
+        if (root.missing !== true && rootAuthority.status(root.path) === "present")
+          openedRoots.add(root.path);
+      }
+
+      if (refused.length === 0) return result;
+      return {
+        ...result,
+        warnings: [
+          ...(result.warnings ?? []),
+          ...refused.map(
+            (root) => `Root 未获主进程授权，请重新选择；Source Backup 也不能作为 Root：${root}`,
+          ),
+        ],
+      } satisfies OpenedWorkspace;
     });
   };
 
-  return { handle, handleRoot, handleOpenRoots };
+  return {
+    approveRoot: (path) => rootAuthority.approve(path),
+    handle,
+    handleRoot,
+    handleOpenRoots,
+  };
 };
