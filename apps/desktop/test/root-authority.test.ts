@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RootAuthority } from "../src/main/root-authority.ts";
@@ -36,6 +36,37 @@ test("an atomic save may replace a single-file Root without revoking it", () => 
     expect(authority.status(root)).toBe("present");
   } finally {
     rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("a permit persistence failure grants no in-memory authority", () => {
+  const home = mkdtempSync(join(tmpdir(), "refrain-root-authority-persist-failure-"));
+  const root = join(home, "work");
+  const blocked = join(home, "blocked");
+  mkdirSync(root);
+  writeFileSync(blocked, "not a directory");
+  try {
+    const authority = new RootAuthority(join(blocked, "roots.json"));
+    expect(authority.approve(root)).toBe(false);
+    expect(authority.holds(root)).toBe(false);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a symlinked Root state directory cannot receive a permit marker", () => {
+  const home = mkdtempSync(join(tmpdir(), "refrain-root-authority-state-link-"));
+  const root = join(home, "work");
+  const outside = join(home, "outside");
+  mkdirSync(root);
+  mkdirSync(outside);
+  symlinkSync(outside, join(root, ".refrain"), process.platform === "win32" ? "junction" : "dir");
+  try {
+    const authority = new RootAuthority();
+    expect(authority.approve(root)).toBe(false);
+    expect(authority.holds(root)).toBe(false);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 });
 

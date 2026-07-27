@@ -1,11 +1,26 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { dirname, normalize } from "node:path";
-import { isSourceBackupPath, replaceStateFileAtomically } from "@refrain/core";
+import { randomUUID } from "node:crypto";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, normalize } from "node:path";
+import {
+  claimRootStorage,
+  isSourceBackupPath,
+  replaceStateFileAtomically,
+  storageForRoot,
+} from "@refrain/core";
 
 interface RootPermit {
   readonly path: string;
   readonly canonical: string;
   readonly kind: "file" | "folder";
+  readonly marker: string;
   readonly device: string;
   readonly inode: string;
   readonly birth: string;
@@ -17,7 +32,43 @@ interface StoredPermits {
 }
 
 export type RootPermitStatus = "present" | "missing" | "denied";
-const permitAt = (path: string): RootPermit => {
+
+const ROOT_MARKER = "root-permit.json";
+const markerAt = (path: string, kind: RootPermit["kind"], create: boolean): string => {
+  const root = { path, kind } as const;
+  const storage = create && kind === "file" ? claimRootStorage(root) : storageForRoot(root);
+  if (!existsSync(storage.stateDir)) {
+    if (!create) throw new Error(`Root marker is missing: ${storage.stateDir}`);
+    mkdirSync(storage.stateDir, { recursive: true });
+  }
+  if (lstatSync(storage.stateDir).isSymbolicLink())
+    throw new Error(`Root state directory is a symlink: ${storage.stateDir}`);
+
+  const markerPath = join(storage.stateDir, ROOT_MARKER);
+  const markerInfo = lstatSync(markerPath, { throwIfNoEntry: false });
+  if (markerInfo?.isSymbolicLink()) throw new Error(`Root marker is a symlink: ${markerPath}`);
+  if (markerInfo === undefined) {
+    if (!create) throw new Error(`Root marker is missing: ${markerPath}`);
+    try {
+      writeFileSync(markerPath, `${JSON.stringify({ version: 1, id: randomUUID() }, null, 2)}\n`, {
+        encoding: "utf8",
+        flag: "wx",
+        flush: true,
+      });
+    } catch (error) {
+      if (lstatSync(markerPath, { throwIfNoEntry: false }) === undefined) throw error;
+    }
+  }
+
+  if (lstatSync(markerPath).isSymbolicLink())
+    throw new Error(`Root marker is a symlink: ${markerPath}`);
+  const marker = JSON.parse(readFileSync(markerPath, "utf8")) as Record<string, unknown>;
+  if (marker.version !== 1 || typeof marker.id !== "string" || marker.id.length === 0)
+    throw new Error(`Invalid Root marker: ${markerPath}`);
+  return marker.id;
+};
+
+const permitAt = (path: string, createMarker = false): RootPermit => {
   const literal = normalize(path);
   if (isSourceBackupPath(literal))
     throw new Error(`Source Backup cannot be opened as a Root: ${literal}`);
@@ -31,6 +82,7 @@ const permitAt = (path: string): RootPermit => {
     path: literal,
     canonical,
     kind,
+    marker: markerAt(literal, kind, createMarker),
     device: identity.dev.toString(),
     inode: identity.ino.toString(),
     birth: identity.birthtimeNs.toString(),
@@ -46,6 +98,8 @@ const validPermit = (value: unknown): value is RootPermit =>
   typeof value.canonical === "string" &&
   "kind" in value &&
   (value.kind === "file" || value.kind === "folder") &&
+  "marker" in value &&
+  typeof value.marker === "string" &&
   "device" in value &&
   typeof value.device === "string" &&
   "inode" in value &&
@@ -83,22 +137,29 @@ export class RootAuthority {
   approve(path: string): boolean {
     let permit: RootPermit;
     try {
-      permit = permitAt(path);
+      permit = permitAt(path, true);
     } catch {
       return false;
     }
+    const previous = this.#permits.get(permit.path);
     this.#permits.set(permit.path, permit);
-    this.#persist();
-    return true;
+    try {
+      this.#persist();
+      return true;
+    } catch {
+      if (previous === undefined) this.#permits.delete(permit.path);
+      else this.#permits.set(permit.path, previous);
+      return false;
+    }
   }
 
   /**
    * Whether a permit exists for this path, without asking the filesystem.
    *
-   * SPEC Q25 splits the two questions. Opening a workspace only needs to know
-   * the author once granted this path, and a drive cleaned between sessions
-   * must not produce one warning per Root the author did not ask to open.
-   * Identity is checked by `status` on the first call that uses the Root.
+   * SPEC Q25 splits permission from identity so callers can distinguish a path
+   * that was never granted from one that is permitted but currently missing.
+   * `status` must still guard any operation that reads or writes the Root,
+   * including workspace adoption.
    */
   holds(path: string): boolean {
     const literal = normalize(path);
@@ -114,6 +175,7 @@ export class RootAuthority {
       const current = permitAt(literal);
       return current.canonical === approved.canonical &&
         current.kind === approved.kind &&
+        current.marker === approved.marker &&
         current.device === approved.device &&
         current.inode === approved.inode &&
         current.birth === approved.birth
