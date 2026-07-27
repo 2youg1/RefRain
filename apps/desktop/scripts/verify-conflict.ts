@@ -146,6 +146,39 @@ if ((await dialog.count()) === 0) {
   if (editingState.contenteditable !== "false" || editingState.ariaDisabled !== "true")
     failures.push(`the conflict left the editor enabled: ${JSON.stringify(editingState)}`);
 
+  const inputBoundaryHeld = await page.evaluate(() => {
+    const surface = document.querySelector<HTMLElement>(".manuscript");
+    if (!surface) return false;
+    return !surface.dispatchEvent(
+      new InputEvent("beforeinput", {
+        bubbles: true,
+        cancelable: true,
+        data: "x",
+        inputType: "insertText",
+      }),
+    );
+  });
+  if (!inputBoundaryHeld) failures.push("the editor accepted beforeinput behind the conflict");
+
+  // Formatting is an application command that mutates the DOM directly. It
+  // used to bypass contenteditable=false by acting on a stale manuscript
+  // Selection while keyboard focus remained inside the dialog.
+  await page.evaluate(() => {
+    const paragraph = document.querySelector(".manuscript > p");
+    if (!paragraph?.firstChild) return;
+    const range = document.createRange();
+    range.setStart(paragraph.firstChild, 0);
+    range.setEnd(paragraph.firstChild, Math.min(2, paragraph.firstChild.textContent?.length ?? 0));
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  });
+  await page.keyboard.press("Control+b");
+  if ((await page.locator(".manuscript").innerText()) !== beforeBlindInput)
+    failures.push("a formatting shortcut changed the manuscript behind the conflict dialog");
+  if ((await page.locator(".shell").getAttribute("inert")) === null)
+    failures.push("the application behind the conflict dialog is not inert");
+
   // One action per version, each under the version it keeps. A reversed
   // mapping on an irreversible choice loses work to muscle memory.
   const choices = page.locator(".versions .choose");
