@@ -67,7 +67,7 @@ await page.addInitScript(`
     runs: async () => [],
     commit: async () => ({ ok: true, text: "" }),
     ledger: async () => [],
-    searchLedger: async () => [],
+    searchLedger: async () => ({ ok: true, verdicts: [] }),
     reply: async () => "",
     files: {
       ...window.refrain.files,

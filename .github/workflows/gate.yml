@@ -282,6 +282,13 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-agent-trust.ts
 
+      # The Verdict Ledger existed behind IPC but the panel could only dump it.
+      # A writer revising an Agent persona needs to recover prior stated reasons,
+      # and a failed SQLite query must not look like "nothing matched".
+      - name: stated reasons are searchable in the Verdict Ledger
+        working-directory: apps/desktop
+        run: bun scripts/verify-ledger-search.ts
+
       # Removing a middle paragraph, saving, then reverting must put it back
       # where it was. The block identities that make this possible are invisible
       # to a unit test of the pure function: only the rendered interface exercises

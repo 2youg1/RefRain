@@ -11,7 +11,11 @@ interface Props {
 
 const { root, t }: Props = $props();
 
+let allVerdicts = $state<VerdictView[]>([]);
 let verdicts = $state<VerdictView[]>([]);
+let query = $state("");
+let appliedQuery = $state("");
+let searching = $state(false);
 let reply = $state<string | null>(null);
 /** Why the ledger is unreadable, when it is. Distinct from "no verdicts yet". */
 let unavailable = $state<string | null>(null);
@@ -22,18 +26,50 @@ $effect(() => {
     .ledger(root)
     .then((answer) => {
       if (answer.ok) {
+        allVerdicts = answer.verdicts;
         verdicts = answer.verdicts;
+        query = "";
+        appliedQuery = "";
         unavailable = null;
         return;
       }
+      allVerdicts = [];
       verdicts = [];
       unavailable = answer.detail;
     })
     .catch((error: unknown) => {
+      allVerdicts = [];
       verdicts = [];
       unavailable = error instanceof Error ? error.message : String(error);
     });
 });
+
+const search = async (): Promise<void> => {
+  const owner = root;
+  const fragment = query.trim();
+  if (!owner) return;
+  if (!fragment) {
+    verdicts = allVerdicts;
+    appliedQuery = "";
+    return;
+  }
+
+  searching = true;
+  try {
+    const answer = await api().searchLedger(owner, fragment);
+    if (root !== owner) return;
+    if (answer.ok) {
+      verdicts = answer.verdicts;
+      appliedQuery = fragment;
+      return;
+    }
+    unavailable = answer.detail;
+  } catch (error) {
+    if (root === owner) unavailable = error instanceof Error ? error.message : String(error);
+  } finally {
+    if (root === owner) searching = false;
+  }
+};
 
 const showReply = async (proposalId: string): Promise<void> => {
   if (!root) return;
@@ -44,6 +80,32 @@ const kindKey = (kind: VerdictView["kind"]): Key => `kind.${kind}` as Key;
 </script>
 
 <div class="ledger">
+  {#if !unavailable}
+    <form
+      class="search"
+      role="search"
+      onsubmit={(event) => {
+        event.preventDefault();
+        void search();
+      }}
+    >
+      <input
+        type="search"
+        value={query}
+        placeholder={t("ledger.search")}
+        aria-label={t("ledger.search")}
+        oninput={(event) => {
+          query = event.currentTarget.value;
+          if (!query.trim()) {
+            verdicts = allVerdicts;
+            appliedQuery = "";
+          }
+        }}
+      />
+      <button type="submit" disabled={searching}>{t("ledger.searchAction")}</button>
+    </form>
+  {/if}
+
   {#if unavailable}
     <!-- An empty list read the same as a ledger that would not open, and the
          two call for opposite responses: one means start judging, the other
@@ -53,7 +115,7 @@ const kindKey = (kind: VerdictView["kind"]): Key => `kind.${kind}` as Key;
       <code class="cause">{unavailable}</code>
     </div>
   {:else if verdicts.length === 0}
-    <p class="empty">{t("ledger.empty")}</p>
+    <p class="empty">{t(appliedQuery ? "ledger.noMatches" : "ledger.empty")}</p>
   {:else}
     <p class="count label">{verdicts.length} {t("ledger.count")}</p>
 
@@ -92,6 +154,35 @@ const kindKey = (kind: VerdictView["kind"]): Key => `kind.${kind}` as Key;
 {/if}
 
 <style>
+  .search {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.45rem;
+    margin-bottom: 0.8rem;
+  }
+
+  .search input {
+    min-width: 0;
+    padding: 0.42rem 0.55rem;
+    font: inherit;
+    color: var(--ink);
+    background: var(--paper);
+    border: 1px solid var(--rule-strong);
+    border-radius: 2px;
+  }
+
+  .search button {
+    padding: 0.42rem 0.75rem;
+    font-size: var(--step--1);
+    color: var(--ink-soft);
+    border: 1px solid var(--rule-strong);
+    border-radius: 2px;
+  }
+
+  .search button:disabled {
+    opacity: 0.45;
+  }
+
   .unavailable {
     display: grid;
     gap: 0.6rem;
