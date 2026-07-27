@@ -19,8 +19,10 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSy
 import { tmpdir } from "node:os";
 import { isAbsolute, join, normalize } from "node:path";
 import { closeWorkbenches, registerHandlers } from "../src/main/ipc.ts";
+import { RootAuthority } from "../src/main/root-authority.ts";
 
 type Handler = (event: unknown, ...args: unknown[]) => unknown;
+const rootAuthority = new RootAuthority();
 
 /** A stand-in for `ipcMain` that records the channel table. */
 const collectHandlers = () => {
@@ -35,7 +37,7 @@ const collectHandlers = () => {
   };
 
   // The signatures are Electron's; the test only needs the two methods above.
-  registerHandlers(ipc as never, dialog as never);
+  registerHandlers(ipc as never, dialog as never, rootAuthority);
   return handlers;
 };
 
@@ -55,6 +57,8 @@ const invoke = async (channel: string, ...args: unknown[]) => {
 
 /** The real renderer loads the workspace before it invokes a root capability. */
 const call = async (channel: string, ...args: unknown[]) => {
+  if (channel === "project:load-workspace" && Array.isArray(args[0]))
+    for (const path of args[0]) if (typeof path === "string") rootAuthority.approve(path);
   const root = args[0];
   if (
     channel !== "project:load-workspace" &&
@@ -63,6 +67,7 @@ const call = async (channel: string, ...args: unknown[]) => {
     isAbsolute(root) &&
     !adopted.has(normalize(root))
   ) {
+    rootAuthority.approve(root);
     await invoke("project:load-workspace", [root]);
     adopted.add(normalize(root));
   }

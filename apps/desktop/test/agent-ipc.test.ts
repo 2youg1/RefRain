@@ -3,9 +3,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { isAbsolute, join, normalize } from "node:path";
 import { closeWorkbenches, registerHandlers } from "../src/main/ipc.ts";
+import { RootAuthority } from "../src/main/root-authority.ts";
 
 type Handler = (event: unknown, ...args: unknown[]) => unknown;
 
+const rootAuthority = new RootAuthority();
 const handlers = (() => {
   const table = new Map<string, Handler>();
   registerHandlers(
@@ -14,6 +16,7 @@ const handlers = (() => {
       showOpenDialog: async () => ({ canceled: true, filePaths: [] }),
       showSaveDialog: async () => ({ canceled: true, filePath: undefined }),
     } as never,
+    rootAuthority,
   );
   return table;
 })();
@@ -33,6 +36,8 @@ const invoke = async (channel: string, ...args: unknown[]) => {
 
 /** The real renderer adopts its saved roots before it opens collaboration. */
 const call = async (channel: string, ...args: unknown[]) => {
+  if (channel === "project:load-workspace" && Array.isArray(args[0]))
+    for (const path of args[0]) if (typeof path === "string") rootAuthority.approve(path);
   const root = args[0];
   if (
     channel !== "project:load-workspace" &&
@@ -41,6 +46,7 @@ const call = async (channel: string, ...args: unknown[]) => {
     isAbsolute(root) &&
     !adopted.has(normalize(root))
   ) {
+    rootAuthority.approve(root);
     await invoke("project:load-workspace", [root]);
     adopted.add(normalize(root));
   }

@@ -44,6 +44,7 @@ import { parseCommandLine } from "./command-line.ts";
 import { registerFileHandlers } from "./files-ipc.ts";
 import { createIpcAuthority, type IpcAuthority } from "./ipc-auth.ts";
 import { probeCommand } from "./probe.ts";
+import { RootAuthority } from "./root-authority.ts";
 import { type RosterEntry, readRoster, writeRoster } from "./roster.ts";
 
 /**
@@ -250,15 +251,30 @@ const advanceChapter = (workbench: Workbench, chapterId: string, text: string, c
     cause,
   );
 
-export const registerHandlers = (ipc: IpcMain, dialog: Dialog): IpcAuthority => {
-  const handlers = createIpcAuthority(ipc);
+export const registerHandlers = (
+  ipc: IpcMain,
+  dialog: Dialog,
+  rootAuthority = new RootAuthority(),
+): IpcAuthority => {
+  const handlers = createIpcAuthority(ipc, rootAuthority);
+
+  /*
+   * A path becomes a candidate Root only where the main process produced it
+   * itself — a picker, a create, a drop, or an OS open event. The renderer may
+   * remember which Roots to reopen, but a bare absolute path arriving over IPC
+   * grants nothing, which is the self-authorisation this authority removes.
+   */
+  const nominate = <T extends string | null>(path: T): T => {
+    if (typeof path === "string") rootAuthority.approve(path);
+    return path;
+  };
 
   handlers.handle("project:open", async () => {
     const result = await dialog.showOpenDialog({
       properties: ["openDirectory", "createDirectory"],
       title: "Open a project folder",
     });
-    return result.canceled ? null : (result.filePaths[0] ?? null);
+    return result.canceled ? null : nominate(result.filePaths[0] ?? null);
   });
 
   handlers.handle("project:create", async () => {
@@ -269,7 +285,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): IpcAuthority => 
     });
     if (result.canceled || !result.filePath) return null;
     mkdirSync(result.filePath, { recursive: true });
-    return result.filePath;
+    return nominate(result.filePath);
   });
 
   /** A dropped file opens its folder; a dropped folder opens itself. */
@@ -283,7 +299,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): IpcAuthority => 
    */
   handlers.handle("project:resolve-drop", (_e, path: string) => {
     try {
-      return { ok: true, path: statSync(path).isDirectory() ? path : dirname(path) };
+      return { ok: true, path: nominate(statSync(path).isDirectory() ? path : dirname(path)) };
     } catch (error) {
       return {
         ok: false,

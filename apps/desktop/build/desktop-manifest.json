@@ -8,8 +8,8 @@
     },
     {
       "path": "dist/main/main.cjs",
-      "bytes": 138326,
-      "sha256": "e180d3c2c90b0ab2b2aef7b1955a8cd02274670ba4500762a6cac715e07eb6fc"
+      "bytes": 142622,
+      "sha256": "b1025e4e4f7f7055272741564ec0d213e96618b6e23b5ac145d3a7ea59f45897"
     },
     {
       "path": "dist/main/preload.cjs",

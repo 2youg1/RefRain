@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { interruptedWriteMarkerPath } from "@refrain/core";
 import { closeWorkbenches, registerHandlers } from "../src/main/ipc.ts";
+import { RootAuthority } from "../src/main/root-authority.ts";
 
 type Handler = (event: unknown, ...args: unknown[]) => unknown;
 
@@ -13,12 +14,15 @@ const event = { sender, senderFrame: mainFrame };
 
 const loadWorkspace = async (roots: string[]): Promise<unknown> => {
   const handlers = new Map<string, Handler>();
+  const rootAuthority = new RootAuthority();
+  for (const root of roots) rootAuthority.approve(root);
   registerHandlers(
     { handle: (channel: string, handler: Handler) => handlers.set(channel, handler) } as never,
     {
       showOpenDialog: async () => ({ canceled: true, filePaths: [] }),
       showSaveDialog: async () => ({ canceled: true, filePath: undefined }),
     } as never,
+    rootAuthority,
   );
   const handler = handlers.get("project:load-workspace");
   if (!handler) throw new Error("project:load-workspace was not registered");
@@ -38,6 +42,32 @@ test("adopting an existing folder takes its Source Backup through the real IPC p
     writeFileSync(source, "打开后正文。\n");
     await loadWorkspace([root]);
     expect(readFileSync(backup, "utf8")).toBe("打开前原文。\n");
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("opening the Source Backup directly grants no Root and changes no entry", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-backup-protected-"));
+  const source = join(root, "01.md");
+  try {
+    writeFileSync(source, "原件。\n");
+    await loadWorkspace([root]);
+    closeWorkbenches();
+
+    const backup = join(root, ".refrain-source");
+    const before = readdirSync(backup).sort();
+    const workspace = (await loadWorkspace([backup])) as {
+      roots: unknown[];
+      warnings?: string[];
+    };
+
+    expect(workspace.roots).toEqual([]);
+    expect(workspace.warnings?.join("\n")).toMatch(/Source Backup/);
+    expect(readdirSync(backup).sort()).toEqual(before);
+    expect(existsSync(join(backup, ".refrain"))).toBe(false);
+    expect(existsSync(join(backup, ".refrain-source"))).toBe(false);
   } finally {
     closeWorkbenches();
     rmSync(root, { recursive: true, force: true });
