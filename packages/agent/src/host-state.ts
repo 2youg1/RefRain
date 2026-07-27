@@ -10,7 +10,8 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { type AgentComment, type Proposal, replaceStateFileAtomically } from "@refrain/core";
-import type { ReviewTask, RunState } from "./types.ts";
+import { reviewTaskScopeConflict } from "./review-task.ts";
+import type { ReviewTask, RunState, TaskContextScope, TaskEditScope } from "./types.ts";
 
 export interface StoredRun {
   readonly id: string;
@@ -22,7 +23,7 @@ export interface StoredRun {
 }
 
 export interface HostState {
-  readonly version: 1;
+  readonly version: 2;
   readonly sequence: number;
   readonly queue: readonly ReviewTask[];
   readonly runs: readonly StoredRun[];
@@ -38,7 +39,7 @@ export interface HostStateDiagnostic {
 }
 
 export const emptyHostState = (): HostState => ({
-  version: 1,
+  version: 2,
   sequence: 0,
   queue: [],
   runs: [],
@@ -67,11 +68,20 @@ const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) &&
   value.every((entry) => typeof entry === "string" && entry.trim().length > 0);
 
+const isContextScope = (value: unknown): value is TaskContextScope => {
+  if (!isRecord(value) || typeof value.id !== "string" || value.id.trim().length === 0)
+    return false;
+  if (value.kind === "legacy-reference") return Object.keys(value).length === 2;
+  return (
+    value.kind === "material" && typeof value.text === "string" && Object.keys(value).length === 3
+  );
+};
+
 const isTask = (value: unknown): value is ReviewTask => {
   if (
     !isRecord(value) ||
-    !isStringArray(value.contextScope) ||
-    new Set(value.contextScope).size !== value.contextScope.length ||
+    !Array.isArray(value.contextScope) ||
+    !value.contextScope.every(isContextScope) ||
     !Array.isArray(value.editScopes)
   )
     return false;
@@ -86,21 +96,20 @@ const isTask = (value: unknown): value is ReviewTask => {
     value.prompt.trim().length === 0
   )
     return false;
-  const scopeIds = new Set<string>();
+  const editScopes: TaskEditScope[] = [];
   for (const scope of value.editScopes) {
     if (
       !isRecord(scope) ||
       typeof scope.id !== "string" ||
       scope.id.trim().length === 0 ||
-      scopeIds.has(scope.id) ||
       !isStringArray(scope.blockIds) ||
       new Set(scope.blockIds).size !== scope.blockIds.length ||
       typeof scope.text !== "string"
     )
       return false;
-    scopeIds.add(scope.id);
+    editScopes.push({ id: scope.id, blockIds: scope.blockIds, text: scope.text });
   }
-  return true;
+  return reviewTaskScopeConflict(value.contextScope, editScopes) === undefined;
 };
 
 const isComment = (value: unknown): value is AgentComment =>
@@ -154,6 +163,7 @@ const isStoredRun = (value: unknown): value is StoredRun => {
 
   const task = value.task as ReviewTask;
   const scopes = new Map(task.editScopes.map((scope) => [scope.id, scope]));
+  const commentTargets = new Set([...task.contextScope.map((scope) => scope.id), ...scopes.keys()]);
   const proposalIds = new Set<string>();
   const proposalScopes = new Set<string>();
   const proposalsMatch = value.proposals.every((proposal) => {
@@ -170,15 +180,15 @@ const isStoredRun = (value: unknown): value is StoredRun => {
       proposal.scope.blockIds.every((id, index) => id === scope.blockIds[index])
     );
   });
-  return proposalsMatch && value.comments.every((comment) => scopes.has(comment.target));
+  return proposalsMatch && value.comments.every((comment) => commentTargets.has(comment.target));
 };
 
 interface HostStateEnvelope extends Record<string, unknown> {
-  readonly version: 1;
+  readonly version: 1 | 2;
 }
 
 const isHostStateEnvelope = (value: unknown): value is HostStateEnvelope =>
-  isRecord(value) && value.version === 1;
+  isRecord(value) && (value.version === 1 || value.version === 2);
 
 const invalidRecord = (
   source: string,
@@ -301,6 +311,19 @@ const preserveInvalidState = (source: string): string | undefined => {
   return undefined;
 };
 
+const migrateTask = (value: unknown, version: 1 | 2): unknown => {
+  if (version !== 1 || !isRecord(value) || !Array.isArray(value.contextScope)) return value;
+  return {
+    ...value,
+    contextScope: value.contextScope.map((entry) =>
+      typeof entry === "string" ? { kind: "legacy-reference", id: entry } : entry,
+    ),
+  };
+};
+
+const migrateRun = (value: unknown, version: 1 | 2): unknown =>
+  version === 1 && isRecord(value) ? { ...value, task: migrateTask(value.task, version) } : value;
+
 /** A corrupt collaboration snapshot never prevents the manuscript from opening. */
 export const readHostState = (
   root: string,
@@ -337,14 +360,32 @@ export const readHostState = (
     diagnose({ source, path: "$", reason: "invalid-envelope" });
     return emptyHostState();
   }
-  const queue = validRecords(parsed.queue, isTask, "queue", source, diagnose, (task) => task.id);
-  const runs = validRecords(parsed.runs, isStoredRun, "runs", source, diagnose, (run) => run.id);
+  const queue = validRecords(
+    Array.isArray(parsed.queue)
+      ? parsed.queue.map((task) => migrateTask(task, parsed.version))
+      : parsed.queue,
+    isTask,
+    "queue",
+    source,
+    diagnose,
+    (task) => task.id,
+  );
+  const runs = validRecords(
+    Array.isArray(parsed.runs)
+      ? parsed.runs.map((run) => migrateRun(run, parsed.version))
+      : parsed.runs,
+    isStoredRun,
+    "runs",
+    source,
+    diagnose,
+    (run) => run.id,
+  );
   const runSequence = runs.reduce(
     (highest, run) => Math.max(highest, sequenceFromRunId(run.id) ?? 0),
     0,
   );
   return {
-    version: 1,
+    version: 2,
     sequence: Math.max(validSequence(parsed.sequence, source, diagnose), runSequence),
     queue,
     runs,

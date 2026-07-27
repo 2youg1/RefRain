@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
+import type { ReviewTaskIntent } from "../shared/review-task.ts";
 
 /**
  * The only bridge between renderer and main. Named channels, no `ipcRenderer`
@@ -46,7 +47,8 @@ const api = {
   removeAgent: (root: string, id: string) => ipcRenderer.invoke("agent:remove", root, id),
   addAgent: (root: string, name: string, command: string, model: string, reasoningEffort: string) =>
     ipcRenderer.invoke("agent:add", root, name, command, model, reasoningEffort),
-  enqueue: (root: string, task: unknown) => ipcRenderer.invoke("agent:enqueue", root, task),
+  enqueue: (root: string, task: ReviewTaskIntent) =>
+    ipcRenderer.invoke("agent:enqueue", root, task),
   manifest: (root: string) => ipcRenderer.invoke("agent:manifest", root),
   send: (root: string) => ipcRenderer.invoke("agent:send", root),
   cancel: (root: string, runId: string) => ipcRenderer.invoke("agent:cancel", root, runId),

@@ -30,7 +30,7 @@ describe("HostState recovery", () => {
       writeFileSync(join(root, "host.json"), JSON.stringify([]), "utf8");
 
       expect(readHostState(root)).toEqual({
-        version: 1,
+        version: 2,
         sequence: 0,
         queue: [],
         runs: [],
@@ -49,7 +49,7 @@ describe("HostState recovery", () => {
       writeFileSync(join(root, "host.json"), '{"version":1', "utf8");
 
       expect(readHostState(root)).toEqual({
-        version: 1,
+        version: 2,
         sequence: 0,
         queue: [],
         runs: [],
@@ -112,6 +112,40 @@ describe("HostState recovery", () => {
     expect(restored.queue.map((entry) => entry.baseline)).toEqual(baselines);
     writeHostState(root, restored);
     expect(readHostState(root).queue.map((entry) => entry.baseline)).toEqual(baselines);
+  });
+
+  test("v1 id-only Context Scope migrates to an explicit unavailable legacy reference", () => {
+    const legacyTask = { ...task("legacy-context"), contextScope: ["chapter.md"] };
+    writeFileSync(
+      join(root, "host.json"),
+      JSON.stringify({
+        version: 1,
+        sequence: 1,
+        queue: [legacyTask],
+        runs: [
+          {
+            id: "run1",
+            state: "completed",
+            task: legacyTask,
+            comments: [{ target: "chapter.md", text: "Legacy context comment." }],
+            proposals: [],
+          },
+        ],
+        drifted: [],
+      }),
+      "utf8",
+    );
+
+    const restored = readHostState(root);
+    const migrated = [{ kind: "legacy-reference", id: "chapter.md" }] as const;
+    expect(restored.version).toBe(2);
+    expect(restored.queue[0]?.contextScope).toEqual(migrated);
+    expect(restored.runs[0]?.task.contextScope).toEqual(migrated);
+    expect(restored.runs[0]?.comments).toEqual([
+      { target: "chapter.md", text: "Legacy context comment." },
+    ]);
+    writeHostState(root, restored);
+    expect(JSON.parse(readFileSync(join(root, "host.json"), "utf8")).version).toBe(2);
   });
 
   test("a bad drift marker does not erase valid queued work", () => {
@@ -185,6 +219,7 @@ describe("HostState recovery", () => {
       proposals: [],
     };
     const duplicatedScope = task("duplicated-scope").editScopes[0];
+    const overlappingScope = task("overlapping-scope").editScopes[0];
     writeFileSync(
       join(root, "host.json"),
       JSON.stringify({
@@ -195,6 +230,10 @@ describe("HostState recovery", () => {
           task("queued"),
           { ...task("duplicated-scope"), editScopes: [duplicatedScope, duplicatedScope] },
           { ...task("duplicated-context"), contextScope: ["chapter.md", "chapter.md"] },
+          {
+            ...task("overlapping-scope"),
+            editScopes: [overlappingScope, { ...overlappingScope, id: "other-scope" }],
+          },
         ],
         runs: [storedRun, storedRun, { ...storedRun, id: "run999999999999999999999" }],
         drifted: [],
@@ -211,6 +250,7 @@ describe("HostState recovery", () => {
       "$.queue[1]",
       "$.queue[2]",
       "$.queue[3]",
+      "$.queue[4]",
       "$.runs[1]",
       "$.runs[2]",
     ]);

@@ -1,4 +1,5 @@
 <script lang="ts">
+import type { ReviewTaskIntent } from "../shared/review-task.ts";
 import type { AgentView, ManifestEntryView, RunView } from "./api.ts";
 import { api } from "./api.ts";
 import type { Key } from "./i18n.ts";
@@ -11,7 +12,14 @@ interface Props {
   scope: { ids: string[]; text: string };
   runs: RunView[];
   t: (key: Key) => string;
+  enqueueing: boolean;
   onDispatched: () => void;
+  onEnqueue: (
+    intent: ReviewTaskIntent,
+  ) => Promise<{
+    readonly accepted: boolean;
+    readonly manifest: ManifestEntryView[] | null;
+  }>;
   onCancel: (runId: string) => void;
   onCollect: (runId: string) => void;
   /**
@@ -33,7 +41,9 @@ const {
   scope,
   runs,
   t,
+  enqueueing,
   onDispatched,
+  onEnqueue,
   onCancel,
   onCollect,
   prompt,
@@ -43,51 +53,77 @@ const {
 let agents = $state<AgentView[]>([]);
 let manifest = $state<ManifestEntryView[]>([]);
 let chosen = $state<string | null>(null);
+let submitting = $state(false);
 
 const queued = $derived(manifest.reduce((sum, entry) => sum + entry.runCount, 0));
 const ready = $derived(
-  root !== null &&
+  !enqueueing &&
+    !submitting &&
+    root !== null &&
     chapter !== null &&
     chosen !== null &&
-    prompt.trim().length > 0 &&
-    scope.ids.length > 0,
+    prompt.trim().length > 0,
 );
 
 $effect(() => {
-  if (!root) return;
+  const owner = root;
+  if (!owner) {
+    agents = [];
+    manifest = [];
+    chosen = null;
+    return;
+  }
+  let current = true;
   void api()
-    .listAgents(root)
+    .listAgents(owner)
     .then((list) => {
+      if (!current) return;
       agents = list;
       if (!list.some((agent) => agent.id === chosen)) chosen = list[0]?.id ?? null;
     });
   void api()
-    .manifest(root)
-    .then((entries) => (manifest = entries));
+    .manifest(owner)
+    .then((entries) => {
+      if (current) manifest = entries;
+    });
+  return () => {
+    current = false;
+  };
 });
 
 const enqueue = async (): Promise<void> => {
-  if (!root || !chapter || !chosen || scope.ids.length === 0) return;
+  const owner = root;
+  const target = chapter;
+  const agent = chosen;
+  const draft = prompt;
+  const instruction = draft.trim();
+  if (!owner || !target || !agent || instruction.length === 0 || enqueueing || submitting)
+    return;
 
-  // Real block ids and whole-block text, so the Decision Batch can find the
-  // scope and its baseline can match. A fabricated `${chapter}:sel` id made
-  // every merge from this panel fail with stale-baseline.
-  //
-  // randomUUID, not Date.now(): two tasks queued in the same millisecond
-  // collided, and the second silently replaced the first.
-  await api().enqueue(root, {
-    id: crypto.randomUUID(),
-    agentId: chosen,
-    baseline: `${chapter}@current`,
-    prompt: prompt.trim(),
-    contextScope: [],
-    editScopes: [{ id: crypto.randomUUID(), blockIds: scope.ids, text: scope.text }],
-  });
+  submitting = true;
+  try {
+    // The renderer identifies the author's intended chapter and writable blocks.
+    // Main owns the Revision, verifies every scope against it, and supplies the
+    // chapter's readable Context Scope.
+    const result = await onEnqueue({
+      id: crypto.randomUUID(),
+      agentId: agent,
+      chapter: target,
+      prompt: instruction,
+      editScopes:
+        scope.ids.length === 0
+          ? []
+          : [{ id: crypto.randomUUID(), blockIds: scope.ids, text: scope.text }],
+    });
+    if (!result.accepted) return;
 
-  manifest = await api().manifest(root);
-  // Cleared only after the run is queued: the instruction now lives in the
-  // manifest, so there is somewhere else for it to be.
-  onPrompt("");
+    if (result.manifest !== null && root === owner) manifest = result.manifest;
+    // Clear only the exact raw draft that was accepted. Text written while
+    // this operation waited belongs to the next task and must stay.
+    if (prompt === draft) onPrompt("");
+  } finally {
+    submitting = false;
+  }
 };
 
 const send = async (): Promise<void> => {
@@ -153,10 +189,23 @@ const send = async (): Promise<void> => {
             <dt>{t("dispatch.harness")}</dt><dd>{entry.harness}</dd>
             <dt>{t("dispatch.model")}</dt><dd>{entry.model}</dd>
             <dt>{t("dispatch.effort")}</dt><dd>{entry.reasoningEffort}</dd>
-            <dt>{t("dispatch.scope")}</dt><dd>{entry.scopes.join(" · ")}</dd>
+            <dt>{t("dispatch.context")}</dt><dd>{entry.contexts.join(" · ")}</dd>
+            <dt>{t("dispatch.scope")}</dt><dd
+              >{entry.scopes.length === 0
+                ? t("dispatch.noEditScope")
+                : entry.scopes
+                    .map((scope) => scope.blockIds.join(t("list.join")))
+                    .join(" · ")}</dd
+            >
           </dl>
           {#if entry.drifted.length > 0}
-            <p class="drift">{entry.drifted.join(t("list.join"))} — {t("dispatch.drifted")}</p>
+            <p class="drift"
+              >{entry.drifted
+                .flatMap(
+                  (id) => entry.scopes.find((scope) => scope.id === id)?.blockIds ?? [id],
+                )
+                .join(t("list.join"))} — {t("dispatch.drifted")}</p
+            >
           {/if}
         </div>
       {/each}

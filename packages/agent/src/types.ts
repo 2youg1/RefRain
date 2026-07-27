@@ -54,13 +54,19 @@ export interface TaskEditScope {
   readonly text: string;
 }
 
+/** Readable material copied at the baseline Revision; never writable by itself. */
+export type TaskContextScope =
+  | { readonly kind: "material"; readonly id: string; readonly text: string }
+  | { readonly kind: "legacy-reference"; readonly id: string };
+
+/** Work bound to one baseline Revision, readable context, and explicit writable scopes. */
 export interface ReviewTask {
   readonly id: string;
   readonly agentId: string;
   readonly baseline: RevisionId;
   readonly prompt: string;
   /** What the run may read. Readable is not writable. */
-  readonly contextScope: readonly string[];
+  readonly contextScope: readonly TaskContextScope[];
   readonly editScopes: readonly TaskEditScope[];
 }
 

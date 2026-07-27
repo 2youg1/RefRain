@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { type AgentComment, appendMemos, type Proposal, parseAgentResult } from "@refrain/core";
 import { FileChannelAdapter } from "./file-channel.ts";
 import { type HostState, readHostState, type StoredRun, writeHostState } from "./host-state.ts";
+import { reviewTaskScopeConflict } from "./review-task.ts";
 import type { Agent, HarnessAdapter, ReviewTask, Run } from "./types.ts";
 
 const recoveryNotice = (runId: string): string =>
@@ -16,7 +17,11 @@ export interface ManifestEntry {
   readonly model: string;
   readonly reasoningEffort: string;
   readonly runCount: number;
-  readonly scopes: readonly string[];
+  readonly contexts: readonly string[];
+  readonly scopes: readonly {
+    readonly id: string;
+    readonly blockIds: readonly string[];
+  }[];
   readonly prompts: readonly string[];
   /** Scopes whose text changed while queued. The author decides what to do. */
   readonly drifted: readonly string[];
@@ -88,7 +93,7 @@ export class AgentHost {
 
   private persist(): void {
     writeHostState(this.root, {
-      version: 1,
+      version: 2,
       sequence: this.sequence,
       queue: this.queue,
       runs: this.dispatched.flatMap((run) => {
@@ -116,6 +121,13 @@ export class AgentHost {
   }
 
   enqueue(task: ReviewTask): this {
+    const conflict = reviewTaskScopeConflict(task.contextScope, task.editScopes);
+    if (conflict)
+      throw new Error(
+        conflict.kind === "scope-id"
+          ? `Review Task ${task.id} repeats scope id ${conflict.id}`
+          : `Review Task ${task.id} requires disjoint Edit Scopes; block ${conflict.id} repeats`,
+      );
     this.queue.push(task);
     try {
       this.persist();
@@ -392,6 +404,10 @@ export class AgentHost {
     if (!parsed.ok) this.rejectArtifact(run, `${parsed.error.code}: ${parsed.error.detail}`);
 
     const scopes = new Map(task.editScopes.map((scope) => [scope.id, scope]));
+    const commentTargets = new Set([
+      ...task.contextScope.map((scope) => scope.id),
+      ...scopes.keys(),
+    ]);
     const proposals = parsed.value.replacements.map((replacement) => {
       const scope = scopes.get(replacement.scope);
       if (!scope) this.rejectArtifact(run, `unknown scope ${replacement.scope} in run ${runId}`);
@@ -404,7 +420,7 @@ export class AgentHost {
         after: replacement.text,
       } satisfies Proposal;
     });
-    const comments = parsed.value.comments.filter((comment) => scopes.has(comment.target));
+    const comments = parsed.value.comments.filter((comment) => commentTargets.has(comment.target));
 
     // Memo append is idempotent by Run ID. It happens before the snapshot so a
     // crash can safely retry the whole collection without duplicating memory.
@@ -448,7 +464,10 @@ export const sendManifest = (host: AgentHost): readonly ManifestEntry[] => {
   return [...byAgent].flatMap(([agentId, tasks]) => {
     const agent = host.agentFor(agentId);
     if (!agent) return [];
-    const scopes = tasks.flatMap((t) => t.editScopes.map((s) => s.id));
+    const contexts = [...new Set(tasks.flatMap((t) => t.contextScope.map((s) => s.id)))];
+    const scopes = tasks.flatMap((task) =>
+      task.editScopes.map((scope) => ({ id: scope.id, blockIds: scope.blockIds })),
+    );
 
     return [
       {
@@ -457,9 +476,10 @@ export const sendManifest = (host: AgentHost): readonly ManifestEntry[] => {
         model: agent.binding.model,
         reasoningEffort: agent.binding.reasoningEffort,
         runCount: tasks.length,
+        contexts,
         scopes,
         prompts: tasks.map((t) => t.prompt),
-        drifted: scopes.filter((id) => host.isDrifted(id)),
+        drifted: scopes.flatMap((scope) => (host.isDrifted(scope.id) ? [scope.id] : [])),
       },
     ];
   });

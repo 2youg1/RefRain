@@ -297,8 +297,8 @@ export const dict = {
   "dispatch.title": { zh: "交给 Agent", en: "Send to an agent" },
   "dispatch.selection": { zh: "选中的文字", en: "Selected text" },
   "dispatch.noSelection": {
-    zh: "先在正文里选一段。它是 Agent 唯一能改写的范围。",
-    en: "Select a passage first. It is the only range an agent may rewrite.",
+    zh: "未选正文：Agent 可阅读并评论整章，但不能直接改写。",
+    en: "No passage selected: the agent may read and comment on the whole chapter, but cannot rewrite it.",
   },
   "dispatch.who": { zh: "交给谁", en: "To whom" },
   "dispatch.prompt": { zh: "要求", en: "Instruction" },
@@ -323,7 +323,9 @@ export const dict = {
   "dispatch.harness": { zh: "程序", en: "Harness" },
   "dispatch.model": { zh: "模型", en: "Model" },
   "dispatch.effort": { zh: "思考强度", en: "Effort" },
+  "dispatch.context": { zh: "上下文", en: "Context" },
   "dispatch.scope": { zh: "改写范围", en: "Edit Scope" },
+  "dispatch.noEditScope": { zh: "无（只评论）", en: "None (comments only)" },
 
   "sheet.close": { zh: "关闭", en: "Close" },
 

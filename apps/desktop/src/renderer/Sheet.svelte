@@ -22,7 +22,6 @@ const componentId = $props.id();
 const titleId = `${componentId}-title`;
 
 let closeButton = $state<HTMLButtonElement | null>(null);
-let returnFocus: HTMLElement | null = null;
 let wasOpen = false;
 
 /*
@@ -39,18 +38,7 @@ const localise = $derived.by(() => {
 });
 
 $effect(() => {
-  if (open && !wasOpen) {
-    returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    queueMicrotask(() => closeButton?.focus());
-  } else if (!open && wasOpen) {
-    const target = returnFocus;
-    returnFocus = null;
-    queueMicrotask(() => {
-      // A nonmodal Sheet may yield focus to the manuscript before it closes.
-      // Restore only when removing the Sheet itself left focus nowhere useful.
-      if (target?.isConnected && document.activeElement === document.body) target.focus();
-    });
-  }
+  if (open && !wasOpen) queueMicrotask(() => closeButton?.focus());
   wasOpen = open;
 });
 </script>

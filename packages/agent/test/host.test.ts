@@ -40,6 +40,23 @@ describe("Agent Host queue", () => {
     expect(host.runs()).toHaveLength(0);
   });
 
+  test("ambiguous or overlapping task scopes are refused before queue state changes", () => {
+    const host = new AgentHost(root);
+    const overlapping = task({
+      editScopes: [
+        { id: "s1", blockIds: ["b1"], text: "声音很熟。" },
+        { id: "s2", blockIds: ["b1"], text: "声音很熟。" },
+      ],
+    });
+    const ambiguous = task({
+      contextScope: [{ kind: "material", id: "s1", text: "整章。" }],
+    });
+
+    expect(() => host.enqueue(overlapping)).toThrow(/disjoint Edit Scopes.*b1/);
+    expect(() => host.enqueue(ambiguous)).toThrow(/scope id s1/);
+    expect(host.pending()).toEqual([]);
+  });
+
   test("a restarted host never reuses an existing Run id or workspace", async () => {
     const first = new AgentHost(root);
     first.register(agent()).enqueue(task());
@@ -66,17 +83,22 @@ describe("Agent Host queue", () => {
     expect(host.runs()).toEqual([]);
   });
 
-  test("the send manifest states run count, binding, scopes, and prompt", () => {
+  test("the send manifest states run count, binding, readable context, scopes, and prompt", () => {
     const host = new AgentHost(root);
     host.register(agent());
-    host.enqueue(task());
-    host.enqueue(task({ id: "t2" }));
+    const contextScope = [{ kind: "material" as const, id: "chapter:01.md", text: "整章。" }];
+    host.enqueue(task({ contextScope }));
+    host.enqueue(task({ id: "t2", contextScope }));
 
     const manifest = sendManifest(host);
 
     expect(manifest).toHaveLength(1);
     expect(manifest[0]).toMatchObject({ agentName: "kimi", runCount: 2, harness: "file" });
-    expect(manifest[0]?.scopes).toEqual(["s1", "s1"]);
+    expect(manifest[0]?.contexts).toEqual(["chapter:01.md"]);
+    expect(manifest[0]?.scopes).toEqual([
+      { id: "s1", blockIds: ["b1"] },
+      { id: "s1", blockIds: ["b1"] },
+    ]);
   });
 
   test("the manifest never carries a price or a cost estimate", () => {
@@ -327,6 +349,42 @@ describe("L0 file channel", () => {
 
     expect(await host.collect(run!.id)).toHaveLength(0);
     expect(host.commentsFor(run!.id)).toHaveLength(1);
+  });
+
+  test("a whole-chapter comment may target readable context without creating a Proposal", async () => {
+    const host = new AgentHost(root, [new FileChannelAdapter(root)]);
+    host.register(agent()).enqueue({
+      ...task(),
+      contextScope: [{ kind: "material", id: "chapter:01.md", text: "第一段。\n\n第二段。" }],
+      editScopes: [],
+    });
+    const [run] = await host.send();
+    writeFileSync(
+      run!.resultPath,
+      '<agent-result version="1"><comments><comment target="chapter:01.md">第二段转折太早。</comment></comments></agent-result>',
+    );
+
+    expect(await host.collect(run!.id)).toEqual([]);
+    expect(host.commentsFor(run!.id)).toEqual([
+      { target: "chapter:01.md", text: "第二段转折太早。" },
+    ]);
+  });
+
+  test("readable Context Scope cannot become a replacement", async () => {
+    const host = new AgentHost(root, [new FileChannelAdapter(root)]);
+    host.register(agent()).enqueue({
+      ...task(),
+      contextScope: [{ kind: "material", id: "chapter:01.md", text: "整章正文。" }],
+      editScopes: [],
+    });
+    const [run] = await host.send();
+    writeFileSync(
+      run!.resultPath,
+      '<agent-result version="1"><replacement scope="chapter:01.md">越权改写。</replacement></agent-result>',
+    );
+
+    expect(host.collect(run!.id)).rejects.toThrow(/unknown scope chapter:01.md/);
+    expect(run!.state).toBe("failed");
   });
 
   test("a replacement for an invented scope fails instead of disappearing", async () => {

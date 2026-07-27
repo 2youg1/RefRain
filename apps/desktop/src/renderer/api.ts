@@ -1,3 +1,5 @@
+import type { ReviewTaskIntent } from "../shared/review-task.ts";
+
 /**
  * The renderer's whole capability surface. Everything else — file access,
  * process launch, the ledger — lives in the main process behind these channels.
@@ -72,7 +74,8 @@ export interface ManifestEntryView {
   model: string;
   reasoningEffort: string;
   runCount: number;
-  scopes: string[];
+  contexts: string[];
+  scopes: { id: string; blockIds: string[] }[];
   prompts: string[];
   drifted: string[];
 }
@@ -188,7 +191,7 @@ interface RefRainApi {
     model: string,
     reasoningEffort: string,
   ): Promise<AgentView>;
-  enqueue(root: string, task: unknown): Promise<boolean>;
+  enqueue(root: string, task: ReviewTaskIntent): Promise<boolean>;
   manifest(root: string): Promise<ManifestEntryView[]>;
   send(root: string): Promise<{ id: string; requestPath: string; resultPath: string }[]>;
   cancel(root: string, runId: string): Promise<boolean>;

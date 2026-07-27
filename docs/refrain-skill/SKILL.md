@@ -1,11 +1,11 @@
 ---
 name: refrain
-description: RefRain 写作工作台的 agent 协议。当你收到一份含 "# Before / # Request / # Reply format / # Agent reply" 四段的请求文件时，加载本 skill。它告诉你请求怎么来的、你必须怎么回、人类会看到什么、你会收到什么反馈。
+description: RefRain 写作工作台的 agent 协议。当请求文件含「# Context（可选）/ # Before / # Request / # Reply format / # Agent reply」时加载本 skill。它说明哪些材料只可读、哪些段落可改、必须怎样回复，以及人会怎样裁决。
 ---
 
 # 你在 RefRain 里工作
 
-RefRain 是一个本地写作工作台。一个人在里面写长稿，把某几段交给你改。
+RefRain 是一个本地写作工作台。一个人在里面写长稿，把整章交给你评论，或把其中几段交给你改。
 
 **你写的是提案，不是正文。** 你的每一个字都要经过那个人点一次鼠标才会进入手稿。没有自动接受，没有后台合并。
 
@@ -14,13 +14,13 @@ RefRain 是一个本地写作工作台。一个人在里面写长稿，把某几
 ## 一分钟版本
 
 ```
-人选中几段 → 变成一份请求文件 → 你回一个 <agent-result> → 人逐条裁决 → 裁决回传给你
+人交出整章或选中几段 → 变成一份请求文件 → 你回一个 <agent-result> → 人逐条裁决 → 裁决回传给你
 ```
 
 四件事，记住就够了：
 
 1. **只回一个 `<agent-result>` 元素。** 前后不能有任何字，包括「好的，我来改」。
-2. **scope id 照抄。** 从 `# Before` 里抄，一个字符都不能变。
+2. **可改的 scope id 只从 `# Before` 抄。** `# Context` 只可读，只能作为评论 target。
 3. **一个 scope 最多一个 `<replacement>`。** 重复 = 整个 run 失败。
 4. **不想改就别写 `<replacement>`。** 只写 `<comment>` 是合法的，也是你表达怀疑的方式。
 
@@ -28,9 +28,14 @@ RefRain 是一个本地写作工作台。一个人在里面写长稿，把某几
 
 ## 第一步 · 请求是怎么来的
 
-那个人在编辑器里选中若干段落，写一句要求，点发送。RefRain 生成一份文件给你，长这样：
+那个人交出整章或选中若干段落，写一句要求，点发送。RefRain 生成一份文件给你，长这样：
 
 ```markdown
+# Context
+
+<!-- context chapter:ch01 -->
+这里是绑定到同一 Revision 的整章正文。你可以据此评论，但不能替换它。
+
 # Before
 
 <!-- scope ch01:b3 -->
@@ -52,9 +57,9 @@ RefRain 是一个本地写作工作台。一个人在里面写长稿，把某几
 <!-- Your <agent-result> element replaces this comment. -->
 ```
 
-**四段各归谁**：`# Before`、`# Request`、`# Reply format` 由应用生成；`# Agent reply` 是你的，只有你的。
+**各段归谁**：`# Context`、`# Before`、`# Request`、`# Reply format` 由应用生成；`# Agent reply` 是你的，只有你的。
 
-**scope id 就是段落的身份**（形如 `ch01:b3`）。它不是给你看的编号，是应用用来找回那一段的钥匙。抄错 = 找不到 = 你的改动被拒。
+`# Context` 的 id 是只读材料的身份，可以作为 `<comment target>`；`# Before` 的 scope id 是可写段落的身份，可以作为 `<replacement scope>` 或评论 target。两种 id 都必须逐字照抄。
 
 ---
 
@@ -68,15 +73,16 @@ preamble, no closing remark, no code fence. Text outside the element is
 rejected and the run fails.
 
 <agent-result version="1">
-  <replacement scope="SCOPE-ID">the rewritten text</replacement>
+  <replacement scope="BEFORE-SCOPE-ID">the rewritten text</replacement>
   <comments>
-    <comment target="SCOPE-ID">an observation that changes nothing</comment>
+    <comment target="CONTEXT-OR-BEFORE-ID">an observation that changes nothing</comment>
   </comments>
   <memo topic="optional label">what you want to still know next time</memo>
 </agent-result>
 
 Rules:
-- Use the scope ids marked in "# Before" above, exactly as written.
+- Only scope ids marked in "# Before" may appear in <replacement>.
+- Context ids are readable comment targets, never replacement scopes.
 - One <replacement> per scope at most. Repeating a scope fails the run.
 - An empty <replacement> deletes that scope's text.
 - Every <comment> goes inside <comments>, and uses target= rather than scope=.
@@ -99,7 +105,8 @@ it is the only thing you carry across a lost context.
 |---|---|
 | `<comment>` 用 `target=`，**不是** `scope=` | 解析失败，整个 run 作废 |
 | `<comment>` 必须**包在** `<comments>` 里面 | 同上 |
-| 元素外不能有任何文字，**包括代码围栏** | 同上 |
+| 把 `# Context` 的 id 写进 `<replacement scope>` | 越过可写边界，run 失败 |
+| 元素外不能有任何文字，**包括代码围栏** | 解析失败，整个 run 作废 |
 
 被测过的六种回法里，**五种失败**：裸散文、包在代码块里、加一句客套开头、漏掉 `version` 属性、猜错元素名。这五种恰好是多数模型的默认行为。
 
@@ -109,13 +116,13 @@ it is the only thing you carry across a lost context.
 <agent-result version="1">
   <replacement scope="ch01:b3">改写后的第三段。</replacement>
   <comments>
-    <comment target="ch01:b4">第四段的引文出处我无法核实，没有改动。</comment>
+    <comment target="chapter:ch01">全章第二次转折太早，我没有改动。</comment>
   </comments>
   <memo topic="语气">这位作者不接受设问句结尾。已第三次遇到。</memo>
 </agent-result>
 ```
 
-注意这里做了一件事：**b4 只留评论、不给替换**。这是正确用法——你拿不准就不要改，说出来。
+这个例子把 `ch01:b3` 作为可写 scope，又把 `chapter:ch01` 作为整章评论 target。`# Context` 让你说明问题，但不授权你替换整章。
 
 ---
 
