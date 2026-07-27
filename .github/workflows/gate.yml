@@ -332,6 +332,13 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-caret.ts
 
+      # Five chords were rebindable in Settings and reached no handler. A dead
+      # entry does not merely do nothing: `commandFor` matches by iteration
+      # order, so it shadows the command the author rebound onto those keys.
+      - name: every rebindable chord reaches a handler
+        working-directory: apps/desktop
+        run: bun scripts/verify-bindings.ts
+
       # Held under continue-on-error as SPEC Q5, a 289px drift between the
       # chapter header and the manuscript. There was no drift: the fixture
       # never opened, and the gate measured a blank screen. It now opens, the
