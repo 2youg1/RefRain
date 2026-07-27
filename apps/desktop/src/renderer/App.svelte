@@ -1014,6 +1014,7 @@ const onScroll = (): void => {
     {icon}
     {commands}
     {paletteOpen}
+    paletteShortcut={bindings.palette}
     {dragging}
     onOpenFolder={() => void addRoot()}
     onOpenFile={() => void openFile()}
@@ -1029,6 +1030,7 @@ const onScroll = (): void => {
         {icon}
         {commands}
         {paletteOpen}
+        paletteShortcut={bindings.palette}
         {rootViews}
         {chapters}
         {active}
@@ -1122,6 +1124,7 @@ const onScroll = (): void => {
     x={menuAt.x}
     y={menuAt.y}
     {selection}
+    {bindings}
     {t}
     onFormat={format}
     onAnnotate={() => {

@@ -11,7 +11,11 @@ export const dict = {
     zh: "校勘——多个抄本送到面前，由一个人裁决，裁决被记录下来。",
     en: "Collation — competing readings, one human judge, a recorded judgment.",
   },
-  "welcome.hint": { zh: "随时按 Ctrl K 唤出全部命令", en: "Ctrl K brings up every command" },
+  // `{keys}` is filled from the live binding. These read "Ctrl K" for as long
+  // as the author leaves the default alone, and followed it wherever they
+  // moved it — the string used to hardcode the chord and went on advertising
+  // Ctrl K after a rebind.
+  "welcome.hint": { zh: "随时按 {keys} 唤出全部命令", en: "{keys} brings up every command" },
   "welcome.open": { zh: "打开文件夹", en: "Open folder" },
   "welcome.openFile": { zh: "打开单个文件", en: "Open a file" },
   "welcome.create": { zh: "新建项目", en: "New project" },
@@ -27,7 +31,7 @@ export const dict = {
     en: "Type a command, or press ? for all",
   },
   "palette.empty": { zh: "没有匹配的命令", en: "No matching command" },
-  "palette.hint": { zh: "Ctrl K 唤出命令", en: "Ctrl K for commands" },
+  "palette.hint": { zh: "{keys} 唤出命令", en: "{keys} for commands" },
 
   "cmd.open": { zh: "打开项目…", en: "Open project…" },
   "cmd.create": { zh: "新建项目…", en: "New project…" },
@@ -420,6 +424,20 @@ export const dict = {
 
   "keys.press": { zh: "按下组合键…", en: "Press a chord…" },
   "keys.reset": { zh: "恢复默认快捷键", en: "Reset to defaults" },
+  // A refusal names what it collided with. "Invalid shortcut" tells the author
+  // to guess; these tell them which key to press instead, or which command to
+  // free up first.
+  "keys.bare": {
+    zh: "单个按键不能作快捷键——写作时它会在句子中间触发，输入法选字时也一样。请加上 Ctrl 或 Alt。",
+    en: "A single key cannot be a shortcut: it would fire mid-sentence, and while an input method is choosing characters. Add Ctrl or Alt.",
+  },
+  "keys.reserved": {
+    zh: "这个组合键系统已占用（",
+    en: "The system already uses this chord (",
+  },
+  "keys.reservedTail": { zh: "），换一个。", en: "). Choose another." },
+  "keys.duplicate": { zh: "这个组合键已经绑给了「", en: "This chord is already bound to " },
+  "keys.duplicateTail": { zh: "」，先把那一条改掉。", en: ". Change that one first." },
   "keys.open": { zh: "打开文件夹", en: "Open folder" },
   "keys.newChapter": { zh: "新建章节", en: "New chapter" },
   "keys.save": { zh: "保存", en: "Save" },
@@ -471,3 +489,16 @@ export const translator =
   (lang: Lang) =>
   (key: Key): string =>
     dict[key][lang];
+
+/**
+ * Fill `{keys}` with the chord that is bound right now.
+ *
+ * Every label naming a shortcut used to spell it out — "Ctrl K" in two strings
+ * here, "Ctrl M" and "Ctrl D" in the context menu. Rebinding the command left
+ * all of them advertising the old chord, and the context menu was worse than
+ * stale: it offered Ctrl M for a command that had been deleted, so the label
+ * described a key that did nothing at all. A label that names a chord reads it
+ * from `bindings` or it does not name one.
+ */
+export const withChord = (text: string, chord: string | undefined): string =>
+  text.replace("{keys}", chord ?? "");

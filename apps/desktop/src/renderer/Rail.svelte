@@ -8,6 +8,7 @@ interface Props {
   icon: string | null;
   commands: Command[];
   paletteOpen: boolean;
+  paletteShortcut: string;
   rootViews: RootView[];
   chapters: ChapterView[];
   active: string | null;
@@ -24,6 +25,7 @@ const {
   icon,
   commands,
   paletteOpen,
+  paletteShortcut,
   rootViews,
   chapters,
   active,
@@ -57,6 +59,7 @@ let openMaterial = $state<Record<string, boolean>>({});
       {commands}
       {t}
       {icon}
+      shortcut={paletteShortcut}
       inverted
       onOpen={onPaletteOpen}
       onClose={onPaletteClose}
