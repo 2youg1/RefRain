@@ -41,6 +41,8 @@ const api = {
 
   listAgents: (root: string) => ipcRenderer.invoke("agent:list", root),
   probeAgent: (root: string, id: string) => ipcRenderer.invoke("agent:probe", root, id),
+  /** The author read the command and accepts it; only then may it run. */
+  trustAgent: (root: string, id: string) => ipcRenderer.invoke("agent:trust", root, id),
   removeAgent: (root: string, id: string) => ipcRenderer.invoke("agent:remove", root, id),
   addAgent: (root: string, name: string, command: string) =>
     ipcRenderer.invoke("agent:add", root, name, command),

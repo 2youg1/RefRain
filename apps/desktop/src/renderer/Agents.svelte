@@ -11,7 +11,7 @@ import { api } from "./api.ts";
 
   const { root, t }: Props = $props();
 
-  type Status = "ready" | "checking" | "unreachable" | "file";
+  type Status = "ready" | "checking" | "unreachable" | "file" | "untrusted";
 
   interface AgentRow extends AgentView {
     status: Status;
@@ -24,6 +24,17 @@ import { api } from "./api.ts";
   let command = $state("");
   let checking = $state<string | null>(null);
 
+  /*
+   * Opening this screen used to run every configured binary.
+   *
+   * Each agent was probed on arrival, and a probe executes the command's first
+   * token. `agents.json` lives in the project folder, so it comes with whatever
+   * the project came with — and reading someone else's writing project ran
+   * their choice of program before its name had appeared on screen.
+   *
+   * A command restored from a project file is listed but not run. The author
+   * sees the argv and decides; only then does it get probed.
+   */
   $effect(() => {
     if (!root) return;
     void api()
@@ -31,11 +42,26 @@ import { api } from "./api.ts";
       .then((list) => {
         agents = list.map((agent) => ({
           ...agent,
-          status: agent.binding.harness === "file" ? "file" : "checking",
+          status:
+            agent.binding.harness === "file"
+              ? "file"
+              : agent.trusted === false
+                ? "untrusted"
+                : "checking",
         }));
         for (const agent of agents) if (agent.status === "checking") void probe(agent.id);
       });
   });
+
+  /** The author read the command and accepts it; only now may it be probed. */
+  const trust = async (id: string): Promise<void> => {
+    if (!root) return;
+    if (!(await api().trustAgent(root, id))) return;
+    agents = agents.map((agent) =>
+      agent.id === id ? { ...agent, trusted: true, status: "checking" } : agent,
+    );
+    await probe(id);
+  };
 
   /**
    * Ask the harness whether it is actually there.
@@ -52,7 +78,9 @@ import { api } from "./api.ts";
       agent.id === id
         ? {
             ...agent,
-            status: result.ok ? "ready" : "unreachable",
+            // Main refuses to run an unvouched command even when asked, so the
+            // row returns to waiting for consent rather than reading as broken.
+            status: result.ok ? "ready" : result.reason === "untrusted" ? "untrusted" : "unreachable",
             ...(result.detail === undefined ? {} : { detail: result.detail }),
           }
         : agent,
@@ -81,10 +109,17 @@ import { api } from "./api.ts";
 
   const statusKey = (status: Status): Key => `agents.${status}` as Key;
 
-  /** Ready-made entries for the harnesses whose interfaces are documented. */
+  /**
+   * Ready-made entries for the harnesses whose interfaces are documented.
+   *
+   * No shell metacharacters. Commands are launched with `shell: false`, because
+   * a prompt is author text and must never become a command — so a `>` here is
+   * a literal argument, not a redirection, and the claude preset shipped as an
+   * example that could not work and taught the wrong template shape.
+   */
   const presets: { name: string; command: string }[] = [
     { name: "codex", command: "codex exec --file {request} --output {result}" },
-    { name: "claude", command: "claude -p --output-format text {prompt} > {result}" },
+    { name: "claude", command: "claude -p --output-format text --output-file {result} {prompt}" },
     { name: "kimi", command: "kimi run --input {request} --output {result}" },
     { name: "pi", command: "pi run --file {request} --out {result}" },
   ];
@@ -115,11 +150,19 @@ import { api } from "./api.ts";
           : agent.binding.harness.replace(/^command:/, "")}
       </p>
 
-      {#if agent.detail}
+      {#if agent.status === "untrusted"}
+        <div class="consent">
+          <p class="explains">{t("agents.untrustedExplains")}</p>
+          {#if agent.command}
+            <code class="argv">{agent.command}</code>
+          {/if}
+          <button class="trust" onclick={() => trust(agent.id)}>{t("agents.trust")}</button>
+        </div>
+      {:else if agent.detail}
         <p class="detail">{agent.detail}</p>
       {/if}
 
-      {#if agent.status !== "file"}
+      {#if agent.status !== "file" && agent.status !== "untrusted"}
         <button class="recheck" onclick={() => probe(agent.id)}>{t("agents.recheck")}</button>
       {/if}
     </article>
@@ -228,6 +271,57 @@ import { api } from "./api.ts";
 
   .dot.checking {
     background: var(--seal);
+  }
+
+  /* Awaiting consent is not an error and not a success: it is a question. */
+  .dot.untrusted {
+    background: var(--agent);
+  }
+
+  .consent {
+    display: grid;
+    gap: 0.6rem;
+    margin-top: 0.7rem;
+    padding: 0.8rem 0.9rem;
+    border: 1px solid var(--rule-strong);
+    border-radius: 3px;
+    background: var(--paper-sunk);
+  }
+
+  .consent .explains {
+    margin: 0;
+    font-size: var(--step--1);
+    line-height: 1.7;
+    color: var(--ink-soft);
+  }
+
+  /* The argv wraps rather than truncates: a command the author cannot read
+     whole is a command they cannot agree to. */
+  .consent .argv {
+    font-family: var(--mono);
+    font-size: var(--step--1);
+    line-height: 1.6;
+    padding: 0.5rem 0.6rem;
+    border-radius: 2px;
+    background: var(--paper);
+    color: var(--ink);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+
+  .consent .trust {
+    justify-self: start;
+    font-size: var(--step--1);
+    padding: 0.35rem 0.9rem;
+    border: 1px solid var(--seal);
+    border-radius: 2px;
+    background: transparent;
+    color: var(--seal);
+    cursor: pointer;
+  }
+
+  .consent .trust:hover {
+    background: var(--seal-wash);
   }
 
   .dot.pulsing {

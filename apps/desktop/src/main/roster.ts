@@ -31,11 +31,28 @@ interface StoredAgent {
    * dropped it.
    */
   readonly template?: readonly string[];
+  /** Set once the author has confirmed the argv; absent means never confirmed. */
+  readonly trusted?: boolean;
 }
 
 export interface RosterEntry {
   readonly agent: Agent;
   readonly template?: readonly string[];
+  /**
+   * Whether the author has seen this command and agreed to run it.
+   *
+   * `agents.json` lives inside the project folder, so it arrives with whatever
+   * the project arrived with — a clone, a shared drive, an archive from a
+   * colleague. Restoring it used to register the command adapter outright, and
+   * merely opening the Agents screen probed every agent, which runs the binary.
+   * Opening someone else's writing project was enough to execute their choice
+   * of program.
+   *
+   * A restored command is untrusted until the author reads the argv and says
+   * yes. Trust is recorded per project, because it is a statement about this
+   * project's file and not about the agent's name.
+   */
+  readonly trusted?: boolean;
 }
 
 const fileFor = (stateDir: string): string => join(stateDir, "agents.json");
@@ -88,6 +105,9 @@ export const readRoster = (stateDir: string): RosterEntry[] => {
             },
           },
           ...(template === undefined ? {} : { template }),
+          // Anything but a literal `true` reads as untrusted, so a hand-edited
+          // or truncated file fails closed.
+          trusted: entry.trusted === true,
         },
       ];
     });
@@ -103,13 +123,14 @@ export const readRoster = (stateDir: string): RosterEntry[] => {
  * truncated roster, because the recovery from that is retyping every agent.
  */
 export const writeRoster = (stateDir: string, entries: readonly RosterEntry[]): void => {
-  const stored: StoredAgent[] = entries.map(({ agent, template }) => ({
+  const stored: StoredAgent[] = entries.map(({ agent, template, trusted }) => ({
     id: agent.id,
     name: agent.name,
     harness: agent.binding.harness,
     model: agent.binding.model,
     reasoningEffort: agent.binding.reasoningEffort,
     ...(template === undefined ? {} : { template }),
+    ...(trusted === true ? { trusted: true } : {}),
   }));
 
   replaceFileAtomically(fileFor(stateDir), `${JSON.stringify(stored, null, 2)}\n`);

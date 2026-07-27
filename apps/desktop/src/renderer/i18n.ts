@@ -264,6 +264,12 @@ export const dict = {
   "agents.checking": { zh: "检测中", en: "checking" },
   "agents.unreachable": { zh: "连不上", en: "unreachable" },
   "agents.file": { zh: "文件通道", en: "file channel" },
+  "agents.untrusted": { zh: "等待确认", en: "awaiting consent" },
+  "agents.untrustedExplains": {
+    zh: "这条命令来自项目文件夹里的 agents.json，不是你在这台机器上输入的。确认之前它不会运行。",
+    en: "This command came from agents.json inside the project folder, not from anything typed here. It does not run until you agree.",
+  },
+  "agents.trust": { zh: "我确认，运行它", en: "I agree, run it" },
   "agents.recheck": { zh: "重新检测", en: "Check again" },
   "agents.remove": { zh: "移除", en: "Remove" },
   "agents.presets": { zh: "常见 Harness", en: "Known harnesses" },
