@@ -97,8 +97,9 @@ export const createIpcAuthority = (ipc: IpcMain): IpcAuthority => {
       const result = await body(event, roots);
       // Open/create/drop only choose candidates in the real renderer flow. The
       // workspace load is the first operation that proves all roots can be
-      // described; adopting after it returns avoids half-granted permissions
-      // when a later root makes the load throw.
+      // described; replacing after it returns both avoids half-granted
+      // permissions and revokes a Root the author has removed.
+      openedRoots.clear();
       for (const root of roots) openedRoots.add(root);
       return result;
     });
