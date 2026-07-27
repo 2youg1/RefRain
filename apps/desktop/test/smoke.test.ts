@@ -7,8 +7,8 @@ const here = fileURLToPath(new URL(".", import.meta.url));
 const dist = join(here, "..", "dist");
 
 /**
- * These read build output, so they run after `make.sh` rather than in the
- * default suite. `bun run gate` builds first; a bare `bun test` skips them
+ * These read build output, so they run after `build-desktop.ts` rather than in
+ * the default suite. `bun run gate` builds first; a bare `bun test` skips them
  * instead of failing on an absent dist/.
  */
 const built = existsSync(join(dist, "main", "main.cjs"));
@@ -51,14 +51,14 @@ test("packaging uses Node platform names for the native binary", () => {
 
 test("the reviewed manifest identifies every generated desktop byte", () => {
   const config = readFileSync(join(here, "..", "electron-builder.yml"), "utf8");
-  const make = readFileSync(join(here, "..", "make.sh"), "utf8");
+  const build = readFileSync(join(here, "..", "scripts", "build-desktop.ts"), "utf8");
   const gate = readFileSync(
     join(here, "..", "..", "..", ".github", "workflows", "gate.yml"),
     "utf8",
   );
 
   expect(config).toContain("build/desktop-manifest.json");
-  expect(make).toContain("scripts/build-manifest.ts");
+  expect(build).toContain('["scripts/build-manifest.ts"]');
   expect(gate).toContain("git diff --exit-code -- apps/desktop/build/desktop-manifest.json");
 });
 
