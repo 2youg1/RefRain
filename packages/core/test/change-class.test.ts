@@ -88,4 +88,49 @@ describe("Change classification", () => {
 
     expect(cls).toBe("formatting");
   });
+
+  /**
+   * Reordering is the case that breaks a classifier built on concatenation.
+   * Every removed sentence is also an added sentence, so gluing the two sides
+   * together produces two strings that differ only in the order of their
+   * characters — and the skeleton test cannot see order across a join. The
+   * proposal was then offered for bulk accept, which is the one outcome this
+   * module exists to prevent: a meaning change riding through in one click.
+   */
+  test("swapping two sentences is semantic, not a formatting sweep", () => {
+    const cls = classifyProposal([
+      slice("s0", "del", "他走了。"),
+      slice("s1", "del", "天亮了。"),
+      slice("s2", "ins", "天亮了。"),
+      slice("s3", "ins", "他走了。"),
+    ]);
+
+    expect(cls).toBe("semantic");
+  });
+
+  test("moving one sentence past an untouched one is semantic", () => {
+    const cls = classifyProposal([
+      slice("s0", "del", "第一句。"),
+      slice("s1", "same", "中间的一句。"),
+      slice("s2", "ins", "第一句。"),
+    ]);
+
+    expect(cls).toBe("semantic");
+  });
+
+  /**
+   * The pairing must not become so strict that a genuine sweep across several
+   * sentences stops qualifying — false negatives cost a keystroke, but enough
+   * of them make the bulk path useless.
+   */
+  test("a punctuation sweep over many sentences is still formatting", () => {
+    const cls = classifyProposal([
+      slice("s0", "del", "他说,好."),
+      slice("s1", "ins", "他说，好。"),
+      slice("s2", "del", "她说,行."),
+      slice("s3", "ins", "她说，行。"),
+    ]);
+
+    expect(cls).toBe("formatting");
+  });
 });

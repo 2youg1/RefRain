@@ -74,16 +74,35 @@ export const classifyChange = (before: string, after: string): ChangeClass =>
  * Classify a whole Proposal from its slices. One semantic slice makes the
  * whole proposal semantic: bulk-accepting a proposal must never let a meaning
  * change ride along with the punctuation fixes around it.
+ *
+ * Removals and insertions are paired in order rather than concatenated. Gluing
+ * each side into one string loses where the boundaries were, and a sentence
+ * lifted out and put back somewhere else then reduces to two identical strings
+ * — classified as formatting, and offered for bulk accept. Moving a sentence
+ * changes what a paragraph argues; it is exactly what has to be read one at a
+ * time.
+ *
+ * An unequal count is semantic on its face: a sentence appeared or vanished.
  */
 export const classifyProposal = (slices: readonly ReviewSlice[]): ChangeClass => {
-  const removed = slices
-    .filter((s) => s.kind === "del")
-    .map((s) => s.text)
-    .join("");
-  const added = slices
-    .filter((s) => s.kind === "ins")
-    .map((s) => s.text)
-    .join("");
+  const removed = slices.filter((slice) => slice.kind === "del");
+  const added = slices.filter((slice) => slice.kind === "ins");
+  if (removed.length !== added.length) return "semantic";
 
-  return classifyChange(removed, added);
+  // A sweep rewrites each sentence where it stands, so its removal and its
+  // replacement sit next to each other with nothing but whitespace between.
+  // A sentence that travelled has unchanged text in between — the one thing a
+  // concatenated comparison cannot see, and the reason a move used to pass as
+  // formatting and be offered for bulk accept.
+  let pair = 0;
+  for (const [index, slice] of slices.entries()) {
+    if (slice.kind !== "del") continue;
+    const replacement = added[pair];
+    pair += 1;
+    if (replacement === undefined) return "semantic";
+    if (classifyChange(slice.text, replacement.text) !== "formatting") return "semantic";
+    if (slices.indexOf(replacement) !== index + 1) return "semantic";
+  }
+
+  return "formatting";
 };
