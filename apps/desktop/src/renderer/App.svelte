@@ -759,6 +759,20 @@ const collect = async (runId: string): Promise<void> => {
  */
 let staged = $state<Record<string, VerdictView>>({});
 
+/**
+ * The dispatch instruction and the rewrite the author is typing, held here for
+ * the same reason as the verdicts above: both are the author's own words, and
+ * both used to live in a sheet that unmounts on Escape.
+ *
+ * The dispatch case was the worse of the two — writing an instruction means
+ * going back to the manuscript to quote a phrase or check where the Edit Scope
+ * ends, and Escape is the way back.
+ */
+let dispatchPrompt = $state("");
+let reviewDraft = $state("");
+let reviewEditing = $state<string | null>(null);
+let agentDraft = $state({ adding: false, name: "", command: "" });
+
 const commit = async (verdicts: VerdictView[]): Promise<void> => {
   // The main process merges against its own head. With unsaved text in the
   // editor that head is stale, and `result.text` would overwrite characters
@@ -770,22 +784,31 @@ const commit = async (verdicts: VerdictView[]): Promise<void> => {
   const chapter = activeChapter;
   if (!chapter) return;
   refusal = null;
-  const result = await api().commit(chapter.root, { chapter: chapter.id, verdicts });
-  if (!result.ok) {
-    refusal = { reason: result.reason, detail: result.detail };
-    return;
+  // A refused merge answers `ok: false`; a merge that could not be written at
+  // all — an unwritable .refrain, a ledger that threw — rejects instead. Every
+  // other async action here says so (save, collect, revert); this one left the
+  // author looking at a panel that did nothing, with the failure in a console
+  // they never open.
+  try {
+    const result = await api().commit(chapter.root, { chapter: chapter.id, verdicts });
+    if (!result.ok) {
+      refusal = { reason: result.reason, detail: result.detail };
+      return;
+    }
+    text = result.text;
+    render(result.text);
+    chapters = chapters.map((entry) =>
+      entry.path === chapter.path ? { ...entry, text: result.text } : entry,
+    );
+    proposals = proposals.filter((p) => !verdicts.some((v) => v.proposalId === p.id));
+    // Cleared only now: the merge is on disk, so the judgments have somewhere
+    // else to live. Anything refused above still sits in the panel.
+    staged = {};
+    saved = true;
+    if (proposals.length === 0) sheet = null;
+  } catch (error) {
+    say(error instanceof Error ? error.message : String(error));
   }
-  text = result.text;
-  render(result.text);
-  chapters = chapters.map((entry) =>
-    entry.path === chapter.path ? { ...entry, text: result.text } : entry,
-  );
-  proposals = proposals.filter((p) => !verdicts.some((v) => v.proposalId === p.id));
-  // Cleared only now: the merge is on disk, so the judgments have somewhere
-  // else to live. Anything refused above still sits in the panel.
-  staged = {};
-  saved = true;
-  if (proposals.length === 0) sheet = null;
 };
 
 /**
@@ -1113,6 +1136,8 @@ const onScroll = (): void => {
     {scope}
     {runs}
     {t}
+    prompt={dispatchPrompt}
+    onPrompt={(next) => (dispatchPrompt = next)}
     onDispatched={async () => {
       const owner = activeChapter?.root ?? root;
       if (owner) {
@@ -1132,6 +1157,10 @@ const onScroll = (): void => {
     {refusal}
     {staged}
     onStaged={(next) => (staged = next)}
+    draft={reviewDraft}
+    onDraft={(next) => (reviewDraft = next)}
+    editing={reviewEditing}
+    onEditing={(next) => (reviewEditing = next)}
     onCommit={commit}
   />
 </Sheet>
@@ -1205,7 +1234,7 @@ const onScroll = (): void => {
       <Typography settings={type} {t} onChange={(next) => (type = next)} />
     {/snippet}
     {#snippet agents()}
-      <Agents {root} {t} />
+      <Agents {root} {t} draft={agentDraft} onDraft={(next) => (agentDraft = next)} />
     {/snippet}
     {#snippet shortcuts()}
       <Shortcuts {bindings} {t} onChange={(next) => (bindings = next)} />

@@ -193,7 +193,11 @@ jobs:
       # and came back found an empty list. The same component also cleared them
       # on Merge before knowing the merge succeeded, so a refused commit
       # destroyed the judgments it had just declined to apply.
-      - name: staged verdicts survive Escape and a refused merge
+      # The same lifetime fault held the rewrite typed into a Review Slice and
+      # the dispatch instruction. The dispatch case was the worst of the three:
+      # writing an instruction means going back to the manuscript to quote it,
+      # and Escape is the way back.
+      - name: what an author types survives Escape and a refused merge
         working-directory: apps/desktop
         run: bun scripts/verify-staged-verdicts.ts
 

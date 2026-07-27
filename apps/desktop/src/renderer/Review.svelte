@@ -19,11 +19,38 @@ interface Props {
    */
   staged: Record<string, VerdictView>;
   onStaged: (next: Record<string, VerdictView>) => void;
+  /**
+   * The rewrite the author is typing for a slice, before pressing "use mine".
+   *
+   * Same reason as `staged`: it is the author's own prose, and its only copy
+   * was in a component the sheet unmounts on Escape.
+   */
+  draft: string;
+  onDraft: (next: string) => void;
+  /**
+   * Which slice the rewrite box is open on.
+   *
+   * On its own this is a UI indicator. Once `draft` outlives the panel, this
+   * has to as well: leaving it behind reopens the panel with the text intact
+   * and the box shut, which the author reads as the text being gone.
+   */
+  editing: string | null;
+  onEditing: (next: string | null) => void;
 }
 
-const { proposals, comments, t, refusal, onCommit, staged, onStaged }: Props = $props();
-let editing = $state<string | null>(null);
-let draft = $state("");
+const {
+  proposals,
+  comments,
+  t,
+  refusal,
+  onCommit,
+  staged,
+  onStaged,
+  draft,
+  onDraft,
+  editing,
+  onEditing,
+}: Props = $props();
 let reasonFor = $state<string | null>(null);
 
 const stagedCount = $derived(Object.keys(staged).length);
@@ -127,16 +154,20 @@ const setReason = (sliceId: string, reason: string): void => {
         <div class="row">
           <div class="slice {slice.kind}" class:judged={verdict !== undefined}>
             {#if editing === slice.id}
-              <textarea bind:value={draft} rows="3"></textarea>
+              <textarea
+                value={draft}
+                oninput={(event) => onDraft(event.currentTarget.value)}
+                rows="3"
+              ></textarea>
               <div class="edit-actions">
                 <button
                   class="primary"
                   onclick={() => {
                     judge(proposal, slice, "accept-modified", draft);
-                    editing = null;
+                    onEditing(null);
                   }}>{t("review.useMine")}</button
                 >
-                <button onclick={() => (editing = null)}>{t("review.cancel")}</button>
+                <button onclick={() => onEditing(null)}>{t("review.cancel")}</button>
               </div>
             {:else}
               <span class="text" class:struck={slice.kind === "del" && verdict?.kind === "accept"}>
@@ -158,8 +189,8 @@ const setReason = (sliceId: string, reason: string): void => {
               {#if slice.kind === "ins"}
                 <button
                   onclick={() => {
-                    editing = slice.id;
-                    draft = verdict?.finalText ?? slice.text;
+                    onEditing(slice.id);
+                    onDraft(verdict?.finalText ?? slice.text);
                   }}>{t("review.rewrite")}</button
                 >
               {/if}
