@@ -11,6 +11,7 @@
  * looks permanent and a delete that is recoverable should not look alike.
  */
 
+import { onDestroy } from "svelte";
 import type { Key } from "./i18n.ts";
 
 export interface FileEntry {
@@ -63,6 +64,8 @@ const {
 const ROW = 26;
 /** Rows rendered beyond the viewport, so a fast scroll does not show a gap. */
 const MARGIN = 8;
+/** Long enough to coalesce ordinary typing, short enough to stay below a deliberate pause. */
+const SEARCH_DEBOUNCE_MS = 200;
 
 let viewport = $state<HTMLElement | null>(null);
 let scrollTop = $state(0);
@@ -74,6 +77,7 @@ let scrollTop = $state(0);
 let height = $state(0);
 let selected = $state(new Set<string>());
 let focusedIndex = $state<number | null>(null);
+let queryTimer: ReturnType<typeof setTimeout> | undefined;
 
 const first = $derived(Math.max(0, Math.floor(scrollTop / ROW) - MARGIN));
 const visible = $derived(Math.ceil(height / ROW) + MARGIN * 2);
@@ -98,6 +102,21 @@ const onScroll = (event: Event) => {
   scrollTop = target.scrollTop;
   height = target.clientHeight;
 };
+
+const queueQuery = (next: string): void => {
+  clearTimeout(queryTimer);
+  queryTimer = undefined;
+  if (next.trim() === "") {
+    onQuery(next);
+    return;
+  }
+  queryTimer = setTimeout(() => {
+    queryTimer = undefined;
+    onQuery(next);
+  }, SEARCH_DEBOUNCE_MS);
+};
+
+onDestroy(() => clearTimeout(queryTimer));
 
 const focus = (index: number) => {
   if (!viewport || total === 0) return;
@@ -197,7 +216,7 @@ const columns: { order: SortOrder; label: Key }[] = [
         type="search"
         placeholder={t("files.search")}
         value={query}
-        oninput={(event) => onQuery((event.currentTarget as HTMLInputElement).value)}
+        oninput={(event) => queueQuery((event.currentTarget as HTMLInputElement).value)}
         aria-label={t("files.search")}
       />
       <div class="columns" role="group" aria-label={t("files.sort")}>
