@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Agent, ReviewTask } from "../src/index.ts";
-import { AgentHost, CommandAdapter } from "../src/index.ts";
+import { AgentHost, CommandAdapter, DEFAULT_TIMEOUT_MS } from "../src/index.ts";
 
 let root = "";
 beforeEach(() => {
@@ -78,6 +78,20 @@ describe("command adapter", () => {
     await adapter.awaitCompletion(run!).catch(() => undefined);
 
     expect(run!.state).toBe("failed");
+  });
+
+  test("an adapter with no configured timeout still has one", () => {
+    // Every construction site — `ipc.ts` has three — omits `timeoutMs`, so a
+    // harness that hangs held its Run in `dispatched` forever. The author could
+    // cancel it by hand, but nothing else ever would, and a Run that never
+    // settles is a Run whose Proposals never arrive.
+    expect(DEFAULT_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(new CommandAdapter({ id: "command", template: ["true"] }).timeoutMs).toBe(
+      DEFAULT_TIMEOUT_MS,
+    );
+    expect(new CommandAdapter({ id: "command", template: ["true"], timeoutMs: 30 }).timeoutMs).toBe(
+      30,
+    );
   });
 
   test("a timed-out harness is killed and reaches failed", async () => {

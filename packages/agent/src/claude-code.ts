@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { DEFAULT_TIMEOUT_MS } from "./command.ts";
 import { scaffold } from "./file-channel.ts";
 import { after, type Launched, launch } from "./spawn.ts";
 import type {
@@ -182,12 +183,10 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
     const child = this.running.get(run.id);
     if (!child) return;
 
-    const timeout = this.config.timeoutMs;
-    const timer = timeout ? after(timeout) : undefined;
-    const exited = timer
-      ? await Promise.race([child.exited, timer.promise.then(() => TIMED_OUT)])
-      : await child.exited;
-    timer?.cancel();
+    const timeout = this.config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const timer = after(timeout);
+    const exited = await Promise.race([child.exited, timer.promise.then(() => TIMED_OUT)]);
+    timer.cancel();
 
     if (exited === TIMED_OUT) {
       child.kill();

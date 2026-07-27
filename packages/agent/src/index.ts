@@ -3,7 +3,7 @@ export { broadcast, competitorsFor, roundOf } from "./broadcast.ts";
 export type { ClaudeCodeConfig } from "./claude-code.ts";
 export { ClaudeCodeAdapter } from "./claude-code.ts";
 export type { CommandAdapterConfig } from "./command.ts";
-export { CommandAdapter } from "./command.ts";
+export { CommandAdapter, DEFAULT_TIMEOUT_MS } from "./command.ts";
 export { FileChannelAdapter, scaffold } from "./file-channel.ts";
 export type { Grant, GrantRefusal, GrantRequest, GrantVerdict } from "./grant.ts";
 export { grantAllows, issueGrant, revokeGrant, spendGrant } from "./grant.ts";
