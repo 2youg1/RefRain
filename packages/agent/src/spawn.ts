@@ -90,6 +90,55 @@ const runnable = (program: string): boolean => {
 };
 
 /**
+ * The parts of this process's environment a harness needs, and no more.
+ *
+ * Everything used to be inherited, which handed each subprocess whatever the
+ * author's shell happened to hold — API keys for services this application
+ * never talks to among them. A harness needs to find its own files and speak
+ * the author's language; it does not need the rest, and a prompt injected
+ * through the manuscript could otherwise read a credential straight out of
+ * `process.env`.
+ *
+ * A harness with its own credential is configured through `env` on the launch,
+ * which is merged over this and stays explicit.
+ */
+const KEPT = new Set([
+  "PATH",
+  "PATHEXT",
+  "HOME",
+  "USERPROFILE",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "TMPDIR",
+  "TEMP",
+  "TMP",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TZ",
+  "SHELL",
+  "COMSPEC",
+  "SYSTEMROOT",
+  "WINDIR",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "PROGRAMFILES",
+  "PROGRAMFILES(X86)",
+  "PROGRAMDATA",
+  "USERNAME",
+  "USER",
+  "LOGNAME",
+  "NODE_EXTRA_CA_CERTS",
+  "SSL_CERT_FILE",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_CACHE_HOME",
+]);
+
+const inherited = (): NodeJS.ProcessEnv =>
+  Object.fromEntries(Object.entries(process.env).filter(([name]) => KEPT.has(name.toUpperCase())));
+
+/**
  * Launch a process, or throw if it cannot start.
  *
  * Throwing synchronously for an absent binary is the contract the Host builds
@@ -115,7 +164,7 @@ export const launch = ({ argv, cwd, env, input }: Launch): Launched => {
 
   const child = spawn(image, imageArgs, {
     cwd,
-    env: { ...process.env, ...env },
+    env: { ...inherited(), ...env },
     stdio: ["pipe", "pipe", "pipe"],
     // Never a shell: a prompt is author text and will contain quotes and
     // semicolons, none of which may become a command.

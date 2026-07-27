@@ -133,6 +133,41 @@ describe("Verdict Ledger", () => {
     ledger.close();
   });
 
+  /*
+   * `_` and `%` are LIKE's wildcards, and the fragment went in unescaped. The
+   * parameter was bound, so nothing could be injected — but the answers were
+   * quietly wrong, and this is the entry point to the ledger's whole value.
+   * Searching a snake_case term, or a reason containing "30%", returned rows
+   * that do not match and the author had no way to notice.
+   */
+  test("an underscore in the query is a character, not a wildcard", () => {
+    const ledger = new VerdictLedger(join(root, "underscore.db"));
+    ledger.record(verdict({ id: "a", reason: "改成 snake_case 更一致" }));
+    ledger.record(verdict({ id: "b", reason: "snakeXcase 是错的" }));
+
+    expect(ledger.search("snake_case").map((v) => v.id)).toEqual(["a"]);
+    ledger.close();
+  });
+
+  test("a percent sign in the query is a character, not a wildcard", () => {
+    const ledger = new VerdictLedger(join(root, "percent.db"));
+    ledger.record(verdict({ id: "a", reason: "这段有 30% 是套话" }));
+    ledger.record(verdict({ id: "b", reason: "毫无关系的理由" }));
+
+    expect(ledger.search("30%").map((v) => v.id)).toEqual(["a"]);
+    expect(ledger.search("%").map((v) => v.id)).toEqual(["a"]);
+    ledger.close();
+  });
+
+  test("a backslash in the query does not escape the next character", () => {
+    const ledger = new VerdictLedger(join(root, "backslash.db"));
+    ledger.record(verdict({ id: "a", reason: "路径写成 C:\\\\书稿 了" }));
+    ledger.record(verdict({ id: "b", reason: "另一条" }));
+
+    expect(ledger.search("C:\\\\书稿").map((v) => v.id)).toEqual(["a"]);
+    ledger.close();
+  });
+
   test("a duplicate Verdict id cannot rewrite the original audit record", () => {
     const ledger = new VerdictLedger(join(root, "ledger.db"));
     const original = verdict({ id: "fixed", reason: "原来的理由" });

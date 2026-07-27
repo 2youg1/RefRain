@@ -99,12 +99,25 @@ export class VerdictLedger {
     ).map(toVerdict);
   }
 
-  /** Retrieval over stated reasoning is what turns the ledger into taste. */
+  /**
+   * Retrieval over stated reasoning is what turns the ledger into taste.
+   *
+   * `_` and `%` are LIKE's wildcards and used to travel unescaped. The
+   * parameter was bound, so nothing could be injected — the failure was
+   * quieter than that: searching `snake_case`, or a reason that mentions
+   * "30%", returned rows that do not match, and the author had no way to see
+   * it happening. A search that lies is worse than one that finds nothing.
+   */
   search(fragment: string): Verdict[] {
+    // `!` rather than a backslash: the escape character has to survive both a
+    // TypeScript string literal and SQL's own quoting, and a backslash spends
+    // the whole trip being halved. `!` needs neither, and is escaped here like
+    // any other special character so a reason containing one still matches.
+    const pattern = fragment.replace(/[!%_]/g, (character) => `!${character}`);
     return (
       this.db
-        .prepare("SELECT * FROM verdicts WHERE reason LIKE ? ORDER BY decided_at, id")
-        .all(`%${fragment}%`) as unknown as Row[]
+        .prepare("SELECT * FROM verdicts WHERE reason LIKE ? ESCAPE '!' ORDER BY decided_at, id")
+        .all(`%${pattern}%`) as unknown as Row[]
     ).map(toVerdict);
   }
 
