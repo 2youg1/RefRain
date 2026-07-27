@@ -75,6 +75,9 @@ jobs:
       - name: File URLs become paths the way Windows needs
         run: bun run verify:paths
 
+      - name: Unix-only constructs stay off the Windows target
+        run: bun run verify:unix-guards
+
       - name: Bytes the author did not edit come back unchanged
         run: bun run verify:roundtrip
 
