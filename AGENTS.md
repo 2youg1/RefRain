@@ -40,6 +40,24 @@ The empty `libnode.dll` satisfies napi's build script, which checks that the
 path exists before a link step clippy never reaches. `bun run verify:unix-guards`
 covers the other half — a Unix-only construct that would not compile there at all.
 
+**Green on Linux is not evidence for Windows**, and Windows is the only platform
+0.1.x ships to. Seven distinct defects reached the release job in one night, all
+of the same shape: a rule Unix does not enforce.
+
+| What Windows enforces | What it cost |
+|---|---|
+| A flush needs a writable handle | Every durable state write failed — `fsyncSync` on an `O_RDONLY` descriptor |
+| An open handle locks its file | A ledger that threw mid-construction leaked the handle, and the workspace could not be removed |
+| Environment names arrive as `Path` | `environment.PATH` read `undefined`, so no harness could be launched at all |
+| `URL.pathname` yields `/D:/…` | A fixture read a path that does not exist |
+| A junction needs the directory form of remove | `rmSync(path)` answers EFAULT |
+
+Two of those are product defects, not test defects. Three gates now guard the
+statically visible half — `verify:paths` (which scans the test directories too,
+because that is where one hid), `verify:durable-writes`, `verify:unix-guards` —
+and the rest is why the Windows job exists. Do not read a local green as
+permission to skip it. Full account in `docs/windows-platform-defects.md`.
+
 ## Before you edit
 
 Read `SPEC.md`, then the target module in full, then its tests. Read a function's callers before changing its signature.
