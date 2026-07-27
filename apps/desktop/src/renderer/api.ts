@@ -103,6 +103,15 @@ export interface AgentView {
   id: string;
   name: string;
   binding: { harness: string; model: string; reasoningEffort: string };
+  /**
+   * The argv this agent runs, for a command harness.
+   *
+   * Shown before the author is asked to trust it: a confirmation that hides
+   * what it executes asks for agreement to something unreadable.
+   */
+  command?: string;
+  /** False while a command restored from the project file awaits consent. */
+  trusted?: boolean;
 }
 
 interface RefRainApi {
@@ -111,7 +120,9 @@ interface RefRainApi {
   createProject(): Promise<string | null>;
   loadWorkspace(roots: string[]): Promise<WorkspaceView>;
   systemFonts(): Promise<string[]>;
-  probeAgent(root: string, id: string): Promise<{ ok: boolean; detail?: string }>;
+  probeAgent(root: string, id: string): Promise<{ ok: boolean; reason?: string; detail?: string }>;
+  /** Records that the author read this agent's command and accepts it. */
+  trustAgent(root: string, id: string): Promise<boolean>;
   removeAgent(root: string, id: string): Promise<boolean>;
   revertEdit(root: string, chapterId: string, edit: EditView): Promise<string>;
   revertAll(root: string, chapterId: string, edits: EditView[]): Promise<string>;

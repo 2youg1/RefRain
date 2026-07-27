@@ -108,12 +108,20 @@ const openWorkbench = (root: string): Workbench => {
   const host = new AgentHost(stateDir, [new FileChannelAdapter(stateDir)]);
   const roster = readRoster(stateDir);
 
-  // Re-register what the author configured last time, adapters included. The
-  // roster is the one thing here that cannot be rebuilt from the disk: heads
-  // come from the chapters, runs and results are already files under
-  // `.refrain/runs/`, and proposals freeze from those.
+  // Re-register what the author configured last time. The roster is the one
+  // thing here that cannot be rebuilt from the disk: heads come from the
+  // chapters, runs and results are already files under `.refrain/runs/`, and
+  // proposals freeze from those.
+  //
+  // The command adapter waits for consent. `agents.json` sits inside the
+  // project folder, so it travels with the project — a clone, a shared drive,
+  // an archive from a colleague — and building the adapter here used to be
+  // enough: opening the Agents screen probes every agent, and a probe runs the
+  // binary. Reading someone else's writing project executed their choice of
+  // program before the author had seen its name. The agent is listed either
+  // way, so nothing disappears; what waits is the ability to run it.
   for (const entry of roster) {
-    if (entry.template !== undefined)
+    if (entry.template !== undefined && entry.trusted === true)
       host.addAdapter(
         new CommandAdapter({ id: entry.agent.binding.harness, template: entry.template }),
       );
@@ -464,9 +472,41 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     return true;
   });
 
+  /**
+   * The roster, with the command each entry runs and whether it may run yet.
+   *
+   * The argv travels to the interface deliberately: a confirmation that says
+   * "trust this agent?" without showing what it executes asks the author to
+   * agree to something they cannot read.
+   */
   ipc.handle("agent:list", (_e, root: string) =>
-    openWorkbench(root).roster.map((entry) => entry.agent),
+    openWorkbench(root).roster.map((entry) => ({
+      ...entry.agent,
+      ...(entry.template === undefined ? {} : { command: entry.template.join(" ") }),
+      trusted: entry.template === undefined || entry.trusted === true,
+    })),
   );
+
+  /**
+   * Record that the author read this agent's command and accepted it.
+   *
+   * Trust is per project, because it is a judgment about this project's
+   * `agents.json` and not about an agent's name.
+   */
+  ipc.handle("agent:trust", (_e, root: string, id: string) => {
+    const workbench = openWorkbench(root);
+    const index = workbench.roster.findIndex((entry) => entry.agent.id === id);
+    const entry = workbench.roster[index];
+    if (!entry || entry.template === undefined) return false;
+
+    const next: RosterEntry = { ...entry, trusted: true };
+    workbench.roster.splice(index, 1, next);
+    writeRoster(join(root, ".refrain"), workbench.roster);
+    workbench.host.addAdapter(
+      new CommandAdapter({ id: next.agent.binding.harness, template: entry.template }),
+    );
+    return true;
+  });
 
   /**
    * Ask a harness whether it is actually reachable.
@@ -479,6 +519,11 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     const entry = openWorkbench(root).roster.find((candidate) => candidate.agent.id === id);
     if (!entry) return { ok: false, detail: "unknown agent" };
     if (entry.agent.binding.harness === "file") return { ok: true };
+
+    // A probe is an execution. An agent restored from a project file the author
+    // has not vouched for does not get run just because a screen was opened.
+    if (entry.template !== undefined && entry.trusted !== true)
+      return { ok: false, reason: "untrusted", detail: entry.template.join(" ") };
 
     const program = entry.template?.[0];
     if (!program) return { ok: false, detail: "no command configured" };
@@ -525,7 +570,10 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
       name,
       binding: { harness, model: "unspecified", reasoningEffort: "unspecified" },
     };
-    const entry = { agent, ...(template === undefined ? {} : { template }) };
+    // Typed here, in this window, a moment ago: the author is the source, so
+    // there is nothing to confirm. Consent is owed for commands that arrive
+    // with a project, not for the ones someone just wrote.
+    const entry = { agent, ...(template === undefined ? {} : { template, trusted: true }) };
     const next = [...workbench.roster, entry];
     writeRoster(join(root, ".refrain"), next);
     if (template !== undefined)
