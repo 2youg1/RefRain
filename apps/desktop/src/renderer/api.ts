@@ -92,6 +92,15 @@ export interface RunView {
   failure?: string;
 }
 
+/** A 念頭寄存 note, with the place the author was standing when it arrived. */
+export interface KaraNoteView {
+  id: string;
+  text: string;
+  chapterId?: string;
+  blockId?: string;
+  capturedAt: string;
+}
+
 export interface VerdictView {
   id: string;
   proposalId: string;
@@ -208,6 +217,24 @@ interface RefRainApi {
   /** Search the ledger over stated reasoning, to inform a persona revision. */
   searchLedger(root: string, fragment: string): Promise<VerdictView[]>;
   reply(root: string, proposalId: string): Promise<string>;
+
+  /**
+   * 念頭寄存 (SPEC Q12). A thought caught mid-sentence, kept where it can be
+   * walked back to. The ledger is optional, so every one of these can refuse —
+   * a note accepted into a store that will not keep it is a note lost in
+   * silence.
+   */
+  note(
+    root: string,
+    note: { text: string; chapterId?: string; blockId?: string },
+  ): Promise<{ ok: true; note: KaraNoteView } | { ok: false; reason: string; detail: string }>;
+  notes(
+    root: string,
+  ): Promise<{ ok: true; notes: KaraNoteView[] } | { ok: false; reason: string; detail: string }>;
+  dropNote(
+    root: string,
+    id: string,
+  ): Promise<{ ok: true } | { ok: false; reason: string; detail: string }>;
 
   /**
    * The native file layer. Every call returns a tagged result rather than

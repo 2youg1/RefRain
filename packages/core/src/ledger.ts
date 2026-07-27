@@ -36,6 +36,40 @@ const toVerdict = (row: Row): Verdict => ({
   ...(row.reason === null ? {} : { reason: row.reason }),
 });
 
+/**
+ * A thought that arrived while the author was writing something else (SPEC Q12).
+ *
+ * It carries where they were standing, because the whole value of catching one
+ * is being able to walk back to the sentence it interrupted. Deliberately not
+ * a task: no priority, no due date, no state beyond existing. The moment it
+ * grows those it competes with the manuscript for attention, which is the
+ * problem it was built to remove.
+ */
+export interface KaraNote {
+  readonly id: string;
+  readonly text: string;
+  /** Absent when the thought arrived with no chapter open. */
+  readonly chapterId?: string;
+  readonly blockId?: string;
+  readonly capturedAt: string;
+}
+
+interface NoteRow {
+  id: string;
+  text: string;
+  chapter_id: string | null;
+  block_id: string | null;
+  captured_at: string;
+}
+
+const toNote = (row: NoteRow): KaraNote => ({
+  id: row.id,
+  text: row.text,
+  capturedAt: row.captured_at,
+  ...(row.chapter_id === null ? {} : { chapterId: row.chapter_id }),
+  ...(row.block_id === null ? {} : { blockId: row.block_id }),
+});
+
 export class VerdictLedger {
   private readonly db: SqliteDatabase;
 
@@ -53,6 +87,19 @@ export class VerdictLedger {
       decided_at TEXT NOT NULL
     )`);
     this.db.exec("CREATE INDEX IF NOT EXISTS verdicts_decided ON verdicts(decided_at)");
+
+    // A separate table, not a Verdict with an unusual kind: a note is about
+    // the work rather than about a Proposal, so giving it `proposal_id` and
+    // `baseline` would mean writing two lies to store one thought — and every
+    // query over verdicts would then have to remember to exclude it.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS kara_notes (
+      id TEXT PRIMARY KEY,
+      text TEXT NOT NULL,
+      chapter_id TEXT,
+      block_id TEXT,
+      captured_at TEXT NOT NULL
+    )`);
+    this.db.exec("CREATE INDEX IF NOT EXISTS kara_notes_captured ON kara_notes(captured_at)");
   }
 
   record(verdict: Verdict): this {
@@ -119,6 +166,36 @@ export class VerdictLedger {
         .prepare("SELECT * FROM verdicts WHERE reason LIKE ? ESCAPE '!' ORDER BY decided_at, id")
         .all(`%${pattern}%`) as unknown as Row[]
     ).map(toVerdict);
+  }
+
+  /**
+   * Catch a thought without letting it take over (SPEC Q12).
+   *
+   * Newest first on the way out, because the last thing the author caught is
+   * the one still live in their head.
+   */
+  note(note: KaraNote): this {
+    this.db
+      .prepare(
+        `INSERT INTO kara_notes VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO NOTHING`,
+      )
+      .run(note.id, note.text, note.chapterId ?? null, note.blockId ?? null, note.capturedAt);
+    return this;
+  }
+
+  notes(): KaraNote[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM kara_notes ORDER BY captured_at DESC, id DESC")
+        .all() as unknown as NoteRow[]
+    ).map(toNote);
+  }
+
+  /** Going back to it and dropping it are the only two things v0.1.6 offers. */
+  dropNote(id: string): this {
+    this.db.prepare("DELETE FROM kara_notes WHERE id = ?").run(id);
+    return this;
   }
 
   close(): void {

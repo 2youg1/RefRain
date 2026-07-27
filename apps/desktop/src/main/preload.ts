@@ -58,6 +58,11 @@ const api = {
   reply: (root: string, proposalId: string) => ipcRenderer.invoke("ledger:reply", root, proposalId),
   searchLedger: (root: string, fragment: string) =>
     ipcRenderer.invoke("ledger:search", root, fragment),
+  // 念頭寄存 (SPEC Q12). The main process mints the id and the capture time.
+  note: (root: string, note: { text: string; chapterId?: string; blockId?: string }) =>
+    ipcRenderer.invoke("ledger:note", root, note),
+  notes: (root: string) => ipcRenderer.invoke("ledger:notes", root),
+  dropNote: (root: string, id: string) => ipcRenderer.invoke("ledger:drop-note", root, id),
 
   /**
    * The file layer. Every call returns a tagged result rather than throwing:
