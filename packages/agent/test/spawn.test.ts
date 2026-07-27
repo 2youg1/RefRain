@@ -77,6 +77,29 @@ process.stdin.on("end", () => { process.stdout.write(seen.length + ""); });
     expect(await run.exited).toBe(3);
   });
 
+  /**
+   * A harness may log forever. stdout and stderr used to append every chunk to
+   * one string, so an accidental debug loop could consume the main process's
+   * heap and take the window and every unsaved manuscript with it. The cap is
+   * per stream: a useful result may still fit even when a noisy warning stream
+   * does not.
+   */
+  test("a child cannot fill the main process heap with output", async () => {
+    const noisy = script(
+      "noisy.js",
+      `const chunk = "x".repeat(1024 * 1024);
+for (let i = 0; i < 10; i++) process.stdout.write(chunk);
+`,
+    );
+
+    const run = launch({ argv: [process.execPath, noisy] });
+    await run.exited;
+    const output = await run.stdout;
+
+    expect(Buffer.byteLength(output)).toBeLessThan(8 * 1024 * 1024 + 256);
+    expect(output).toMatch(/REFRAIN_OUTPUT_TRUNCATED dropped=2097152 bytes/);
+  });
+
   /*
    * `.cmd` is a script, not an executable image. `runnable` finds `claude.cmd`
    * through PATHEXT and `shell: false` hands it straight to libuv, which
