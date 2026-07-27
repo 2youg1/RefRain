@@ -65,6 +65,12 @@ const api = {
    * browser, and the renderer needs to tell those apart.
    */
   files: {
+    /** External changes are pushed from the Root watcher; scanning stays author-visible and local. */
+    onChange: (listener: (root: string) => void) => {
+      const wrapped = (_event: unknown, root: string) => listener(root);
+      ipcRenderer.on("files:changed", wrapped);
+      return () => ipcRenderer.removeListener("files:changed", wrapped);
+    },
     scan: (root: string, options?: Record<string, unknown>) =>
       ipcRenderer.invoke("files:scan", root, options),
     page: (root: string, offset: number, limit: number) =>

@@ -215,6 +215,8 @@ interface RefRainApi {
    * and loses only the browser — and the renderer has to tell those apart.
    */
   files: {
+    /** Subscribe to external changes under a Root; returns an exact unsubscribe. */
+    onChange(listener: (root: string) => void): () => void;
     scan(root: string, options?: Record<string, unknown>): Promise<FileResult<{ count: number }>>;
     page(
       root: string,
