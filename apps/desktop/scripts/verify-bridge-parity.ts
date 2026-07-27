@@ -313,6 +313,44 @@ if (wrongShape.length > 0) {
   process.exit(1);
 }
 
+/*
+ * A stub may not invent a state the domain does not have.
+ *
+ * `verify-staged-verdicts` drove a Run whose state was `"collected"`, which is
+ * not one of the four `RunState` values. The Collect button renders only for
+ * `completed`, so the gate failed looking for a control the application was
+ * right not to show — and the failure read as a missing feature for as long as
+ * nobody compared the stub against the type.
+ *
+ * The domain is read from the type, not listed from memory: a list written by
+ * hand omits exactly the value the author forgot, which is the same value the
+ * stub got wrong.
+ */
+const TYPES = join(DESKTOP, "../../packages/agent/src/types.ts");
+const runStates = (readFileSync(TYPES, "utf8").match(/export type RunState =([^;]+);/)?.[1] ?? "")
+  .split("|")
+  .map((part) => part.trim().replace(/^"|"$/g, ""))
+  .filter(Boolean);
+
+if (runStates.length === 0) {
+  console.error("FAIL  could not read RunState from packages/agent/src/types.ts");
+  process.exit(1);
+}
+
+const inventedStates = stubs.flatMap(({ name, source }) =>
+  [...source.matchAll(/\bstate:\s*"([a-z]+)"/g)]
+    .map((match) => match[1] as string)
+    .filter((state) => !runStates.includes(state))
+    .map((state) => `${name}: state "${state}" is not a RunState`),
+);
+
+if (inventedStates.length > 0) {
+  console.error(`FAIL  ${inventedStates.length} stub(s) drive a state the domain does not have:`);
+  for (const line of inventedStates) console.error(`  ${line}`);
+  console.error(`      RunState is: ${runStates.join(" | ")}`);
+  process.exit(1);
+}
+
 console.log(
   `PASS  ${stubs.length} stubbed bridges match ${real.keys.size} top-level and ` +
     `${real.files.size} files methods; all ${onDisk.length} gates are wired into CI`,
