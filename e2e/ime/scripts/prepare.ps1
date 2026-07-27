@@ -3,10 +3,10 @@ param([string]$Root = (Resolve-Path "$PSScriptRoot\..").Path)
 $ErrorActionPreference = 'Stop'
 Push-Location $Root
 try {
-  npm install --no-audit --no-fund
+  npm ci --no-audit --no-fund
   foreach ($s in 'e42', 'e43', 'e44') {
     Push-Location "shells\$s"
-    npm install --no-audit --no-fund
+    npm ci --no-audit --no-fund
     Pop-Location
     if (-not (Test-Path "shells\$s\node_modules\electron\dist\electron.exe")) {
       Push-Location "shells\$s\node_modules\electron"
