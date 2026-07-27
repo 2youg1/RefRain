@@ -40,7 +40,10 @@ await page.addInitScript(`
   Object.assign(window.refrain, {
     openProject: async () => "/p",
     loadProject: async () => [{ id: "01.md", title: "01", text: "黑暗中有人问。" }],
-    loadWorkspace: async () => [{ id: "01.md", title: "01", text: "黑暗中有人问。", root: "/p", path: "/p/01.md" }],
+    loadWorkspace: async () => ({
+      roots: [{ id: "p", path: "/p", name: "p" }],
+      chapters: [{ id: "01.md", title: "01", text: "黑暗中有人问。", rootId: "p", path: "/p/01.md" }],
+    }),
     createProject: async () => null, pathFor: () => "", resolveDrop: async () => null,
     fullscreen: async () => true, onCloseRequest: () => () => {}, saveChapter: async () => ({ ok: true, edits: [] }), listAgents: async () => [],
     addAgent: async () => ({}), removeAgent: async () => true, probeAgent: async () => ({ ok: true }),

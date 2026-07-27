@@ -30,7 +30,7 @@ const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 await page.addInitScript(`${BRIDGE_STUB}
 Object.assign(window.refrain, {
-  openProject: async () => "/p", loadProject: async () => [], loadWorkspace: async () => [],
+  openProject: async () => "/p", loadProject: async () => [], loadWorkspace: async () => ({ roots: [], chapters: [] }),
   createProject: async () => null, pathFor: () => "", resolveDrop: async () => null,
   fullscreen: async () => true, saveChapter: async () => ({ ok: true, edits: [] }),
   listAgents: async () => [], addAgent: async () => ({}), enqueue: async () => true,
