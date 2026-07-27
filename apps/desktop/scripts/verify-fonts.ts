@@ -68,9 +68,12 @@ const manuscriptFamily = (): Promise<string> =>
 const bundled = await manuscriptFamily();
 
 // All three slots must be present in the stack the manuscript actually uses.
+// The Japanese default is a mincho: Japanese body text is set in mincho, and
+// the slot had only ever offered a gothic — the equivalent of defaulting Latin
+// prose to a display face.
 for (const [face, why] of [
   ["Antic Didone", "the Latin face"],
-  ["Zen Kaku Gothic New", "the Japanese face"],
+  ["Shippori Mincho", "the Japanese face"],
   ["Chiron Sung HK", "the Chinese face"],
 ] as const)
   if (!bundled.includes(face)) failures.push(`${why} is not in the manuscript stack: ${bundled}`);
@@ -78,7 +81,7 @@ for (const [face, why] of [
 // Order decides which face wins a character all three carry. Japanese must
 // precede Chinese, or 直 骨 令 are set in the Chinese forms for a Japanese
 // reader — the reason these are two slots and not one.
-if (bundled.indexOf("Zen Kaku") > bundled.indexOf("Chiron"))
+if (bundled.indexOf("Shippori") > bundled.indexOf("Chiron"))
   failures.push(`the Japanese face sits after the Chinese one: ${bundled}`);
 
 // The faces must have loaded, not merely been named. `document.fonts.check`
@@ -87,8 +90,30 @@ const loaded = await page.evaluate(async () => {
   await document.fonts.ready;
   return [...document.fonts].map((f) => f.family);
 });
-for (const face of ["Chiron Sung HK", "Zen Kaku Gothic New", "Murecho", "Antic Didone"])
+for (const face of [
+  "Chiron Sung HK",
+  "Noto Sans SC",
+  "Shippori Mincho",
+  "Zen Kaku Gothic New",
+  "Murecho",
+  "Antic Didone",
+])
   if (!loaded.includes(face)) failures.push(`${face} never loaded: ${JSON.stringify(loaded)}`);
+
+/*
+ * Murecho is a Japanese sans, and it was offered as a Chinese option while
+ * also sitting ahead of PingFang and Microsoft YaHei in the interface stack —
+ * so the whole interface rendered Chinese in Japanese letterforms, 直 骨 令
+ * among them, without anything on screen saying so.
+ */
+const interfaceStack = await page.evaluate(() => getComputedStyle(document.body).fontFamily);
+const chinese = interfaceStack.indexOf("Noto Sans SC");
+const japanese = interfaceStack.indexOf("Murecho");
+// Absent reads as -1, and -1 is less than everything — so the ordering test
+// has to be told the Chinese face is there at all before it compares.
+if (chinese === -1) failures.push(`the interface stack has no Chinese face: ${interfaceStack}`);
+else if (japanese !== -1 && japanese < chinese)
+  failures.push(`the interface sets Chinese in a Japanese face: ${interfaceStack}`);
 
 // ── Choosing a system face fills the slot the author selected ────
 // Typography is a section of Settings, reached through the palette.

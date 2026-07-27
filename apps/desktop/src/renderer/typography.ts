@@ -46,7 +46,10 @@ export interface TypeSettings {
 
 export const DEFAULTS: TypeSettings = {
   cjkFamily: "Chiron Sung HK",
-  jpFamily: "Zen Kaku Gothic New",
+  // Mincho, not gothic: Japanese body text is set in mincho, and the slot had
+  // only ever offered a gothic — the equivalent of defaulting Latin prose to a
+  // grotesque display face.
+  jpFamily: "Shippori Mincho",
   latinFamily: "Antic Didone",
   size: 17,
   weight: 400,
@@ -68,9 +71,19 @@ export const DEFAULTS: TypeSettings = {
   zoom: 1,
 };
 
-/** The faces this application ships, always present regardless of the machine. */
-export const BUNDLED_CJK = ["Chiron Sung HK", "Murecho"];
-export const BUNDLED_JP = ["Zen Kaku Gothic New", "Murecho"];
+/**
+ * The faces this application ships, always present regardless of the machine.
+ *
+ * Murecho left the Chinese list. It is a Japanese sans, and offering it as a
+ * Chinese option put a reader one click away from seeing their own characters
+ * in the other tradition's shapes — 直, 骨 and 令 among them.
+ *
+ * Japanese now has a mincho as well as a gothic, because Japanese body text is
+ * set in mincho: a gothic there is a display face, the way a grotesque is in
+ * Latin, and the slot had only ever held one.
+ */
+export const BUNDLED_CJK = ["Chiron Sung HK", "Noto Sans SC"];
+export const BUNDLED_JP = ["Shippori Mincho", "Zen Kaku Gothic New", "Murecho"];
 export const BUNDLED_LATIN = ["Antic Didone", "Jost", "Courier Prime"];
 
 /**
