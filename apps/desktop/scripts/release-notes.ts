@@ -22,6 +22,15 @@ if (!tag) {
 }
 
 const version = tag.replace(/^v/, "");
+const desktopPackage = JSON.parse(
+  readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
+) as { version?: unknown };
+if (desktopPackage.version !== version) {
+  console.error(
+    `tag ${tag} does not match apps/desktop/package.json version ${String(desktopPackage.version)}`,
+  );
+  process.exit(1);
+}
 const roadmap = readFileSync(
   fileURLToPath(new URL("../../../ROADMAP.md", import.meta.url)),
   "utf8",
