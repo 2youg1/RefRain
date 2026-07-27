@@ -46,10 +46,17 @@ LATIN_RANGES = ",".join(
     ]
 )
 
-# The Japanese face keeps kana and the ideographs, and drops nothing a
-# Japanese writer types. It is a separate slot from the Chinese face because
-# 直, 骨 and 令 are drawn differently in the two traditions and one face gets
-# one of them wrong (SPEC Q10).
+# Japanese has a stack of its own — a gothic and a mincho — rather than one
+# slot borrowed from the Chinese side. 直, 骨 and 令 exist in both traditions
+# and are drawn differently, so a single CJK face renders one reader's
+# characters in shapes they will call wrong; and a writer setting Japanese body
+# text needs a mincho, because a gothic is a display face there the way a
+# grotesque is in Latin.
+#
+# Murecho moved to this list. It is a Japanese sans, and it had been offered as
+# a Chinese option while also sitting ahead of PingFang and Microsoft YaHei in
+# the interface stack — so the whole interface rendered Chinese in Japanese
+# letterforms.
 JP_RANGES = ",".join(
     [
         "U+0020-007E",
@@ -67,8 +74,10 @@ JP_RANGES = ",".join(
 
 JOBS = [
     ("ChironSungHK.ttf", CJK_RANGES),
-    ("Murecho.ttf", CJK_RANGES),
+    ("NotoSansSC-Regular.otf", CJK_RANGES),
     ("ZenKakuGothicNew-Regular.ttf", JP_RANGES),
+    ("ShipporiMincho-Regular.ttf", JP_RANGES),
+    ("Murecho.ttf", JP_RANGES),
     ("Jost.ttf", LATIN_RANGES),
     ("AnticDidone.ttf", LATIN_RANGES),
     ("CourierPrime.ttf", LATIN_RANGES),
@@ -80,6 +89,7 @@ missing: list[str] = []
 
 def subset(name: str, ranges: str) -> None:
     source = FONT_DIR / name
+    # `.otf` and `.ttf` both become `.woff2`; `with_suffix` handles either.
     target = source.with_suffix(".woff2")
     if not source.exists():
         # Already subset on a previous run is fine; never converted is not.
@@ -113,6 +123,17 @@ def subset(name: str, ranges: str) -> None:
     print(f"  {name:22} {before // 1024:>7} KB -> {after // 1024:>6} KB  ({after * 100 // before}%)")
     source.unlink()
 
+
+# Chiron Sung HK also carries a second variable axis, PADG, which nothing in
+# this application drives. Dropping it costs 5.5 MB and no capability:
+#
+#   python3 -m fontTools.varLib.instancer ChironSungHK.woff2 PADG=0 \
+#       --output=ChironSungHK.woff2
+#
+# Verified rather than assumed — 21,706 glyphs before and after, wght still
+# 200..900, and 直 骨 令 雨 漢 字 all still present. The step is not in JOBS
+# because the shipped file is already instanced; it is written down so the next
+# person to re-fetch the face knows what to redo.
 
 print("Subsetting bundled typefaces")
 for name, ranges in JOBS:

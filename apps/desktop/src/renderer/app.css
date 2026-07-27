@@ -32,7 +32,8 @@
    */
   --serif: "Chiron Sung HK", "Source Han Serif SC", "Songti SC", "SimSun", Georgia, serif;
   --sans:
-    "Jost", "Murecho", "PingFang SC", "Microsoft YaHei UI", -apple-system, "Segoe UI", sans-serif;
+    "Jost", "Noto Sans SC", "Murecho", "PingFang SC", "Microsoft YaHei UI", -apple-system,
+    "Segoe UI", sans-serif;
   --mono: "Courier Prime", "Cascadia Mono", Consolas, monospace;
   --display: "Antic Didone", "Chiron Sung HK", Georgia, serif;
 
