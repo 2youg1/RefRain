@@ -13,13 +13,33 @@ interface Props {
   t: (key: Key) => string;
   onDispatched: () => void;
   onCollect: (runId: string) => void;
+  /**
+   * The instruction the author is writing for this dispatch.
+   *
+   * Held by the shell, not here. Writing one means going back to the
+   * manuscript — to quote a phrase, to check where the Edit Scope ends — and
+   * the only way back is Escape, which unmounts this sheet. Eighty words of
+   * the author's own instruction went with it.
+   */
+  prompt: string;
+  onPrompt: (next: string) => void;
 }
 
-const { root, chapter, selection, scope, runs, t, onDispatched, onCollect }: Props = $props();
+const {
+  root,
+  chapter,
+  selection,
+  scope,
+  runs,
+  t,
+  onDispatched,
+  onCollect,
+  prompt,
+  onPrompt,
+}: Props = $props();
 
 let agents = $state<AgentView[]>([]);
 let manifest = $state<ManifestEntryView[]>([]);
-let prompt = $state("");
 let chosen = $state<string | null>(null);
 
 const queued = $derived(manifest.reduce((sum, entry) => sum + entry.runCount, 0));
@@ -63,7 +83,9 @@ const enqueue = async (): Promise<void> => {
   });
 
   manifest = await api().manifest(root);
-  prompt = "";
+  // Cleared only after the run is queued: the instruction now lives in the
+  // manifest, so there is somewhere else for it to be.
+  onPrompt("");
 };
 
 const send = async (): Promise<void> => {
@@ -106,7 +128,12 @@ const send = async (): Promise<void> => {
 
   <section>
     <span class="label">{t("dispatch.prompt")}</span>
-    <textarea bind:value={prompt} rows="4" placeholder={t("dispatch.promptPlaceholder")}></textarea>
+    <textarea
+      value={prompt}
+      oninput={(event) => onPrompt(event.currentTarget.value)}
+      rows="4"
+      placeholder={t("dispatch.promptPlaceholder")}
+    ></textarea>
     <button class="queue" onclick={enqueue} disabled={!ready}>{t("dispatch.queue")}</button>
   </section>
 

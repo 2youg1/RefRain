@@ -4,12 +4,30 @@
 import { api } from "./api.ts";
   import type { Key } from "./i18n.ts";
 
+  /**
+   * The half-filled "add an agent" form, held by the shell.
+   *
+   * Lower stakes than a dispatch instruction — this is configuration, and an
+   * argv can usually be pasted again — but it is still typing the author did,
+   * and Escape used to take it. One shape, one remedy.
+   */
+  interface Draft {
+    adding: boolean;
+    name: string;
+    command: string;
+  }
+
   interface Props {
     root: string | null;
     t: (key: Key) => string;
+    draft: Draft;
+    onDraft: (next: Draft) => void;
   }
 
-  const { root, t }: Props = $props();
+  const { root, t, draft, onDraft }: Props = $props();
+  const adding = $derived(draft.adding);
+  const name = $derived(draft.name);
+  const command = $derived(draft.command);
 
   type Status = "ready" | "checking" | "unreachable" | "file" | "untrusted";
 
@@ -19,9 +37,6 @@ import { api } from "./api.ts";
   }
 
   let agents = $state<AgentRow[]>([]);
-  let adding = $state(false);
-  let name = $state("");
-  let command = $state("");
   let checking = $state<string | null>(null);
 
   /*
@@ -96,9 +111,7 @@ import { api } from "./api.ts";
       { ...agent, status: command.trim().length === 0 ? "file" : "checking" },
     ];
     if (command.trim().length > 0) void probe(agent.id);
-    name = "";
-    command = "";
-    adding = false;
+    onDraft({ adding: false, name: "", command: "" });
   };
 
   const remove = async (id: string): Promise<void> => {
@@ -172,12 +185,22 @@ import { api } from "./api.ts";
     <div class="new">
       <div class="field">
         <span class="label">{t("agents.name")}</span>
-        <input bind:value={name} placeholder="kimi" spellcheck="false" />
+        <input
+          value={name}
+          oninput={(event) => onDraft({ ...draft, name: event.currentTarget.value })}
+          placeholder="kimi"
+          spellcheck="false"
+        />
       </div>
 
       <div class="field">
         <span class="label">{t("agents.command")}</span>
-        <input bind:value={command} placeholder={t("agents.placeholderCmd")} spellcheck="false" />
+        <input
+          value={command}
+          oninput={(event) => onDraft({ ...draft, command: event.currentTarget.value })}
+          placeholder={t("agents.placeholderCmd")}
+          spellcheck="false"
+        />
         <p class="hint">{t("agents.commandHint")}</p>
       </div>
 
@@ -186,16 +209,12 @@ import { api } from "./api.ts";
         <div class="chips">
           {#each presets as preset (preset.name)}
             <button
-              onclick={() => {
-                name = preset.name;
-                command = preset.command;
-              }}>{preset.name}</button
+              onclick={() => onDraft({ ...draft, name: preset.name, command: preset.command })}
+              >{preset.name}</button
             >
           {/each}
           <button
-            onclick={() => {
-              command = "";
-            }}>{t("agents.fileChannel")}</button
+            onclick={() => onDraft({ ...draft, command: "" })}>{t("agents.fileChannel")}</button
           >
         </div>
       </div>
@@ -204,11 +223,13 @@ import { api } from "./api.ts";
         <button class="primary" onclick={add} disabled={name.trim().length === 0}>
           {t("agents.add")}
         </button>
-        <button onclick={() => (adding = false)}>{t("review.cancel")}</button>
+        <button onclick={() => onDraft({ ...draft, adding: false })}>{t("review.cancel")}</button>
       </div>
     </div>
   {:else}
-    <button class="open-new" onclick={() => (adding = true)}>＋ {t("agents.connect")}</button>
+    <button class="open-new" onclick={() => onDraft({ ...draft, adding: true })}
+      >＋ {t("agents.connect")}</button
+    >
   {/if}
 </div>
 

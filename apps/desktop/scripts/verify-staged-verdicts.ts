@@ -194,7 +194,92 @@ if (afterRefusal !== afterJudging)
       "were destroyed with it",
   );
 
+/*
+ * The same lifetime question for the other things an author types.
+ *
+ * A rewrite in the review panel and an instruction in the dispatch panel are
+ * both the author's own prose, and both lived inside the sheet that Escape
+ * unmounts. The dispatch case is the worse one: writing an instruction means
+ * going back to the manuscript to quote it, and Escape is the way back.
+ */
+const REWRITE = "这是我自己改的一句。";
+const INSTRUCTION = "把这一段改得更冷一些，保留原有的断句。";
+
+const openedRewrite = await page.evaluate(() => {
+  const button = [...document.querySelectorAll<HTMLElement>(".review button")].find((node) =>
+    /改写|Rewrite/.test(node.textContent ?? ""),
+  );
+  button?.click();
+  return button !== undefined;
+});
+if (!openedRewrite) await fail("the review panel offers no way to rewrite a slice");
+await page.waitForTimeout(300);
+
+await page.fill(".review textarea", REWRITE);
+await page.waitForTimeout(200);
+
+await page.keyboard.press("Escape");
+await page.waitForTimeout(350);
+await page.keyboard.press("Control+k");
+await page.waitForTimeout(300);
+await page.evaluate(() => {
+  const entry = [...document.querySelectorAll<HTMLElement>("button, li, [role=option]")].find(
+    (node) => /^\s*(审阅提案|Review proposals)(\s|$)/.test(node.textContent ?? ""),
+  );
+  entry?.click();
+});
+await page.waitForTimeout(450);
+
+const rewriteKept = await page.evaluate(
+  (expected) =>
+    [...document.querySelectorAll<HTMLTextAreaElement>(".review textarea")].some(
+      (node) => node.value === expected,
+    ),
+  REWRITE,
+);
+if (!rewriteKept)
+  await fail("the rewrite an author typed did not survive dismissing the review panel");
+
+// Dispatch: type an instruction, leave to read the manuscript, come back.
+await page.keyboard.press("Escape");
+await page.waitForTimeout(300);
+await page.keyboard.press("Control+k");
+await page.waitForTimeout(300);
+await page.evaluate(() => {
+  const entry = [...document.querySelectorAll<HTMLElement>("button, li, [role=option]")].find(
+    (node) => /^\s*(交给 Agent…|Send to an agent…)(\s|$)/.test(node.textContent ?? ""),
+  );
+  entry?.click();
+});
+await page.waitForTimeout(500);
+
+await page.fill(".dispatch textarea", INSTRUCTION);
+await page.waitForTimeout(200);
+
+await page.keyboard.press("Escape");
+await page.waitForTimeout(350);
+await page.keyboard.press("Control+k");
+await page.waitForTimeout(300);
+await page.evaluate(() => {
+  const entry = [...document.querySelectorAll<HTMLElement>("button, li, [role=option]")].find(
+    (node) => /^\s*(交给 Agent…|Send to an agent…)(\s|$)/.test(node.textContent ?? ""),
+  );
+  entry?.click();
+});
+await page.waitForTimeout(500);
+
+const instructionKept = await page.evaluate(
+  (expected) =>
+    [...document.querySelectorAll<HTMLTextAreaElement>(".dispatch textarea")].some(
+      (node) => node.value === expected,
+    ),
+  INSTRUCTION,
+);
+if (!instructionKept)
+  await fail("the dispatch instruction an author typed did not survive dismissing the panel");
+
 await teardown();
 console.log(
-  `PASS  ${afterJudging} verdict(s) survived Escape and a refused merge (${afterReopen}, ${afterRefusal})`,
+  `PASS  ${afterJudging} verdict(s), a rewrite and an instruction survived Escape ` +
+    `(${afterReopen}, ${afterRefusal})`,
 );
