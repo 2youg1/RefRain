@@ -165,11 +165,27 @@ describe("Result Artifact rejection", () => {
     "missing-root",
   );
 
-  test("a malformed tag is answered in bounded time", () => {
-    const started = Date.now();
-    const result = parseAgentResult(wrap(`<agent-result version="1"><memo>x</memo</agent-result>`));
-    expect(result.ok).toBe(false);
-    expect(Date.now() - started).toBeLessThan(1_000);
+  test("malformed tag mutations always return within the parser budget", () => {
+    const valid = `<agent-result version="1"><replacement scope="s1"><![CDATA[甲<乙>]]></replacement><memo>丙</memo></agent-result>`;
+    const mutations = Array.from({ length: valid.length }, (_, end) => valid.slice(0, end));
+    let seed = 0x5eed;
+    const next = (): number => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed;
+    };
+    const syntax = ["<", ">", "/", "<![CDATA[", "]]>"];
+    for (let index = 0; index < 256; index += 1) {
+      const at = next() % (valid.length + 1);
+      mutations.push(
+        next() % 2 === 0
+          ? `${valid.slice(0, at)}${syntax[next() % syntax.length]}${valid.slice(at)}`
+          : `${valid.slice(0, at)}${valid.slice(Math.min(at + 1, valid.length))}`,
+      );
+    }
+
+    const started = performance.now();
+    for (const mutation of mutations) parseAgentResult(wrap(mutation));
+    expect(performance.now() - started).toBeLessThan(100);
   });
 
   /*
