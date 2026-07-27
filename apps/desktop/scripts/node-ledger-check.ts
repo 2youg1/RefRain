@@ -1,8 +1,8 @@
 /**
- * Exercise the Verdict Ledger under Node — the runtime Electron's main process
- * actually uses. Bundled by `make.sh` and run with `node`, because `bun test`
- * proves only the Bun branch of the SQLite adapter and leaves the Node branch
- * untested until application launch. That gap shipped `bun:sqlite` once.
+ * Exercise the Verdict Ledger under Electron's embedded Node — the runtime its
+ * main process actually uses. Bundled by `make.sh` and run through the Electron
+ * executable with ELECTRON_RUN_AS_NODE, because `bun test` proves only the Bun
+ * branch and a system Node can carry a different `node:sqlite` implementation.
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
@@ -36,7 +36,7 @@ try {
   if (unstated?.reason !== undefined) throw new Error("absent reason became a value");
 
   ledger.close();
-  console.log("PASS  the ledger round-trips under Node");
+  console.log("PASS  the ledger round-trips under Electron's embedded Node");
 } catch (error) {
   console.error(`FAIL  ${error instanceof Error ? error.message : String(error)}`);
   process.exit(1);
