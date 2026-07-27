@@ -13,6 +13,7 @@
 //! implementations of one promise: the file comes back.
 
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::guard::{Guard, Refusal};
@@ -211,16 +212,34 @@ pub fn trash(guard: &Guard, target: &Path) -> Result<PathBuf, OpError> {
 /// error like any other. The distinction matters to the person: a locked file
 /// is their problem to solve, while a volume without a trash is a fact about
 /// the disk that the application can route around.
+///
+/// This used to read `error.to_string().to_lowercase()` and look for
+/// "read-only", "permission", "could not create". Those are English strings.
+/// On a Chinese or Japanese Windows the same failure produced the same words
+/// in another language, every `contains` missed, and the one refusal the
+/// interface knows how to act on was reported as an ordinary I/O error — so
+/// the author was offered nothing instead of "move it to the system trash".
+/// The crate's error is an enum carrying an `io::Error` and an OS code; both
+/// mean the same thing in every locale.
 fn classify_trash_failure(target: &Path, error: &trash::Error) -> OpError {
-    let text = error.to_string().to_lowercase();
-    let volume_has_none = text.contains("trash")
-        && (text.contains("read-only")
-            || text.contains("readonly")
-            || text.contains("permission")
-            || text.contains("no such")
-            || text.contains("not found")
-            || text.contains("could not create")
-            || text.contains("failed to create"));
+    let volume_has_none = match error {
+        #[cfg(all(
+            unix,
+            not(target_os = "macos"),
+            not(target_os = "ios"),
+            not(target_os = "android")
+        ))]
+        trash::Error::FileSystem { source, .. } => matches!(
+            source.kind(),
+            io::ErrorKind::PermissionDenied
+                | io::ErrorKind::ReadOnlyFilesystem
+                | io::ErrorKind::NotFound
+        ),
+        // EROFS 30, EACCES 13, EPERM 1 — the three ways a volume says the trash
+        // directory cannot be created. Numeric on every platform and locale.
+        trash::Error::Os { code, .. } => matches!(code, 1 | 13 | 30),
+        _ => false,
+    };
 
     if volume_has_none {
         return OpError::NoTrashHere {
@@ -539,6 +558,55 @@ mod tests {
         assert_eq!(
             fs::read_to_string(root.join("chapter.md")).unwrap(),
             "第一章的正文"
+        );
+    }
+
+    /// The trash classification must not depend on the language of the error.
+    ///
+    /// It used to match English substrings — "read-only", "permission",
+    /// "could not create". On a Chinese or Japanese Windows the same failure
+    /// arrives with the same meaning in another language, every match missed,
+    /// and "this volume has no trash" was reported as an ordinary I/O error.
+    /// The interface keys its one useful offer off that distinction, so the
+    /// author was left with nothing to do.
+    #[test]
+    fn the_trash_classification_reads_codes_rather_than_english() {
+        let target = Path::new("/tmp/refrain-classify/01.md");
+
+        // EROFS, EACCES, EPERM: the three ways a volume says the trash
+        // directory cannot be created.
+        for code in [1, 13, 30] {
+            let error = trash::Error::Os {
+                code,
+                description: "ここには削除できません".into(),
+            };
+            assert!(
+                matches!(
+                    classify_trash_failure(target, &error),
+                    OpError::NoTrashHere { .. }
+                ),
+                "os code {code} should read as a volume without a trash"
+            );
+        }
+
+        // A different code is somebody else's problem and must stay an I/O
+        // error, or the interface offers a workaround that cannot help.
+        let unrelated = trash::Error::Os {
+            code: 28,
+            description: "no matter what this says".into(),
+        };
+        assert!(matches!(
+            classify_trash_failure(target, &unrelated),
+            OpError::Io { .. }
+        ));
+
+        // The English text that used to drive the decision now decides nothing.
+        let english = trash::Error::Unknown {
+            description: "could not create trash directory: read-only file system".into(),
+        };
+        assert!(
+            matches!(classify_trash_failure(target, &english), OpError::Io { .. }),
+            "prose must not classify, in any language"
         );
     }
 
