@@ -21,6 +21,14 @@ files:
 extraResources:
   - from: ../../packages/fs/refrain-fs.${platform}-${arch}.node
     to: refrain-fs.${platform}-${arch}.node
+  # Licences remain standalone resources rather than being folded into the
+  # application's GPL-governed source bundle.
+  - from: ../../LICENSE
+    to: licenses/RefRain-GPL-3.0.txt
+  - from: src/renderer/fonts/OFL-1.1.txt
+    to: licenses/fonts/OFL-1.1.txt
+  - from: src/renderer/fonts/LICENSES.md
+    to: licenses/fonts/ATTRIBUTIONS.md
 
 # The app never fetches anything, so there is no updater and no telemetry
 # endpoint to configure. Absence here is the feature.

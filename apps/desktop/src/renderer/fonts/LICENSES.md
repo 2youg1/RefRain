@@ -1,55 +1,27 @@
-# Bundled typefaces
+# Bundled font licences and attribution
 
-Eight typefaces ship inside the application so it renders identically on every
-machine. **They are licensed separately from RefRain itself** — the SIL Open
-Font License, not the GPL — and their terms travel with the font files.
+RefRain ships eight font files. They are licensed separately from the GPL-3.0-only application code: each font remains under the SIL Open Font License, Version 1.1. The release places the complete OFL text beside this inventory and keeps RefRain's GPL text in a separate file.
 
-The OFL permits bundling, redistribution, and modification. It requires that
-the fonts not be sold on their own and that derivatives under a reserved name
-be renamed. Nothing in it constrains what you write with them.
-
-| Typeface | Role | Copyright | Licence |
+| Packaged file | Typeface and role | Copyright notice embedded in the packaged font | Upstream |
 |---|---|---|---|
-| Chiron Sung HK | Chinese serif — the reading face | © Chiron Fonts | SIL OFL 1.1 |
-| Noto Sans SC | Chinese sans, manuscript and interface | © The Noto Project Authors | SIL OFL 1.1 |
-| Shippori Mincho | Japanese mincho — the reading face | © The Shippori Mincho Project Authors | SIL OFL 1.1 |
-| Zen Kaku Gothic New | Japanese gothic | © The Zen Kaku Gothic Project Authors | SIL OFL 1.1 |
-| Murecho | Japanese gothic, interface | © The Murecho Project Authors | SIL OFL 1.1 |
-| Antic Didone | Display / titles | © Santiago Orozco | SIL OFL 1.1 |
-| Jost | Latin interface sans | © indestructible type* | SIL OFL 1.1 |
-| Courier Prime | Monospace | © Quote-Unquote Apps | SIL OFL 1.1 |
+| `ChironSungHK.woff2` | Chiron Sung HK; Chinese serif | © 2017-2024 Adobe (http://www.adobe.com/). | <https://github.com/chiron-fonts/chiron-sung-hk> |
+| `NotoSansSC-Regular.woff2` | Noto Sans SC; Chinese sans | © 2014-2021 Adobe (http://www.adobe.com/). | <https://github.com/notofonts/noto-cjk> |
+| `ShipporiMincho-Regular.woff2` | Shippori Mincho; Japanese mincho | Copyright 2021 The Shippori Mincho Project Authors (https://github.com/fontdasu/ShipporiMincho) | <https://github.com/googlefonts/shippori-mincho> |
+| `ZenKakuGothicNew-Regular.woff2` | Zen Kaku Gothic New; Japanese gothic | Copyright 2022 The Zen Project Authors (https://github.com/googlefonts/zen-kakugothic) | <https://github.com/googlefonts/zen-kakugothic> |
+| `Murecho.woff2` | Murecho; Japanese gothic and interface | Copyright 2021 The Murecho Project Authors (https://github.com/positype/Murecho-Project) | <https://github.com/positype/Murecho-Project> |
+| `AnticDidone.woff2` | Antic Didone; display and titles | Copyright (c) 2011, Santiago Orozco (hi@typemade.mx), with Reserved Font Name Antic Didone. | <https://github.com/google/fonts/tree/main/ofl/anticdidone> |
+| `Jost.woff2` | Jost; Latin interface sans | Copyright 2020 The Jost Project Authors (https://github.com/indestructible-type/Jost) | <https://github.com/indestructible-type/Jost> |
+| `CourierPrime.woff2` | Courier Prime; monospace | Copyright 2015 The Courier Prime Project Authors (https://github.com/quoteunquoteapps/CourierPrime). | <https://github.com/quoteunquoteapps/CourierPrime> |
 
-Chinese and Japanese have stacks of their own — a serif and a sans each —
-because they are separate settings: 直, 骨 and 令 exist in both traditions and
-are drawn differently, so a single CJK face renders one reader's characters in
-shapes they will call wrong, and a writer quoting Japanese inside Chinese prose
-needs both at once.
+The copyright column reproduces name ID 0 from each packaged WOFF2, inspected on 2026-07-28. Every file also declares OFL 1.1 in name ID 13 and reports installable embedding (`OS/2.fsType = 0`). Antic Didone's notice declares its Reserved Font Name; any modified build must obey OFL clause 3 rather than assuming that no rename is required.
 
-Japanese carries a mincho as well as a gothic because Japanese body text is set
-in mincho; a gothic there is a display face, the way a grotesque is in Latin.
-Murecho is listed under Japanese, which is what it is — it had been offered as a
-Chinese option, and sat ahead of PingFang in the interface stack, so the whole
-interface rendered Chinese in Japanese letterforms.
+Chinese and Japanese retain separate serif and sans stacks because shared characters such as 直, 骨, and 令 have language-specific forms. This is a rendering decision, not a change to the fonts' licences.
 
-Full licence text: <https://openfontlicense.org>
+## OFL text provenance
 
-Sources:
+`OFL-1.1.txt` is the complete plaintext retrieved from SIL's official endpoint on 2026-07-28:
 
-- Chiron Sung HK — <https://github.com/chiron-fonts/chiron-sung-hk>
-- Noto Sans SC — <https://github.com/notofonts/noto-cjk>
-- Shippori Mincho — <https://github.com/googlefonts/shippori-mincho>
-- Zen Kaku Gothic New — <https://github.com/googlefonts/zen-kakugothic>
-- Antic Didone, Jost, Murecho, Courier Prime — <https://github.com/google/fonts>
+- <https://openfontlicense.org/documents/OFL.txt>
+- SHA-256: `1d361a8f8e8ce6e68457dcd93fb56e162e6baa3bbb7e7573a290d44399f6b57e`
 
-The files here are subset to the ranges the application needs (CJK Unified
-Ideographs, kana, CJK and fullwidth punctuation, Latin and Latin Extended-A).
-Subsetting is a modification the OFL permits; the reserved names are unchanged
-because the glyph outlines are not. None of the eight declares a Reserved Font
-Name, so no rename is owed — a face that did (KazukiReiwa, ChillDINGothic)
-would have to ship under a new family name once subset, which means a family
-nobody else's machine has ever heard of.
-
-That is why the Chinese sans is Noto Sans SC rather than a proprietary face
-with a friendlier weight range: the OFL cannot be withdrawn, and a licence that
-can be is a dependency on somebody's continued goodwill. A typeface is not a
-thing to have to replace in version three.
+The URL records provenance; it does not replace the packaged text. `electron-builder.yml` copies this inventory and the complete OFL into `resources/licenses/fonts/`, while RefRain's GPL text goes to `resources/licenses/RefRain-GPL-3.0.txt`. The application licence does not relicense the font files.
