@@ -83,7 +83,13 @@
   };
 
   const onKeydown = (event: KeyboardEvent): void => {
-    if (event.key === "Escape") return onClose();
+    if (event.key === "Escape") {
+      // App owns every other Escape surface. Do not let this one continue and
+      // close the drawer that happens to sit behind the palette as well.
+      event.stopPropagation();
+      onClose();
+      return;
+    }
     if (event.key === "ArrowDown" || (event.ctrlKey && event.key === "n")) {
       event.preventDefault();
       cursor = Math.min(cursor + 1, flat.length - 1);
