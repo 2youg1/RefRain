@@ -1356,32 +1356,37 @@ const onScroll = (): void => {
   overflow: hidden;
 }
 
-/* A trace of fibre on the desk, so it is a material and not a fill. */
 /*
- * Fibre, and a direction to it.
+ * A lamp, not a wash of white.
  *
- * Paper stock has a grain; a uniform noise field reads as screen dither. The
- * turbulence is stretched vertically to suggest one, and the whole is strong
- * enough to survive a screenshot — an earlier value was technically present
- * and visually absent, which is the same as not having done it.
- */
-/*
- * Volume, not grain.
+ * A large shallow luminance gradient reads as a lit surface at any pixel
+ * density, which a noise tile does not — at 2× the tile resamples and the
+ * particles disappear, so the texture is in the stylesheet and absent on
+ * screen. That reasoning held. The colour did not: this was
+ * `oklch(1 0 0 / 0.5)`, pure white at half opacity, identical in all eight
+ * themes. Light falling on paper raises the paper's own lightness and leaves
+ * its hue alone — it does not turn the paper white — and a fixed white wash on
+ * day paper already at L 0.95 pushed the column to within a hair of the pure
+ * value this project forbids, while on 墨's L 0.24 it read as a bulb sitting on
+ * the page.
  *
- * A noise tile is the obvious way to make a surface feel like paper and it
- * does not survive: at 2× the tile is resampled and the particles wash out, so
- * the texture is present in the stylesheet and absent on screen. A large, very
- * shallow luminance gradient reads as a lit surface at any pixel density —
- * one lamp, upper left, the way a desk actually is.
+ * `--lamp` and `--shade` are derived per theme in `docs/theme-tokens.ts`: the
+ * paper moved along L, up toward the lamp and down toward the far corner,
+ * hue untouched. The radius is wider and the centre lower than before, so the
+ * falloff has no visible edge — a gradient whose boundary can be found reads as
+ * a shape drawn on the page rather than as light.
  */
 .writing::before {
   content: "";
   position: absolute;
   inset: 0;
   pointer-events: none;
+  /* Named so the gate can read the same number the compositor does. */
+  --lamp-opacity: 0.55;
   background:
-    radial-gradient(120% 90% at 22% 0%, oklch(1 0 0 / 0.5), transparent 58%),
-    radial-gradient(100% 80% at 96% 100%, oklch(0.2 0.02 60 / 0.045), transparent 62%);
+    radial-gradient(145% 115% at 30% 4%, var(--lamp), transparent 66%),
+    radial-gradient(100% 80% at 96% 100%, var(--shade), transparent 62%);
+  opacity: var(--lamp-opacity);
 }
 
 /*

@@ -171,6 +171,36 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-themes.ts
 
+      # The lit corner has to belong to the theme it sits in. The page carried a
+      # fixed `oklch(1 0 0 / 0.5)` wash at the upper left, identical in all
+      # eight: day paper at L 0.95 came out within a hair of the pure white the
+      # palette rules forbid, and 墨's L 0.24 read as a bulb on the page. This
+      # samples rendered pixels, because that was a stylesheet which read
+      # reasonably and composited wrong.
+      - name: eight themes light their own paper
+        working-directory: apps/desktop
+        run: bun scripts/verify-lighting.ts
+
+      # Roots persist across a quit, and nothing loaded them at startup — so a
+      # second launch showed an empty rail over a full project, and re-opening
+      # the same folder hit a duplicate check that declined in silence.
+      - name: a remembered workspace comes back on its own
+        working-directory: apps/desktop
+        run: bun scripts/verify-relaunch.ts
+
+      # Saving resolves normally on failure, so switching chapters on `.then`
+      # walked away from unsaved text and overwrote the only copy of it.
+      - name: a failed save keeps the author on the text
+        working-directory: apps/desktop
+        run: bun scripts/verify-save-blocks-switch.ts
+
+      # `agents.json` travels with the project, and opening the Agents screen
+      # probes every agent — which runs the binary. Reading someone else's
+      # writing project executed their choice of program.
+      - name: a command that came with the project waits for consent
+        working-directory: apps/desktop
+        run: bun scripts/verify-agent-trust.ts
+
       # Removing a middle paragraph, saving, then reverting must put it back
       # where it was. The block identities that make this possible are invisible
       # to a unit test of the pure function: only the rendered interface exercises
