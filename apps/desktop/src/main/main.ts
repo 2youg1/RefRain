@@ -174,7 +174,7 @@ if (primaryInstance)
 
       window.webContents.once("did-finish-load", () => {
         clearTimeout(deadline);
-        console.log("SMOKE_OK window loaded");
+        console.log("SMOKE_OK");
         setTimeout(() => app.exit(0), 500);
       });
 
