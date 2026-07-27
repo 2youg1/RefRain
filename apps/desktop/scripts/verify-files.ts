@@ -19,6 +19,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BRIDGE_STUB, launchBrowser } from "./browser.ts";
 
+declare global {
+  interface Window {
+    __fileScans: number;
+    __fileChanged?: (root: string) => void;
+  }
+}
+
 const here = dirname(fileURLToPath(import.meta.url));
 const root = dirname(here);
 
@@ -39,6 +46,8 @@ const bridge = `
   // a bridge that never got assigned looks exactly like a component that never
   // rendered.
   window.__ENTRIES = ${JSON.stringify(ENTRIES)};
+  window.__fileScans = 0;
+  window.__fileChanged = null;
   ${BRIDGE_STUB}
   Object.assign(window.refrain, {
     openProject: async () => null,
@@ -70,7 +79,8 @@ const bridge = `
     describeEdits: async () => "",
     files: {
       ...window.refrain.files,
-      scan: async () => ({ ok: true, count: ${ENTRIES.length} }),
+      onChange: (listener) => { window.__fileChanged = listener; return () => { window.__fileChanged = null; }; },
+      scan: async () => { window.__fileScans += 1; return { ok: true, count: ${ENTRIES.length} }; },
       page: async (_root, offset, limit) => ({
         ok: true,
         entries: window.__ENTRIES.slice(offset, offset + limit),
@@ -163,6 +173,14 @@ if ((await target.count()) > 0) {
 
 const pane = page.locator("section.files");
 check("the file browser renders", (await pane.count()) > 0);
+
+const scansBeforeExternalChange = await page.evaluate(() => window.__fileScans);
+await page.evaluate(() => window.__fileChanged?.("/home/author/novel"));
+await page.waitForFunction((before) => window.__fileScans > before, scansBeforeExternalChange);
+check(
+  "an external Root change rescans the open file browser",
+  (await page.evaluate(() => window.__fileScans)) > scansBeforeExternalChange,
+);
 
 if ((await pane.count()) > 0) {
   const rows = page.locator("section.files .row");

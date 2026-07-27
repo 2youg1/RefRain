@@ -270,9 +270,24 @@ const filesFor = async (
   }
 };
 
-const observeFiles = (root: string, subscriber: WebContents): void => {
+/**
+ * Subscribe a window to one Root's external changes.
+ *
+ * The subscriber is whatever `files:scan` arrived from, and that is not always
+ * a live `WebContents`: a window can be torn down between the invoke and the
+ * handler, and the handler table is also driven directly by tests. A watch is
+ * worth starting either way — the notification simply has nowhere to go yet —
+ * so an unusable sender is skipped rather than throwing back through a scan the
+ * author asked for.
+ */
+const observeFiles = (root: string, subscriber: WebContents | undefined): void => {
   const workbench = openWorkbench(root);
-  if (!workbench.fileSubscribers.has(subscriber.id)) {
+  const usable =
+    typeof subscriber?.id === "number" &&
+    typeof subscriber.send === "function" &&
+    typeof subscriber.once === "function";
+
+  if (usable && !workbench.fileSubscribers.has(subscriber.id)) {
     workbench.fileSubscribers.set(subscriber.id, subscriber);
     subscriber.once("destroyed", () => workbench.fileSubscribers.delete(subscriber.id));
   }
