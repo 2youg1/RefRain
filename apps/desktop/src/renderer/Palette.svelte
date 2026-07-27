@@ -1,7 +1,6 @@
 <script lang="ts">
-  
-  import type { Key } from "./i18n.ts";
-import Mark from "./Mark.svelte";
+  import { type Key, withChord } from "./i18n.ts";
+  import Mark from "./Mark.svelte";
 
   export interface Command {
     id: string;
@@ -17,12 +16,13 @@ import Mark from "./Mark.svelte";
     commands: Command[];
     t: (key: Key) => string;
     icon: string | null;
+    shortcut: string;
     inverted?: boolean;
     onOpen: () => void;
     onClose: () => void;
   }
 
-  const { open, commands, t, icon, inverted = false, onOpen, onClose }: Props = $props();
+  const { open, commands, t, icon, shortcut, inverted = false, onOpen, onClose }: Props = $props();
 
   let query = $state("");
   let cursor = $state(0);
@@ -102,7 +102,12 @@ import Mark from "./Mark.svelte";
   behind it, so the interface needs no permanent toolbar and the manuscript
   keeps the room a toolbar would have taken.
 -->
-<button class="key" class:lifted={open} onclick={onOpen} aria-label={t("palette.hint")}>
+<button
+  class="key"
+  class:lifted={open}
+  onclick={onOpen}
+  aria-label={withChord(t("palette.hint"), shortcut)}
+>
   <Mark size={22} custom={icon} {inverted} />
 </button>
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Key } from "./i18n.ts";
+import { type Key, withChord } from "./i18n.ts";
 import Mark from "./Mark.svelte";
 import Palette, { type Command } from "./Palette.svelte";
 
@@ -8,6 +8,7 @@ interface Props {
   icon: string | null;
   commands: Command[];
   paletteOpen: boolean;
+  paletteShortcut: string;
   dragging: boolean;
   onOpenFolder: () => void;
   onOpenFile: () => void;
@@ -21,6 +22,7 @@ const {
   icon,
   commands,
   paletteOpen,
+  paletteShortcut,
   dragging,
   onOpenFolder,
   onOpenFile,
@@ -43,12 +45,20 @@ const {
 
   <p class="drop">{t("welcome.drop")}</p>
   <p class="fine">{t("welcome.fine")}</p>
-  <p class="fine key">{t("welcome.hint")}</p>
+  <p class="fine key">{withChord(t("welcome.hint"), paletteShortcut)}</p>
 
   <!-- The palette must be mounted for its keyboard shortcut to work, but the
        welcome screen has its own three buttons and does not need the control. -->
   <div class="hidden-entry">
-    <Palette open={paletteOpen} {commands} {t} {icon} onOpen={onPaletteOpen} onClose={onPaletteClose} />
+    <Palette
+      open={paletteOpen}
+      {commands}
+      {t}
+      {icon}
+      shortcut={paletteShortcut}
+      onOpen={onPaletteOpen}
+      onClose={onPaletteClose}
+    />
   </div>
 </main>
 

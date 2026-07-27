@@ -5,6 +5,7 @@
     x: number;
     y: number;
     selection: string;
+    bindings: Record<string, string>;
     t: (key: Key) => string;
     onFormat: (mark: "bold" | "italic" | "strike" | "code") => void;
     onAnnotate: () => void;
@@ -12,7 +13,8 @@
     onClose: () => void;
   }
 
-  const { x, y, selection, t, onFormat, onAnnotate, onDispatch, onClose }: Props = $props();
+  const { x, y, selection, bindings, t, onFormat, onAnnotate, onDispatch, onClose }: Props =
+    $props();
 
   /**
    * The menu that appears where the author is looking.
@@ -44,12 +46,11 @@
 
   <button class="item" disabled={!has} onclick={onAnnotate}>
     <span>{t("edit.annotate")}</span>
-    <kbd>Ctrl M</kbd>
   </button>
 
   <button class="item accent" disabled={!has} onclick={onDispatch}>
     <span>{t("edit.toAgent")}</span>
-    <kbd>Ctrl D</kbd>
+    <kbd>{bindings.dispatch}</kbd>
   </button>
 
   {#if !has}
