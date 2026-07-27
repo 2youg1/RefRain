@@ -22,7 +22,23 @@ export const applyTextAction = (
   cause: string,
 ): TextHead => {
   const ranges = changes.filter((change) => change.kind !== "insert");
-  const replaced = new Map(ranges.map((change) => [change.blockIds[0], change] as const));
+
+  // Building the map straight from the list let a later change overwrite an
+  // earlier one silently. Two accepted verdicts landing on the same paragraph
+  // — routine, once a run returns several slices for one Edit Scope — merged
+  // as one, and the manuscript lost a judgment the reader had signed.
+  const replaced = new Map<BlockId, TextChange>();
+  for (const change of ranges) {
+    const key = change.blockIds[0];
+    if (key === undefined) continue;
+    const earlier = replaced.get(key);
+    if (earlier !== undefined)
+      throw new Error(
+        `two changes address block ${key}: ${JSON.stringify(earlier.text)} and ` +
+          `${JSON.stringify(change.text)} — resolve them into one before applying`,
+      );
+    replaced.set(key, change);
+  }
   const consumed = new Set(ranges.flatMap((change) => change.blockIds));
   const blocks: Block[] = [];
 
