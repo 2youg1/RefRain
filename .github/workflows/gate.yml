@@ -159,6 +159,13 @@ jobs:
       - name: generated desktop bytes match the reviewed manifest
         run: git diff --exit-code -- apps/desktop/build/desktop-manifest.json
 
+      # Source scans alone can miss a dynamic import or a dependency rewritten
+      # by the bundler. This gate runs only after the reviewed main, preload, and
+      # renderer bytes exist, and refuses a missing bundle rather than scanning
+      # an empty directory successfully.
+      - name: no outbound request reaches the built application
+        run: bun run verify:no-network
+
       # The main process is bundled for Node; a Bun global there is a crash no
       # test can see, because bun test runs under Bun. This shipped once.
       - name: the main process names no Bun global
@@ -536,11 +543,6 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
       - run: bun install --frozen-lockfile
 
-      # SPEC 1.3: the app process makes no outbound network requests.
-      # Caught in CI because a stray import is invisible in review.
-      - name: no network in core
-        run: bun run verify:no-network
-
       # INV-5. A manuscript opened and saved with no edit at all lost twelve
       # bytes out of a hundred and eighty-six: the ideographic indent that opens
       # a Chinese paragraph, deleted on load; a fenced code block cut in two by
@@ -567,6 +569,12 @@ jobs:
       # asks the question, so this reads the source and asks it everywhere.
       - name: Unix-only constructs stay off the Windows target
         run: bun run verify:unix-guards
+
+      # Windows will not flush a handle opened without write access, so a
+      # read-only descriptor took down every durable state write there while
+      # passing on Unix. Three shipped that way before the release platform said so.
+      - name: durable writes hold a writable descriptor
+        run: bun run verify:durable-writes
 
       # INV-8: the cost of saving follows the size of the change, not of the
       # book. A 40,000-block manuscript threw RangeError: Out of memory on a

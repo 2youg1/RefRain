@@ -77,7 +77,12 @@ const removeMarker = (path: string, parent: string): void => {
 const markTemporary = (path: string, parent: string): void => {
   const marker = interruptedWriteMarkerPath(path);
   writeFileSync(marker, OWNER, { encoding: "utf8", flag: "wx" });
-  const file = openSync(marker, constants.O_RDONLY);
+  // Opened for writing even though nothing more is written: Windows refuses to
+  // flush a handle that carries no write access, so a read-only descriptor made
+  // `FlushFileBuffers` fail with EPERM and took every state write down with it.
+  // Unix allows the flush either way, which is why this only ever showed up on
+  // the release platform.
+  const file = openSync(marker, constants.O_RDWR);
   try {
     fsyncSync(file);
   } finally {
@@ -104,7 +109,9 @@ const preserveTemporary = (
 
     try {
       observe?.("recovery-linked");
-      const file = openSync(evidence, constants.O_RDONLY);
+      // O_RDWR, not O_RDONLY: Windows will not flush a handle without write
+      // access. See `markTemporary` — the same rule, the same platform.
+      const file = openSync(evidence, constants.O_RDWR);
       try {
         fsyncSync(file);
       } finally {

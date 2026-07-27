@@ -27,6 +27,7 @@
     "verify:scale": "bun scripts/verify-scale.ts",
     "verify:paths": "bun scripts/verify-paths.ts",
     "verify:unix-guards": "bun scripts/verify-unix-guards.ts",
+    "verify:durable-writes": "bun scripts/verify-durable-writes.ts",
     "native": "cd packages/fs && cargo build --release && bun run scripts/build.ts",
     "check:svelte": "cd apps/desktop && bun scripts/check-svelte.ts"
   },
