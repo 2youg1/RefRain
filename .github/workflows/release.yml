@@ -109,6 +109,9 @@ jobs:
         shell: bash
         run: ./make.sh
 
+      - name: Generated desktop bytes match the reviewed manifest
+        run: git diff --exit-code -- apps/desktop/build/desktop-manifest.json
+
       # A release must not ship a main process that names a Bun global: it is
       # bundled for Node, so the reference is a crash on the user's machine
       # that no test under Bun can reach.
@@ -146,10 +149,18 @@ jobs:
         timeout-minutes: 4
         run: node scripts/launch-check.mjs
 
+      - name: Require a fresh package output root
+        working-directory: apps/desktop
+        run: bun scripts/verify-package-assets.ts empty
+
       - name: Package ${{ matrix.target }}
         working-directory: apps/desktop
         shell: bash
         run: bun x electron-builder ${{ matrix.builder_args }} --publish never
+
+      - name: Require one authoritative package artifact
+        working-directory: apps/desktop
+        run: bun scripts/verify-package-assets.ts ${{ matrix.target }}
 
       # The SBOM describes what electron-builder left for publication. Creating
       # it from the source tree before packaging would inventory dependencies

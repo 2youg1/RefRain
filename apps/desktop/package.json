@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "REFRAIN_DEV=1 bun x vite",
     "build": "./make.sh",
-    "pack": "electron-builder --publish never",
+    "pack": "bun scripts/verify-package-assets.ts empty && electron-builder --publish never",
     "smoke": "bun test test/smoke.test.ts"
   },
   "devDependencies": {

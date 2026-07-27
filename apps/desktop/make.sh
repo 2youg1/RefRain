@@ -29,6 +29,11 @@ bun build scripts/node-ledger-check.ts --target=node --outdir=dist/checks --form
 mv -f dist/checks/node-ledger-check.js dist/checks/node-ledger-check.cjs
 ELECTRON_RUN_AS_NODE=1 bun x electron dist/checks/node-ledger-check.cjs
 
+# dist is ignored because it is generated, but its committed manifest is not.
+# Any stale or foreign byte changes that manifest, so source-state status still
+# reveals when the renderer, preload, main process, or runtime probe moved.
+bun scripts/build-manifest.ts
+
 # electron-builder only warns when the icon is missing and ships the default
 # Electron one, which reaches a user as a released application wearing another
 # project's mark. The icon is committed; this catches its removal.

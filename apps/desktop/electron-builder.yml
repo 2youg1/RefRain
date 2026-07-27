@@ -12,6 +12,7 @@ directories:
 
 files:
   - dist/**/*
+  - build/desktop-manifest.json
   - package.json
 
 # The native file layer travels with the app. Without this the packaged build

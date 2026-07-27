@@ -49,6 +49,19 @@ test("packaging uses Node platform names for the native binary", () => {
   expect(config).not.toMatch(/refrain-fs\.\$\{os\}-\$\{arch\}\.node/);
 });
 
+test("the reviewed manifest identifies every generated desktop byte", () => {
+  const config = readFileSync(join(here, "..", "electron-builder.yml"), "utf8");
+  const make = readFileSync(join(here, "..", "make.sh"), "utf8");
+  const gate = readFileSync(
+    join(here, "..", "..", "..", ".github", "workflows", "gate.yml"),
+    "utf8",
+  );
+
+  expect(config).toContain("build/desktop-manifest.json");
+  expect(make).toContain("scripts/build-manifest.ts");
+  expect(gate).toContain("git diff --exit-code -- apps/desktop/build/desktop-manifest.json");
+});
+
 test("the release publishes one Windows x64 installer", () => {
   const workflow = readFileSync(
     join(here, "..", "..", "..", ".github", "workflows", "release.yml"),
@@ -60,7 +73,9 @@ test("the release publishes one Windows x64 installer", () => {
   expect(workflow).not.toContain("target: linux-x64");
   expect(workflow).not.toContain("target: mac-arm64");
   expect(workflow).not.toContain("target: mac-x64");
-  expect(workflow).toContain("expected 1 release file");
+  expect(workflow).toContain("expected 1 installer and 1 SBOM");
+  expect(workflow).toContain("anchore/sbom-action@");
+  expect(workflow).toContain("SHA256SUMS");
   expect(workflow.match(/softprops\/action-gh-release/g)).toHaveLength(1);
 
   /*

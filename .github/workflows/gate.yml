@@ -141,6 +141,9 @@ jobs:
         working-directory: apps/desktop
         run: ./make.sh
 
+      - name: generated desktop bytes match the reviewed manifest
+        run: git diff --exit-code -- apps/desktop/build/desktop-manifest.json
+
       # The main process is bundled for Node; a Bun global there is a crash no
       # test can see, because bun test runs under Bun. This shipped once.
       - name: the main process names no Bun global
