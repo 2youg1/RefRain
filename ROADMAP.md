@@ -62,6 +62,63 @@ that unmounts on Escape, so a reader who judged several slices and glanced back
 at the paragraph found an empty list on reopening. The same component cleared
 them before the merge it was asked to perform.
 
+**A shortcut deletes the link, not the chapter.** `trash` already knew this;
+the escape hatch beside it, for a volume that has no trash of its own, did not.
+It resolved the path first, so staging a shortcut to chapter three moved
+chapter three onto another volume. Its cross-device fallback then dereferenced
+the link a second time while copying. Admission now validates both the entry as
+written and what it points at, and a copy recreates a link as a link.
+
+**A Root the author never opened stops being a warning.** Permission and
+filesystem identity were one question asked at one moment, so cleaning a drive
+and reopening RefRain produced one refusal per vanished project. Holding a
+permit is now an in-memory answer; identity is verified before anything is
+written inside that Root, which is where it matters.
+
+**The file layer is retried, not written off.** The reason a load failed was
+cached for the life of the session — a volume mounted afterwards, or a platform
+binary installed after launch, meant restarting the application to recover from
+a condition that had already cleared.
+
+**Nothing runs forever.** Both harness adapters shipped with their timeout
+disabled, because every construction site left it unset, so a hung harness held
+its Run in `dispatched` for the session and the Proposals it was carrying never
+arrived.
+
+**A Root notices when it changes underneath.** A chapter added by another
+editor, a branch checkout, a file dropped into the folder: none of it appeared
+until something else happened to trigger a rescan. One watcher per Root now
+reports it, ignoring the application's own state directories so a save does not
+announce itself as somebody else's edit.
+
+**Removing a Root asks first**, and the control it asks about is visible to a
+keyboard — it was revealed on hover alone, so tabbing through the rail landed
+on a button at zero opacity.
+
+**A Proposal stays with the chapter it was written against.** Switching
+chapters kept them, so the review panel offered a merge whose scope named text
+no longer on screen.
+
+**Settings refuse what would break the page.** Clearing the size box to retype
+it reads back as zero, and the manuscript collapsed to 0px under the author; a
+font name went into a `style` attribute, where a quote closes the string and a
+semicolon starts a new declaration.
+
+**念頭寄存 has somewhere to put a thought.** A stray thought caught
+mid-sentence is a judgment about the work, so it lives in the Verdict Ledger,
+carrying the chapter and block the author was standing in. Two things can be
+done with one — return to it, or drop it. It is deliberately not a task system.
+
+**Three documents stopped describing an application that does not exist.** The
+specification named two typefaces that were never packaged; the flow document
+taught eight adjudication chords that had been deleted, and a dead binding
+shadows whatever the author rebinds to that chord; a stylesheet set CJK
+emphasis in italic, which the manuscript — a plain-text surface — had never
+rendered at all.
+
+**14MB of regenerable screenshots left the repository**, along with a check
+nobody had ever called and the dependency it existed to use.
+
 ## Shipped — v0.1.5
 
 Windows x64. One author, several local folders, any harness, chapterised
