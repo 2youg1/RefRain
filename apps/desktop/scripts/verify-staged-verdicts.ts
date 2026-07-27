@@ -51,6 +51,31 @@ const fail = async (why: string): Promise<never> => {
   process.exit(1);
 };
 
+/**
+ * Open a panel through the command palette, and refuse to continue if its entry
+ * is gone.
+ *
+ * Discarding this result is how a renamed menu entry turns into a report that
+ * the author's text was lost: the panel never opens, the textarea is absent,
+ * and the assertion blames the product for a defect in the harness.
+ */
+const openViaPalette = async (label: RegExp, what: string): Promise<void> => {
+  await page.keyboard.press("Control+k");
+  await page.waitForTimeout(300);
+  const found = await page.evaluate((source) => {
+    const entry = [...document.querySelectorAll<HTMLElement>("button, li, [role=option]")].find(
+      (node) => new RegExp(source).test(node.textContent ?? ""),
+    );
+    entry?.click();
+    return entry !== undefined;
+  }, label.source);
+  if (!found) await fail(`the command palette has no entry for ${what}`);
+  await page.waitForTimeout(500);
+};
+
+const REVIEW_ENTRY = /^\s*(审阅提案|Review proposals)(\s|$)/;
+const DISPATCH_ENTRY = /^\s*(交给 Agent…|Send to an agent…)(\s|$)/;
+
 // One proposal with two judgable slices, and a commit that always refuses —
 // so the refusal path is exercised without needing a real merge to fail.
 await page.addInitScript(`window.refrain = {
@@ -100,17 +125,7 @@ await page.waitForTimeout(600);
 /** Open the review sheet through the palette, the way an author would. */
 // Proposals arrive by collecting a finished run, which is how they arrive in
 // the application. Reaching into the panel without that would test a fixture.
-await page.keyboard.press("Control+k");
-await page.waitForTimeout(300);
-const openedRuns = await page.evaluate(() => {
-  const entry = [...document.querySelectorAll<HTMLElement>("button, li, [role=option]")].find(
-    (node) => /^\s*(交给 Agent…|Send to an agent…)(\s|$)/.test(node.textContent ?? ""),
-  );
-  entry?.click();
-  return entry !== undefined;
-});
-if (!openedRuns) await fail("the command palette has no dispatch entry to reach runs through");
-await page.waitForTimeout(500);
+await openViaPalette(DISPATCH_ENTRY, "dispatching to an agent");
 
 const collected = await page.evaluate(() => {
   const button = [...document.querySelectorAll<HTMLElement>("button")].find((node) =>
@@ -156,17 +171,7 @@ await page.waitForTimeout(350);
 const sheetGone = await page.evaluate(() => document.querySelector(".sheet") === null);
 if (!sheetGone) await fail("Escape did not dismiss the review sheet, so this proves nothing");
 
-await page.keyboard.press("Control+k");
-await page.waitForTimeout(300);
-const reopened = await page.evaluate(() => {
-  const entry = [...document.querySelectorAll<HTMLElement>("button, li, [role=option]")].find(
-    (node) => /^\s*(审阅提案|Review proposals)(\s|$)/.test(node.textContent ?? ""),
-  );
-  entry?.click();
-  return entry !== undefined;
-});
-if (!reopened) await fail("the command palette has no entry to reopen the review panel");
-await page.waitForTimeout(450);
+await openViaPalette(REVIEW_ENTRY, "reviewing proposals");
 if (!(await page.evaluate(() => !!document.querySelector(".review"))))
   await fail("the review sheet did not reopen");
 
@@ -220,15 +225,7 @@ await page.waitForTimeout(200);
 
 await page.keyboard.press("Escape");
 await page.waitForTimeout(350);
-await page.keyboard.press("Control+k");
-await page.waitForTimeout(300);
-await page.evaluate(() => {
-  const entry = [...document.querySelectorAll<HTMLElement>("button, li, [role=option]")].find(
-    (node) => /^\s*(审阅提案|Review proposals)(\s|$)/.test(node.textContent ?? ""),
-  );
-  entry?.click();
-});
-await page.waitForTimeout(450);
+await openViaPalette(REVIEW_ENTRY, "reviewing proposals");
 
 const rewriteKept = await page.evaluate(
   (expected) =>
@@ -243,30 +240,14 @@ if (!rewriteKept)
 // Dispatch: type an instruction, leave to read the manuscript, come back.
 await page.keyboard.press("Escape");
 await page.waitForTimeout(300);
-await page.keyboard.press("Control+k");
-await page.waitForTimeout(300);
-await page.evaluate(() => {
-  const entry = [...document.querySelectorAll<HTMLElement>("button, li, [role=option]")].find(
-    (node) => /^\s*(交给 Agent…|Send to an agent…)(\s|$)/.test(node.textContent ?? ""),
-  );
-  entry?.click();
-});
-await page.waitForTimeout(500);
+await openViaPalette(DISPATCH_ENTRY, "dispatching to an agent");
 
 await page.fill(".dispatch textarea", INSTRUCTION);
 await page.waitForTimeout(200);
 
 await page.keyboard.press("Escape");
 await page.waitForTimeout(350);
-await page.keyboard.press("Control+k");
-await page.waitForTimeout(300);
-await page.evaluate(() => {
-  const entry = [...document.querySelectorAll<HTMLElement>("button, li, [role=option]")].find(
-    (node) => /^\s*(交给 Agent…|Send to an agent…)(\s|$)/.test(node.textContent ?? ""),
-  );
-  entry?.click();
-});
-await page.waitForTimeout(500);
+await openViaPalette(DISPATCH_ENTRY, "dispatching to an agent");
 
 const instructionKept = await page.evaluate(
   (expected) =>
