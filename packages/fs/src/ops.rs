@@ -190,11 +190,6 @@ fn verify_copy(from: &Path, to: &Path) -> Result<(), OpError> {
         return Ok(());
     }
 
-    fs::OpenOptions::new()
-        .write(true)
-        .open(to)
-        .and_then(|copied| copied.sync_all())
-        .map_err(|error| io(to, error))?;
     let mut source = fs::File::open(from).map_err(|error| io(from, error))?;
     let mut copied = fs::File::open(to).map_err(|error| io(to, error))?;
     let mut source_bytes = [0_u8; 64 * 1024];
@@ -286,7 +281,16 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), OpError> {
     if let Some(parent) = to.parent() {
         fs::create_dir_all(parent).map_err(|error| io(parent, error))?;
     }
-    fs::copy(from, to).map_err(|error| io(from, error))?;
+    let mut source = fs::File::open(from).map_err(|error| io(from, error))?;
+    let mut copied = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(to)
+        .map_err(|error| io(to, error))?;
+    io::copy(&mut source, &mut copied).map_err(|error| io(to, error))?;
+    copied.sync_all().map_err(|error| io(to, error))?;
+    fs::set_permissions(to, metadata.permissions()).map_err(|error| io(to, error))?;
     Ok(())
 }
 
@@ -1020,6 +1024,9 @@ mod tests {
         fs::create_dir(&root).unwrap();
         let target = root.join("one.md");
         fs::write(&target, "跨卷正文").unwrap();
+        let mut permissions = fs::metadata(&target).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&target, permissions).unwrap();
         let home = scratch("via-home-cross-device-home");
         assert_ne!(
             fs::metadata(&root).unwrap().dev(),

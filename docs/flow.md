@@ -42,12 +42,12 @@ flowchart TB
     C3["sliceProposal()<br/>确定性 diff 得 Review Slice"]
     C4{"classifyProposal()"}
 
-    V1["④a 格式类一次全过<br/>Alt+Shift+A"]
-    V2["④b 语义类逐条读<br/>Alt+J / Alt+K 移动"]
-    V3["Alt+A 接受<br/>Alt+X 拒绝<br/>Alt+E 改后合并"]
-    V4["⑤ Alt+S 打勾攒批<br/>未勾的留下精调"]
+    V1["④a 格式类一次全过<br/>提案头 全选"]
+    V2["④b 语义类逐条读<br/>点选切片"]
+    V3["接受<br/>拒绝<br/>改后合并"]
+    V4["⑤ 打勾攒批<br/>未勾的留下精调"]
 
-    M1["⑥ commitDecisionBatch()<br/>Alt+Enter 一次提交"]
+    M1["⑥ commitDecisionBatch()<br/>点合并 一次提交"]
     M2{"基线还成立"}
     M3["整批拒绝<br/>指名冲突处，不暗选赢家"]
     M4["⑦ 一个 Text Action<br/>新 Text Head，定为 Revision"]
@@ -160,14 +160,14 @@ flowchart TB
 ```mermaid
 flowchart LR
     P["Proposal"] --> K{"classifyProposal()"}
-    K -->|"formatting<br/>骨架相同"| F["Alt+Shift+A<br/>一次全过"]
+    K -->|"formatting<br/>骨架相同"| F["提案头 全选<br/>一次全过"]
     K -->|"semantic<br/>骨架有变"| S["逐条阅读"]
-    S --> A["Alt+A 原样接受"]
-    S --> X["Alt+X 拒绝"]
-    S --> E["Alt+E 改后合并<br/>写入 finalText"]
-    F & A & E --> B["Alt+S 打勾入批"]
+    S --> A["原样接受"]
+    S --> X["拒绝"]
+    S --> E["改后合并<br/>写入 finalText"]
+    F & A & E --> B["打勾入批"]
     X --> L[("只落 Verdict<br/>不动正文")]
-    B --> C["Alt+Enter 提交"]
+    B --> C["提交"]
 
     classDef human fill:#f5e6e0,stroke:#a8422f,stroke-width:2px
     class F,S,A,X,E,B,C human
@@ -185,16 +185,22 @@ Windows 已经占用的位，语义一致就直接复用，不另造：
 
 | 复用 | 命令 | 理由 |
 |---|---|---|
-| `Ctrl+S` `Ctrl+O` `Ctrl+N` `Ctrl+F` `Ctrl+Z` `Ctrl+Y` | 保存／打开／新建／查找／撤销／重做 | 语义与系统一致 |
+| `Ctrl+S` `Ctrl+O` `Ctrl+N` | 保存／打开／新建 | 语义与系统一致 |
 
-裁决动作一律 `Alt+`，因为检阅时正文有焦点、常有输入法候选窗开着——**裸字母键在中文写作里是字符，不是命令**：
+`Ctrl+F` `Ctrl+Z` `Ctrl+Y` 曾列在这里。它们已从 `keys.ts` 删除：手稿还没有搜索，正文是一块没有历史插件的 `contenteditable`，撤销与重做由浏览器自己应答。留着它们的后果不是"暂时无效"，而是这三个和弦被一条死绑定占住、作者重新绑定后按下去什么都不发生。
 
-| 键 | 动作 |
-|---|---|
-| `Alt+J` / `Alt+K` | 下一条／上一条 |
-| `Alt+A` / `Alt+X` / `Alt+E` | 接受／拒绝／改后合并 |
-| `Alt+S` | 打勾入批 |
-| `Alt+Shift+A` | 本提案格式类全过 |
-| `Alt+Enter` | 提交这一批 |
+裁决动作原定一律 `Alt+`，因为检阅时正文有焦点、常有输入法候选窗开着——**裸字母键在中文写作里是字符，不是命令**。这个判断仍然成立，但**这批和弦目前不存在**：
+
+| 键 | 动作 | 状态 |
+|---|---|---|
+| `Alt+J` / `Alt+K` | 下一条／上一条 | 未实现 |
+| `Alt+A` / `Alt+X` / `Alt+E` | 接受／拒绝／改后合并 | 未实现 |
+| `Alt+S` | 打勾入批 | 未实现 |
+| `Alt+Shift+A` | 本提案格式类全过 | 未实现 |
+| `Alt+Enter` | 提交这一批 | 未实现 |
+
+八条和弦曾登记在 `DEFAULT_BINDINGS` 里而没有任何组件处理它们。`commandFor` 按遍历顺序匹配，所以一条死绑定会遮住作者重新绑到同一和弦上的命令，然后两边都不执行——比缺席更糟。它们随 Review 的键盘裁决一起回来，不早于它。
+
+眼下检阅用鼠标：点切片选裁决，点合并提交。`Ctrl+R` 打开检阅面板，`Ctrl+D` 打开派发，这两条是实装的。
 
 设置里的快捷键面板会实时报三类问题：**系统保留**（并说明系统拿它做什么）、**与本应用其他命令重复**、**裸键**。

@@ -247,6 +247,14 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-soft-break.ts
 
+      # `.manuscript :is(em, i) { font-style: italic }` sat in app.css from the
+      # beginning and never applied to anything — the surface is plain text —
+      # while being wrong for the languages this application is for. Deleting a
+      # rule proves nothing; these two assertions do.
+      - name: emphasis stays literal Markdown
+        working-directory: apps/desktop
+        run: bun scripts/verify-emphasis.ts
+
       # Playwright cannot emulate Electron's webUtils path conversion, but the
       # File-to-resolveDrop-to-Root chain after it must not be a silent no-op.
       - name: a dropped path enters Root adoption
