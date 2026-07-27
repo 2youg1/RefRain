@@ -117,9 +117,28 @@ interface Workbench {
 
 const workbenches = new Map<string, Workbench>();
 
+/**
+ * Release one workbench's OS-level holdings.
+ *
+ * The map used to be emptied only at quit, so a Root the author removed kept
+ * its Verdict Ledger connection open and its native file index resident for
+ * the rest of the session. Adding and dropping Roots is ordinary work in a
+ * multi-root workspace, so the cost grew with use rather than with project
+ * size.
+ *
+ * Closing and forgetting are one step on purpose: a closed ledger left in the
+ * map would answer the next caller with a dead database handle, which reaches
+ * the interface as "ledger-unavailable" for a file that is perfectly healthy.
+ */
+const closeWorkbench = (root: string): void => {
+  const workbench = workbenches.get(root);
+  if (!workbench) return;
+  workbench.ledger?.close();
+  workbenches.delete(root);
+};
+
 export const closeWorkbenches = (): void => {
-  for (const workbench of workbenches.values()) workbench.ledger?.close();
-  workbenches.clear();
+  for (const root of [...workbenches.keys()]) closeWorkbench(root);
 };
 
 const openWorkbench = (root: string): Workbench => {
@@ -351,6 +370,22 @@ export const registerHandlers = (
       }),
     ];
     const pathOf = new Map(workspace.roots.map((root) => [root.id, root.path]));
+
+    /*
+     * The workspace load is the harvest point for Roots the author removed.
+     *
+     * There is no "root closed" channel: the renderer drops a Root from its
+     * list and reloads the workspace with what is left, so the difference
+     * between this call's Roots and the live workbenches *is* the removal.
+     * Reaping here also covers the paths that never reach a removal event at
+     * all — a Root whose identity check failed, or one refused by the
+     * authority, both of which arrive as absences rather than as messages.
+     *
+     * A missing Root keeps its workbench: the volume being unmounted is a
+     * state the author is expected to recover from, not a removal.
+     */
+    const live = new Set(workspace.roots.map((root) => root.path));
+    for (const root of [...workbenches.keys()]) if (!live.has(root)) closeWorkbench(root);
 
     for (const chapter of workspace.chapters) {
       // A workbench is keyed by the root's own path. For a single opened file

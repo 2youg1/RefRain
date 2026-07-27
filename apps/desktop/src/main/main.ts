@@ -108,7 +108,16 @@ const createWindow = (): BrowserWindow => {
   window.on("move", announceDisplay);
   window.on("resize", announceDisplay);
   window.webContents.once("did-finish-load", announceDisplay);
+
+  /*
+   * `screen` is process-global and outlives every window, so this subscription
+   * has to be paired or it accumulates: one stranded `announceDisplay` per
+   * window opened, each holding that window's `webContents` alive. `closed`
+   * rather than `close` — the latter is cancellable, and the close guard does
+   * cancel it to ask about unsaved work.
+   */
   screen.on("display-metrics-changed", announceDisplay);
+  window.on("closed", () => screen.removeListener("display-metrics-changed", announceDisplay));
 
   guardWindowClose(window, ipcMain, dialog);
 
