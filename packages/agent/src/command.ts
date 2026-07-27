@@ -26,6 +26,18 @@ export interface CommandAdapterConfig {
 /** Distinguishes a timeout from an exit code, which can also be a number. */
 const TIMED_OUT = Symbol("timed-out");
 
+/**
+ * How long a harness may run before RefRain stops waiting for it.
+ *
+ * `timeoutMs` was optional and every construction site left it out, so an
+ * adapter shipped with no timeout at all: a harness that hung held its Run in
+ * `dispatched` forever, and a Run that never settles is a Run whose Proposals
+ * never arrive. Twenty minutes is long enough for a slow model on a long
+ * chapter and short enough that a wedged process does not outlive the session.
+ * A configuration may still say otherwise.
+ */
+export const DEFAULT_TIMEOUT_MS = 20 * 60 * 1_000;
+
 export class CommandAdapter implements HarnessAdapter {
   readonly tier = "L1" as const;
   private readonly running = new Map<string, Launched>();
@@ -35,6 +47,10 @@ export class CommandAdapter implements HarnessAdapter {
 
   get id(): string {
     return this.config.id;
+  }
+
+  get timeoutMs(): number {
+    return this.config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   async dispatch(run: Run, task: ReviewTask, _agent: Agent): Promise<void> {
@@ -83,12 +99,10 @@ export class CommandAdapter implements HarnessAdapter {
     const child = this.running.get(run.id);
     if (!child) return;
 
-    const timeout = this.config.timeoutMs;
-    const timer = timeout ? after(timeout) : undefined;
-    const exited = timer
-      ? await Promise.race([child.exited, timer.promise.then(() => TIMED_OUT)])
-      : await child.exited;
-    timer?.cancel();
+    const timeout = this.timeoutMs;
+    const timer = after(timeout);
+    const exited = await Promise.race([child.exited, timer.promise.then(() => TIMED_OUT)]);
+    timer.cancel();
 
     if (exited === TIMED_OUT) {
       child.kill();
