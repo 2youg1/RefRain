@@ -59,14 +59,19 @@ test("a refused Source Backup reaches the workspace IPC warning", async () => {
   }
 });
 
-test("a single-file Root waits for SPEC Q22 rather than inventing backup placement", async () => {
+test("a single-file Root takes its original without adopting the parent folder", async () => {
   const folder = mkdtempSync(join(tmpdir(), "refrain-backup-file-root-"));
   const source = join(folder, "only.md");
+  const neighbour = join(folder, "neighbour.md");
   try {
     writeFileSync(source, "单文件。\n");
+    writeFileSync(neighbour, "邻稿。\n");
 
-    await expect(loadWorkspace([source])).rejects.toThrow(/ENOTDIR|not a directory/i);
-    expect(existsSync(join(folder, ".refrain-source"))).toBe(false);
+    const workspace = (await loadWorkspace([source])) as { chapters: { path: string }[] };
+    const companion = join(folder, ".only.md.refrain");
+    expect(workspace.chapters.map((chapter) => chapter.path)).toEqual([source]);
+    expect(readFileSync(join(companion, ".refrain-source", "only.md"), "utf8")).toBe("单文件。\n");
+    expect(existsSync(join(companion, ".refrain-source", "neighbour.md"))).toBe(false);
   } finally {
     closeWorkbenches();
     rmSync(folder, { recursive: true, force: true });

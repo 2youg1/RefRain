@@ -75,6 +75,8 @@ export {
 export { serializeVerdicts } from "./reply.ts";
 export type { EditScope, Proposal, ReviewSlice, SliceKind } from "./review.ts";
 export { sliceProposal } from "./review.ts";
+export type { RootLocation, RootStorage } from "./root-storage.ts";
+export { claimRootStorage, storageForRoot } from "./root-storage.ts";
 export type { Carry, CarryBreakdown, RoundInput } from "./round-input.ts";
 export { breakdown, composeRound } from "./round-input.ts";
 export type { SourceBlock, SourceDocument } from "./roundtrip.ts";
