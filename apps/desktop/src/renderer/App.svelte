@@ -487,6 +487,7 @@ const reload = async (): Promise<void> => {
     const workspace = await api().loadWorkspace(roots);
     rootViews = workspace.roots;
     chapters = workspace.chapters;
+    if (workspace.warnings?.length) say(workspace.warnings.join("\n"));
     if (!chapters.some((chapter) => chapter.path === active)) select(chapters[0]?.path ?? null);
   } catch (error) {
     say(error instanceof Error ? error.message : String(error));
@@ -1880,12 +1881,18 @@ const onScroll = (): void => {
   left: 50%;
   transform: translateX(-50%);
   z-index: 95;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: min(18rem, calc(100vw - 3rem));
+  max-width: min(42rem, calc(100vw - 3rem));
   padding: 0.6rem 1.1rem;
   background: var(--ink);
   color: var(--paper-raised);
   border-radius: 3px;
   font-size: var(--step--1);
-  max-width: 70vw;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   box-shadow: var(--shadow-float);
   animation: rise 200ms var(--spring);
 }

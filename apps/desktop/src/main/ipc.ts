@@ -30,6 +30,7 @@ import {
   sliceProposal,
   splitBlocks,
   type TextHead,
+  takeSourceBackup,
   type Verdict,
   VerdictLedger,
   type WriteOutcome,
@@ -299,6 +300,11 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
   /** Several roots at once: a folder kept empty for tidiness locks out nothing. */
   handlers.handleOpenRoots("project:load-workspace", (_e, roots: string[]) => {
     const workspace = loadWorkspace(roots);
+    const warnings = workspace.roots.flatMap((root) => {
+      if (root.kind !== "folder" || root.missing === true) return [];
+      const outcome = takeSourceBackup(root.path);
+      return outcome.kind === "refused" ? [outcome.reason ?? "无法保存原件副本。"] : [];
+    });
     const pathOf = new Map(workspace.roots.map((root) => [root.id, root.path]));
 
     for (const chapter of workspace.chapters) {
@@ -316,6 +322,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     }
 
     return {
+      ...(warnings.length === 0 ? {} : { warnings }),
       roots: workspace.roots.map((root) => ({
         id: root.id,
         path: root.path,
