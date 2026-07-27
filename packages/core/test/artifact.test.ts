@@ -136,4 +136,70 @@ describe("Result Artifact rejection", () => {
 
     expect(result.ok).toBe(false);
   });
+
+  /*
+   * The one untrusted input this parser exists to survive.
+   *
+   * A closing tag missing its ">" made `indexOf` return -1, and `-1 + 1` put
+   * the cursor back at zero, so the loop rescanned the same element forever and
+   * the array grew until the process died. The path is `host.collect()` reading
+   * a result file, so any harness emitting one malformed byte took the main
+   * process — and every unsaved manuscript in the window — with it.
+   *
+   * Each of these returns in milliseconds when the guard is present and hangs
+   * without it, so the test is written to fail loudly rather than hang the
+   * suite: it asserts on the refusal, and a hang is the runner's timeout.
+   */
+  rejects(
+    "a closing tag missing its bracket is refused, not rescanned forever",
+    `<agent-result version="1"><memo>x</memo</agent-result>`,
+    "malformed",
+  );
+
+  // Truncated before the root element closes, so the root regex never matches
+  // and the refusal names the missing root rather than the tag inside it. What
+  // matters is that it refuses at all: this input used to hang.
+  rejects(
+    "a reply truncated mid-element is refused",
+    `<agent-result version="1"><replacement scope="s1">甲</replacement`,
+    "missing-root",
+  );
+
+  test("a malformed tag is answered in bounded time", () => {
+    const started = Date.now();
+    const result = parseAgentResult(wrap(`<agent-result version="1"><memo>x</memo</agent-result>`));
+    expect(result.ok).toBe(false);
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  /*
+   * CDATA is consumed as an opaque run, which the module comment has claimed
+   * since it was written and `scan()` never did. An agent explaining this very
+   * format to its successor — "do not write </replacement> inside prose" — had
+   * its whole run refused, and the error pointed at the author's own sentence
+   * and called it stray text.
+   */
+  test("markup inside CDATA never reaches the tag scanner", () => {
+    const result = parseAgentResult(
+      wrap(
+        `<agent-result version="1"><memo><![CDATA[不要在正文里写 </replacement> 这种东西]]></memo></agent-result>`,
+      ),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.memos[0]?.text).toContain("</replacement>");
+  });
+
+  test("a replacement carrying CDATA with angle brackets survives", () => {
+    const result = parseAgentResult(
+      wrap(
+        `<agent-result version="1"><replacement scope="s1"><![CDATA[他写下 <ruby> 标签]]></replacement></agent-result>`,
+      ),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.replacements[0]?.text).toBe("他写下 <ruby> 标签");
+  });
 });
