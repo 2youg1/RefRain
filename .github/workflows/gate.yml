@@ -310,6 +310,12 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-agent-trust.ts
 
+      # A roster refresh may remove the chosen Agent. Keep the choice only while
+      # it still exists, and never invent chapter context for a scope-less task.
+      - name: Dispatch keeps one valid Agent choice
+        working-directory: apps/desktop
+        run: bun scripts/verify-dispatch.ts
+
       # The Verdict Ledger existed behind IPC but the panel could only dump it.
       # A writer revising an Agent persona needs to recover prior stated reasons,
       # and a failed SQLite query must not look like "nothing matched".
