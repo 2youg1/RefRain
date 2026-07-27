@@ -4,8 +4,9 @@
  * This is the one defect this application cannot apologise for: a writer who
  * loses a chapter has lost the work the whole thing exists to protect. The
  * promise is only worth as much as the thing that fails when it is broken, so
- * this scans every layer for a permanent delete and exits non-zero if one has
- * appeared.
+ * this scans every layer for a permanent-delete surface and exits non-zero if
+ * one has appeared. The sole internal cleanup allowed is the source of a
+ * cross-volume move, after an identical copy has already reached system trash.
  *
  * It checks four surfaces, because a delete could be added at any of them:
  *
@@ -38,29 +39,55 @@ const check = (claim: string, ok: boolean, detail = ""): void => {
 /*
  * 1 — the Rust layer.
  *
- * `remove_file` and `remove_dir_all` delete without recourse. The crate is
- * allowed to use them nowhere but its own tests, where a scratch directory is
- * being cleaned up rather than a manuscript.
+ * `remove_file` and `remove_dir_all` delete without recourse. Production may
+ * use them only to remove the source of a cross-volume move after an identical
+ * copy has reached system trash. That helper is private, has one caller, and is
+ * removed from the broad source scan below; any second use turns this gate red.
  */
 const rustSources = readdirSync(join(root, "packages/fs/src"))
   .filter((name) => name.endsWith(".rs"))
   .map((name) => ({ name, text: read(`packages/fs/src/${name}`) }));
+const ops = read("packages/fs/src/ops.rs");
+const cleanupStart = ops.indexOf("fn remove_after_recovery(path: &Path)");
+const cleanupEnd = ops.indexOf("\n}\n\n/// Copy a file or a directory tree", cleanupStart);
+const cleanup = cleanupStart >= 0 && cleanupEnd >= 0 ? ops.slice(cleanupStart, cleanupEnd + 2) : "";
+const cleanupCalls = [...ops.matchAll(/\bremove_after_recovery\(/g)].length;
+const crossVolumeOrder = [
+  "copy_tree(&target, &staged)?;",
+  "verify_copy(&target, &staged)?;",
+  "send_to_trash(&staged)?;",
+  "remove_after_recovery(&target)?;",
+].reduce((after, clause) => {
+  const at = ops.indexOf(clause, after);
+  return at < 0 ? -1 : at + clause.length;
+}, 0);
+check(
+  "the one permanent cleanup is private and single-purpose",
+  cleanup.startsWith("fn remove_after_recovery") &&
+    cleanup.includes("fs::remove_file") &&
+    cleanup.includes("fs::remove_dir_all") &&
+    cleanupCalls === 2,
+  `${cleanupCalls - 1} call site(s)`,
+);
+check(
+  "cross-volume cleanup follows copy, byte verification, and system trash",
+  crossVolumeOrder > 0,
+);
 
 for (const { name, text } of rustSources) {
-  // Everything from `#[cfg(test)]` onwards is test scaffolding.
-  const production = text.split("#[cfg(test)]")[0] ?? text;
+  // Everything from `#[cfg(test)]` onwards is test scaffolding. The narrowly
+  // audited cleanup above is excluded; no other production deletion is legal.
+  let production = text.split("#[cfg(test)]")[0] ?? text;
+  if (name === "ops.rs" && cleanup) production = production.replace(cleanup, "");
   const permanent = /\bfs::remove_(file|dir_all|dir)\b/.exec(production);
   check(
-    `packages/fs/src/${name} deletes nothing permanently`,
+    `packages/fs/src/${name} has no unguarded permanent deletion`,
     permanent === null,
     permanent ? `found ${permanent[0]}` : "",
   );
 }
 
-check(
-  "the Rust layer routes deletion through the system trash",
-  read("packages/fs/src/ops.rs").includes("trash::delete"),
-);
+check("the Rust layer routes deletion through the system trash", ops.includes("trash::delete"));
 
 /*
  * 2 and 3 — the binding and the wrapper.

@@ -13,7 +13,7 @@
 //! implementations of one promise: the file comes back.
 
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use crate::guard::{Guard, Refusal};
@@ -146,11 +146,11 @@ pub fn move_to(guard: &Guard, from: &Path, to: &Path, replace: bool) -> Outcome 
     }
 }
 
-/// Compare what was written against what was read, before the source is trashed.
+/// Compare every copied byte before the source can leave the workspace.
 ///
-/// Size only, and deliberately: a hash of a large tree costs more than the
-/// failure it guards against is likely to cost, while a short write — the
-/// realistic way a cross-device copy goes wrong — always changes the size.
+/// Size alone cannot distinguish a same-length corrupt copy. This path is paid
+/// only for an explicit cross-volume move, where reading the bytes a second time
+/// is cheaper than discovering that the recoverable copy was not the manuscript.
 fn verify_copy(from: &Path, to: &Path) -> Result<(), OpError> {
     let source_metadata = fs::symlink_metadata(from).map_err(|error| io(from, error))?;
     if source_metadata.file_type().is_symlink() {
@@ -168,22 +168,74 @@ fn verify_copy(from: &Path, to: &Path) -> Result<(), OpError> {
     }
 
     if source_metadata.is_dir() {
-        for entry in fs::read_dir(from).map_err(|error| io(from, error))? {
-            let entry = entry.map_err(|error| io(from, error))?;
+        let source_entries = fs::read_dir(from)
+            .map_err(|error| io(from, error))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| io(from, error))?;
+        let copied_count = fs::read_dir(to)
+            .map_err(|error| io(to, error))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| io(to, error))?
+            .len();
+        if source_entries.len() != copied_count {
+            return Err(OpError::Io {
+                path: to.display().to_string(),
+                reason: "copy has a different set of directory entries; the original is untouched"
+                    .into(),
+            });
+        }
+        for entry in source_entries {
             verify_copy(&entry.path(), &to.join(entry.file_name()))?;
         }
         return Ok(());
     }
 
-    let source = source_metadata.len();
-    let copied = fs::metadata(to).map_err(|error| io(to, error))?.len();
-    if source != copied {
-        return Err(OpError::Io {
-            path: to.display().to_string(),
-            reason: format!("copy is {copied} bytes against {source}; the original is untouched"),
-        });
+    fs::OpenOptions::new()
+        .write(true)
+        .open(to)
+        .and_then(|copied| copied.sync_all())
+        .map_err(|error| io(to, error))?;
+    let mut source = fs::File::open(from).map_err(|error| io(from, error))?;
+    let mut copied = fs::File::open(to).map_err(|error| io(to, error))?;
+    let mut source_bytes = [0_u8; 64 * 1024];
+    let mut copied_bytes = [0_u8; 64 * 1024];
+    loop {
+        let count = source
+            .read(&mut source_bytes)
+            .map_err(|error| io(from, error))?;
+        if count == 0 {
+            if copied
+                .read(&mut copied_bytes[..1])
+                .map_err(|error| io(to, error))?
+                == 0
+            {
+                return Ok(());
+            }
+            break;
+        }
+        if copied.read_exact(&mut copied_bytes[..count]).is_err()
+            || source_bytes[..count] != copied_bytes[..count]
+        {
+            break;
+        }
     }
-    Ok(())
+    Err(OpError::Io {
+        path: to.display().to_string(),
+        reason: "copy differs from the original; the original is untouched".into(),
+    })
+}
+
+/// Remove the source of a cross-volume move after its verified copy has reached
+/// system trash. This is private and intentionally has one caller; exposing it
+/// would create the permanent-delete variant the file layer forbids.
+fn remove_after_recovery(path: &Path) -> Result<(), OpError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| io(path, error))?;
+    let result = if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    };
+    result.map_err(|error| io(path, error))
 }
 
 /// Copy a file or a directory tree.
@@ -393,30 +445,19 @@ fn trash_via_home_at(
     })?;
     let staged = unique_name(&staging.join(name));
 
-    // `rename` first. This module offers no permanent delete and
-    // `verify-trash-only` enforces that by reading the source, so the file is
-    // *moved* into staging and the operating system then trashes it from
-    // there. Nothing here can lose a manuscript even if it fails halfway:
-    // either the rename happened or it did not.
-    //
-    // But a bare rename was the whole of it, and this function exists for
-    // exactly the case a rename cannot serve — the workspace volume has no
-    // trash, so staging happens under the home directory, which is usually a
-    // different volume. EXDEV, every time. The one escape hatch SPEC Q8 closes
-    // on could not run, and Q8 was marked closed citing a fallback that lived
-    // in `move_to` and had never been reached from here.
-    //
-    // The fallback is still not a delete: copy, verify, then hand the source
-    // to the operating system's trash. The manuscript is recoverable at every
-    // point, which is the property `verify-trash-only` is really protecting.
+    // Crossing devices cannot be one atomic rename. Copy and compare every byte,
+    // put that verified copy in the selected system trash, and only then remove
+    // the original directory entry. At every failure point at least one complete
+    // recoverable copy remains.
     if let Err(error) = fs::rename(&target, &staged) {
         if error.kind() != io::ErrorKind::CrossesDevices {
             return Err(io(&staged, error));
         }
         copy_tree(&target, &staged)?;
         verify_copy(&target, &staged)?;
-        trash::delete(&target).map_err(|error| classify_trash_failure(&target, &error))?;
-        return Ok(staged);
+        send_to_trash(&staged)?;
+        remove_after_recovery(&target)?;
+        return Ok(target);
     }
 
     // If the home volume turns out to have no trash either, put the file back
@@ -798,6 +839,14 @@ mod tests {
         assert!(matches!(error, OpError::Io { .. }));
         assert!(from.exists(), "the original stays when the copy is short");
 
+        let source_len = fs::metadata(&from).unwrap().len() as usize;
+        fs::write(&to, vec![b'x'; source_len]).unwrap();
+        assert!(
+            verify_copy(&from, &to).is_err(),
+            "same-length corruption must not pass byte verification"
+        );
+        assert!(from.exists(), "the original stays when copied bytes differ");
+
         fs::copy(&from, &to).unwrap();
         assert!(verify_copy(&from, &to).is_ok(), "a full copy verifies");
     }
@@ -953,6 +1002,51 @@ mod tests {
             .file_type()
             .is_symlink());
         assert_eq!(fs::read_to_string(&chapter).unwrap(), "第三章的正文");
+    }
+
+    /// The via-home fallback exists to cross volumes. Exercise a real EXDEV
+    /// boundary instead of only checking the same-volume rename path.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn trashing_via_home_crosses_a_real_volume_and_keeps_a_recoverable_copy() {
+        use std::cell::Cell;
+        use std::os::unix::fs::MetadataExt;
+
+        let root = PathBuf::from("/dev/shm").join(format!(
+            "refrain-fs-via-home-cross-device-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir(&root).unwrap();
+        let target = root.join("one.md");
+        fs::write(&target, "跨卷正文").unwrap();
+        let home = scratch("via-home-cross-device-home");
+        assert_ne!(
+            fs::metadata(&root).unwrap().dev(),
+            fs::metadata(&home).unwrap().dev(),
+            "the test must exercise a real cross-device boundary"
+        );
+        let fake_trash = home.join("recoverable.md");
+        let called = Cell::new(false);
+        let guard = Guard::new([&root]);
+
+        let outcome = trash_via_home_at(&guard, &target, &home, |staged| {
+            called.set(true);
+            fs::rename(staged, &fake_trash).map_err(|error| io(staged, error))?;
+            Ok(())
+        });
+
+        assert!(outcome.is_ok(), "cross-device via-home trash: {outcome:?}");
+        assert!(
+            called.get(),
+            "the staged copy must reach the selected trash"
+        );
+        assert!(
+            !target.exists(),
+            "only a recoverable copy may let the source leave"
+        );
+        assert_eq!(fs::read_to_string(&fake_trash).unwrap(), "跨卷正文");
+        fs::remove_dir_all(root).unwrap();
     }
 
     /// SPEC Q8's escape hatch. The file leaves the workspace and reaches a
