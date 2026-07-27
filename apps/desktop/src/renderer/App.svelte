@@ -160,6 +160,13 @@ onMount(() => {
   if (roots.length > 0) void reload();
 });
 
+/* A second launch joins this window; otherwise two cached Text Heads can race. */
+onMount(() =>
+  api().onOpenPaths((paths) => {
+    void addRoots(paths);
+  }),
+);
+
 /*
  * The last chance to write.
  *
@@ -446,18 +453,19 @@ const onEdit = (): void => {
  * the same folder again. Re-reading a root that is already listed costs one
  * read and is the obvious meaning of the gesture.
  */
+const addRoots = async (paths: string[]): Promise<void> => {
+  roots = [...new Set([...roots, ...paths])];
+  await reload();
+};
+
 const addRoot = async (path?: string): Promise<void> => {
   const chosen = path ?? (await api().openProject());
-  if (!chosen) return;
-  if (!roots.includes(chosen)) roots = [...roots, chosen];
-  await reload();
+  if (chosen) await addRoots([chosen]);
 };
 
 const openFile = async (): Promise<void> => {
   const chosen = await api().openFile();
-  if (!chosen) return;
-  if (!roots.includes(chosen)) roots = [...roots, chosen];
-  await reload();
+  if (chosen) await addRoots([chosen]);
 };
 
 const removeRoot = async (path: string): Promise<void> => {

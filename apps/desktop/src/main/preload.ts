@@ -106,6 +106,13 @@ const api = {
     return () => ipcRenderer.removeListener("display:changed", wrapped);
   },
 
+  /** A file association opened a second process; the first process owns the window. */
+  onOpenPaths: (listener: (paths: string[]) => void) => {
+    const wrapped = (_event: unknown, paths: string[]) => listener(paths);
+    ipcRenderer.on("app:open-paths", wrapped);
+    return () => ipcRenderer.removeListener("app:open-paths", wrapped);
+  },
+
   /**
    * The window asks before it closes, and waits for the answer.
    *

@@ -81,5 +81,5 @@ export const BRIDGE_STUB = `window.refrain = {
     uniqueName: async () => "", admits: async () => true, searchDirectories: async () => [],
   },
   displayProfile: async () => ({ refreshHz: 60, scaleFactor: 1, css: {} }),
-  onDisplayChange: () => {}, onCloseRequest: () => () => {},
+  onDisplayChange: () => {}, onOpenPaths: () => () => {}, onCloseRequest: () => () => {},
 };`;
