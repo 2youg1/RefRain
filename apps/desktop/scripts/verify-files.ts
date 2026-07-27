@@ -74,7 +74,7 @@ const bridge = `
     commit: async () => ({ ok: true, text: "" }),
     ledger: async () => [],
     reply: async () => "",
-    searchLedger: async () => [],
+    searchLedger: async () => ({ ok: true, verdicts: [] }),
 
     revertEdit: async (t) => t,
     revertAll: async (t) => t,

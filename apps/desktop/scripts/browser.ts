@@ -73,7 +73,7 @@ export const BRIDGE_STUB = `window.refrain = {
   collect: async () => ({ proposals: [], comments: [] }),
   runs: async () => [], commit: async () => ({ ok: true, text: "" }),
   ledger: async () => ({ ok: true, verdicts: [] }), reply: async () => "",
-  searchLedger: async () => [],
+  searchLedger: async () => ({ ok: true, verdicts: [] }),
   note: async () => ({ ok: true, note: { id: "n", text: "", capturedAt: "" } }),
   notes: async () => ({ ok: true, notes: [] }),
   dropNote: async () => ({ ok: true }),

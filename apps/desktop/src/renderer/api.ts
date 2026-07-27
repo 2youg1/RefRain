@@ -215,7 +215,10 @@ interface RefRainApi {
     root: string,
   ): Promise<{ ok: true; verdicts: VerdictView[] } | { ok: false; reason: string; detail: string }>;
   /** Search the ledger over stated reasoning, to inform a persona revision. */
-  searchLedger(root: string, fragment: string): Promise<VerdictView[]>;
+  searchLedger(
+    root: string,
+    fragment: string,
+  ): Promise<{ ok: true; verdicts: VerdictView[] } | { ok: false; reason: string; detail: string }>;
   reply(root: string, proposalId: string): Promise<string>;
 
   /**
