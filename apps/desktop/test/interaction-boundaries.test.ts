@@ -12,6 +12,7 @@ test("one global owner consumes Escape once and never exits 空", () => {
 
   expect(sheet).not.toContain("<svelte:window");
   expect(sheet).not.toContain("const onKeydown");
+  expect(app).toContain('if (event.key === "Escape" && (menuAt !== null || sheet !== null))');
   expect(app).toContain("else if (sheet !== null) sheet = null");
   expect(app).not.toContain("if (zen) return void setZen(false)");
   expect(palette).toContain("event.stopPropagation()");
