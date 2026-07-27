@@ -8,8 +8,19 @@ export type {
   ParseResult,
 } from "./artifact.ts";
 export { parseAgentResult } from "./artifact.ts";
-export type { AtomicWriteCheckpoint, AtomicWriteObserver } from "./atomic-file.ts";
-export { replaceFileAtomically } from "./atomic-file.ts";
+export type {
+  AtomicWriteCheckpoint,
+  AtomicWriteObserver,
+  AtomicWriteResult,
+} from "./atomic-file.ts";
+export {
+  AtomicWriteFailure,
+  interruptedWriteMarkerPath,
+  ownsInterruptedWrite,
+  recoverInterruptedWrite,
+  replaceFileAtomically,
+  replaceStateFileAtomically,
+} from "./atomic-file.ts";
 export type { ChangeClass } from "./change-class.ts";
 export { classifyChange, classifyProposal } from "./change-class.ts";
 export type { BatchRefusal, DecisionBatchResult } from "./decision-batch.ts";
@@ -44,14 +55,17 @@ export type {
   Chapter,
   ChapterFileSnapshot,
   FileStamp,
+  PreparedChapterWrite,
   Root,
   Workspace,
   WriteOutcome,
 } from "./project.ts";
 export {
+  commitChapterWrite,
   describeRoot,
   loadProject,
   loadWorkspace,
+  prepareChapterWrite,
   readChapterFile,
   saveChapter,
   serializeChapter,

@@ -3,17 +3,44 @@ import {
   constants,
   existsSync,
   fsyncSync,
+  linkSync,
   mkdirSync,
   openSync,
+  readFileSync,
   renameSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname } from "node:path";
 
-export type AtomicWriteCheckpoint = "written" | "file-synced" | "renamed" | "directory-synced";
+export type AtomicWriteCheckpoint =
+  | "recovery-linked"
+  | "recovery-directory-synced"
+  | "recovery-unlinked"
+  | "written"
+  | "file-synced"
+  | "renamed"
+  | "directory-synced";
 
 export type AtomicWriteObserver = (checkpoint: AtomicWriteCheckpoint) => void;
+
+export interface AtomicWriteResult {
+  readonly recoveryEvidencePath?: string;
+}
+
+export class AtomicWriteFailure extends Error {
+  readonly recoveryEvidencePath: string;
+
+  constructor(error: unknown, recoveryEvidencePath: string) {
+    const detail = error instanceof Error ? error.message : String(error);
+    super(`${detail}; interrupted-write evidence is preserved at ${recoveryEvidencePath}`, {
+      cause: error,
+    });
+    this.name = "AtomicWriteFailure";
+    this.recoveryEvidencePath = recoveryEvidencePath;
+  }
+}
 
 const syncDirectory = (path: string): void => {
   if (process.platform === "win32") return;
@@ -25,37 +52,175 @@ const syncDirectory = (path: string): void => {
   }
 };
 
+const hasCode = (error: unknown, code: string): boolean =>
+  typeof error === "object" && error !== null && "code" in error && error.code === code;
+
+const OWNER = "refrain-atomic-write-v1\n";
+
+export const interruptedWriteMarkerPath = (path: string): string => `${path}.writing.refrain-owner`;
+
+export const ownsInterruptedWrite = (path: string): boolean => {
+  try {
+    return readFileSync(interruptedWriteMarkerPath(path), "utf8") === OWNER;
+  } catch {
+    return false;
+  }
+};
+
+const removeMarker = (path: string, parent: string): void => {
+  const marker = interruptedWriteMarkerPath(path);
+  if (!existsSync(marker)) return;
+  unlinkSync(marker);
+  syncDirectory(parent);
+};
+
+const markTemporary = (path: string, parent: string): void => {
+  const marker = interruptedWriteMarkerPath(path);
+  writeFileSync(marker, OWNER, { encoding: "utf8", flag: "wx" });
+  const file = openSync(marker, constants.O_RDONLY);
+  try {
+    fsyncSync(file);
+  } finally {
+    closeSync(file);
+  }
+  syncDirectory(parent);
+};
+
+const preserveTemporary = (
+  temporary: string,
+  parent: string,
+  observe?: AtomicWriteObserver,
+): string => {
+  const timestamp = Date.now();
+  for (let sequence = 0; ; sequence += 1) {
+    const suffix = new Date(timestamp + sequence).toISOString().replaceAll(":", "-");
+    const evidence = `${temporary}.${suffix}`;
+    try {
+      linkSync(temporary, evidence);
+    } catch (error) {
+      if (hasCode(error, "EEXIST")) continue;
+      throw error;
+    }
+
+    try {
+      observe?.("recovery-linked");
+      const file = openSync(evidence, constants.O_RDONLY);
+      try {
+        fsyncSync(file);
+      } finally {
+        closeSync(file);
+      }
+      // The second name is durable before the original name is removed. A
+      // crash on either side of the unlink therefore leaves at least one name
+      // for the same inode rather than a copy gap that can lose both.
+      syncDirectory(parent);
+      observe?.("recovery-directory-synced");
+      unlinkSync(temporary);
+      observe?.("recovery-unlinked");
+      syncDirectory(parent);
+      return evidence;
+    } catch (error) {
+      throw new AtomicWriteFailure(error, evidence);
+    }
+  }
+};
+
+const recoverTemporary = (
+  path: string,
+  temporary: string,
+  parent: string,
+  observe?: AtomicWriteObserver,
+): string | undefined => {
+  if (!existsSync(temporary)) return undefined;
+  if (existsSync(path) && readFileSync(temporary).equals(readFileSync(path))) {
+    unlinkSync(temporary);
+    syncDirectory(parent);
+    return undefined;
+  }
+  return preserveTemporary(temporary, parent, observe);
+};
+
 /**
- * Replace one file without exposing a partial canonical version.
+ * Resolve the residue of one interrupted atomic replacement without starting a
+ * new write. Startup calls this before any state or manuscript writer can hide
+ * the evidence by opening the same target again.
+ */
+export const recoverInterruptedWrite = (
+  path: string,
+  observe?: AtomicWriteObserver,
+): AtomicWriteResult => {
+  const parent = dirname(path);
+  const recoveryEvidencePath = recoverTemporary(path, `${path}.writing`, parent, observe);
+  removeMarker(path, parent);
+  return recoveryEvidencePath === undefined ? {} : { recoveryEvidencePath };
+};
+
+/**
+ * State files have no user-facing return channel for recovery evidence.
+ *
+ * Preserve an interrupted candidate, then stop before replacing the canonical
+ * state. The failure message carries the evidence path; a retry writes normally.
+ */
+export const replaceStateFileAtomically = (path: string, content: string | Uint8Array): void => {
+  replaceAtomically(path, content, undefined, true);
+};
+
+/**
+ * Replace a file without ever exposing a partial destination.
  *
  * The temporary file lives beside the target so rename stays on one filesystem.
- * An existing temporary file is never overwritten: it may be the only complete
- * version left by an interrupted save and therefore remains evidence for
- * recovery. The observer exists for crash-boundary tests; application callers
- * do not need one.
+ * A temporary file left by an interrupted save is recovered before a new one is
+ * opened. If it duplicates the canonical file it is redundant and removed. If
+ * it differs, it is preserved beside the target with a timestamp so the candidate
+ * remains available to the author while the requested save proceeds. The
+ * observer exists for crash-boundary tests; application callers do not need one.
  */
+const replaceAtomically = (
+  path: string,
+  content: string | Uint8Array,
+  observe?: AtomicWriteObserver,
+  stopAfterRecovery = false,
+): AtomicWriteResult => {
+  const parent = dirname(path);
+  mkdirSync(parent, { recursive: true });
+  const temporary = `${path}.writing`;
+  const recoveryEvidencePath = recoverTemporary(path, temporary, parent, observe);
+  if (stopAfterRecovery && recoveryEvidencePath !== undefined)
+    throw new AtomicWriteFailure(
+      new Error("state write stopped after recovering an interrupted candidate"),
+      recoveryEvidencePath,
+    );
+  removeMarker(path, parent);
+  markTemporary(path, parent);
+
+  try {
+    const mode = existsSync(path) ? statSync(path).mode : 0o666;
+    const file = openSync(temporary, "wx", mode);
+
+    try {
+      writeFileSync(file, content);
+      observe?.("written");
+      fsyncSync(file);
+      observe?.("file-synced");
+    } finally {
+      closeSync(file);
+    }
+
+    renameSync(temporary, path);
+    observe?.("renamed");
+    syncDirectory(parent);
+    observe?.("directory-synced");
+    removeMarker(path, parent);
+    return recoveryEvidencePath === undefined ? {} : { recoveryEvidencePath };
+  } catch (error) {
+    if (recoveryEvidencePath !== undefined)
+      throw new AtomicWriteFailure(error, recoveryEvidencePath);
+    throw error;
+  }
+};
+
 export const replaceFileAtomically = (
   path: string,
   content: string | Uint8Array,
   observe?: AtomicWriteObserver,
-): void => {
-  const parent = dirname(path);
-  mkdirSync(parent, { recursive: true });
-  const temporary = `${path}.writing`;
-  const mode = existsSync(path) ? statSync(path).mode : 0o666;
-  const file = openSync(temporary, "wx", mode);
-
-  try {
-    writeFileSync(file, content);
-    observe?.("written");
-    fsyncSync(file);
-    observe?.("file-synced");
-  } finally {
-    closeSync(file);
-  }
-
-  renameSync(temporary, path);
-  observe?.("renamed");
-  syncDirectory(parent);
-  observe?.("directory-synced");
-};
+): AtomicWriteResult => replaceAtomically(path, content, observe);

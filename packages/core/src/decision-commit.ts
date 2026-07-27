@@ -1,15 +1,15 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { replaceFileAtomically } from "./atomic-file.ts";
+import { replaceStateFileAtomically } from "./atomic-file.ts";
 import type { TextHead } from "./domain.ts";
 import type { VerdictLedger } from "./ledger.ts";
 import {
+  commitChapterWrite,
   type FileStamp,
+  prepareChapterWrite,
   readChapterFile,
-  serializeChapter,
   type WriteOutcome,
-  writeChapter,
 } from "./project.ts";
 import type { Verdict } from "./verdict.ts";
 
@@ -90,19 +90,20 @@ export const persistDecisionCommit = (
   ledger: VerdictLedger,
 ): WriteOutcome => {
   if (existsSync(intentPath(stateDir))) throw new Error("a Decision Batch is awaiting recovery");
-  const chapter = serializeChapter(head);
+  const prepared = prepareChapterWrite(chapterPath, head, expected, dirname(stateDir));
+  if (!prepared.ok) return prepared;
   const intent: DecisionCommitIntent = {
     version: 1,
     path: chapterPath,
     beforeDigest: expected.digest,
-    afterDigest: digest(chapter),
+    afterDigest: digest(prepared.content),
     verdicts,
   };
-  replaceFileAtomically(intentPath(stateDir), `${JSON.stringify(intent, null, 2)}\n`);
+  replaceStateFileAtomically(intentPath(stateDir), `${JSON.stringify(intent, null, 2)}\n`);
 
   let outcome: WriteOutcome;
   try {
-    outcome = writeChapter(chapterPath, head, expected);
+    outcome = commitChapterWrite(prepared);
   } catch (error) {
     if (readChapterFile(chapterPath)?.stamp.digest === expected.digest) finishIntent(stateDir);
     throw error;

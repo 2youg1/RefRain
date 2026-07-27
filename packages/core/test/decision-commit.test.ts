@@ -1,10 +1,12 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TextHead, Verdict } from "../src/index.ts";
 import {
+  loadWorkspace,
+  persistDecisionCommit,
   readChapterFile,
   recoverDecisionCommit,
   replaceFileAtomically,
@@ -95,4 +97,28 @@ test("recovery refuses a third manuscript version it cannot attribute", () => {
   expect(readFileSync(chapter, "utf8")).toBe("崩溃后又被别处改过。\n");
   expect(ledger.all()).toEqual([]);
   expect(existsSync(join(stateDir, "decision-commit.json"))).toBe(true);
+});
+
+test("recovery attributes the exact BOM, CRLF, and blank-line bytes the chapter writer committed", () => {
+  writeFileSync(chapter, "\ufeff甲。\r\n\r\n\r\n乙。\r\n", "utf8");
+  const loaded = loadWorkspace([chapter]).chapters[0];
+  if (!loaded?.stamp) throw new Error("chapter did not load");
+  const edited: TextHead = {
+    ...loaded.head,
+    blocks: loaded.head.blocks.map((block, index) =>
+      index === 1 ? { ...block, text: "乙改。" } : block,
+    ),
+  };
+  const failing = spyOn(ledger, "recordAll").mockImplementation(() => {
+    throw new Error("crash before ledger commit");
+  });
+
+  expect(() =>
+    persistDecisionCommit(stateDir, chapter, loaded.stamp!, edited, [verdict], ledger),
+  ).toThrow(/crash before ledger/);
+  failing.mockRestore();
+
+  expect(recoverDecisionCommit(stateDir, ledger)).toEqual({ ok: true });
+  expect(readFileSync(chapter, "utf8")).toBe("\ufeff甲。\r\n\r\n\r\n乙改。\r\n");
+  expect(ledger.all()).toEqual([verdict]);
 });
