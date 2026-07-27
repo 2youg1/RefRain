@@ -381,6 +381,15 @@ jobs:
       - name: bytes the author did not edit come back unchanged
         run: bun run verify:roundtrip
 
+      # A file URL's `.pathname` is not a path on Windows: it yields `/D:/a/repo`,
+      # and joining that gives a leading backslash before the drive letter. The
+      # trash gate — guarding the one loss this application promises never to
+      # cause — crashed with ENOENT on the release runner because of it, having
+      # only ever run on Linux where `.pathname` happens to work. Caught by
+      # grep here so it fails on every platform rather than one.
+      - name: file URLs become paths the way Windows needs
+        run: bun run verify:paths
+
       # INV-8: the cost of saving follows the size of the change, not of the
       # book. A 40,000-block manuscript threw RangeError: Out of memory on a
       # single save whatever the author had changed, because the alignment

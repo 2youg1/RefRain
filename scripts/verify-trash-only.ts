@@ -17,8 +17,15 @@
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = new URL("..", import.meta.url).pathname;
+// `.pathname` on a file URL is not a path on Windows: it yields `/D:/a/repo`,
+// and joining that produced `\D:\a\repo\packages\fs\src`, which does not
+// exist. So this gate — the one guarding the only loss this application
+// promises never to cause — crashed on the platform the installer ships to,
+// and nobody knew, because it had only ever run on Linux. `fileURLToPath` is
+// what every other script in the repository already used.
+const root = fileURLToPath(new URL("..", import.meta.url));
 
 const read = (path: string): string => readFileSync(join(root, path), "utf8");
 

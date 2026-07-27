@@ -72,6 +72,9 @@ jobs:
       # the Linux gate. Source fidelity is the one that most needs it: CRLF is
       # a Windows fact, and a line-ending rule that holds on Linux proves
       # nothing about the machine this installer is built for.
+      - name: File URLs become paths the way Windows needs
+        run: bun run verify:paths
+
       - name: Bytes the author did not edit come back unchanged
         run: bun run verify:roundtrip
 
