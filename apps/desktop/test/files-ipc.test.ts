@@ -17,7 +17,7 @@
 import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, normalize } from "node:path";
 import { closeWorkbenches, registerHandlers } from "../src/main/ipc.ts";
 
 type Handler = (event: unknown, ...args: unknown[]) => unknown;
@@ -40,11 +40,33 @@ const collectHandlers = () => {
 };
 
 const handlers = collectHandlers();
+const mainFrame = { isDestroyed: () => false };
+const event = {
+  sender: { isDestroyed: () => false, mainFrame },
+  senderFrame: mainFrame,
+};
+const adopted = new Set<string>();
 
-const call = async (channel: string, ...args: unknown[]) => {
+const invoke = async (channel: string, ...args: unknown[]) => {
   const handler = handlers.get(channel);
   if (!handler) throw new Error(`no handler for ${channel}`);
-  return await handler({}, ...args);
+  return await handler(event, ...args);
+};
+
+/** The real renderer loads the workspace before it invokes a root capability. */
+const call = async (channel: string, ...args: unknown[]) => {
+  const root = args[0];
+  if (
+    channel !== "project:load-workspace" &&
+    channel !== "project:resolve-drop" &&
+    typeof root === "string" &&
+    isAbsolute(root) &&
+    !adopted.has(normalize(root))
+  ) {
+    await invoke("project:load-workspace", [root]);
+    adopted.add(normalize(root));
+  }
+  return invoke(channel, ...args);
 };
 
 test("every file channel the renderer calls is registered", () => {

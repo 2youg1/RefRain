@@ -1,5 +1,5 @@
 import type { Workspace as FileWorkspace, SortOrder } from "@refrain/fs";
-import type { IpcMain } from "electron";
+import type { IpcAuthority } from "./ipc-auth.ts";
 
 /**
  * The file layer's IPC channels.
@@ -29,7 +29,7 @@ export type FilesFor = (
 export type FileErrorFor = (root: string) => string | undefined;
 
 export const registerFileHandlers = (
-  ipc: IpcMain,
+  handleRoot: IpcAuthority["handleRoot"],
   filesFor: FilesFor,
   fileErrorFor: FileErrorFor,
 ): void => {
@@ -54,24 +54,24 @@ export const registerFileHandlers = (
     }
   };
 
-  ipc.handle("files:scan", async (_e, root: string, options?: Record<string, unknown>) => {
+  handleRoot("files:scan", async (_e, root: string, options?: Record<string, unknown>) => {
     const files = await filesFor(root, options);
     return files ? { ok: true as const, count: files.scan() } : unavailable(root);
   });
 
-  ipc.handle("files:page", async (_e, root: string, offset: number, limit: number) => {
+  handleRoot("files:page", async (_e, root: string, offset: number, limit: number) => {
     const files = await filesFor(root);
     if (!files) return unavailable(root);
     return { ok: true as const, entries: files.page(offset, limit), total: files.size };
   });
 
-  ipc.handle("files:search", async (_e, root: string, query: string, limit?: number) => {
+  handleRoot("files:search", async (_e, root: string, query: string, limit?: number) => {
     const files = await filesFor(root);
     if (!files) return unavailable(root);
     return { ok: true as const, hits: files.search(query, limit ?? 50) };
   });
 
-  ipc.handle(
+  handleRoot(
     "files:search-directories",
     async (_e, root: string, query: string, limit?: number) => {
       const files = await filesFor(root);
@@ -80,14 +80,14 @@ export const registerFileHandlers = (
     },
   );
 
-  ipc.handle("files:sort", async (_e, root: string, order: SortOrder, descending: boolean) => {
+  handleRoot("files:sort", async (_e, root: string, order: SortOrder, descending: boolean) => {
     const files = await filesFor(root);
     if (!files) return unavailable(root);
     files.sort(order, descending);
     return { ok: true as const };
   });
 
-  ipc.handle(
+  handleRoot(
     "files:move",
     async (_e, root: string, from: string, to: string, replace?: boolean) => {
       const files = await filesFor(root);
@@ -98,7 +98,7 @@ export const registerFileHandlers = (
     },
   );
 
-  ipc.handle(
+  handleRoot(
     "files:copy",
     async (_e, root: string, from: string, to: string, replace?: boolean) => {
       const files = await filesFor(root);
@@ -114,7 +114,7 @@ export const registerFileHandlers = (
    * are per path: one file locked by another process must not abandon the rest
    * of a selection, and the writer needs to know which chapter is still there.
    */
-  ipc.handle("files:trash", async (_e, root: string, targets: string[]) => {
+  handleRoot("files:trash", async (_e, root: string, targets: string[]) => {
     const files = await filesFor(root);
     if (!files) return unavailable(root);
     const outcomes = files.trashAll(targets);
@@ -127,7 +127,7 @@ export const registerFileHandlers = (
    * interface only after `files:trash` reported NO_TRASH_HERE, so the author
    * chooses it rather than having their file quietly moved somewhere else.
    */
-  ipc.handle("files:trash-via-home", async (_e, root: string, target: string) => {
+  handleRoot("files:trash-via-home", async (_e, root: string, target: string) => {
     const files = await filesFor(root);
     if (!files) return unavailable(root);
     const outcome = attempt(() => files.trashViaHome(target));
@@ -135,7 +135,7 @@ export const registerFileHandlers = (
     return outcome.ok ? { ok: true as const, path: outcome.value } : outcome;
   });
 
-  ipc.handle("files:link", async (_e, root: string, target: string, linkPath: string) => {
+  handleRoot("files:link", async (_e, root: string, target: string, linkPath: string) => {
     const files = await filesFor(root);
     if (!files) return unavailable(root);
     const outcome = attempt(() => files.link(target, linkPath));
@@ -143,7 +143,7 @@ export const registerFileHandlers = (
     return outcome.ok ? { ok: true as const, path: outcome.value } : outcome;
   });
 
-  ipc.handle("files:create-directory", async (_e, root: string, path: string) => {
+  handleRoot("files:create-directory", async (_e, root: string, path: string) => {
     const files = await filesFor(root);
     if (!files) return unavailable(root);
     const outcome = attempt(() => files.createDirectory(path));
@@ -151,13 +151,13 @@ export const registerFileHandlers = (
     return outcome.ok ? { ok: true as const, path: outcome.value } : outcome;
   });
 
-  ipc.handle("files:unique-name", async (_e, root: string, desired: string) => {
+  handleRoot("files:unique-name", async (_e, root: string, desired: string) => {
     const files = await filesFor(root);
     return files ? { ok: true as const, path: files.uniqueName(desired) } : unavailable(root);
   });
 
   /** Whether a destination would be admitted, so the interface can grey it out. */
-  ipc.handle("files:admits", async (_e, root: string, path: string) => {
+  handleRoot("files:admits", async (_e, root: string, path: string) => {
     const files = await filesFor(root);
     return files ? { ok: true as const, admitted: files.admits(path) } : unavailable(root);
   });
