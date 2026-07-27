@@ -7,23 +7,11 @@
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Browser, Locator, Page } from "playwright";
 import { BRIDGE_STUB, launchBrowser } from "./browser.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const server = Bun.serve({
-  port: 0,
-  fetch(req) {
-    const p = new URL(req.url).pathname;
-    return new Response(Bun.file(join(root, "dist", "renderer", p === "/" ? "index.html" : p)), {
-      headers: { "cache-control": "no-store" },
-    });
-  },
-});
 
-/* The rail groups chapters by `rootId`, not by path — ChapterView says so, and
- * says an empty workspace is exactly what a mismatch looks like. This stub had
- * neither `rootId` nor `role`, so the rail drew a root with no chapters under
- * it and the fixture measured a header that was never rendered. */
 const ROOTS = [{ id: "r1", path: "/p", name: "p", kind: "folder" as const }];
 
 const CHAPTERS = [
@@ -38,127 +26,144 @@ const CHAPTERS = [
   },
 ];
 
-const browser = await launchBrowser();
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-await page.addInitScript(`
-  ${BRIDGE_STUB}
-  Object.assign(window.refrain, {
-    openProject: async () => "/p",
-    openFile: async () => null,
-    createProject: async () => null,
-    pathFor: () => "/p",
-    resolveDrop: async (p) => p,
-    fullscreen: async () => true,
-    onCloseRequest: () => () => {},
-    loadProject: async () => ${JSON.stringify(CHAPTERS)},
-    loadWorkspace: async () => ({ roots: ${JSON.stringify(ROOTS)}, chapters: ${JSON.stringify(CHAPTERS)} }),
-    saveChapter: async () => ({ ok: true, edits: [] }),
-    systemFonts: async () => [],
-    listAgents: async () => [],
-    probeAgent: async () => ({ ok: true }),
-    removeAgent: async () => true,
-    addAgent: async () => ({}),
-    enqueue: async () => true,
-    manifest: async () => [],
-    send: async () => [],
-    collect: async () => ({ proposals: [], comments: [] }),
-    runs: async () => [],
-    commit: async () => ({ ok: true, text: "" }),
-    ledger: async () => [],
-    reply: async () => "",
+export type AnchorMutation = "chapter" | "header" | "menu-input" | "menu-opener" | "sheet";
 
-    revertEdit: async (t) => t,
-    revertAll: async (t) => t,
-    describeEdits: async () => "",
+const MUTATIONS: readonly AnchorMutation[] = [
+  "chapter",
+  "header",
+  "menu-input",
+  "menu-opener",
+  "sheet",
+];
+
+const missing = (label: string, selector: string): Error =>
+  new Error(`FAIL  missing ${label}: selector ${selector} matched no elements`);
+
+const requireTarget = async (page: Page, label: string, selector: string): Promise<Locator> => {
+  const target = page.locator(selector);
+  if ((await target.count()) === 0) throw missing(label, selector);
+  return target.first();
+};
+
+const removeTargets = async (page: Page, selector: string): Promise<void> => {
+  await page.locator(selector).evaluateAll((elements) => {
+    for (const element of elements) element.remove();
   });
-  localStorage.setItem("refrain.roots", JSON.stringify(["/p"]));
-`);
-await page.goto(`http://localhost:${server.port}`);
-await page.waitForTimeout(900);
+};
 
-/*
- * The workspace loads on an explicit action rather than on mount, so seeding
- * `refrain.roots` alone lands on the blank screen and the header never exists.
- * The command is `cmd.open` — "打开项目…". The welcome screen says "打开文件夹"
- * for the same gesture, and searching the panel for that wording matched
- * nothing: the click landed on no button, the fixture opened empty, and the
- * empty fixture was recorded as a 289px alignment defect (SPEC Q5).
- */
-await page.keyboard.press("Control+k");
-await page.waitForTimeout(300);
-await page.locator("nav.menu input").fill("打开项目");
-await page.waitForTimeout(300);
-const opener = page.locator("nav.menu button.row").first();
-if ((await opener.count()) === 0) {
-  console.error("FAIL  the command panel offers no 打开项目 command");
-  await browser.close();
-  server.stop();
-  process.exit(1);
+export const runAnchorGate = async (mutation?: AnchorMutation): Promise<void> => {
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const path = new URL(req.url).pathname;
+      return new Response(
+        Bun.file(join(root, "dist", "renderer", path === "/" ? "index.html" : path)),
+        { headers: { "cache-control": "no-store" } },
+      );
+    },
+  });
+  let browser: Browser | undefined;
+
+  try {
+    browser = await launchBrowser();
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.addInitScript(`
+      ${BRIDGE_STUB}
+      Object.assign(window.refrain, {
+        openProject: async () => "/p",
+        pathFor: () => "/p",
+        loadProject: async () => ${JSON.stringify(CHAPTERS)},
+        loadWorkspace: async () => ({
+          roots: ${JSON.stringify(ROOTS)},
+          chapters: ${JSON.stringify(CHAPTERS)},
+        }),
+      });
+      localStorage.setItem("refrain.roots", JSON.stringify([]));
+    `);
+    await page.goto(`http://localhost:${server.port}`);
+    await page.waitForTimeout(900);
+
+    /*
+     * The workspace loads through an explicit action. "打开项目" is the command a
+     * person uses; `openProject` in the stub returns the fixture root, so this
+     * drives the same path the application really takes instead of pre-seeding a
+     * root that `addRoot` correctly treats as a duplicate.
+     */
+    await page.keyboard.press("Control+k");
+    await page.waitForTimeout(300);
+    if (mutation === "menu-input") await removeTargets(page, "nav.menu input");
+    const menuInput = await requireTarget(page, "command-menu input", "nav.menu input");
+    await menuInput.fill("打开项目");
+    await page.waitForTimeout(300);
+    if (mutation === "menu-opener") await removeTargets(page, "nav.menu button.row");
+    const opener = await requireTarget(page, "open-project command", "nav.menu button.row");
+    await opener.click();
+    await page.waitForTimeout(900);
+
+    /*
+     * The header renders only with a chapter open, and `Progress.svelte` also
+     * carries a `.bar` class. Every target is asserted, so fixture and DOM drift
+     * fail rather than manufacturing a measurement or quietly skipping one.
+     */
+    if (mutation === "chapter") await removeTargets(page, "nav .chapter");
+    const chapter = await requireTarget(page, "chapter", "nav .chapter");
+    const chapterCount = await page.locator("nav .chapter").count();
+    console.log(`fixture: ${chapterCount} chapter(s) in the rail`);
+    await chapter.click();
+    await page.waitForTimeout(700);
+
+    if (mutation === "header") await removeTargets(page, "header.bar");
+    if (mutation === "sheet") await removeTargets(page, ".sheet-surface");
+    await requireTarget(page, "chapter header", "header.bar");
+    await requireTarget(page, "manuscript sheet", ".sheet-surface");
+
+    const report = await page.evaluate(() => {
+      const box = (selector: string) => {
+        const element = document.querySelector(selector);
+        if (!element) return null;
+        const rectangle = element.getBoundingClientRect();
+        return { left: Math.round(rectangle.left), width: Math.round(rectangle.width) };
+      };
+      const rail = document.querySelector(".bar-rail");
+      return {
+        // `header.bar`, not `.bar`: Progress.svelte uses the same class name.
+        bar: box("header.bar"),
+        barRail: box(".bar-rail"),
+        sheet: box(".sheet-surface"),
+        measure: getComputedStyle(document.documentElement).getPropertyValue(
+          "--manuscript-measure",
+        ),
+        railWidth: rail ? getComputedStyle(rail).width : "(no .bar-rail)",
+      };
+    });
+
+    console.log(JSON.stringify(report, null, 2));
+    if (!report.bar) throw missing("chapter header", "header.bar");
+    if (!report.sheet) throw missing("manuscript sheet", ".sheet-surface");
+
+    const drift = Math.abs(report.bar.left - report.sheet.left);
+    console.log("\n--- verdict ---");
+    console.log(`bar   left ${report.bar.left}  width ${report.bar.width}`);
+    console.log(`sheet left ${report.sheet.left}  width ${report.sheet.width}`);
+    console.log(`drift ${drift}px`);
+    if (drift > 1)
+      throw new Error(`FAIL  the column does not hang from one line: drift ${drift}px`);
+    console.log("PASS  one left edge");
+  } finally {
+    await browser?.close();
+    server.stop(true);
+  }
+};
+
+if (import.meta.main) {
+  try {
+    const requested = process.argv.find((argument) => argument.startsWith("--remove-target="));
+    const mutation = requested?.slice("--remove-target=".length);
+    if (mutation !== undefined && !MUTATIONS.includes(mutation as AnchorMutation))
+      throw new Error(`FAIL  unknown anchor mutation: ${mutation}`);
+    await runAnchorGate(mutation as AnchorMutation | undefined);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  }
 }
-await opener.click();
-await page.waitForTimeout(900);
-
-/*
- * The header renders only with a chapter open, and `Progress.svelte` also
- * carries a `.bar` class. With no chapter the old selector silently measured
- * the progress rule instead — which is the whole of the 289px "drift" recorded
- * as SPEC Q5. The count is asserted, not logged, so an empty fixture fails
- * rather than reporting a defect that is not there.
- */
-const chapterCount = await page.locator("nav .chapter").count();
-console.log(`fixture: ${chapterCount} chapter(s) in the rail`);
-if (chapterCount === 0) {
-  const debug = await page.evaluate(() => ({
-    welcome: document.querySelector(".welcome") !== null,
-    roots: localStorage.getItem("refrain.roots"),
-    railHtml: document.querySelector("nav.rail")?.innerHTML.slice(0, 200) ?? "(no rail)",
-  }));
-  console.error("FAIL  the fixture opened no project:", JSON.stringify(debug, null, 2));
-  await browser.close();
-  server.stop();
-  process.exit(1);
-}
-await page
-  .locator("nav .chapter")
-  .first()
-  .click()
-  .catch(() => {});
-await page.waitForTimeout(700);
-
-const report = await page.evaluate(() => {
-  const box = (selector: string) => {
-    const el = document.querySelector(selector);
-    if (!el) return null;
-    const r = el.getBoundingClientRect();
-    return { left: Math.round(r.left), width: Math.round(r.width) };
-  };
-  const rail = document.querySelector(".bar-rail");
-  return {
-    // `header.bar`, not `.bar`: Progress.svelte uses the same class name.
-    bar: box("header.bar"),
-    barRail: box(".bar-rail"),
-    sheet: box(".sheet-surface"),
-    measure: getComputedStyle(document.documentElement).getPropertyValue("--manuscript-measure"),
-    railWidth: rail ? getComputedStyle(rail).width : "(no .bar-rail)",
-  };
-});
-
-console.log(JSON.stringify(report, null, 2));
-
-if (!report.bar || !report.sheet) {
-  console.error("\nSKIP  no chapter open in the fixture; nothing to compare");
-  await browser.close();
-  server.stop();
-  process.exit(0);
-}
-
-const drift = Math.abs(report.bar.left - report.sheet.left);
-console.log("\n--- verdict ---");
-console.log(`bar   left ${report.bar.left}  width ${report.bar.width}`);
-console.log(`sheet left ${report.sheet.left}  width ${report.sheet.width}`);
-console.log(`drift ${drift}px`);
-console.log(drift <= 1 ? "PASS  one left edge" : "FAIL  the column does not hang from one line");
-
-await browser.close();
-server.stop();
-process.exit(drift <= 1 ? 0 : 1);
