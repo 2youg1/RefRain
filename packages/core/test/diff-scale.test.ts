@@ -131,4 +131,58 @@ describe("the diff scales to a whole manuscript", () => {
     ]);
     expect(slices.filter((slice) => slice.kind === "same")).toHaveLength(10);
   });
+
+  /**
+   * Every earlier test edits in place, which leaves each later sentence at the
+   * position it already had. One inserted sentence shifts all of them by one,
+   * and that is the case the review engine's own segmentation could not handle:
+   * without probing for the shift, nothing matches again after the insertion,
+   * no anchor is ever found, and the whole scope becomes one region — the
+   * quadratic table this file exists to prevent. Measured before the fix: 2.6 s
+   * at 20,000 sentences, growing fourfold per doubling.
+   */
+  test("one sentence inserted at the head does not defeat segmentation", () => {
+    const before = Array.from({ length: 20_000 }, (_, i) => sentence(i)).join("");
+
+    const started = performance.now();
+    const slices = sliceProposal({
+      id: "p1",
+      runId: "r1",
+      baseline: "rev0",
+      scope: { id: "s1", blockIds: ["b0"] },
+      before,
+      after: `插入的第一句。${before}`,
+    });
+    const elapsed = performance.now() - started;
+
+    expect(elapsed).toBeLessThan(400);
+    expect(slices.filter((slice) => slice.kind === "ins").map((slice) => slice.text)).toEqual([
+      "插入的第一句。",
+    ]);
+    expect(slices.filter((slice) => slice.kind === "del")).toHaveLength(0);
+  });
+
+  /**
+   * A region past the table budget must be reported, not allocated. The review
+   * engine had no budget check at all, so two fully divergent texts asked for
+   * (n+1)(m+1) cells however large the manuscript was — the exact allocation
+   * the alignment module was written to refuse.
+   */
+  test("two fully divergent texts are reported rather than tabled", () => {
+    const before = Array.from({ length: 5_000 }, (_, i) => `甲${i}這句完全不同。`).join("");
+    const after = Array.from({ length: 5_000 }, (_, i) => `乙${i}那句毫不相干。`).join("");
+
+    const slices = sliceProposal({
+      id: "p1",
+      runId: "r1",
+      baseline: "rev0",
+      scope: { id: "s1", blockIds: ["b0"] },
+      before,
+      after,
+    });
+
+    expect(slices.filter((slice) => slice.kind === "del")).toHaveLength(5_000);
+    expect(slices.filter((slice) => slice.kind === "ins")).toHaveLength(5_000);
+    expect(slices.filter((slice) => slice.kind === "same")).toHaveLength(0);
+  });
 });
