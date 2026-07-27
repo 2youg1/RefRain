@@ -14,9 +14,8 @@ anything.
 literal path. A refactor moved the code they watched, and both quietly degraded
 to `exit 0` — green forever, watching an empty set. They now count what they
 scanned and fail when the count is zero. A third script had never been called
-by any workflow at all: it had been failing unnoticed, and its symptom was
-written into the design baseline as a product defect. The gate list on disk and
-the gate list in CI are now compared by a gate.
+by any workflow at all, and had been failing unnoticed for two releases. The
+gate list on disk and the gate list in CI are now compared by a gate.
 
 **Every stubbed bridge answers what the real one answers.** Twenty-one render
 gates each hand-wrote a stand-in for the preload bridge, and none was complete.
@@ -37,6 +36,15 @@ way and the review engine another, so a paragraph the author had reordered
 could be described as whitespace. Both now use the alignment the edit log
 already had, and an insertion chain lands in chain order rather than
 declaration order.
+
+**A gate held under an exemption was measuring a blank screen.** The chapter
+header was recorded as sitting 289px off the manuscript it names — twice in the
+design baseline, once as a layout defect and once as a measurement fault
+awaiting a remeasure — and its gate ran in CI under `continue-on-error`, so the
+red never stopped anything. There is no drift. The fixture had never opened:
+its command-panel search typed the welcome screen's wording rather than the
+command's, and its stub returned a shape the rail could not group. Header and
+sheet share a left edge to the pixel. The exemption is gone.
 
 **Typography and theme live in one place.** Chinese and Japanese were setting
 each other's stacks — a Japanese face was reaching Chinese text through a
