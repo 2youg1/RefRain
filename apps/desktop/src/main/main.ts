@@ -32,6 +32,27 @@ const bundleDir = (): string => {
  */
 const useDevServer = process.env.REFRAIN_DEV === "1";
 
+/**
+ * Window-scoped capabilities register once and derive their owner from the
+ * authenticated sender. Re-registering them inside `createWindow` made the
+ * latest window steal global handlers from every earlier one.
+ */
+const registerWindowHandlers = (handlers: ReturnType<typeof registerHandlers>): void => {
+  handlers.handle("window:fullscreen", (event, on) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) throw new Error("Refused IPC window:fullscreen: sender has no window");
+    window.setFullScreen(on);
+    return window.isFullScreen();
+  });
+
+  handlers.handle("display:profile", (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) throw new Error("Refused IPC display:profile: sender has no window");
+    const profile = profileForBounds(screen, window.getBounds());
+    return { ...profile, css: cssVariables(profile) };
+  });
+};
+
 const createWindow = (): BrowserWindow => {
   const window = new BrowserWindow({
     width: 1440,
@@ -67,30 +88,10 @@ const createWindow = (): BrowserWindow => {
     if (!rendererMayNavigate(url, useDevServer)) event.preventDefault();
   });
 
-  // Zen mode asks the OS for real fullscreen; the renderer only says when.
-  ipcMain.removeHandler("window:fullscreen");
-  ipcMain.handle("window:fullscreen", (_event, on: boolean) => {
-    window.setFullScreen(on);
-    return window.isFullScreen();
-  });
-
-  /*
-   * The panel decides the frame budget.
-   *
-   * A 165 Hz monitor has 6.06 ms per frame and a 60 Hz one 16.67; motion
-   * quantised to a constant stutters on the first and wastes the second. The
-   * renderer receives the measured rate and expresses durations in frames.
-   */
-  ipcMain.removeHandler("display:profile");
-  ipcMain.handle("display:profile", () => {
-    const profile = profileForBounds(screen, window.getBounds());
-    return { ...profile, css: cssVariables(profile) };
-  });
-
   /*
    * Dragging between monitors changes the target. Without this the window keeps
-   * whichever budget it started with, which is the wrong one for the panel the
-   * writer is now looking at.
+   * whichever budget it started with, which is wrong for the panel the writer
+   * is now looking at.
    */
   let lastProfile = "";
   const announceDisplay = () => {
@@ -175,7 +176,8 @@ if (primaryInstance)
     // a black strip of affordances that duplicated nothing the app offers.
     Menu.setApplicationMenu(null);
 
-    registerHandlers(ipcMain, dialog);
+    const handlers = registerHandlers(ipcMain, dialog);
+    registerWindowHandlers(handlers);
     const window = createWindow();
 
     // CI launches the built app with --smoke: the window must actually finish

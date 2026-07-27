@@ -324,12 +324,9 @@ test("an unknown conflict choice is rejected instead of being treated as keep-mi
     writeFileSync(path, "另一个编辑器的版本。\n", "utf8");
     await call("project:save", root, "01.md", "本地版本。");
 
-    const outcome = (await call("project:resolve-conflict", root, "01.md", "anything")) as {
-      ok: boolean;
-      reason?: string;
-    };
-
-    expect(outcome).toEqual({ ok: false, reason: "invalid conflict choice" });
+    await expect(call("project:resolve-conflict", root, "01.md", "anything")).rejects.toThrow(
+      /argument.*mine.*disk/i,
+    );
     expect(readFileSync(path, "utf8")).toBe("另一个编辑器的版本。\n");
   } finally {
     closeWorkbenches();
