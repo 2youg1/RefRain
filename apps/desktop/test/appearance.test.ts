@@ -10,11 +10,10 @@ const read = (name: string): string => readFileSync(join(renderer, name), "utf8"
 /**
  * INV-6: every option the interface offers reaches a real implementation.
  *
- * The theme system is what taught us to write this down. Eight themes were
- * declared in `preferences.ts`, seven had selectors in `themes.css`, and the
- * settings panel offered three older identifiers that matched none of them —
- * so every click set `data-theme` to a value no stylesheet answered, and the
- * palette silently stayed put. Three sources of truth, no two agreeing, and a
+ * The theme system is what taught us to write this down. The declarations,
+ * generated selectors, and settings panel once disagreed, so a click could set
+ * `data-theme` to a value no stylesheet answered and the palette silently stay
+ * put. Three sources of truth, no two agreeing, and a
  * green suite throughout: nothing compared the list on screen against the list
  * that renders.
  */
@@ -69,13 +68,15 @@ test("the theme command cycles through declared themes only", () => {
   expect(cycled.filter((id) => !declared.has(id))).toEqual([]);
 });
 
-test("day and night are both populated, because the toggle moves between them", () => {
+test("the declared theme set remains eight: five day and three night", () => {
   const themes = declaredThemes();
 
-  // Not one palette and its inverse: a night theme is drawn from its own
-  // reference, so the toggle needs somewhere to land on each side.
-  expect(themes.filter((theme) => theme.mode === "day").length).toBeGreaterThan(0);
-  expect(themes.filter((theme) => theme.mode === "night").length).toBeGreaterThan(0);
+  // Q9 settles eight independently drawn palettes. Exact counts make a stale
+  // comment or a silently added/removed theme fail mechanically instead of
+  // leaving prose, controls, and generated CSS to drift apart again.
+  expect(themes).toHaveLength(8);
+  expect(themes.filter((theme) => theme.mode === "day")).toHaveLength(5);
+  expect(themes.filter((theme) => theme.mode === "night")).toHaveLength(3);
 });
 
 test("no orphaned translation keys survive from the retired three-theme set", () => {
