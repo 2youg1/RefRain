@@ -33,7 +33,7 @@ export const registerFileHandlers = (
   handleRoot: IpcAuthority["handleRoot"],
   filesFor: FilesFor,
   fileErrorFor: FileErrorFor,
-  observeFiles: (root: string, subscriber: WebContents) => void,
+  observeFiles: (root: string, subscriber: WebContents | undefined) => void,
 ): void => {
   const unavailable = (root: string) => ({
     ok: false as const,
@@ -57,7 +57,7 @@ export const registerFileHandlers = (
   };
 
   handleRoot("files:scan", async (event, root: string, options?: Record<string, unknown>) => {
-    observeFiles(root, event.sender);
+    observeFiles(root, (event as { sender?: WebContents })?.sender);
     const files = await filesFor(root, options);
     return files ? { ok: true as const, count: files.scan() } : unavailable(root);
   });

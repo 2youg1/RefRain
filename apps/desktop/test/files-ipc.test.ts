@@ -15,7 +15,15 @@
  */
 
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, normalize } from "node:path";
 import { __setWorkspaceLoader, closeWorkbenches, registerHandlers } from "../src/main/ipc.ts";
@@ -43,10 +51,15 @@ const collectHandlers = () => {
 
 const handlers = collectHandlers();
 const mainFrame = { isDestroyed: () => false };
-const event = {
-  sender: { isDestroyed: () => false, mainFrame },
-  senderFrame: mainFrame,
+const sent: { channel: string; args: unknown[] }[] = [];
+const sender = {
+  id: 1,
+  isDestroyed: () => false,
+  mainFrame,
+  once: () => undefined,
+  send: (channel: string, ...args: unknown[]) => sent.push({ channel, args }),
 };
+const event = { sender, senderFrame: mainFrame };
 const adopted = new Set<string>();
 
 const invoke = async (channel: string, ...args: unknown[]) => {
@@ -120,6 +133,23 @@ test("a scan reports a count or an explained unavailability, never a throw", asy
       // explanation reads as a broken project rather than an unbuilt binary.
       expect(result.detail).toBeTruthy();
     }
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an external nested change reaches the renderer that opened the file browser", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-ipc-watch-"));
+  const nested = join(root, "material");
+  mkdirSync(nested);
+  sent.length = 0;
+  try {
+    await call("files:scan", root);
+    writeFileSync(join(nested, "external.md"), "outside edit", "utf8");
+    for (let attempt = 0; attempt < 100 && sent.length === 0; attempt += 1) await Bun.sleep(10);
+
+    expect(sent).toContainEqual({ channel: "files:changed", args: [root] });
   } finally {
     closeWorkbenches();
     rmSync(root, { recursive: true, force: true });
