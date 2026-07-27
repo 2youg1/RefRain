@@ -478,9 +478,13 @@ const onEdit = (): void => {
   // Mid-composition the surface holds a candidate. Reading it back would
   // record uncommitted keystrokes as the manuscript and mark it dirty against
   // text the author has not chosen yet.
-  if (composing) return;
+  if (composing || conflict !== null) return;
   text = readSurface();
   saved = false;
+};
+
+const blockConflictInput = (event: InputEvent): void => {
+  if (conflict !== null) event.preventDefault();
 };
 
 /**
@@ -897,6 +901,7 @@ const commit = async (verdicts: VerdictView[]): Promise<void> => {
  * manuscript. `selectedBlocks` already guarded this; this did not.
  */
 const format = (mark: "bold" | "italic" | "strike" | "code"): void => {
+  if (conflict !== null) return;
   const wrap = { bold: "**", italic: "*", strike: "~~", code: "`" }[mark];
   const sel = window.getSelection();
   if (!sel || sel.rangeCount === 0 || !surfaceEl) return;
@@ -936,6 +941,7 @@ const commands = $derived<Command[]>([
 ]);
 
 const onKeydown = (event: KeyboardEvent): void => {
+  if (conflict !== null) return;
   const chord = chordOf(event);
   const command = commandFor(bindings, chord);
 
@@ -1097,7 +1103,7 @@ const onScroll = (): void => {
     onPaletteClose={() => (paletteOpen = false)}
   />
 {:else}
-  <div class="shell" class:zen class:dragging>
+  <div class="shell" class:zen class:dragging inert={conflict !== null}>
     {#if !zen}
       <Rail
         {t}
@@ -1172,6 +1178,7 @@ const onScroll = (): void => {
             contenteditable={conflict === null ? "true" : "false"}
             spellcheck="false"
             bind:this={surfaceEl}
+            onbeforeinput={blockConflictInput}
             oninput={onEdit}
             oncompositionstart={onCompositionStart}
             oncompositionend={onCompositionEnd}
