@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { TextChange, TextHead } from "../src/index.ts";
-import { applyTextAction, blockAt, currentText } from "../src/index.ts";
+import { applyTextAction, blockAt, currentText, loadProject, saveChapter } from "../src/index.ts";
 
 const head = (): TextHead => ({
   id: "h0",
@@ -21,6 +24,41 @@ describe("Text Action", () => {
     expect(after.id).not.toBe(before.id);
   });
 
+  test("a shuffled cross-block replacement stays block-identical after save and reload", () => {
+    const root = mkdtempSync(join(tmpdir(), "refrain-cross-block-"));
+    const path = join(root, "01.md");
+    writeFileSync(path, "甲。\n\n乙。\n\n丙。\n");
+
+    try {
+      const project = loadProject(root);
+      const chapter = project.chapters[0];
+      const [first, second, third] = chapter?.head.blocks ?? [];
+      if (
+        chapter === undefined ||
+        first === undefined ||
+        second === undefined ||
+        third === undefined
+      )
+        throw new Error("cross-block fixture did not load three blocks");
+
+      const after = applyTextAction(
+        chapter.head,
+        [{ blockIds: [first.id, second.id], text: "乙改。\n\n甲改。" }],
+        "shuffled cross-block replacement",
+      );
+      const saved = saveChapter(project, chapter.id, after, chapter.stamp);
+      if (!saved.ok) throw new Error(`cross-block fixture refused save: ${saved.reason}`);
+      const reparsed = loadProject(root).chapters[0]?.head;
+      if (reparsed === undefined) throw new Error("saved cross-block fixture did not reload");
+
+      expect(readFileSync(path, "utf8")).toBe("乙改。\n\n甲改。\n\n丙。\n");
+      expect(after.blocks).toEqual(reparsed.blocks);
+      expect(after.blocks.map((block) => block.id)).toEqual([first.id, second.id, third.id]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("two changes on one block are refused rather than silently merged", () => {
     // A run returning several Review Slices for one Edit Scope produces exactly
     // this. The map was keyed on blockIds[0], so the second verdict overwrote
@@ -33,6 +71,19 @@ describe("Text Action", () => {
           { blockIds: ["b2"], text: "剑落下了。" },
         ],
         "test",
+      ),
+    ).toThrow(/two changes address block b2/);
+  });
+
+  test("a later change inside a multi-block scope is refused rather than duplicated", () => {
+    expect(() =>
+      applyTextAction(
+        head(),
+        [
+          { blockIds: ["b1", "b2"], text: "第一段改。\n\n第二段改。" },
+          { blockIds: ["b2"], text: "第二段又改。" },
+        ],
+        "overlapping range changes",
       ),
     ).toThrow(/two changes address block b2/);
   });
