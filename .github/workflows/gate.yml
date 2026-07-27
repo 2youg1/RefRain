@@ -71,7 +71,7 @@ jobs:
       # way a Windows path rule or a macOS trash binding gets tested at all.
       - name: test
         working-directory: packages/fs
-        run: cargo test --lib
+        run: cargo test --all-targets
 
       - name: build
         working-directory: packages/fs

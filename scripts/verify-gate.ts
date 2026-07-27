@@ -17,13 +17,33 @@ const probes: Record<string, string> = {
   "exact-optional.ts": "type T = { a?: string }; export const t: T = { a: undefined };",
 };
 
-mkdirSync(dir, { recursive: true });
-for (const [name, src] of Object.entries(probes)) writeFileSync(`${dir}/${name}`, src);
+/**
+ * The probes are deliberately ill-typed source files inside `packages/core`.
+ * They were removed on the line after the check ran, which is fine until the
+ * run is interrupted — a Ctrl+C or a CI timeout between the write and the
+ * remove leaves three files that fail `bun run check` for everyone, forever,
+ * with nothing to say where they came from.
+ */
+const clean = (): void => rmSync(dir, { recursive: true, force: true });
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const)
+  process.on(signal, () => {
+    clean();
+    process.exit(130);
+  });
 
-const { exitCode, stderr, stdout } = await $`bun run check`.nothrow().quiet();
-rmSync(dir, { recursive: true, force: true });
+let exitCode: number;
+let output: string;
+try {
+  mkdirSync(dir, { recursive: true });
+  for (const [name, src] of Object.entries(probes)) writeFileSync(`${dir}/${name}`, src);
 
-const output = stdout.toString() + stderr.toString();
+  const result = await $`bun run check`.nothrow().quiet();
+  exitCode = result.exitCode;
+  output = result.stdout.toString() + result.stderr.toString();
+} finally {
+  clean();
+}
+
 const missed = Object.keys(probes).filter((name) => !output.includes(name));
 
 if (exitCode === 0) {
