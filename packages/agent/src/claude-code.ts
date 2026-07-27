@@ -95,9 +95,24 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
    * and none of them may become a command. `--permission-mode dontAsk` with an
    * explicit allowlist means anything not named here is denied rather than
    * prompted — a prompt in a subprocess nobody is watching hangs forever.
+   *
+   * Write is confined to the run's own directory. It used to be granted with
+   * no path restriction at all, which contradicts SPEC 3.1 rule 2 — agents have
+   * no write access to the manuscript — and the attack is not theoretical: the
+   * request file embeds the manuscript, the manuscript is untrusted text, and
+   * one injected sentence could read any file into a memo (memos travel into
+   * every later round) or overwrite the chapter, `host.json`, or `agents.json`
+   * outright. The run directory is the only place this adapter needs to write,
+   * because the only thing it produces is `result.md`.
+   *
+   * Hooks stay on. Disabling them switched off protections the author had
+   * configured for themselves, in their own harness, without telling them.
    */
-  private argv(agent: Agent): string[] {
+  private argv(agent: Agent, workspace: string): string[] {
     const binary = this.config.command ?? "claude";
+    const permissions = JSON.stringify({
+      permissions: { allow: [`Write(${workspace}/**)`, `Edit(${workspace}/**)`] },
+    });
 
     return [
       binary,
@@ -116,7 +131,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
       "--allowedTools",
       "Read,Write",
       "--settings",
-      '{"disableAllHooks": true}',
+      permissions,
       // Bare `{}` crashes the CLI from 2.1.59 onwards; the key must be present.
       "--mcp-config",
       '{"mcpServers":{}}',
@@ -132,7 +147,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
     writeFileSync(run.requestPath, scaffold(task), "utf8");
 
     const child = launch({
-      argv: this.argv(agent),
+      argv: this.argv(agent, run.workspace),
       cwd: this.config.cwd ?? run.workspace,
       env: this.config.env,
       input: `${readFileSync(run.requestPath, "utf8")}\n\nWrite your reply to ${run.resultPath}`,

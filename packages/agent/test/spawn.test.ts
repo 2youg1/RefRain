@@ -107,4 +107,44 @@ process.stdin.on("end", () => { process.stdout.write(seen.length + ""); });
 
     expect(JSON.parse(await run.stdout)).toEqual([dangerous]);
   });
+
+  /*
+   * A harness used to inherit the whole environment. Whatever the author's
+   * shell held went with it — API keys for services this application never
+   * speaks to among them — and the request file embeds the manuscript, which is
+   * untrusted text. One injected sentence and a credential is in a memo, and
+   * memos travel into every later round.
+   */
+  test("a secret in this process's environment does not reach the child", async () => {
+    const dump = script("env.js", "process.stdout.write(JSON.stringify(process.env));\n");
+    process.env.REFRAIN_TEST_SECRET = "sk-do-not-leak";
+    process.env.ANTHROPIC_API_KEY = "sk-neither-this";
+
+    try {
+      const run = launch({ argv: [process.execPath, dump] });
+      await run.exited;
+      const seen = JSON.parse(await run.stdout) as Record<string, string>;
+
+      expect(seen.REFRAIN_TEST_SECRET).toBeUndefined();
+      expect(seen.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(seen.PATH).toBeDefined();
+    } finally {
+      delete process.env.REFRAIN_TEST_SECRET;
+      delete process.env.ANTHROPIC_API_KEY;
+    }
+  });
+
+  test("a credential the author configured for this harness does travel", async () => {
+    const dump = script("env2.js", "process.stdout.write(JSON.stringify(process.env));\n");
+
+    const run = launch({
+      argv: [process.execPath, dump],
+      env: { HARNESS_TOKEN: "configured-on-purpose" },
+    });
+    await run.exited;
+
+    expect((JSON.parse(await run.stdout) as Record<string, string>).HARNESS_TOKEN).toBe(
+      "configured-on-purpose",
+    );
+  });
 });
