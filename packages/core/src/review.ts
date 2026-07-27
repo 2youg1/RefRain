@@ -127,11 +127,17 @@ const alignRegion = (
   while (j < after.length) emit("ins", after[j++]);
 };
 
+/** One immutable Proposal owns one diff for its lifetime in this process. */
+const slicesByProposal = new WeakMap<Proposal, ReviewSlice[]>();
+
 /**
  * Longest common subsequence over sentences. Unchanged sentences surface as
  * context so the author reviews only what actually moved.
  */
 export const sliceProposal = (proposal: Proposal): ReviewSlice[] => {
+  const cached = slicesByProposal.get(proposal);
+  if (cached) return cached;
+
   const before = sentences(proposal.before);
   const after = proposal.after === null ? [] : sentences(proposal.after);
 
@@ -157,5 +163,7 @@ export const sliceProposal = (proposal: Proposal): ReviewSlice[] => {
     alignRegion(region.before, region.after, emit);
   }
 
+  Object.freeze(slices);
+  slicesByProposal.set(proposal, slices);
   return slices;
 };

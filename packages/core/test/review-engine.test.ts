@@ -38,9 +38,13 @@ describe("Review Slice", () => {
     expect(slices).toHaveLength(2);
   });
 
-  test("slice identifiers are stable across repeated slicing", () => {
+  test("one immutable Proposal owns one frozen sliced result", () => {
     const p = proposal("甲。乙。", "甲。丙。");
+    const first = sliceProposal(p);
+    const second = sliceProposal(p);
 
-    expect(sliceProposal(p).map((s) => s.id)).toEqual(sliceProposal(p).map((s) => s.id));
+    expect(second).toBe(first);
+    expect(Object.isFrozen(first)).toBe(true);
+    expect(first.map((slice) => slice.id)).toEqual(second.map((slice) => slice.id));
   });
 });
