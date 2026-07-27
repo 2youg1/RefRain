@@ -412,7 +412,11 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - run: bun install --frozen-lockfile
-      - name: typecheck rejects ill-typed code
+      # One probe set per type configuration. `bun run check` is a chain of four
+      # independent tsc runs guarding three runtimes; probing only the shared
+      # core proved the root config bites and said nothing about the main
+      # process reaching for `document` or the renderer reaching for `Bun`.
+      - name: every type configuration rejects ill-typed code
         run: bun run verify:gate
 
   invariants:

@@ -90,6 +90,13 @@ jobs:
       - name: Every gate has a path that runs it
         run: bun run verify:gates-run
 
+      # And every gate must still be able to fail. A release built by a
+      # typecheck that has quietly become a no-op — a widened `lib`, a stale
+      # `types` list — carries none of the evidence the green ticks imply, and
+      # this is the platform where the runtime boundaries actually differ.
+      - name: Every type configuration rejects ill-typed code
+        run: bun run verify:gate
+
       # make.sh verifies the Node branch of the SQLite adapter, which bun test
       # cannot reach. Declare the runtime rather than relying on the runner
       # image shipping one — a release must not depend on that accident.
