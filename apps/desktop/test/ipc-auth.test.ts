@@ -295,6 +295,24 @@ test("a main-owned path choice grants a candidate, and workspace load makes it a
   }
 });
 
+test("an unreadable dropped path returns a reason and grants no Root", async () => {
+  const handlers = collectHandlers();
+  const absent = join(tmpdir(), `refrain-no-drop-${crypto.randomUUID()}`, "chapter.md");
+
+  const outcome = (await invoke(handlers, trustedEvent, "project:resolve-drop", absent)) as {
+    ok: boolean;
+    reason?: string;
+    detail?: string;
+  };
+  expect(outcome).toMatchObject({ ok: false, reason: "unreadable-path" });
+  expect(outcome.detail).toMatch(/ENOENT|not found/i);
+  await invoke(handlers, trustedEvent, "project:load-workspace", [dirname(absent)]);
+  await expect(invoke(handlers, trustedEvent, "files:scan", dirname(absent))).rejects.toThrow(
+    /opened root|authority|permit/i,
+  );
+  closeWorkbenches();
+});
+
 test("the file picker grants a single-file Root before workspace adoption", async () => {
   const parent = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-file-picker-"));
   const root = join(parent, "essay.md");
