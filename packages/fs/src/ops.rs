@@ -39,6 +39,14 @@ pub enum OpError {
     IntoItself {
         path: String,
     },
+    /// Source and destination resolve to the same file.
+    ///
+    /// Its own error rather than an `Io`: the interface offers "duplicate",
+    /// and a duplicate whose destination collapses onto the original is a
+    /// mistake to explain, not a disk failure to report.
+    SameFile {
+        path: String,
+    },
     /// This volume has no trash and one cannot be created (SPEC Q8).
     ///
     /// Distinguished from a plain `Io` failure because the interface can act on
@@ -58,6 +66,7 @@ impl OpError {
             Self::Io { path, reason } => format!("{path}: {reason}"),
             Self::Occupied { path } => format!("{path} already exists"),
             Self::IntoItself { path } => format!("{path} cannot be moved inside itself"),
+            Self::SameFile { path } => format!("{path} is both the source and the destination"),
             Self::NoTrashHere { path } => {
                 format!("{path}: this volume has no trash, so nothing here can be deleted safely")
             }
@@ -137,6 +146,16 @@ pub fn copy(guard: &Guard, from: &Path, to: &Path, replace: bool) -> Outcome {
     if to.exists() && !replace {
         return Err(OpError::Occupied {
             path: to.display().to_string(),
+        });
+    }
+    // `fs::copy` opens the destination with O_TRUNC, so a copy onto the same
+    // inode empties the source before a byte is read. `admit` hands back
+    // resolved paths, so `a/chapter.md` and `a/./chapter.md` compare equal here
+    // and both are refused — the duplicate action destroyed the chapter it was
+    // asked to duplicate.
+    if from == to {
+        return Err(OpError::SameFile {
+            path: from.display().to_string(),
         });
     }
     if from.is_dir() && to.starts_with(&from) {
@@ -479,6 +498,48 @@ mod tests {
             "b"
         );
         assert!(root.join("part/one.md").exists(), "copy keeps the source");
+    }
+
+    /// Copying a file onto itself used to empty it.
+    ///
+    /// `fs::copy` opens the destination with `O_TRUNC`, so when `from` and `to`
+    /// name the same inode the truncation lands on the source before a byte is
+    /// read. A duplicate action whose destination resolved back to the original
+    /// destroyed the chapter it was asked to duplicate.
+    #[test]
+    fn copying_a_file_onto_itself_is_refused() {
+        let root = scratch("copy-onto-itself");
+        let target = root.join("chapter.md");
+        fs::write(&target, "第一章的正文").unwrap();
+        let guard = Guard::new([&root]);
+
+        let error = copy(&guard, &target, &target, true).unwrap_err();
+
+        assert!(matches!(error, OpError::SameFile { .. }));
+        assert_eq!(fs::read_to_string(&target).unwrap(), "第一章的正文");
+    }
+
+    /// The comparison is on the resolved path, so a destination spelled
+    /// differently but landing on the same file is refused too.
+    #[test]
+    fn copying_onto_the_same_file_named_differently_is_refused() {
+        let root = scratch("copy-onto-itself-aliased");
+        fs::write(root.join("chapter.md"), "第一章的正文").unwrap();
+        let guard = Guard::new([&root]);
+
+        let error = copy(
+            &guard,
+            &root.join("chapter.md"),
+            &root.join("./chapter.md"),
+            true,
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, OpError::SameFile { .. }));
+        assert_eq!(
+            fs::read_to_string(root.join("chapter.md")).unwrap(),
+            "第一章的正文"
+        );
     }
 
     #[test]
