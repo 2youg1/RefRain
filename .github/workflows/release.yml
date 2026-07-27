@@ -66,6 +66,16 @@ jobs:
       # where path and process assumptions that Linux permits are refused.
       - run: bun run fmt:check
       - run: bun run check
+
+      # The command-adapter suite drives a real child process, and the harness
+      # it drives is `sh` — the point is that RefRain launches whatever the
+      # author configured, so a fake would test the fake. Windows runners carry
+      # Git's `sh` but not on PATH; adding it keeps the suite testing the
+      # adapter rather than the platform's shell inventory.
+      - name: put Git's sh on PATH for the harness tests
+        shell: bash
+        run: echo "C:/Program Files/Git/usr/bin" >> "$GITHUB_PATH"
+
       - run: bun test
 
       # The invariants are checked on the platform being shipped, not only on

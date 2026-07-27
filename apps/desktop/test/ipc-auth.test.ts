@@ -232,7 +232,11 @@ test("retargeting an approved symlink revokes its Root authority", async () => {
     approve(handlers, root);
     await invoke(handlers, trustedEvent, "project:load-workspace", [root]);
 
-    rmSync(root);
+    // A junction is a directory entry, so Windows needs the directory form of
+    // remove. `rmSync` on its own answers EFAULT there, while Unix unlinks the
+    // symlink happily — the retarget this test performs could not even be set
+    // up on the platform the retarget matters most on.
+    rmSync(root, { recursive: true });
     symlinkSync(second, root, process.platform === "win32" ? "junction" : "dir");
     await expect(
       invoke(handlers, trustedEvent, "project:save", root, "new.md", "must not cross"),

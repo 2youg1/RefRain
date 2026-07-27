@@ -26,8 +26,26 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
-/** Where scripts live. A script is the only place `import.meta.url` becomes a path. */
-const DIRS = ["scripts", "apps/desktop/scripts", "packages/fs/scripts", "docs"];
+/**
+ * Where `import.meta.url` becomes a filesystem path.
+ *
+ * This said "a script is the only place" and listed four script directories.
+ * A test read `docs/refrain-skill/SKILL.md` through `.pathname` and went out
+ * of scope, so it opened `/D:/a/RefRain/...` on the release runner and failed
+ * there — after this gate had passed. Tests resolve fixtures the same way
+ * scripts resolve their own directory; the pattern belongs to the repository,
+ * not to one kind of file in it.
+ */
+const DIRS = [
+  "scripts",
+  "apps/desktop/scripts",
+  "packages/fs/scripts",
+  "docs",
+  "apps/desktop/test",
+  "packages/core/test",
+  "packages/agent/test",
+  "packages/fs/test",
+];
 
 /**
  * Two ways a script can assume the filesystem uses forward slashes.
