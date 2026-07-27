@@ -45,3 +45,41 @@ export const launchBrowser = async (): Promise<Browser> => {
     throw error;
   }
 };
+
+/**
+ * A complete stand-in for the preload bridge.
+ *
+ * Eighteen gates each hand-wrote their own `window.refrain`, and none of them
+ * was complete — a method the stub forgot was `undefined` at call time, so the
+ * component took its empty branch and the gate reported PASS on a screen no
+ * user would ever see. verify-anchor failed exactly this way.
+ *
+ * Gates spread this first, then override the handful of methods they actually
+ * drive. `verify-bridge-parity` asserts the base stays level with preload.ts,
+ * so a new bridge method turns that gate red until this object answers it.
+ */
+export const BRIDGE_STUB = `window.refrain = {
+  openProject: async () => "/p", openFile: async () => null, createProject: async () => null,
+  loadProject: async () => [], loadWorkspace: async () => ({ roots: [], chapters: [] }),
+  revertEdit: async () => ({ ok: true }), revertAll: async () => ({ ok: true }),
+  describeEdits: async () => [], resolveConflict: async () => ({ ok: true }),
+  saveChapter: async () => ({ ok: true, edits: [] }),
+  pathFor: () => "", resolveDrop: async () => null, fullscreen: async () => true,
+  openProjectUrl: async () => true, systemFonts: async () => [], fonts: async () => [],
+  listAgents: async () => [], probeAgent: async () => ({ ok: true }),
+  trustAgent: async () => ({ ok: true }), removeAgent: async () => ({ ok: true }),
+  addAgent: async () => ({}), enqueue: async () => true, manifest: async () => [],
+  send: async () => [], collect: async () => ({ proposals: [], comments: [] }),
+  runs: async () => [], commit: async () => ({ ok: true, text: "" }),
+  ledger: async () => ({ ok: true, verdicts: [] }), reply: async () => "",
+  searchLedger: async () => [],
+  files: {
+    scan: async () => [], search: async () => [], page: async () => [], sort: async () => [],
+    copy: async () => ({ ok: true }), move: async () => ({ ok: true }),
+    trash: async () => ({ ok: true }), trashViaHome: async () => ({ ok: true }),
+    link: async () => ({ ok: true }), createDirectory: async () => ({ ok: true }),
+    uniqueName: async () => "", admits: async () => true, searchDirectories: async () => [],
+  },
+  displayProfile: async () => ({ refreshHz: 60, scaleFactor: 1, css: {} }),
+  onDisplayChange: () => {}, onCloseRequest: () => () => {},
+};`;

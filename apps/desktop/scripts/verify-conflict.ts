@@ -11,7 +11,7 @@
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { launchBrowser } from "./browser.ts";
+import { BRIDGE_STUB, launchBrowser } from "./browser.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -41,7 +41,8 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 // author chooses. The old reload-then-save pair remains as a tripwire.
 await page.addInitScript(`
   window.__calls = [];
-  window.refrain = {
+  ${BRIDGE_STUB}
+  Object.assign(window.refrain, {
     openProject: async () => "/p",
     loadProject: async () => [{ id: "01.md", title: "01", text: ${JSON.stringify(MINE)} }],
     loadWorkspace: async () => ({
@@ -80,7 +81,7 @@ await page.addInitScript(`
       search: async () => ({ ok: true, hits: [] }), sort: async () => ({ ok: true }),
       trash: async () => ({ ok: true, outcomes: [] }), trashViaHome: async () => ({ ok: true, path: "" }),
     },
-  };
+  });
 `);
 
 await page.goto(`http://localhost:${server.port}`);

@@ -162,6 +162,15 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-files.ts
 
+      # Every render gate hand-writes a stand-in for the preload bridge. A key
+      # the stub forgets is undefined at call time, so the component takes its
+      # empty branch and the gate passes on a screen no user will ever see —
+      # verify-anchor failed exactly this way. This keeps the stubs level with
+      # the real bridge, and keeps the gate list level with the workflow.
+      - name: every stubbed bridge answers what preload answers
+        working-directory: apps/desktop
+        run: bun scripts/verify-bridge-parity.ts
+
       # The bundled faces must actually render. `document.fonts.check` returns
       # true for any substitutable family, so this compares rendered pixels.
       - name: the bundled typefaces render

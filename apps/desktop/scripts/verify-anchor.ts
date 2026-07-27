@@ -7,7 +7,7 @@
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { launchBrowser } from "./browser.ts";
+import { BRIDGE_STUB, launchBrowser } from "./browser.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const server = Bun.serve({
@@ -33,7 +33,8 @@ const CHAPTERS = [
 const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 await page.addInitScript(`
-  window.refrain = {
+  ${BRIDGE_STUB}
+  Object.assign(window.refrain, {
     openProject: async () => "/p",
     openFile: async () => null,
     createProject: async () => null,
@@ -61,7 +62,7 @@ await page.addInitScript(`
     revertEdit: async (t) => t,
     revertAll: async (t) => t,
     describeEdits: async () => "",
-  };
+  });
   localStorage.setItem("refrain.roots", JSON.stringify(["/p"]));
 `);
 await page.goto(`http://localhost:${server.port}`);

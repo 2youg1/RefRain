@@ -12,7 +12,7 @@
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { launchBrowser } from "./browser.ts";
+import { BRIDGE_STUB, launchBrowser } from "./browser.ts";
 
 const desktop = dirname(dirname(fileURLToPath(import.meta.url)));
 const html = (await Bun.file(join(desktop, "dist", "renderer", "index.html")).text()).replace(
@@ -32,7 +32,8 @@ const server = Bun.serve({
 /** The bridge keeps a growing workspace, so a created chapter can be seen. */
 const bridge = `
 window.__created = [];
-window.refrain = {
+${BRIDGE_STUB}
+Object.assign(window.refrain, {
   openProject: async () => "/work",
   openFile: async () => null,
   createProject: async () => null,
@@ -55,7 +56,7 @@ window.refrain = {
   commit: async () => ({ ok: true, text: "" }), ledger: async () => [], reply: async () => "",
   displayProfile: async () => ({ refreshHz: 60, scaleFactor: 1, css: {} }),
   onDisplayChange: () => {}, onCloseRequest: () => () => {}, fonts: async () => [],
-};`;
+});`;
 
 const failures: string[] = [];
 const browser = await launchBrowser();

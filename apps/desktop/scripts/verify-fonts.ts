@@ -10,7 +10,7 @@
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { launchBrowser } from "./browser.ts";
+import { BRIDGE_STUB, launchBrowser } from "./browser.ts";
 
 const desktop = dirname(dirname(fileURLToPath(import.meta.url)));
 const html = (await Bun.file(join(desktop, "dist", "renderer", "index.html")).text()).replace(
@@ -29,7 +29,8 @@ const server = Bun.serve({
 
 const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-await page.addInitScript(`window.refrain = {
+await page.addInitScript(`${BRIDGE_STUB}
+Object.assign(window.refrain, {
   openProject: async () => "/w", openFile: async () => null, createProject: async () => null,
   pathFor: () => "", resolveDrop: async () => null, fullscreen: async () => true,
   loadProject: async () => [], saveChapter: async () => ({ ok: true, edits: [] }),
@@ -45,7 +46,7 @@ await page.addInitScript(`window.refrain = {
   onDisplayChange: () => {}, onCloseRequest: () => () => {},
   fonts: async () => ["Probe Serif One", "Probe Sans Two"],
   systemFonts: async () => ["Probe Serif One", "Probe Sans Two"],
-};`);
+});`);
 await page.goto(`http://localhost:${server.port}`);
 await page.waitForTimeout(400);
 

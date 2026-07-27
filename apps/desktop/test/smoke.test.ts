@@ -62,7 +62,22 @@ test("the release publishes one Windows x64 installer", () => {
   expect(workflow).not.toContain("target: mac-x64");
   expect(workflow).toContain("expected 1 release file");
   expect(workflow.match(/softprops\/action-gh-release/g)).toHaveLength(1);
-  expect(workflow).toContain(`RefRain ${desktopPackage.version} is available`);
+
+  /*
+   * The notes used to be pasted into this workflow, and this test asserted the
+   * version appeared there — which is why it caught nothing when the workflow
+   * announced 0.1.5 during a 0.1.6 tag: the literal and package.json were
+   * updated by different hands. ROADMAP.md is the authority now, so the
+   * assertions moved to the two things that can still drift: the workflow must
+   * generate rather than paste, and ROADMAP must describe the version being
+   * shipped.
+   */
+  expect(workflow).toContain("release-notes.ts");
+  expect(workflow).toContain("body_path:");
+  expect(workflow).not.toMatch(/RefRain \d+\.\d+\.\d+ is available/);
+
+  const roadmap = readFileSync(join(here, "..", "..", "..", "ROADMAP.md"), "utf8");
+  expect(roadmap).toContain(`## Shipped — v${desktopPackage.version}`);
 });
 
 /**

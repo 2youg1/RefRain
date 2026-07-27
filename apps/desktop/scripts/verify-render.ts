@@ -4,7 +4,7 @@
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { launchBrowser } from "./browser.ts";
+import { BRIDGE_STUB, launchBrowser } from "./browser.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const html = (await Bun.file(join(root, "dist", "renderer", "index.html")).text()).replace(
@@ -23,14 +23,15 @@ const server = Bun.serve({
 
 const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-await page.addInitScript(`window.refrain = {
+await page.addInitScript(`${BRIDGE_STUB}
+Object.assign(window.refrain, {
   openProject: async () => "/p", loadProject: async () => [{ id: "01.md", title: "01", text: "黑暗中有人问。\\n\\n声音很熟，熟到她握剑的手松了半分。她想起十年前那个雨夜，那时他也是这样开口的。\\n\\n剑尖垂下去，抵住青石板。" }],
   createProject: async () => null, pathFor: () => "", resolveDrop: async () => null,
   fullscreen: async () => true, onCloseRequest: () => () => {}, saveChapter: async () => ({ ok: true, edits: [] }), listAgents: async () => [],
   addAgent: async () => ({}), enqueue: async () => true, manifest: async () => [], send: async () => [],
   collect: async () => ({ proposals: [], comments: [] }), runs: async () => [],
   commit: async () => ({ ok: true, text: "" }), ledger: async () => [], reply: async () => "",
-};`);
+});`);
 await page.goto(`http://localhost:${server.port}`);
 await page.waitForTimeout(400);
 await page.evaluate(() => document.querySelector<HTMLElement>(".actions .primary")?.click());

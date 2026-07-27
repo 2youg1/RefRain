@@ -1,6 +1,6 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { launchBrowser } from "./browser.ts";
+import { BRIDGE_STUB, launchBrowser } from "./browser.ts";
 
 const desktop = dirname(dirname(fileURLToPath(import.meta.url)));
 const html = (await Bun.file(join(desktop, "dist", "renderer", "index.html")).text()).replace(
@@ -28,7 +28,8 @@ await page.addInitScript(`
   let queued = false;
   let sent = false;
   let reads = 0;
-  window.refrain = {
+  ${BRIDGE_STUB}
+  Object.assign(window.refrain, {
     openProject: async () => "/work",
     openFile: async () => null,
     createProject: async () => null,
@@ -79,7 +80,7 @@ await page.addInitScript(`
       trash: async () => ({ ok: true, outcomes: [] }),
       trashViaHome: async () => ({ ok: true, path: "" }),
     },
-  };
+  });
 `);
 
 try {
