@@ -105,7 +105,7 @@ const bridge = `
         "--motion-slow": "96.970ms",
       },
     }),
-    onDisplayChange: () => () => {},
+    onDisplayChange: () => () => {}, onCloseRequest: () => () => {},
   };
   localStorage.setItem("refrain.roots", JSON.stringify(["/home/author/novel"]));
 `;

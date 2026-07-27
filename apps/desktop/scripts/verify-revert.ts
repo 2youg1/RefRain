@@ -52,6 +52,7 @@ await page.addInitScript(`
     pathFor: () => "",
     resolveDrop: async () => null,
     fullscreen: async () => true,
+    onCloseRequest: () => () => {},
     systemFonts: async () => [],
     openProjectUrl: async () => true,
     listAgents: async () => [],

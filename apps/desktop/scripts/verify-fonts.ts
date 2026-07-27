@@ -42,7 +42,7 @@ await page.addInitScript(`window.refrain = {
   collect: async () => ({ proposals: [], comments: [] }),
   commit: async () => ({ ok: true, text: "" }), ledger: async () => [], reply: async () => "",
   displayProfile: async () => ({ refreshHz: 60, scaleFactor: 1, css: {} }),
-  onDisplayChanged: () => {},
+  onDisplayChange: () => {}, onCloseRequest: () => () => {},
   fonts: async () => ["Probe Serif One", "Probe Sans Two"],
   systemFonts: async () => ["Probe Serif One", "Probe Sans Two"],
 };`);

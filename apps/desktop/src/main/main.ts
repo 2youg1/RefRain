@@ -104,6 +104,40 @@ const createWindow = (): BrowserWindow => {
   window.webContents.once("did-finish-load", announceDisplay);
   screen.on("display-metrics-changed", announceDisplay);
 
+  /*
+   * The window asks the renderer to write before it goes.
+   *
+   * Saving happened on Ctrl+S and on a chapter switch, and nowhere else, so
+   * finishing a paragraph and closing the window — the most ordinary sequence
+   * in a writing application — lost it in silence. `before-quit` only closed
+   * the ledger database; nothing wrote the manuscript.
+   *
+   * The close is held rather than cancelled: the renderer answers on its own
+   * token, and a renderer that never answers still gets three seconds before
+   * the window leaves, because a hung save must not make the application
+   * unclosable.
+   */
+  let closing = false;
+  window.on("close", (event) => {
+    if (closing || window.webContents.isDestroyed()) return;
+    event.preventDefault();
+    closing = true;
+
+    const token = Date.now();
+    const release = () => {
+      ipcMain.removeListener("window:close-ready", answered);
+      clearTimeout(deadline);
+      window.destroy();
+    };
+    const answered = (_event: unknown, replied: number) => {
+      if (replied === token) release();
+    };
+    const deadline = setTimeout(release, 3_000);
+
+    ipcMain.on("window:close-ready", answered);
+    window.webContents.send("window:closing", token);
+  });
+
   if (useDevServer) window.loadURL("http://localhost:5173");
   else window.loadFile(join(bundleDir(), "..", "renderer", "index.html"));
 

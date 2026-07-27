@@ -53,6 +53,7 @@ await page.addInitScript(`
     }),
     createProject: async () => null, pathFor: () => "", resolveDrop: async () => null,
     fullscreen: async () => true,
+    onCloseRequest: () => () => {},
     saveChapter: async (root, title, text) => {
       window.__calls.push(["save", title, text]);
       await new Promise((resolve) => setTimeout(resolve, 200));
