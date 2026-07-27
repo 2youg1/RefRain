@@ -277,7 +277,9 @@ const preserveInvalidState = (source: string): string | undefined => {
       }
     }
     try {
-      const file = openSync(evidence, constants.O_RDONLY);
+      // O_RDWR, not O_RDONLY: Windows refuses to flush a handle that carries no
+      // write access, and this evidence file must be durable before the rename.
+      const file = openSync(evidence, constants.O_RDWR);
       try {
         fsyncSync(file);
       } finally {

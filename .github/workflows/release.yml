@@ -78,14 +78,14 @@ jobs:
       - name: Unix-only constructs stay off the Windows target
         run: bun run verify:unix-guards
 
+      - name: durable writes hold a writable descriptor
+        run: bun run verify:durable-writes
+
       - name: Bytes the author did not edit come back unchanged
         run: bun run verify:roundtrip
 
       - name: Saving a long manuscript costs what the change costs
         run: bun run verify:scale
-
-      - name: No outbound request reaches the application process
-        run: bun run verify:no-network
 
       - name: Delete goes to the trash, everywhere
         run: bun run verify:trash-only
@@ -113,6 +113,9 @@ jobs:
 
       - name: Generated desktop bytes match the reviewed manifest
         run: git diff --exit-code -- apps/desktop/build/desktop-manifest.json
+
+      - name: No outbound request reaches the built application
+        run: bun run verify:no-network
 
       # A release must not ship a main process that names a Bun global: it is
       # bundled for Node, so the reference is a crash on the user's machine
