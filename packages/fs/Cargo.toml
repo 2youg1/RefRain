@@ -37,10 +37,17 @@ napi-bindings = []
 [build-dependencies]
 napi-build = "2"
 
+[[example]]
+name = "panic-boundary-addon"
+path = "test/panic-boundary-addon.rs"
+crate-type = ["cdylib"]
+
 [profile.release]
 # The file layer is the competitive surface. LTO across the whole graph and a
 # single codegen unit cost build time and buy call-path inlining.
 lto = "fat"
 codegen-units = 1
-panic = "abort"
+# napi-rs catches an unwinding panic and turns it into a JavaScript error. Abort
+# would terminate Electron before that boundary can run.
+panic = "unwind"
 strip = true

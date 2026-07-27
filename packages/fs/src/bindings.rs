@@ -134,7 +134,7 @@ pub struct Workspace {
 
 #[napi]
 impl Workspace {
-    #[napi(constructor)]
+    #[napi(constructor, catch_unwind)]
     pub fn new(roots: Vec<String>, options: Option<JsScanOptions>) -> Self {
         let roots: Vec<PathBuf> = roots.into_iter().map(PathBuf::from).collect();
         Self {
@@ -147,20 +147,20 @@ impl Workspace {
 
     /// Walk the roots and replace the index. Returns the entry count so a caller
     /// can report progress without pulling the whole index across.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn scan(&mut self) -> u32 {
         self.entries = index::scan(&self.roots, &self.options);
         self.entries.len() as u32
     }
 
-    #[napi(getter)]
+    #[napi(getter, catch_unwind)]
     pub fn size(&self) -> u32 {
         self.entries.len() as u32
     }
 
     /// A page of the index. The tree view is virtualised, so it asks for the
     /// rows it can actually show rather than the whole workspace.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn page(&self, offset: u32, limit: u32) -> Vec<JsEntry> {
         self.entries
             .iter()
@@ -171,7 +171,7 @@ impl Workspace {
     }
 
     /// Rank the index against a query.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn search(&self, query: String, limit: u32) -> Vec<JsHit> {
         search::matches(&self.entries, &query, limit as usize)
             .into_iter()
@@ -184,7 +184,7 @@ impl Workspace {
     }
 
     /// Directories only, for a move destination picker.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn search_directories(&self, query: String, limit: u32) -> Vec<JsHit> {
         search::directories(&self.entries, &query, limit as usize)
             .into_iter()
@@ -197,7 +197,7 @@ impl Workspace {
     }
 
     /// Reorder the held index in place.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn sort(&mut self, order: String, descending: bool) -> Result<()> {
         let order = match order.as_str() {
             "name" => Order::Name,
@@ -221,7 +221,7 @@ impl Workspace {
     }
 
     /// Move or rename.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn move_entry(&self, from: String, to: String, replace: Option<bool>) -> Result<String> {
         ops::move_to(
             &self.guard,
@@ -233,7 +233,7 @@ impl Workspace {
         .map_err(op_error)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn copy_entry(&self, from: String, to: String, replace: Option<bool>) -> Result<String> {
         ops::copy(
             &self.guard,
@@ -247,7 +247,7 @@ impl Workspace {
 
     /// Delete to the system trash. There is no permanent variant on this object;
     /// a writer's misclick must stay recoverable through the operating system.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn trash(&self, target: String) -> Result<String> {
         ops::trash(&self.guard, &PathBuf::from(target))
             .map(|path| path.display().to_string())
@@ -259,7 +259,7 @@ impl Workspace {
     /// The escape hatch when `trash` returns `NO_TRASH_HERE`. Still not a
     /// permanent delete: the file is staged beside the home directory and
     /// trashed from there, so the operating system can restore it.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn trash_via_home(&self, target: String) -> Result<String> {
         ops::trash_via_home(&self.guard, &PathBuf::from(target))
             .map(|path| path.display().to_string())
@@ -268,7 +268,7 @@ impl Workspace {
 
     /// Trash several paths, reporting each outcome separately: one locked file
     /// must not abandon the rest of the selection.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn trash_all(&self, targets: Vec<String>) -> Vec<JsTrashOutcome> {
         let paths: Vec<PathBuf> = targets.into_iter().map(PathBuf::from).collect();
         ops::trash_all(&self.guard, &paths)
@@ -294,7 +294,7 @@ impl Workspace {
             .collect()
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn link(&self, target: String, link_path: String) -> Result<String> {
         ops::link(
             &self.guard,
@@ -305,7 +305,7 @@ impl Workspace {
         .map_err(op_error)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn create_directory(&self, path: String) -> Result<String> {
         ops::create_directory(&self.guard, &PathBuf::from(path))
             .map(|path| path.display().to_string())
@@ -313,7 +313,7 @@ impl Workspace {
     }
 
     /// A name that does not collide, for a paste or a duplicate.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn unique_name(&self, desired: String) -> String {
         ops::unique_name(&PathBuf::from(desired))
             .display()
@@ -322,7 +322,7 @@ impl Workspace {
 
     /// Check a path without touching the disk. The interface calls this to grey
     /// out a destination before the user commits to it.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn admits(&self, path: String) -> bool {
         self.guard.admit(&PathBuf::from(path)).is_ok()
     }
