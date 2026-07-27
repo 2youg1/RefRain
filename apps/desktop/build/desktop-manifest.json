@@ -8,13 +8,13 @@
     },
     {
       "path": "dist/main/main.cjs",
-      "bytes": 153052,
-      "sha256": "fab7447cb1c245707885e9dad6e2ef75d5f0631ecaf5f6ef7d186312ef5fbe07"
+      "bytes": 154704,
+      "sha256": "c8710325107eac4114be088d9e100d26775f286f7db06a91ae27902215ea92f1"
     },
     {
       "path": "dist/main/preload.cjs",
-      "bytes": 6482,
-      "sha256": "823c57cde42c6a72de5ee56bfac0c154e74d9b87ed3c683493e00ff3ad57baae"
+      "bytes": 6738,
+      "sha256": "92d04320edb3c84d45fc51117773c33a86ab9a4fc989fe8b231a15d3e89e534a"
     },
     {
       "path": "dist/renderer/assets/AnticDidone-Bk4I4Inl.woff2",
