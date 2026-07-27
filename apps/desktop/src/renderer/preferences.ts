@@ -13,11 +13,11 @@ import { DEFAULTS, manuscriptStack, type TypeSettings } from "./typography.ts";
  */
 
 /**
- * Seven themes, each belonging to a time of day (see themes.css).
+ * Eight themes, each belonging to a time of day (see themes.css).
  *
  * Day and night are not one palette and its inverse: inverting a day palette
  * gives a screen turned inside out, not a page under a lamp. So the five day
- * themes and the two night themes are drawn separately, and switching between
+ * themes and the three night themes are drawn separately, and switching between
  * them is a change of hour rather than a change of polarity.
  */
 export type Theme = "tou" | "kasumi" | "kare" | "hayashi" | "seiji" | "sumi" | "yu" | "shigure";

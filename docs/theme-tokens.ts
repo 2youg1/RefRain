@@ -1,11 +1,11 @@
 /**
  * Generate `apps/desktop/src/renderer/themes.css`.
  *
- * Seven themes, each defined by four anchor colours. Everything else — the
+ * Eight themes, each defined by four anchor colours. Everything else — the
  * raised and sunken surfaces, the rules, the whole rail, the four semantic
  * roles — is derived here, so adding a theme is four colours rather than
  * forty, and a relation like "the rail follows the paper" cannot hold in six
- * themes and quietly break in the seventh.
+ * themes and quietly break in the eighth.
  *
  * Run it after changing an anchor:
  *
@@ -53,7 +53,7 @@ interface Theme {
  * Day and night are not one palette and its inverse.
  *
  * A theme belongs to a time and is drawn for it. The five day themes and the
- * two night themes each stand on their own; inverting a day palette gives you
+ * three night themes each stand on their own; inverting a day palette gives you
  * a screen turned inside out, not a page under a lamp.
  */
 const THEMES: readonly Theme[] = [
@@ -63,7 +63,7 @@ const THEMES: readonly Theme[] = [
     mode: "day",
     isDefault: true,
     lineage: "北斎《神奈川沖浪裏》",
-    why: "工件实测。暖纸配群青墨，冷暖对撞；金取自浪尖的落款印泥，作第二强调。七套里唯一敢把深蓝当正文墨色的一套。",
+    why: "工件实测。暖纸配群青墨，冷暖对撞；金取自浪尖的落款印泥，作第二强调。八套里唯一敢把深蓝当正文墨色的一套。",
     source: "纸 #f3eddf／墨 #19345c／印 #ca4d23／副 #c39d32，自 2026-07-25 的工件像素采样",
     paper: [0.947, 0.0197, 87.5],
     ink: [0.326, 0.0786, 258.2],
