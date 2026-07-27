@@ -216,6 +216,9 @@ const parseChapter = (
 /** Neither the Source Backup nor the application's own state is manuscript. */
 const RESERVED_DIR = new Set([SOURCE_BACKUP_DIR, ".refrain"]);
 
+/** A chapter number is a number: 10 follows 9 rather than 1. */
+const FILE_ORDER = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
 const isMarkdown = (name: string): boolean => MARKDOWN.has(extname(name).toLowerCase());
 
 /**
@@ -235,9 +238,9 @@ const collect = (root: Root, dir: string, depth: number, into: Chapter[]): void 
     return;
   }
 
-  // Sorted so `chapter-2` precedes `chapter-10` never happens by accident of
-  // filesystem order; the rail's sequence is the writer's sequence.
-  for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
+  // Numeric collation keeps chapter-2 before chapter-10 regardless of the
+  // filesystem's enumeration order; the rail's sequence is the writer's sequence.
+  for (const entry of [...entries].sort((a, b) => FILE_ORDER.compare(a.name, b.name))) {
     const name = entry.name;
     if (name.startsWith(".") && RESERVED_DIR.has(name.toLowerCase())) continue;
     const path = join(dir, name);
