@@ -27,7 +27,7 @@ await page.addInitScript(`
   Object.assign(window.refrain, {
     openProject: async () => "/p", openFile: async () => null, createProject: async () => null,
     pathFor: () => "/p", resolveDrop: async (p) => p, fullscreen: async () => true, onCloseRequest: () => () => {},
-    loadProject: async () => [], loadWorkspace: async () => [],
+    loadProject: async () => [], loadWorkspace: async () => ({ roots: [], chapters: [] }),
     saveChapter: async () => ({ ok: true, edits: [] }), systemFonts: async () => [], listAgents: async () => [],
     probeAgent: async () => ({ ok: true }), removeAgent: async () => true, addAgent: async () => ({}),
     enqueue: async () => true, manifest: async () => [], send: async () => [],

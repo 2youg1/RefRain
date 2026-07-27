@@ -197,6 +197,7 @@ const stubs = readdirSync(SCRIPTS)
     return [
       {
         name,
+        source,
         keys: new Set([...inheritedKeys, ...keysOf(source, literal)]),
         files:
           ownFiles === undefined
@@ -273,6 +274,42 @@ if (uncalled.length > 0) {
     `FAIL  ${uncalled.length} gate(s) exist but no workflow runs them: ${uncalled.join(", ")}`,
   );
   console.error("      Wire it into .github/workflows, or delete it.");
+  process.exit(1);
+}
+
+/*
+ * Parity of keys is not parity of answers.
+ *
+ * `loadWorkspace` returned a bare chapter array before multi-Root, and two
+ * stubs kept answering that way long after the real bridge began returning
+ * `{ roots, chapters }`. One gate crashed the page it was driving — reported
+ * as a product defect — and the other passed, because it never reached the
+ * manuscript and so was covering the rot rather than finding it.
+ *
+ * Keys cannot catch this: the key was present in both. The shape is what
+ * drifted, so the shape is what is asserted, for the bridge methods whose
+ * answers the interface destructures.
+ */
+const SHAPES: Record<string, RegExp> = {
+  loadWorkspace: /\{\s*roots\s*:|\(\{\s*roots/,
+};
+
+const wrongShape = stubs.flatMap(({ name, source }) =>
+  Object.entries(SHAPES).flatMap(([method, shape]) => {
+    const at = source.indexOf(`${method}:`);
+    if (at === -1) return [];
+    // The answer is whatever the stub's arrow function returns, up to the next
+    // top-level key. Long enough to hold an object literal, short enough not to
+    // run into an unrelated method that happens to match.
+    const answer = source.slice(at, at + 400);
+    return shape.test(answer) ? [] : [`${name}: ${method} does not answer { roots, … }`];
+  }),
+);
+
+if (wrongShape.length > 0) {
+  console.error(`FAIL  ${wrongShape.length} stub answer(s) have drifted from the real bridge:`);
+  for (const line of wrongShape) console.error(`  ${line}`);
+  console.error("      A stub that answers the wrong shape drives a screen no user will see.");
   process.exit(1);
 }
 
