@@ -40,7 +40,7 @@ import type { Workspace as FileWorkspace } from "@refrain/fs";
 import type { Dialog, IpcMain } from "electron";
 import { parseCommandLine } from "./command-line.ts";
 import { registerFileHandlers } from "./files-ipc.ts";
-import { createIpcAuthority } from "./ipc-auth.ts";
+import { createIpcAuthority, type IpcAuthority } from "./ipc-auth.ts";
 import { probeCommand } from "./probe.ts";
 import { type RosterEntry, readRoster, writeRoster } from "./roster.ts";
 
@@ -245,7 +245,7 @@ const advanceChapter = (workbench: Workbench, chapterId: string, text: string, c
     cause,
   );
 
-export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
+export const registerHandlers = (ipc: IpcMain, dialog: Dialog): IpcAuthority => {
   const handlers = createIpcAuthority(ipc);
 
   handlers.handle("project:open", async () => {
@@ -774,4 +774,5 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
   // group when the platform binary is missing, and that rule is easier to hold
   // where it is the only rule in the file.
   registerFileHandlers(handlers.handleRoot, filesFor, (root) => openWorkbench(root).fileError);
+  return handlers;
 };

@@ -137,13 +137,13 @@ test("load-workspace rejects malformed root lists without partially admitting th
   try {
     await expect(
       invoke(handlers, trustedEvent, "project:load-workspace", [root, 7]),
-    ).rejects.toThrow(/absolute path strings/i);
+    ).rejects.toThrow(/argument.*string/i);
     await expect(
       invoke(handlers, trustedEvent, "project:save", root, "new.md", "not authorised"),
     ).rejects.toThrow(/opened root/i);
     await expect(
       invoke(handlers, trustedEvent, "project:load-workspace", ["relative/root"]),
-    ).rejects.toThrow(/absolute path strings/i);
+    ).rejects.toThrow(/argument.*absolute path/i);
   } finally {
     closeWorkbenches();
     rmSync(root, { recursive: true, force: true });
@@ -175,10 +175,79 @@ test("path pickers and the legacy project:load channel do not admit a root", asy
   }
 });
 
-test("both handler modules register exclusively through the shared authority", () => {
+test("payloads are validated before a handler can act", async () => {
+  let opened = 0;
+  const handlers = collectHandlers({
+    showOpenDialog: async () => {
+      opened += 1;
+      return { canceled: true, filePaths: [] };
+    },
+  });
+
+  await expect(invoke(handlers, trustedEvent, "project:open", "surplus")).rejects.toThrow(
+    /argument/i,
+  );
+  expect(opened).toBe(0);
+
+  await expect(
+    invoke(handlers, trustedEvent, "review:slice", { id: "not-a-proposal" }),
+  ).rejects.toThrow(/argument/i);
+});
+
+test("a malformed Review Task never enters the Agent Host", async () => {
+  const handlers = collectHandlers();
+  const root = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-task-"));
+  try {
+    await invoke(handlers, trustedEvent, "project:load-workspace", [root]);
+
+    await expect(
+      invoke(handlers, trustedEvent, "agent:enqueue", root, {
+        id: "task",
+        agentId: 7,
+        baseline: "revision",
+        prompt: "read",
+        contextScope: [],
+        editScopes: [],
+      }),
+    ).rejects.toThrow(/argument/i);
+    await expect(invoke(handlers, trustedEvent, "agent:manifest", root)).resolves.toEqual([]);
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a file path outside its opened Root is rejected before the native layer", async () => {
+  const handlers = collectHandlers();
+  const root = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-path-"));
+  try {
+    await invoke(handlers, trustedEvent, "project:load-workspace", [root]);
+
+    await expect(
+      invoke(
+        handlers,
+        trustedEvent,
+        "files:move",
+        root,
+        join(root, "..", "outside.md"),
+        join(root, "inside.md"),
+        false,
+      ),
+    ).rejects.toThrow(/argument|Root/i);
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("every invoke handler registers exclusively through the shared authority", () => {
   const here = dirname(fileURLToPath(import.meta.url));
-  for (const name of ["ipc.ts", "files-ipc.ts"]) {
+  for (const name of ["ipc.ts", "files-ipc.ts", "main.ts"]) {
     const source = readFileSync(join(here, "../src/main", name), "utf8");
-    expect(source).not.toMatch(/\bipc\.handle\s*\(/);
+    expect(source).not.toMatch(/\bipc(?:Main)?\.handle\s*\(/);
+    if (name === "main.ts") {
+      expect(source).toContain('handlers.handle("window:fullscreen"');
+      expect(source).toContain('handlers.handle("display:profile"');
+    }
   }
 });

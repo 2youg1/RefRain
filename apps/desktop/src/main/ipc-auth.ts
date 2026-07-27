@@ -1,5 +1,5 @@
-import { isAbsolute, normalize } from "node:path";
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
+import { type IpcArgs, type IpcChannel, parseIpcArgs, type RootIpcChannel } from "./ipc-payload.ts";
 
 type InvokeHandler<Args extends unknown[], Result> = (
   event: IpcMainInvokeEvent,
@@ -7,12 +7,15 @@ type InvokeHandler<Args extends unknown[], Result> = (
 ) => Result | Promise<Result>;
 
 export interface IpcAuthority {
-  handle<Args extends unknown[], Result>(channel: string, body: InvokeHandler<Args, Result>): void;
-  handleRoot<Rest extends unknown[], Result>(
-    channel: string,
-    body: InvokeHandler<[root: string, ...rest: Rest], Result>,
+  handle<C extends IpcChannel, Result>(channel: C, body: InvokeHandler<IpcArgs<C>, Result>): void;
+  handleRoot<C extends RootIpcChannel, Result>(
+    channel: C,
+    body: InvokeHandler<IpcArgs<C>, Result>,
   ): void;
-  handleOpenRoots<Result>(channel: string, body: InvokeHandler<[roots: string[]], Result>): void;
+  handleOpenRoots<Result>(
+    channel: "project:load-workspace",
+    body: InvokeHandler<IpcArgs<"project:load-workspace">, Result>,
+  ): void;
 }
 
 const refuse = (channel: string, reason: string): never => {
@@ -33,74 +36,54 @@ const assertMainFrame = (event: IpcMainInvokeEvent, channel: string): void => {
   if (frame !== sender.mainFrame) refuse(channel, "sender is not the live main frame");
 };
 
-const rootPath = (value: unknown, channel: string): string => {
-  if (typeof value !== "string") return refuse(channel, "root must be an absolute path string");
-  if (!isAbsolute(value)) return refuse(channel, "root must be an absolute path string");
-  return normalize(value);
-};
-
-const rootList = (value: unknown, channel: string): string[] => {
-  if (!Array.isArray(value))
-    return refuse(channel, "roots must be an array of absolute path strings");
-
-  const roots: string[] = [];
-  const seen = new Set<string>();
-  for (const candidate of value) {
-    if (typeof candidate !== "string" || !isAbsolute(candidate))
-      return refuse(channel, "roots must be an array of absolute path strings");
-    const root = normalize(candidate);
-    if (seen.has(root)) continue;
-    seen.add(root);
-    roots.push(root);
-  }
-  return roots;
-};
-
 /**
  * The only authority allowed to register RefRain invoke handlers.
  *
- * Main-frame admission and the opened-root set live in the same closure, so the
- * file module cannot drift from the editor module. Before this wrapper,
- * `files:scan` accepted a temp root the workspace had never opened; every new
- * channel inherited that capability unless its author remembered a check.
+ * Main-frame admission, payload parsing and the opened-root set live in one
+ * closure. Before this wrapper, `files:scan` accepted a temp Root the workspace
+ * had never opened, `agent:enqueue` accepted a task whose agent id was a number,
+ * and every new channel inherited both capabilities unless its author happened
+ * to remember local checks.
  */
 export const createIpcAuthority = (ipc: IpcMain): IpcAuthority => {
   const openedRoots = new Set<string>();
 
-  const handle = <Args extends unknown[], Result>(
-    channel: string,
-    body: InvokeHandler<Args, Result>,
+  const handle = <C extends IpcChannel, Result>(
+    channel: C,
+    body: InvokeHandler<IpcArgs<C>, Result>,
   ): void => {
-    ipc.handle(channel, async (event, ...args: unknown[]) => {
+    ipc.handle(channel, async (event, ...values: unknown[]) => {
       assertMainFrame(event, channel);
-      return await body(event, ...(args as Args));
+      const args = parseIpcArgs(channel, values);
+      return await body(event, ...args);
     });
   };
 
-  const handleRoot = <Rest extends unknown[], Result>(
-    channel: string,
-    body: InvokeHandler<[root: string, ...rest: Rest], Result>,
+  const handleRoot = <C extends RootIpcChannel, Result>(
+    channel: C,
+    body: InvokeHandler<IpcArgs<C>, Result>,
   ): void => {
-    handle<[root: unknown, ...rest: Rest], Result>(channel, (event, candidate, ...rest) => {
-      const root = rootPath(candidate, channel);
+    handle(channel, (event, ...args) => {
+      const root = args[0];
+      if (typeof root !== "string") return refuse(channel, "root parser returned a non-string");
       if (!openedRoots.has(root)) refuse(channel, `root is not an opened root: ${root}`);
-      return body(event, root, ...rest);
+      return body(event, ...args);
     });
   };
 
   const handleOpenRoots = <Result>(
-    channel: string,
-    body: InvokeHandler<[roots: string[]], Result>,
+    channel: "project:load-workspace",
+    body: InvokeHandler<IpcArgs<"project:load-workspace">, Result>,
   ): void => {
-    handle<[roots: unknown], Result>(channel, async (event, candidate) => {
-      const roots = rootList(candidate, channel);
-      const result = await body(event, roots);
+    handle(channel, async (event, roots) => {
+      const unique = [...new Set(roots)];
+      const result = await body(event, unique);
       // Open/create/drop only choose candidates in the real renderer flow. The
-      // workspace load is the first operation that proves all roots can be
+      // workspace load is the first operation that proves all Roots can be
       // described; replacing after it returns both avoids half-granted
       // permissions and revokes a Root the author has removed.
       openedRoots.clear();
-      for (const root of roots) openedRoots.add(root);
+      for (const root of unique) openedRoots.add(root);
       return result;
     });
   };
