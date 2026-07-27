@@ -102,3 +102,32 @@ console.log("--font-line  :", report.fontLineVar || "(unset)");
 
 await browser.close();
 server.stop();
+
+/**
+ * This printed "NO  <-- CJK falls back" and exited zero, so the bundled serif
+ * could stop loading entirely — every Chinese glyph in the manuscript rendered
+ * in whatever the system happened to offer — without failing a build. The
+ * fingerprint comparison below was already here; only the exit was missing.
+ */
+const fail = (why: string): never => {
+  console.error(`FAIL  ${why}`);
+  process.exit(1);
+};
+
+if (!report.chironLoaded)
+  fail(
+    "Chiron Sung HK renders 剑 identically to monospace, so the bundled serif is not loading " +
+      "and CJK text falls back to a system face",
+  );
+
+// Advance width deliberately proves nothing here: this file already notes that
+// both CJK faces are full-width, so 400px against 400px is what a correct
+// render looks like. The glyph fingerprint above is the judgement.
+
+if (!report.manuscriptFamily.includes("Chiron Sung HK"))
+  fail(`the manuscript's font stack does not name Chiron Sung HK: ${report.manuscriptFamily}`);
+
+if (!report.fontLineVar.trim())
+  fail("--font-line is unset, so leading falls back to a browser default");
+
+console.log("PASS  the bundled serif loads and the manuscript uses it");

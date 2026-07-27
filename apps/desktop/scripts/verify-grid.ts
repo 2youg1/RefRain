@@ -30,26 +30,86 @@ const LONG =
 
 const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+// The stub answers `loadWorkspace`, which is what the renderer calls. It used
+// to answer only the older `loadProject`, so the workspace came back empty,
+// no paragraph was ever rendered, and the gate measured nothing — while
+// exiting zero.
 await page.addInitScript(`window.refrain = {
-  openProject: async () => "/p",
-  loadProject: async () => [{ id: "01.md", title: "01", text: ${JSON.stringify(LONG)} }],
-  createProject: async () => null, pathFor: () => "", resolveDrop: async () => null,
-  fullscreen: async () => true, onCloseRequest: () => () => {}, saveChapter: async () => ({ ok: true, edits: [] }), listAgents: async () => [],
-  addAgent: async () => ({}), enqueue: async () => true, manifest: async () => [], send: async () => [],
-  collect: async () => ({ proposals: [], comments: [] }), runs: async () => [],
+  openProject: async () => "/p", openFile: async () => null, createProject: async () => null,
+  pathFor: () => "", resolveDrop: async () => null, fullscreen: async () => true,
+  loadProject: async () => [], saveChapter: async () => ({ ok: true, edits: [] }),
+  loadWorkspace: async (roots) => ({
+    roots: [{ id: "r1", path: roots[0], name: "w", kind: "folder" }],
+    chapters: [{ id: "01.md", title: "01", text: ${JSON.stringify(LONG)},
+      rootId: "r1", root: roots[0], role: "chapter", path: roots[0] + "/01.md" }] }),
+  listAgents: async () => [], addAgent: async () => ({}), enqueue: async () => true,
+  manifest: async () => [], send: async () => [], runs: async () => [],
+  collect: async () => ({ proposals: [], comments: [] }),
   commit: async () => ({ ok: true, text: "" }), ledger: async () => [], reply: async () => "",
+  displayProfile: async () => ({ refreshHz: 60, scaleFactor: 1, css: {} }),
+  onDisplayChange: () => {}, onCloseRequest: () => () => {},
+  fonts: async () => [], systemFonts: async () => [],
 };`);
 await page.goto(`http://localhost:${server.port}`);
 await page.waitForTimeout(400);
-await page.evaluate(() => document.querySelector<HTMLElement>(".actions .primary")?.click());
-await page.waitForTimeout(500);
 
-// Turn the grid on through the interface, the way an author would.
+const openedWorkspace = await page.evaluate(() => {
+  const button = [...document.querySelectorAll<HTMLElement>("button")].find((node) =>
+    /打开文件夹|Open folder/.test(node.textContent ?? ""),
+  );
+  button?.click();
+  return button !== undefined;
+});
+if (!openedWorkspace) {
+  console.error("FAIL  the welcome screen offers no way to open a folder");
+  process.exit(1);
+}
+await page.waitForTimeout(600);
+
+// Turn the grid on through the interface, the way an author would. Typography
+// is a section of Settings; the palette used to carry a second entry straight
+// to it, and this gate silently stopped measuring anything when that duplicate
+// was removed — it printed its verdict and exited zero either way.
 await page.keyboard.press("Control+k");
 await page.waitForTimeout(250);
-await page.getByRole("button", { name: "排版…" }).click();
-await page.waitForTimeout(350);
-await page.getByRole("button", { name: "基线网格" }).click();
+const openedSettings = await page.evaluate(() => {
+  const entry = [...document.querySelectorAll<HTMLElement>("button, li, [role=option]")].find(
+    (node) => /^\s*(设置…|Settings…)(\s|$)/.test(node.textContent ?? ""),
+  );
+  entry?.click();
+  return entry !== undefined;
+});
+if (!openedSettings) {
+  console.error("FAIL  the command palette has no Settings entry to reach typography through");
+  process.exit(1);
+}
+await page.waitForTimeout(450);
+
+const openedTypography = await page.evaluate(() => {
+  const tab = [...document.querySelectorAll<HTMLElement>("button, li, [role=tab]")].find((node) =>
+    /排版|Typography/.test(node.textContent ?? ""),
+  );
+  tab?.click();
+  return tab !== undefined;
+});
+if (!openedTypography) {
+  console.error("FAIL  Settings has no typography section");
+  process.exit(1);
+}
+await page.waitForTimeout(400);
+
+// The switch carries no text of its own; its name is on the aria-label.
+const gridToggled = await page.evaluate(() => {
+  const toggle = [...document.querySelectorAll<HTMLElement>("button[aria-label]")].find((node) =>
+    /基线网格|Baseline grid/.test(node.getAttribute("aria-label") ?? ""),
+  );
+  toggle?.click();
+  return toggle !== undefined;
+});
+if (!gridToggled) {
+  console.error("FAIL  the typography panel offers no baseline-grid control");
+  process.exit(1);
+}
 await page.waitForTimeout(400);
 
 const report = await page.evaluate(() => {
@@ -78,8 +138,22 @@ const report = await page.evaluate(() => {
   ))
     lines.push({ top: rect.top - top, bottom: rect.bottom - top });
 
-  const halfLeading = (lineBox - size * fontLine) / 2;
-  const ruleAt = halfLeading + size * fontLine;
+  /**
+   * Read where the rule is actually drawn, rather than recomputing it here.
+   *
+   * This recomputed `--rule-at` from the other custom properties, which meant
+   * the gate compared its own arithmetic against its own arithmetic: changing
+   * the real declaration to draw the rule straight through the glyphs left it
+   * passing. The stylesheet's computed value is the only witness that answers
+   * the question the gate is asking.
+   */
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:absolute;visibility:hidden;height:var(--rule-at)";
+  paragraph.append(probe);
+  const ruleAt = probe.getBoundingClientRect().height;
+  probe.remove();
+  if (!Number.isFinite(ruleAt) || ruleAt <= 0)
+    return { error: `--rule-at did not resolve to a length, measured ${ruleAt}` };
 
   return {
     size,
@@ -97,18 +171,40 @@ const report = await page.evaluate(() => {
 
 console.log(JSON.stringify(report, null, 2));
 
-if (!("error" in report) && report.lines && report.lines.length >= 2) {
-  const [first, second] = report.lines;
-  console.log("\n--- verdict ---");
-  console.log(`line box            : ${report.lineBox}px`);
-  console.log(`rule drawn at       : ${report.ruleAt}px from each line's top`);
-  console.log(`line 1 glyph bottom : ${first?.bottom}px`);
-  console.log(`line 2 glyph top    : ${second?.top}px`);
-  const gap = (second?.top ?? 0) - (first?.bottom ?? 0);
-  console.log(`gap between lines   : ${Math.round(gap * 10) / 10}px`);
-  const inGap = (report.ruleAt ?? 0) >= (first?.bottom ?? 0);
-  console.log(inGap ? "PASS  the rule sits below the glyphs" : "FAIL  the rule crosses the glyphs");
-}
-
 await browser.close();
 server.stop();
+
+/**
+ * This printed its verdict and exited zero either way, so the rule could cross
+ * the glyphs in every theme and CI stayed green — the gate named the defect it
+ * was watching for and then did not fail on it.
+ */
+const fail = (why: string): never => {
+  console.error(`FAIL  ${why}`);
+  process.exit(1);
+};
+
+if ("error" in report) fail(`the page did not render a paragraph to measure: ${report.error}`);
+if (!report.lines || report.lines.length < 2)
+  fail(
+    `expected the sample paragraph to wrap onto at least two lines, saw ${report.lines?.length ?? 0}`,
+  );
+
+const [first, second] = report.lines as { top: number; bottom: number }[];
+const gap = Math.round((second.top - first.bottom) * 10) / 10;
+const ruleAt = report.ruleAt ?? 0;
+
+console.log("\n--- verdict ---");
+console.log(`line box            : ${report.lineBox}px`);
+console.log(`rule drawn at       : ${ruleAt}px from each line's top`);
+console.log(`line 1 glyph bottom : ${first.bottom}px`);
+console.log(`line 2 glyph top    : ${second.top}px`);
+console.log(`gap between lines   : ${gap}px`);
+
+if (ruleAt < first.bottom)
+  fail(
+    `the baseline rule is drawn ${ruleAt}px down, above the first line's glyph bottom at ` +
+      `${first.bottom}px — it crosses the glyphs`,
+  );
+
+console.log("PASS  the rule sits below the glyphs");
