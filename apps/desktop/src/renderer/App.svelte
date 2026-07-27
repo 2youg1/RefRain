@@ -183,8 +183,8 @@ onMount(() =>
  */
 onMount(() =>
   api().onCloseRequest(async () => {
-    if (composing) return;
-    if (!saved) await save();
+    if (composing) return false;
+    return saved ? true : save();
   }),
 );
 

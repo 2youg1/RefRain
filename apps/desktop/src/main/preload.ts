@@ -121,12 +121,13 @@ const api = {
    * renderer reports back, because only the renderer knows whether the surface
    * holds characters the disk has never seen.
    */
-  onCloseRequest: (listener: () => Promise<void> | void) => {
+  onCloseRequest: (listener: () => Promise<boolean> | boolean) => {
     const wrapped = async (_event: unknown, token: number) => {
       try {
-        await listener();
-      } finally {
-        ipcRenderer.send("window:close-ready", token);
+        const safeToClose = await listener();
+        ipcRenderer.send(safeToClose ? "window:close-ready" : "window:close-cancel", token);
+      } catch {
+        ipcRenderer.send("window:close-cancel", token);
       }
     };
     ipcRenderer.on("window:closing", wrapped);
