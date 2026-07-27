@@ -125,18 +125,50 @@ pub fn move_to(guard: &Guard, from: &Path, to: &Path, replace: bool) -> Outcome 
 
     match fs::rename(&from, &to) {
         Ok(()) => Ok(Done { from, to }),
+        // Only a cross-device rename earns the fallback. `Err(_)` used to catch
+        // everything — a full disk, a permission failure, a vanished parent —
+        // and answer it by copying and then trashing the source, so a failure
+        // that had changed nothing became a move that put the manuscript
+        // somewhere else. ErrorKind::CrossesDevices is the one case a copy can
+        // actually stand in for.
+        Err(error) if error.kind() != io::ErrorKind::CrossesDevices => Err(io(&from, error)),
         Err(_) => {
-            // Cross-device: copy, verify, then trash the source. Trashing rather
-            // than deleting keeps the original recoverable if the copy is wrong
-            // in a way this check cannot see.
             copy_tree(&from, &to)?;
-            trash::delete(&from).map_err(|error| OpError::Io {
-                path: from.display().to_string(),
-                reason: error.to_string(),
-            })?;
+            // The comment here used to claim the copy was verified. It was not.
+            // A truncated copy followed by a trashed source is the one outcome
+            // this crate exists to prevent, so the claim is now a check: sizes
+            // must agree before anything is removed, and when they do not the
+            // source stays and the destination is left as evidence.
+            verify_copy(&from, &to)?;
+            trash::delete(&from).map_err(|error| classify_trash_failure(&from, &error))?;
             Ok(Done { from, to })
         }
     }
+}
+
+/// Compare what was written against what was read, before the source is trashed.
+///
+/// Size only, and deliberately: a hash of a large tree costs more than the
+/// failure it guards against is likely to cost, while a short write — the
+/// realistic way a cross-device copy goes wrong — always changes the size.
+fn verify_copy(from: &Path, to: &Path) -> Result<(), OpError> {
+    if from.is_dir() {
+        for entry in fs::read_dir(from).map_err(|error| io(from, error))? {
+            let entry = entry.map_err(|error| io(from, error))?;
+            verify_copy(&entry.path(), &to.join(entry.file_name()))?;
+        }
+        return Ok(());
+    }
+
+    let source = fs::metadata(from).map_err(|error| io(from, error))?.len();
+    let copied = fs::metadata(to).map_err(|error| io(to, error))?.len();
+    if source != copied {
+        return Err(OpError::Io {
+            path: to.display().to_string(),
+            reason: format!("copy is {copied} bytes against {source}; the original is untouched"),
+        });
+    }
+    Ok(())
 }
 
 /// Copy a file or a directory tree.
@@ -290,15 +322,31 @@ pub fn trash_via_home(guard: &Guard, target: &Path) -> Result<PathBuf, OpError> 
     })?;
     let staged = unique_name(&staging.join(name));
 
-    // `rename`, never copy-then-delete. This module offers no permanent
-    // delete and `verify-trash-only` enforces that by reading the source, so
-    // the file is *moved* into staging and the operating system then trashes
-    // it from there. Nothing here can lose a manuscript even if it fails
-    // halfway: either the rename happened or it did not.
-    fs::rename(&target, &staged).map_err(|error| OpError::Io {
-        path: staged.display().to_string(),
-        reason: error.to_string(),
-    })?;
+    // `rename` first. This module offers no permanent delete and
+    // `verify-trash-only` enforces that by reading the source, so the file is
+    // *moved* into staging and the operating system then trashes it from
+    // there. Nothing here can lose a manuscript even if it fails halfway:
+    // either the rename happened or it did not.
+    //
+    // But a bare rename was the whole of it, and this function exists for
+    // exactly the case a rename cannot serve — the workspace volume has no
+    // trash, so staging happens under the home directory, which is usually a
+    // different volume. EXDEV, every time. The one escape hatch SPEC Q8 closes
+    // on could not run, and Q8 was marked closed citing a fallback that lived
+    // in `move_to` and had never been reached from here.
+    //
+    // The fallback is still not a delete: copy, verify, then hand the source
+    // to the operating system's trash. The manuscript is recoverable at every
+    // point, which is the property `verify-trash-only` is really protecting.
+    if let Err(error) = fs::rename(&target, &staged) {
+        if error.kind() != io::ErrorKind::CrossesDevices {
+            return Err(io(&staged, error));
+        }
+        copy_tree(&target, &staged)?;
+        verify_copy(&target, &staged)?;
+        trash::delete(&target).map_err(|error| classify_trash_failure(&target, &error))?;
+        return Ok(staged);
+    }
 
     // If the home volume turns out to have no trash either, put the file back
     // where the author left it rather than leaving it in a staging directory
@@ -608,6 +656,79 @@ mod tests {
             matches!(classify_trash_failure(target, &english), OpError::Io { .. }),
             "prose must not classify, in any language"
         );
+    }
+
+    /// A rename that failed for a reason a copy cannot fix must not become one.
+    ///
+    /// The fallback used to hang off `Err(_)`: a full disk, a permission
+    /// failure, a vanished parent — every one of them answered by copying and
+    /// then trashing the source. A failure that had changed nothing became a
+    /// move that put the manuscript somewhere the author had not asked for.
+    ///
+    /// The first version of this test pointed the destination at a path whose
+    /// parent was a file. That proved nothing: `copy_tree` fails there too, so
+    /// both branches returned `Io` and the assertion could not tell them
+    /// apart — it passed with the guard deleted. The destination here is one a
+    /// copy would happily succeed at, so the only way the source survives is
+    /// the guard refusing before the fallback runs.
+    #[test]
+    fn a_move_that_fails_for_another_reason_leaves_the_source_alone() {
+        let root = scratch("move-not-exdev");
+        let from = root.join("01.md");
+        fs::write(&from, "第一章").unwrap();
+
+        // Make the source unreadable *after* the destination is known good.
+        // `rename` fails with PermissionDenied on a locked parent, while a copy
+        // to `moved.md` would otherwise be trivially possible.
+        let locked = root.join("locked");
+        fs::create_dir(&locked).unwrap();
+        let inner = locked.join("01.md");
+        fs::write(&inner, "第一章").unwrap();
+        let mut perms = fs::metadata(&locked).unwrap().permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(&locked, perms).unwrap();
+
+        let guard = Guard::new([&root]);
+        let outcome = move_to(&guard, &inner, &root.join("moved.md"), false);
+
+        let mut perms = fs::metadata(&locked).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        fs::set_permissions(&locked, perms).unwrap();
+
+        assert!(outcome.is_err(), "a locked parent cannot be renamed out of");
+        assert!(
+            inner.exists(),
+            "the source must survive a failure that changed nothing"
+        );
+        assert!(
+            !root.join("moved.md").exists(),
+            "no copy may be left behind by a rename that was refused"
+        );
+    }
+
+    /// The claim "the copy is verified" is now a check rather than a comment.
+    ///
+    /// `verify_copy` is what stands between a short write and a trashed
+    /// original. Testing it directly is the honest thing available here: this
+    /// sandbox has one volume, so the CrossesDevices path it guards cannot be
+    /// reached from a real rename. That gap is the reason this test exists at
+    /// the function rather than at `move_to`.
+    #[test]
+    fn a_copy_that_came_up_short_refuses_before_anything_is_removed() {
+        let root = scratch("verify-copy");
+        let from = root.join("01.md");
+        let to = root.join("copy.md");
+        fs::write(&from, "第一章的全文").unwrap();
+        fs::write(&to, "第一章").unwrap();
+
+        let error = verify_copy(&from, &to).unwrap_err();
+
+        assert!(matches!(error, OpError::Io { .. }));
+        assert!(from.exists(), "the original stays when the copy is short");
+
+        fs::copy(&from, &to).unwrap();
+        assert!(verify_copy(&from, &to).is_ok(), "a full copy verifies");
     }
 
     #[test]
