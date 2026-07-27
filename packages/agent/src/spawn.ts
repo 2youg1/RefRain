@@ -96,8 +96,8 @@ const drain = (stream: NodeJS.ReadableStream | null): Promise<string> => {
  * PATH lookup happens here, in the one place that knows how the process is
  * started.
  */
-const runnable = (program: string): boolean => {
-  const ok = (path: string): boolean => {
+const resolveProgram = (program: string, environment: NodeJS.ProcessEnv): string | undefined => {
+  const exists = (path: string): boolean => {
     try {
       accessSync(path, constants.F_OK);
       return true;
@@ -106,18 +106,23 @@ const runnable = (program: string): boolean => {
     }
   };
 
-  if (program.includes("/") || program.includes("\\") || isAbsolute(program)) return ok(program);
+  if (program.includes("/") || program.includes("\\") || isAbsolute(program))
+    return exists(program) ? program : undefined;
 
-  // PATHEXT is why `claude` finds `claude.cmd` on Windows and nothing on Unix.
+  // PATHEXT is why `claude` resolves to `claude.cmd` on Windows. Returning the
+  // resolved path matters: libuv cannot execute the bare script name itself.
   const suffixes =
     process.platform === "win32"
-      ? (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)
+      ? ["", ...(environment.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)]
       : [""];
 
-  for (const dir of (process.env.PATH ?? "").split(delimiter).filter(Boolean))
-    for (const suffix of suffixes) if (ok(join(dir, program + suffix))) return true;
+  for (const dir of (environment.PATH ?? "").split(delimiter).filter(Boolean))
+    for (const suffix of suffixes) {
+      const candidate = join(dir, program + suffix);
+      if (exists(candidate)) return candidate;
+    }
 
-  return false;
+  return undefined;
 };
 
 /**
@@ -173,32 +178,29 @@ const inherited = (): NodeJS.ProcessEnv =>
  * Launch a process, or throw if it cannot start.
  *
  * Throwing synchronously for an absent binary is the contract the Host builds
- * on; see `runnable` for why the check cannot be left to the `error` event.
+ * on; see `resolveProgram` for why the check cannot be left to the `error` event.
  */
 export const launch = ({ argv, cwd, env, input }: Launch): Launched => {
   const [program, ...args] = argv;
   if (!program) throw new Error("launch needs a program");
-  if (!runnable(program)) throw new Error(`cannot run ${program}: not found`);
+  const environment = { ...inherited(), ...env };
+  const resolved = resolveProgram(program, environment);
+  if (!resolved) throw new Error(`cannot run ${program}: not found`);
 
-  // A `.cmd` is a script, not an image Windows can execute. `runnable` finds
-  // `claude.cmd` through PATHEXT and `shell: false` then hands it to libuv,
-  // which answers ENOENT — so every harness installed by npm, which is all of
-  // them on Windows, failed to start on the platform this ships to first. The
-  // failure arrived as exit code -1, indistinguishable from a timeout.
-  //
-  // `cmd.exe /d /s /c` runs the script without a profile and without parsing
-  // the arguments as a command line: the prompt stays author text.
-  const script = process.platform === "win32" && /\.(cmd|bat)$/i.test(program);
+  // A `.cmd` is a script, not an image Windows can execute. Bare npm commands
+  // therefore have to use the resolved PATHEXT path, not the name the author
+  // entered. COMSPEC receives separate argv and no shell profile.
+  const script = process.platform === "win32" && /\.(cmd|bat)$/i.test(resolved);
   const [image, imageArgs] = script
-    ? [process.env.COMSPEC ?? "cmd.exe", ["/d", "/s", "/c", program, ...args]]
-    : [program, args];
+    ? [environment.COMSPEC ?? "cmd.exe", ["/d", "/s", "/c", resolved, ...args]]
+    : [resolved, args];
 
   const child = spawn(image, imageArgs, {
     cwd,
-    env: { ...inherited(), ...env },
+    env: environment,
     stdio: ["pipe", "pipe", "pipe"],
-    // Never a shell: a prompt is author text and will contain quotes and
-    // semicolons, none of which may become a command.
+    // Never ask Node to invent a shell command line. The one exception above is
+    // an already-resolved Windows script, passed to COMSPEC as explicit argv.
     shell: false,
     windowsHide: true,
     // Its own process group, so a cancel can signal the whole tree. A harness
