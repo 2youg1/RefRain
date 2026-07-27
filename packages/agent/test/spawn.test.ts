@@ -164,7 +164,10 @@ for (let i = 0; i < 10; i++) process.stdout.write(chunk);
 
       expect(seen.REFRAIN_TEST_SECRET).toBeUndefined();
       expect(seen.ANTHROPIC_API_KEY).toBeUndefined();
-      expect(seen.PATH).toBeDefined();
+      // The harness still has to be able to find its own files, and the
+      // variable that lets it arrives spelled `Path` on Windows — `inherited`
+      // keeps whatever case the platform used rather than renaming it.
+      expect(Object.keys(seen).some((key) => key.toUpperCase() === "PATH")).toBe(true);
     } finally {
       delete process.env.REFRAIN_TEST_SECRET;
       delete process.env.ANTHROPIC_API_KEY;
