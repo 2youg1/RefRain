@@ -61,8 +61,20 @@ await page.addInitScript(`
     enqueue: async () => true,
     manifest: async () => [],
     send: async () => [],
-    collect: async () => ({ proposals: [], comments: [] }),
-    runs: async () => [],
+    collect: async () => ({
+      proposals: [{
+        id: "p1", runId: "run1", baseline: "rev0",
+        scope: { id: "s1", blockIds: ["b0"] },
+        before: "第一个根的正文。", after: "第一个根改过的正文。",
+        slices: [
+          { id: "p1.s0", kind: "del", text: "第一个根的正文。" },
+          { id: "p1.s1", kind: "ins", text: "第一个根改过的正文。" },
+        ],
+      }],
+      comments: [],
+    }),
+    runs: async () => [{ id: "run1", agentId: "a1", agentName: "probe", state: "completed",
+      task: "t1", scopeIds: ["s1"], startedAt: "2026-01-01T00:00:00Z", workspace: "/w/run1" }],
     commit: async () => ({ ok: true, text: "" }),
     ledger: async () => [],
     reply: async () => "",
@@ -134,6 +146,36 @@ try {
   const last = calls.at(-1);
   if (last?.[1] !== "/b" || last[2] !== "01.md" || !last[3]?.includes("第二个根"))
     throw new Error(`saving /b/01.md targeted the wrong chapter: ${JSON.stringify(calls)}`);
+
+  // A Proposal is written against one chapter's blocks. Carrying it across a
+  // chapter switch offered a merge whose scope addresses text no longer on
+  // screen. Done while both Roots are still present.
+  await page.locator(".root").first().locator(".chapter").click();
+  await page.waitForTimeout(200);
+  await page.keyboard.press("Control+k");
+  await page.getByRole("button", { name: /^交给 Agent…/ }).click();
+  await page.waitForTimeout(200);
+  await page.getByRole("button", { name: "读取结果" }).click();
+  await page.waitForTimeout(300);
+
+  if ((await page.locator(".review").count()) === 0)
+    throw new Error("collecting a finished Run showed no review panel");
+
+  // Switch chapters and reopen Review. Asserting after an Escape would pass
+  // whether or not the Proposals were dropped — the panel is closed either
+  // way — so the assertion has to look at a panel that is open again.
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(200);
+  await page.locator(".root").nth(1).locator(".chapter").click();
+  await page.waitForTimeout(400);
+  await page.keyboard.press("Control+k");
+  await page.getByRole("button", { name: /^审阅提案|^Review proposals/ }).click();
+  await page.waitForTimeout(300);
+
+  if (await page.evaluate(() => document.body.innerText.includes("第一个根改过的正文")))
+    throw new Error("a Proposal from another chapter survived the switch");
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(200);
 
   // Removing a Root is one click from emptying the rail, and the way back is
   // remembering the folder's path. It waits for an answer, and the answer that
