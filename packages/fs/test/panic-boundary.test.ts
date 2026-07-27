@@ -63,4 +63,9 @@ console.log("A10_PROCESS_SURVIVED");`,
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
-}, 30_000);
+  // The build above is normally a no-op: CI warms this example before the
+  // suite, and a developer's target directory is warm too. The budget covers
+  // the cold case rather than assuming it away — 30s was enough for an
+  // incremental rebuild and not for a first one, so this failed only on the
+  // machine that had never built it, which is the release runner.
+}, 300_000);
