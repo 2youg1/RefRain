@@ -32,17 +32,17 @@ jobs:
             assets: apps/desktop/release/*.exe
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-07-27
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: packages/fs
 
@@ -100,7 +100,7 @@ jobs:
       # make.sh verifies the Node branch of the SQLite adapter, which bun test
       # cannot reach. Declare the runtime rather than relying on the runner
       # image shipping one — a release must not depend on that accident.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
 
@@ -151,10 +151,24 @@ jobs:
         shell: bash
         run: bun x electron-builder ${{ matrix.builder_args }} --publish never
 
-      - uses: actions/upload-artifact@v7
+      # The SBOM describes what electron-builder left for publication. Creating
+      # it from the source tree before packaging would inventory dependencies
+      # that did not ship and could omit material introduced by packaging.
+      - name: Describe the packaged software
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: apps/desktop/release
+          format: spdx-json
+          output-file: apps/desktop/release/refrain-${{ matrix.target }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: refrain-${{ matrix.target }}
-          path: ${{ matrix.assets }}
+          path: |
+            ${{ matrix.assets }}
+            apps/desktop/release/refrain-${{ matrix.target }}.spdx.json
           if-no-files-found: error
           retention-days: 30
 
@@ -169,13 +183,13 @@ jobs:
       # The notes are generated from ROADMAP.md, so this job needs the
       # repository and a Bun to run the generator with — it previously needed
       # neither, because the notes were a literal in this file.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           pattern: refrain-*
           path: release-assets
@@ -186,13 +200,23 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           assets = sorted(p for p in Path("release-assets").iterdir() if p.is_file())
-          if len(assets) != 1:
-              raise SystemExit(f"expected 1 release file, found {len(assets)}")
+          installers = [p for p in assets if p.suffix == ".exe"]
+          sboms = [p for p in assets if p.name.endswith(".spdx.json")]
+          if len(installers) != 1 or len(sboms) != 1:
+              raise SystemExit(
+                  f"expected 1 installer and 1 SBOM, found {len(installers)} and {len(sboms)}"
+              )
           for path in assets:
               print(f"{path.name}  {path.stat().st_size} bytes")
           PY
 
-            # The notes come from ROADMAP.md, not from a literal in this file. Two
+      - name: Hash and read back every public release asset
+        working-directory: release-assets
+        run: |
+          sha256sum -- *.exe *.spdx.json > SHA256SUMS
+          sha256sum --check SHA256SUMS
+
+      # The notes come from ROADMAP.md, not from a literal in this file. Two
       # copies of the same paragraphs meant two places to update and one of
       # them lost: this workflow announced "RefRain 0.1.5" while 0.1.6 was
       # being tagged. The generator refuses a tag ROADMAP does not describe.
@@ -202,8 +226,11 @@ jobs:
 
       # One job owns the Release. The build job uploads one verified Windows
       # installer; this job alone turns it into a public release asset.
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          files: release-assets/*
+          files: |
+            release-assets/*.exe
+            release-assets/*.spdx.json
+            release-assets/SHA256SUMS
           generate_release_notes: true
           body_path: ${{ runner.temp }}/notes.md
