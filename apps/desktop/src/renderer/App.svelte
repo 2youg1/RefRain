@@ -100,6 +100,8 @@ let scrollEl = $state<HTMLElement | null>(null);
  * crossing the bridge on every keystroke.
  */
 let fileEntries = $state<FileEntry[]>([]);
+/** The Root that owns every entry, total, query, and error below. */
+let fileOwner = $state<string | null>(null);
 let fileTotal = $state(0);
 let fileUnavailable = $state<string | null>(null);
 let fileQuery = $state("");
@@ -242,6 +244,18 @@ $effect(() => {
   return () => clearTimeout(timer);
 });
 
+/** Move the one file view to another Root without carrying any of its cache across. */
+const claimFileView = (owner: string): void => {
+  fileOwner = owner;
+  fileEntries = [];
+  fileTotal = 0;
+  fileUnavailable = null;
+  fileQuery = "";
+};
+
+/** A late native response may only update the Root that asked for it. */
+const ownsFileView = (owner: string): boolean => fileOwner === owner && root === owner;
+
 /**
  * Open the browser, scanning on first use.
  *
@@ -250,24 +264,37 @@ $effect(() => {
  */
 const openFiles = async () => {
   sheet = "files";
-  if (!root || fileUnavailable || fileTotal > 0) return;
+  const owner = root;
+  if (!owner) return;
+  if (fileOwner !== owner) claimFileView(owner);
+  if (fileUnavailable || fileTotal > 0) return;
 
-  const scanned = await api().files.scan(root);
+  const scanned = await api().files.scan(owner);
+  if (!ownsFileView(owner)) return;
   if (!scanned.ok) {
     fileUnavailable = t("files.unavailable");
     return;
   }
-  await api().files.sort(root, fileOrder, fileDescending);
+  await api().files.sort(owner, fileOrder, fileDescending);
+  if (!ownsFileView(owner)) return;
   // The viewport asks for its own rows once it has measured itself; seeding a
   // fixed page here would put rows in the DOM that no one can see.
   fileTotal = scanned.count;
 };
 
+/* Keep an already-open browser with the manuscript when the active Root changes. */
+$effect(() => {
+  const owner = root;
+  if (sheet === "files" && owner !== null && fileOwner !== owner) void openFiles();
+});
+
 /** Ask the native layer for the rows the viewport can actually show. */
 const needFilePage = async (offset: number, limit: number) => {
   visibleRows = limit;
-  if (!root || fileUnavailable) return;
-  const result = await api().files.page(root, offset, limit);
+  const owner = root;
+  if (!owner || fileUnavailable) return;
+  const result = await api().files.page(owner, offset, limit);
+  if (!ownsFileView(owner)) return;
   if (!result.ok) {
     fileUnavailable = t("files.unavailable");
     return;
@@ -278,23 +305,27 @@ const needFilePage = async (offset: number, limit: number) => {
 
 const searchFiles = async (query: string) => {
   fileQuery = query;
-  if (!root) return;
+  const owner = root;
+  if (!owner) return;
 
   // An empty query returns to the ordered index rather than ranking nothing:
   // clearing the box should show the folder, not an empty list.
   if (query.trim() === "") {
-    const scanned = await api().files.scan(root);
+    const scanned = await api().files.scan(owner);
+    if (!ownsFileView(owner)) return;
     if (!scanned.ok) {
       fileUnavailable = t("files.unavailable");
       return;
     }
-    await api().files.sort(root, fileOrder, fileDescending);
+    await api().files.sort(owner, fileOrder, fileDescending);
+    if (!ownsFileView(owner)) return;
     fileTotal = scanned.count;
     await needFilePage(0, visibleRows);
     return;
   }
 
-  const result = await api().files.search(root, query, 200);
+  const result = await api().files.search(owner, query, 200);
+  if (!ownsFileView(owner)) return;
   if (!result.ok) {
     fileUnavailable = t("files.unavailable");
     return;
@@ -308,14 +339,18 @@ const sortFiles = async (order: SortOrder) => {
   // ascending, which is what every file manager does and what a hand expects.
   fileDescending = order === fileOrder ? !fileDescending : false;
   fileOrder = order;
-  if (!root) return;
-  await api().files.sort(root, order, fileDescending);
+  const owner = root;
+  if (!owner) return;
+  await api().files.sort(owner, order, fileDescending);
+  if (!ownsFileView(owner)) return;
   await needFilePage(0, visibleRows);
 };
 
 const trashFiles = async (paths: string[]) => {
-  if (!root) return;
-  const result = await api().files.trash(root, paths);
+  const owner = root;
+  if (!owner) return;
+  const result = await api().files.trash(owner, paths);
+  if (!ownsFileView(owner)) return;
   if (!result.ok) {
     notice = result.detail;
     return;
@@ -345,14 +380,16 @@ const trashFiles = async (paths: string[]) => {
 let trashOffer = $state<string[]>([]);
 
 const trashViaHome = async (): Promise<void> => {
-  if (!root) return;
+  const owner = root;
+  if (!owner) return;
   const paths = trashOffer;
   trashOffer = [];
   const stayed: string[] = [];
   for (const path of paths) {
-    const outcome = await api().files.trashViaHome(root, path);
+    const outcome = await api().files.trashViaHome(owner, path);
     if (!outcome.ok) stayed.push(path);
   }
+  if (!ownsFileView(owner)) return;
   if (stayed.length > 0) say(t("files.noTrashAnywhere") + stayed.join(t("list.join")));
   await needFilePage(0, visibleRows);
   await reload();
@@ -1185,29 +1222,31 @@ const onScroll = (): void => {
 </Sheet>
 
 <Sheet open={sheet === "files"} title={t("files.title")} width="420px" onClose={() => (sheet = null)}>
-  <Files
-    {t}
-    entries={fileEntries}
-    total={fileTotal}
-    unavailable={fileUnavailable}
-    {active}
-    order={fileOrder}
-    descending={fileDescending}
-    query={fileQuery}
-    onSelect={(entry) => {
-      // Only a manuscript opens in the editor; clicking a folder or an image
-      // selects it for a move or a trash without changing what is on screen.
-      // This called `open()`, which is not defined here — it resolved to
-      // `window.open`, took the chapter title as a URL, and was denied by the
-      // window-open handler. Clicking a file appeared to do nothing at all.
-      const chapter = chapters.find((c) => c.path === entry.path);
-      if (chapter) select(chapter.path);
-    }}
-    onQuery={searchFiles}
-    onSort={sortFiles}
-    onTrash={trashFiles}
-    onNeedPage={needFilePage}
-  />
+  {#key fileOwner}
+    <Files
+      {t}
+      entries={fileEntries}
+      total={fileTotal}
+      unavailable={fileUnavailable}
+      {active}
+      order={fileOrder}
+      descending={fileDescending}
+      query={fileQuery}
+      onSelect={(entry) => {
+        // Only a manuscript opens in the editor; clicking a folder or an image
+        // selects it for a move or a trash without changing what is on screen.
+        // This called `open()`, which is not defined here — it resolved to
+        // `window.open`, took the chapter title as a URL, and was denied by the
+        // window-open handler. Clicking a file appeared to do nothing at all.
+        const chapter = chapters.find((c) => c.path === entry.path);
+        if (chapter) select(chapter.path);
+      }}
+      onQuery={searchFiles}
+      onSort={sortFiles}
+      onTrash={trashFiles}
+      onNeedPage={needFilePage}
+    />
+  {/key}
 </Sheet>
 
 <Sheet open={sheet === "edits"} title={t("edits.title")} width="480px" onClose={() => (sheet = null)}>
