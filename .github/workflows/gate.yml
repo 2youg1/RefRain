@@ -319,10 +319,6 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-seam.ts
 
-      # SPEC Q5: the chapter header does not share the manuscript's left edge.
-      # The check is wired in reporting-only until the defect is fixed — a
-      # verification script that lives outside CI stops being true without
-      # anyone noticing, which is exactly what happened to this one.
       # Held under continue-on-error as SPEC Q5, a 289px drift between the
       # chapter header and the manuscript. There was no drift: the fixture
       # never opened, and the gate measured a blank screen. It now opens, the
