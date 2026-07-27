@@ -876,9 +876,16 @@ const onKeydown = (event: KeyboardEvent): void => {
     event.preventDefault();
     return void (paletteOpen = !paletteOpen);
   }
+  /*
+   * One Escape closes one transient surface. Sheet used to listen on window as
+   * well, so the same bubbling event closed both a context menu and its drawer.
+   * 空 is deliberately absent: SPEC Q19 gives it only Ctrl+Enter as an exit.
+   */
   if (event.key === "Escape") {
-    if (zen) return void setZen(false);
-    if (menuAt) return void (menuAt = null);
+    event.preventDefault();
+    if (menuAt) menuAt = null;
+    else if (sheet !== null) sheet = null;
+    return;
   }
   if (!command) return;
 
@@ -1003,7 +1010,6 @@ const onScroll = (): void => {
 
 <svelte:window
   on:keydown={onKeydown}
-  on:wheel|nonpassive={onWheel}
   on:dragover|preventDefault={() => (dragging = true)}
   on:dragleave={() => (dragging = false)}
   on:drop|preventDefault={onDrop}
@@ -1044,7 +1050,7 @@ const onScroll = (): void => {
       />
     {/if}
 
-    <main class="writing">
+    <main class="writing" onwheel={onWheel}>
       <Progress
         value={progress}
         style={type.progress}

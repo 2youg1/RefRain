@@ -11,19 +11,7 @@ interface Props {
 }
 
 const { open, title, width = "420px", onClose, children, footer }: Props = $props();
-
-/**
- * One sheet at a time, opened on demand and dismissed with Escape. The
- * alternative — three panels standing open forever — forces every feature to
- * occupy screen whether or not the author is using it, which is how the
- * previous build filled itself with buttons.
- */
-const onKeydown = (event: KeyboardEvent): void => {
-  if (event.key === "Escape") onClose();
-};
 </script>
-
-<svelte:window on:keydown={onKeydown} />
 
 {#if open}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
