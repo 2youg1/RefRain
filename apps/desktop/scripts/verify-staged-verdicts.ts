@@ -89,7 +89,7 @@ Object.assign(window.refrain, {
       rootId: "r1", root: roots[0], role: "chapter", path: roots[0] + "/01.md" }] }),
   listAgents: async () => [], addAgent: async () => ({}), enqueue: async () => true,
   manifest: async () => [], send: async () => [],
-  runs: async () => [{ id: "run1", agentId: "a1", agentName: "probe", state: "collected",
+  runs: async () => [{ id: "run1", agentId: "a1", agentName: "probe", state: "completed",
     task: "t1", scopeIds: ["s1"], startedAt: "2026-01-01T00:00:00Z", workspace: "/w/run1" }],
   collect: async () => ({
     proposals: [{
