@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import type { Block, BlockId, TextChange, TextHead } from "./domain.ts";
+import { splitBlocks } from "./roundtrip.ts";
 
 /** Blocks are separated by a blank line, which is also Markdown's paragraph break. */
 const SEPARATOR = "\n\n";
@@ -23,21 +25,23 @@ export const applyTextAction = (
 ): TextHead => {
   const ranges = changes.filter((change) => change.kind !== "insert");
 
-  // Building the map straight from the list let a later change overwrite an
-  // earlier one silently. Two accepted verdicts landing on the same paragraph
-  // — routine, once a run returns several slices for one Edit Scope — merged
-  // as one, and the manuscript lost a judgment the reader had signed.
+  // Registering only each range's first block let two overlapping changes pass
+  // whenever the shared block was not first in both scopes. The later loop then
+  // emitted that block twice, which is the same hidden ordering F-8 forbids.
   const replaced = new Map<BlockId, TextChange>();
+  const addressed = new Map<BlockId, TextChange>();
   for (const change of ranges) {
+    for (const id of change.blockIds) {
+      const earlier = addressed.get(id);
+      if (earlier !== undefined)
+        throw new Error(
+          `two changes address block ${id}: ${JSON.stringify(earlier.text)} and ` +
+            `${JSON.stringify(change.text)} — resolve them into one before applying`,
+        );
+      addressed.set(id, change);
+    }
     const key = change.blockIds[0];
-    if (key === undefined) continue;
-    const earlier = replaced.get(key);
-    if (earlier !== undefined)
-      throw new Error(
-        `two changes address block ${key}: ${JSON.stringify(earlier.text)} and ` +
-          `${JSON.stringify(change.text)} — resolve them into one before applying`,
-      );
-    replaced.set(key, change);
+    if (key !== undefined) replaced.set(key, change);
   }
   const consumed = new Set(ranges.flatMap((change) => change.blockIds));
   const blocks: Block[] = [];
@@ -45,10 +49,17 @@ export const applyTextAction = (
   for (const block of head.blocks) {
     const change = replaced.get(block.id);
     if (change) {
-      // The identifier survives a replacement: the words changed, the paragraph
-      // did not. Minting a new id here made every later reference — a queued
-      // proposal, a compensating undo — unable to find the block it names.
-      if (change.text !== null) blocks.push({ id: block.id, text: change.text });
+      // A replacement may span paragraphs. Keeping its separators inside one
+      // block made the in-memory head disagree with the same text after reload.
+      // Existing identifiers stay positional inside the scope so queued
+      // Proposals remain anchored; only paragraphs beyond that scope are new.
+      if (change.text !== null)
+        blocks.push(
+          ...splitBlocks(change.text).map((text, index) => ({
+            id: change.blockIds[index] ?? `b-${randomUUID()}`,
+            text,
+          })),
+        );
       continue;
     }
     if (!consumed.has(block.id)) blocks.push(block);
