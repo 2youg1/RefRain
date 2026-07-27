@@ -106,6 +106,21 @@ jobs:
           name: refrain-fs-linux-x64
           path: packages/fs
 
+      # `panic-boundary.test.ts` builds a release example and loads it, because
+      # `panic = "unwind"` is a release-profile fact a debug build cannot prove.
+      # It invoked `cargo` with no toolchain declared in this job — surviving on
+      # whatever the runner image happened to carry — and then timed out at 30s
+      # compiling the crate from cold inside a test. The toolchain is declared,
+      # and the build happens here, where it is allowed to take as long as it
+      # takes.
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-07-27
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: warm the release example the panic boundary loads
+        working-directory: packages/fs
+        run: cargo build --release --example panic-boundary-addon
+
       # --frozen-lockfile: CI must fail on an out-of-date lockfile rather than
       # silently resolving different versions than the author tested against.
       - run: bun install --frozen-lockfile
