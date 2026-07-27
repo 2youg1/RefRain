@@ -233,6 +233,13 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-save-blocks-switch.ts
 
+      # Closing used to release after three seconds even when the save failed.
+      # The renderer now refuses that release, and silence defaults to a native
+      # choice whose safe action keeps the manuscript open.
+      - name: closing waits for the manuscript to reach disk
+        working-directory: apps/desktop
+        run: bun scripts/verify-close-saves.ts
+
       # The audit predicted Chromium would store Shift+Enter as `<br>` and lose
       # it through textContent. The current engine uses a text-node newline; pin
       # the actual save contract so either future DOM shape must preserve it.
