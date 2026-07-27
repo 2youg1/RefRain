@@ -31,7 +31,6 @@ export interface ClaudeCodeConfig {
   readonly command?: string;
   /** Argv placed immediately after the binary, for launchers such as `bun wrapper.ts`. */
   readonly commandArgs?: readonly string[];
-  readonly cwd?: string;
   readonly env?: Readonly<Record<string, string>>;
   readonly timeoutMs?: number;
   /** Extra argv appended verbatim, for flags this adapter does not model. */
@@ -93,27 +92,24 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
    * Argv, not a shell string.
    *
    * A prompt is author text: it will contain quotes, semicolons, and newlines,
-   * and none of them may become a command. `--permission-mode dontAsk` with an
-   * explicit allowlist means anything not named here is denied rather than
-   * prompted — a prompt in a subprocess nobody is watching hangs forever.
+   * and none of them may become a command. `dontAsk` makes every capability
+   * outside the scoped allow rules fail closed rather than prompt in a
+   * subprocess nobody is watching.
    *
-   * Write is confined to the run's own directory. It used to be granted with
-   * no path restriction at all, which contradicts SPEC 3.1 rule 2 — agents have
-   * no write access to the manuscript — and the attack is not theoretical: the
-   * request file embeds the manuscript, the manuscript is untrusted text, and
-   * one injected sentence could read any file into a memo (memos travel into
-   * every later round) or overwrite the chapter, `host.json`, or `agents.json`
-   * outright. The run directory is the only place this adapter needs to write,
-   * because the only thing it produces is `result.md`.
+   * Claude Code anchors `/` rules from inline settings at the launch directory,
+   * which is always this run's Task Workspace. `Edit` is the permission rule
+   * for every built-in file-writing tool; `Write(path)` is accepted by recent
+   * CLIs but never matched. The tools list removes Bash, web, and every other
+   * capability before the model can ask for them.
    *
    * Hooks stay on. Disabling them switched off protections the author had
    * configured for themselves, in their own harness, without telling them.
    */
-  private argv(agent: Agent, workspace: string): string[] {
+  private argv(agent: Agent): string[] {
     const binary = this.config.command ?? "claude";
     const session = this.sessions.get(agent.id);
     const permissions = JSON.stringify({
-      permissions: { allow: [`Write(${workspace}/**)`, `Edit(${workspace}/**)`] },
+      permissions: { allow: ["Read(/**)", "Edit(/**)"] },
     });
 
     return [
@@ -129,9 +125,9 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
       "--permission-mode",
       "dontAsk",
       // The agent reads its request and writes its result. It has no reason to
-      // run commands, and this application never lets one merge anything.
-      "--allowedTools",
-      "Read,Write",
+      // run commands, browse, or load project integrations.
+      "--tools",
+      "Read,Edit,Write",
       "--settings",
       permissions,
       // Bare `{}` crashes the CLI from 2.1.59 onwards; the key must be present.
@@ -149,8 +145,8 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
     writeFileSync(run.requestPath, scaffold(task), "utf8");
 
     const child = launch({
-      argv: this.argv(agent, run.workspace),
-      cwd: this.config.cwd ?? run.workspace,
+      argv: this.argv(agent),
+      cwd: run.workspace,
       env: this.config.env,
       input: `${readFileSync(run.requestPath, "utf8")}\n\nWrite your reply to ${run.resultPath}`,
     });

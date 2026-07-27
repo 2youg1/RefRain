@@ -38,6 +38,7 @@ const stubClaude = (
   code = 0,
   delayMs = 0,
   writesResult = true,
+  cwdPath?: string,
 ): ClaudeCodeConfig => {
   mkdirSync(binDir, { recursive: true });
   const path = join(binDir, `claude-${Math.random().toString(36).slice(2)}.js`);
@@ -45,6 +46,7 @@ const stubClaude = (
     path,
     [
       `await Bun.sleep(${delayMs});`,
+      cwdPath ? `await Bun.write(${JSON.stringify(cwdPath)}, process.cwd());` : "",
       // The adapter pipes the request in and names the result path in it, the
       // way it names it to the real binary.
       writesResult
@@ -352,16 +354,32 @@ describe("Claude Code adapter", () => {
     await adapter.awaitCompletion(run!).catch(() => undefined);
   });
 
-  test("the argv denies every tool it does not name", async () => {
-    // A subprocess nobody is watching must never wait on a permission prompt,
-    // and this agent has no reason to run a command.
+  test("the argv exposes only files inside the Task Workspace", () => {
     const adapter = new ClaudeCodeAdapter();
     const argv = (adapter as unknown as { argv(agent: Agent): string[] }).argv(agent);
+    const tools = argv.indexOf("--tools");
+    const settings = argv.indexOf("--settings");
 
     expect(argv).toContain("dontAsk");
-    expect(argv).toContain("Read,Write");
+    expect(argv[tools + 1]).toBe("Read,Edit,Write");
+    expect(JSON.parse(argv[settings + 1]!)).toEqual({
+      permissions: { allow: ["Read(/**)", "Edit(/**)"] },
+    });
+    expect(argv).not.toContain("--allowedTools");
+    expect(argv).not.toContain("--disableAllHooks");
     expect(argv).toContain("--strict-mcp-config");
     expect(argv).not.toContain("--dangerously-skip-permissions");
     expect(argv.join(" ")).not.toContain("Bash");
+  });
+
+  test("inline file permissions are anchored at the Task Workspace", async () => {
+    const observed = join(root, "cwd.txt");
+    const adapter = new ClaudeCodeAdapter(stubClaude(report(), 0, 0, true, observed));
+    const host = new AgentHost(root, [adapter]);
+    host.register(agent).enqueue(task);
+    const [run] = await host.send();
+    await adapter.awaitCompletion(run!);
+
+    expect(readFileSync(observed, "utf8")).toBe(run!.workspace);
   });
 });
