@@ -13,3 +13,4 @@ e2e/ime/shells/wv2/wv2pkg/
 packages/fs/target/
 packages/fs/*.node
 apps/desktop/release/
+apps/desktop/build/checks/
