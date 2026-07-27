@@ -18,7 +18,7 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, normalize } from "node:path";
-import { closeWorkbenches, registerHandlers } from "../src/main/ipc.ts";
+import { __setWorkspaceLoader, closeWorkbenches, registerHandlers } from "../src/main/ipc.ts";
 import { RootAuthority } from "../src/main/root-authority.ts";
 
 type Handler = (event: unknown, ...args: unknown[]) => unknown;
@@ -121,6 +121,42 @@ test("a scan reports a count or an explained unavailability, never a throw", asy
       expect(result.detail).toBeTruthy();
     }
   } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a file layer that failed to load is retried rather than remembered forever", async () => {
+  // A missing platform binary, a volume not yet mounted, a Root created after
+  // launch: the reason a load failed is worth keeping so every later refusal
+  // can name it. Keeping the *attempt* is what made an author restart the
+  // application to recover from a condition that had already cleared.
+  //
+  // The shipped binary answers 0 for an absent path rather than throwing, so
+  // the failure has to come from the loader itself — the one step that really
+  // can fail on a user's machine.
+  const root = mkdtempSync(join(tmpdir(), "refrain-ipc-retry-"));
+  let attempts = 0;
+  __setWorkspaceLoader(async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("the volume is not mounted");
+    return {
+      Workspace: class {
+        scan = () => 1;
+      },
+    } as never;
+  });
+
+  try {
+    const first = (await call("files:scan", root)) as { ok: boolean; detail?: string };
+    expect(first.ok).toBe(false);
+    expect(first.detail).toContain("not mounted");
+
+    const second = (await call("files:scan", root)) as { ok: boolean; count?: number };
+    expect(second.ok).toBe(true);
+    expect(attempts).toBe(2);
+  } finally {
+    __setWorkspaceLoader(undefined);
     closeWorkbenches();
     rmSync(root, { recursive: true, force: true });
   }

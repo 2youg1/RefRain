@@ -203,21 +203,42 @@ const openWorkbench = (root: string): Workbench => {
  * The reason is kept on the workbench so the interface can say which platform
  * lacks a build instead of showing an empty tree.
  */
+const loadWorkspaceModule = async (): Promise<{
+  Workspace: new (roots: string[], options: Record<string, unknown>) => FileWorkspace;
+}> => (await import("@refrain/fs")) as never;
+
+/**
+ * The loader, exposed so a test can supply a failure the real one cannot.
+ *
+ * The shipped binary answers 0 for an absent or non-directory path rather than
+ * throwing, so the only condition that reaches the catch on this machine is a
+ * missing `.node` — which cannot then be made to clear. Overriding the import
+ * is the seam that makes "the failure is not remembered" assertable.
+ */
+export const __setWorkspaceLoader = (loader: typeof loadWorkspaceModule | undefined): void => {
+  workspaceLoader = loader ?? loadWorkspaceModule;
+};
+let workspaceLoader = loadWorkspaceModule;
+
 const filesFor = async (
   root: string,
   options?: Record<string, unknown>,
 ): Promise<FileWorkspace | undefined> => {
   const workbench = openWorkbench(root);
   if (workbench.files) return workbench.files;
-  if (workbench.fileError) return undefined;
 
   try {
-    const { Workspace } = await import("@refrain/fs");
+    const { Workspace } = await workspaceLoader();
     const files = new Workspace([root], options ?? {});
     files.scan();
     workbench.files = files;
+    delete workbench.fileError;
     return files;
   } catch (error) {
+    // The reason is remembered so every refusal can name it, but the attempt is
+    // not. A volume that was not mounted, a Root not yet created, a binary
+    // installed after launch: remembering the failure forever made the author
+    // restart the application to recover from a condition that had cleared.
     workbench.fileError = String(error);
     return undefined;
   }
