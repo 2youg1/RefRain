@@ -110,6 +110,27 @@ test("load-workspace normalizes and deduplicates roots before admitting later ca
   }
 });
 
+test("loading a new workspace revokes a Root the author removed", async () => {
+  const handlers = collectHandlers();
+  const first = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-first-"));
+  const second = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-second-"));
+  try {
+    await invoke(handlers, trustedEvent, "project:load-workspace", [first]);
+    await expect(invoke(handlers, trustedEvent, "files:scan", first)).resolves.toBeDefined();
+
+    await invoke(handlers, trustedEvent, "project:load-workspace", [second]);
+
+    await expect(invoke(handlers, trustedEvent, "files:scan", first)).rejects.toThrow(
+      /opened root/i,
+    );
+    await expect(invoke(handlers, trustedEvent, "files:scan", second)).resolves.toBeDefined();
+  } finally {
+    closeWorkbenches();
+    rmSync(first, { recursive: true, force: true });
+    rmSync(second, { recursive: true, force: true });
+  }
+});
+
 test("load-workspace rejects malformed root lists without partially admitting them", async () => {
   const handlers = collectHandlers();
   const root = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-shape-"));
