@@ -2,6 +2,7 @@ import { dirname, join } from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell } from "electron";
 import { cssVariables, profileForBounds } from "./display.ts";
 import { closeWorkbenches, registerHandlers } from "./ipc.ts";
+import { mayOpenExternally, rendererMayNavigate } from "./navigation.ts";
 
 /**
  * Windowing and packaging only (SPEC 5.2 rule 4). Business logic lives in
@@ -57,11 +58,11 @@ const createWindow = (): BrowserWindow => {
   // SPEC 1.3: the app process makes no outbound requests. Enforced here rather
   // than trusted: a stray link in rendered Markdown must not become navigation.
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("http")) shell.openExternal(url);
+    if (mayOpenExternally(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
   window.webContents.on("will-navigate", (event, url) => {
-    if (!url.startsWith("file://") && !url.startsWith("http://localhost:")) event.preventDefault();
+    if (!rendererMayNavigate(url, useDevServer)) event.preventDefault();
   });
 
   // Zen mode asks the OS for real fullscreen; the renderer only says when.
