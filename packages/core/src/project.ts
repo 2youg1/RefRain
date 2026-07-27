@@ -19,6 +19,7 @@ import {
 import type { TextHead } from "./domain.ts";
 import { storageForRoot } from "./root-storage.ts";
 import { applyBlocks, blockPrefix, parseSource, splitBlocks } from "./roundtrip.ts";
+import { newTextHeadId } from "./text-head-id.ts";
 
 /**
  * Axiom 1: files are truth. A chapter is a Markdown file a reader can open,
@@ -238,7 +239,7 @@ const parseChapter = (
     role,
     stamp: snapshot.stamp,
     head: {
-      id: `${path}@load`,
+      id: newTextHeadId(),
       // No trim. An ideographic indent is how a Chinese paragraph begins, and
       // stripping it on load deleted the author's bytes before they had done
       // anything at all (SPEC INV-5).

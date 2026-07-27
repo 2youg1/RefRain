@@ -21,6 +21,7 @@ import {
   type FileStamp,
   loadProject,
   loadWorkspace,
+  newTextHeadId,
   type Proposal,
   persistDecisionCommit,
   readChapterFile,
@@ -316,7 +317,7 @@ const headFor = (root: string, chapterId: string): TextHead => {
 };
 
 const chapterHead = (chapterId: string, text: string, cause: string): TextHead => ({
-  id: `${chapterId}@${Date.now()}`,
+  id: newTextHeadId(),
   // `core` owns where a block begins. This was one of three copies of that
   // rule; block identity is positional, so any disagreement between them
   // renumbers blocks across the process boundary and silently detaches every
