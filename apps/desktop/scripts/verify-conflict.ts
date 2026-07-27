@@ -32,6 +32,7 @@ const server = Bun.serve({
 const MINE = "我这边写的一句，还没有保存。\n\n第二段也是我写的。";
 const THEIRS = "别处改写过的一句，长度也不一样。\n\n第二段被换掉了。";
 const DURING_SAVE = "保存等待时继续写的字。";
+const BLIND_INPUT = "冲突背后的盲打不应进入正文。";
 
 const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -126,6 +127,24 @@ if ((await dialog.count()) === 0) {
     return active instanceof HTMLElement && document.querySelector(".conflict")?.contains(active);
   });
   if (!focusInside) failures.push("the conflict dialog did not take keyboard focus");
+
+  // A modal safety decision must also remove the editor's mutation capability.
+  // Pointer interception alone still lets a stale focus or script-driven focus
+  // send keystrokes into the manuscript behind the dialog.
+  const beforeBlindInput = await page.locator(".manuscript").innerText();
+  const editingState = await page.evaluate(() => {
+    const surface = document.querySelector<HTMLElement>(".manuscript");
+    surface?.focus();
+    return {
+      contenteditable: surface?.getAttribute("contenteditable"),
+      ariaDisabled: surface?.getAttribute("aria-disabled"),
+    };
+  });
+  await page.keyboard.type(BLIND_INPUT);
+  if ((await page.locator(".manuscript").innerText()) !== beforeBlindInput)
+    failures.push("typing behind the conflict dialog changed the manuscript");
+  if (editingState.contenteditable !== "false" || editingState.ariaDisabled !== "true")
+    failures.push(`the conflict left the editor enabled: ${JSON.stringify(editingState)}`);
 
   // One action per version, each under the version it keeps. A reversed
   // mapping on an irreversible choice loses work to muscle memory.

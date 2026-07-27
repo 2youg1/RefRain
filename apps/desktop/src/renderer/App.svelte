@@ -1157,7 +1157,8 @@ const onScroll = (): void => {
             tabindex="0"
             aria-multiline="true"
             aria-label="manuscript"
-            contenteditable="true"
+            aria-disabled={conflict !== null}
+            contenteditable={conflict === null ? "true" : "false"}
             spellcheck="false"
             bind:this={surfaceEl}
             oninput={onEdit}
