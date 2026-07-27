@@ -13,6 +13,7 @@
  * Usage: bun scripts/release-notes.ts v0.1.6
  */
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const tag = process.argv[2];
 if (!tag) {
@@ -21,7 +22,10 @@ if (!tag) {
 }
 
 const version = tag.replace(/^v/, "");
-const roadmap = readFileSync(new URL("../../../ROADMAP.md", import.meta.url).pathname, "utf8");
+const roadmap = readFileSync(
+  fileURLToPath(new URL("../../../ROADMAP.md", import.meta.url)),
+  "utf8",
+);
 
 /* The heading for this version, up to the next second-level heading. */
 const heading = new RegExp(`^## Shipped — v${version.replace(/\./g, "\\.")}\\s*$`, "m");

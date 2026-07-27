@@ -18,8 +18,9 @@
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const DESKTOP = new URL("..", import.meta.url).pathname;
+const DESKTOP = fileURLToPath(new URL("..", import.meta.url));
 const SCRIPTS = join(DESKTOP, "scripts");
 
 /**
