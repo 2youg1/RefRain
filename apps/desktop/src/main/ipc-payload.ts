@@ -1,6 +1,6 @@
 import { isAbsolute, normalize, relative, resolve, sep } from "node:path";
 import type { ReviewTask } from "@refrain/agent";
-import type { Edit, Proposal, Verdict } from "@refrain/core";
+import type { Edit, Verdict } from "@refrain/core";
 import type { SortOrder } from "@refrain/fs";
 
 interface ReviewCommit {
@@ -39,7 +39,6 @@ interface IpcArguments {
   "agent:cancel": [root: string, runId: string];
   "agent:runs": [root: string];
   "agent:collect": [root: string, runId: string];
-  "review:slice": [proposal: Proposal];
   "review:commit": [root: string, payload: ReviewCommit];
   "ledger:all": [root: string];
   "ledger:reply": [root: string, proposalId: string];
@@ -259,19 +258,6 @@ const reviewTask: Decode<ReviewTask> = (value, path) => {
   return held as unknown as ReviewTask;
 };
 
-const proposal: Decode<Proposal> = (value, path) => {
-  const held = record(value, path, ["id", "runId", "baseline", "scope", "before", "after"]);
-  nonEmptyText(held.id, `${path}.id`);
-  nonEmptyText(held.runId, `${path}.runId`);
-  nonEmptyText(held.baseline, `${path}.baseline`);
-  const scope = record(held.scope, `${path}.scope`, ["id", "blockIds"]);
-  nonEmptyText(scope.id, `${path}.scope.id`);
-  uniqueNonEmptyTexts(scope.blockIds, `${path}.scope.blockIds`);
-  text(held.before, `${path}.before`);
-  if (held.after !== null) text(held.after, `${path}.after`);
-  return held as unknown as Proposal;
-};
-
 const verdict: Decode<Verdict> = (value, path) => {
   const held = record(value, path, [
     "id",
@@ -392,7 +378,6 @@ const parsers = {
   "agent:cancel": tuple(absolutePath, nonEmptyText),
   "agent:runs": tuple(absolutePath),
   "agent:collect": tuple(absolutePath, text),
-  "review:slice": tuple(proposal),
   "review:commit": (channel, values) => {
     const [root, payload] = tuple<[string, ReviewCommit]>(absolutePath, reviewCommit)(
       channel,

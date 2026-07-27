@@ -329,7 +329,7 @@ test("payloads are validated before a handler can act", async () => {
   expect(opened).toBe(0);
 
   await expect(
-    invoke(handlers, trustedEvent, "review:slice", { id: "not-a-proposal" }),
+    invoke(handlers, trustedEvent, "edits:describe", [{ id: "not-an-edit" }]),
   ).rejects.toThrow(/argument/i);
 });
 

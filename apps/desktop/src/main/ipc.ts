@@ -793,8 +793,6 @@ export const registerHandlers = (
     };
   });
 
-  handlers.handle("review:slice", (_e, proposal: Proposal) => sliceProposal(proposal));
-
   handlers.handleRoot(
     "review:commit",
     (_e, root: string, payload: { chapter: string; verdicts: Verdict[] }) => {

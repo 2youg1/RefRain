@@ -25,14 +25,6 @@ const task = {
   contextScope: ["chapter.md"],
   editScopes: [{ id: "scope-1", blockIds: ["b1"], text: "before" }],
 };
-const proposal = {
-  id: "proposal-1",
-  runId: "run-1",
-  baseline: "revision-1",
-  scope: { id: "scope-1", blockIds: ["b1"] },
-  before: "before",
-  after: "after",
-};
 const verdict = {
   id: "verdict-1",
   proposalId: "proposal-1",
@@ -69,7 +61,6 @@ const valid: { [C in IpcChannel]: IpcArgs<C> } = {
   "agent:cancel": [root, "run-1"],
   "agent:runs": [root],
   "agent:collect": [root, "run-1"],
-  "review:slice": [proposal],
   "review:commit": [root, { chapter: "chapter.md", verdicts: [verdict] }],
   "ledger:all": [root],
   "ledger:reply": [root, "proposal-1"],
