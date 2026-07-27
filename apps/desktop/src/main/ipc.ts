@@ -39,8 +39,9 @@ import {
   writeChapter,
 } from "@refrain/core";
 import type { Workspace as FileWorkspace } from "@refrain/fs";
-import type { Dialog, IpcMain } from "electron";
+import type { Dialog, IpcMain, WebContents } from "electron";
 import { parseCommandLine } from "./command-line.ts";
+import { type RootChangeWatch, watchRootChanges } from "./file-watch.ts";
 import { registerFileHandlers } from "./files-ipc.ts";
 import { createIpcAuthority, type IpcAuthority } from "./ipc-auth.ts";
 import { probeCommand } from "./probe.ts";
@@ -113,6 +114,9 @@ interface Workbench {
    */
   files?: FileWorkspace;
   fileError?: string;
+  /** External file changes notify only renderer windows that opened this Root's browser. */
+  fileWatcher?: RootChangeWatch;
+  readonly fileSubscribers: Map<number, WebContents>;
 }
 
 const workbenches = new Map<string, Workbench>();
@@ -133,6 +137,8 @@ const workbenches = new Map<string, Workbench>();
 const closeWorkbench = (root: string): void => {
   const workbench = workbenches.get(root);
   if (!workbench) return;
+  workbench.fileWatcher?.close();
+  workbench.fileSubscribers.clear();
   workbench.ledger?.close();
   workbenches.delete(root);
 };
@@ -207,6 +213,7 @@ const openWorkbench = (root: string): Workbench => {
     onDisk: new Map(),
     conflicts: new Map(),
     proposals: new Map(),
+    fileSubscribers: new Map(),
     roster,
     ...(recovery.ok ? {} : { commitRecovery: recovery.detail ?? "Decision Batch recovery failed" }),
   };
@@ -261,6 +268,25 @@ const filesFor = async (
     workbench.fileError = String(error);
     return undefined;
   }
+};
+
+const observeFiles = (root: string, subscriber: WebContents): void => {
+  const workbench = openWorkbench(root);
+  if (!workbench.fileSubscribers.has(subscriber.id)) {
+    workbench.fileSubscribers.set(subscriber.id, subscriber);
+    subscriber.once("destroyed", () => workbench.fileSubscribers.delete(subscriber.id));
+  }
+  if (workbench.fileWatcher !== undefined) return;
+
+  workbench.fileWatcher = watchRootChanges(root, () => {
+    for (const [id, renderer] of workbench.fileSubscribers) {
+      if (renderer.isDestroyed()) {
+        workbench.fileSubscribers.delete(id);
+        continue;
+      }
+      renderer.send("files:changed", root);
+    }
+  });
 };
 
 const headFor = (root: string, chapterId: string): TextHead => {
@@ -893,6 +919,11 @@ export const registerHandlers = (
   // The file layer's channels live in their own module: they degrade as a
   // group when the platform binary is missing, and that rule is easier to hold
   // where it is the only rule in the file.
-  registerFileHandlers(handlers.handleRoot, filesFor, (root) => openWorkbench(root).fileError);
+  registerFileHandlers(
+    handlers.handleRoot,
+    filesFor,
+    (root) => openWorkbench(root).fileError,
+    observeFiles,
+  );
   return handlers;
 };

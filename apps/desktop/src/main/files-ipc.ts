@@ -1,4 +1,5 @@
 import type { Workspace as FileWorkspace, SortOrder } from "@refrain/fs";
+import type { WebContents } from "electron";
 import type { IpcAuthority } from "./ipc-auth.ts";
 
 /**
@@ -32,6 +33,7 @@ export const registerFileHandlers = (
   handleRoot: IpcAuthority["handleRoot"],
   filesFor: FilesFor,
   fileErrorFor: FileErrorFor,
+  observeFiles: (root: string, subscriber: WebContents) => void,
 ): void => {
   const unavailable = (root: string) => ({
     ok: false as const,
@@ -54,7 +56,8 @@ export const registerFileHandlers = (
     }
   };
 
-  handleRoot("files:scan", async (_e, root: string, options?: Record<string, unknown>) => {
+  handleRoot("files:scan", async (event, root: string, options?: Record<string, unknown>) => {
+    observeFiles(root, event.sender);
     const files = await filesFor(root, options);
     return files ? { ok: true as const, count: files.scan() } : unavailable(root);
   });

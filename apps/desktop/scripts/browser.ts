@@ -75,6 +75,7 @@ export const BRIDGE_STUB = `window.refrain = {
   ledger: async () => ({ ok: true, verdicts: [] }), reply: async () => "",
   searchLedger: async () => [],
   files: {
+    onChange: () => () => {},
     scan: async () => [], search: async () => [], page: async () => [], sort: async () => [],
     copy: async () => ({ ok: true }), move: async () => ({ ok: true }),
     trash: async () => ({ ok: true }), trashViaHome: async () => ({ ok: true }),

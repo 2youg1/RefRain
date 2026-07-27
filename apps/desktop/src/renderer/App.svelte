@@ -172,6 +172,13 @@ onMount(() =>
   }),
 );
 
+/* External filesystem truth refreshes only the open browser for that Root. */
+onMount(() =>
+  api().files.onChange((changedRoot) => {
+    if (sheet === "files" && ownsFileView(changedRoot)) void refreshFileView(changedRoot);
+  }),
+);
+
 /*
  * The last chance to write.
  *
@@ -269,19 +276,8 @@ const openFiles = async () => {
   const owner = root;
   if (!owner) return;
   if (fileOwner !== owner) claimFileView(owner);
-  if (fileUnavailable || fileTotal > 0) return;
-
-  const scanned = await api().files.scan(owner);
-  if (!ownsFileView(owner)) return;
-  if (!scanned.ok) {
-    fileUnavailable = t("files.unavailable");
-    return;
-  }
-  await api().files.sort(owner, fileOrder, fileDescending);
-  if (!ownsFileView(owner)) return;
-  // The viewport asks for its own rows once it has measured itself; seeding a
-  // fixed page here would put rows in the DOM that no one can see.
-  fileTotal = scanned.count;
+  if (fileTotal > 0 && !fileUnavailable) return;
+  await refreshFileView(owner);
 };
 
 /* Keep an already-open browser with the manuscript when the active Root changes. */
@@ -303,6 +299,35 @@ const needFilePage = async (offset: number, limit: number) => {
   }
   fileEntries = result.entries;
   fileTotal = result.total;
+};
+
+const refreshFileView = async (owner: string): Promise<void> => {
+  if (sheet !== "files" || !ownsFileView(owner)) return;
+  const query = fileQuery;
+  const scanned = await api().files.scan(owner);
+  if (!ownsFileView(owner) || fileQuery !== query) return;
+  if (!scanned.ok) {
+    fileUnavailable = t("files.unavailable");
+    return;
+  }
+  fileUnavailable = null;
+  await api().files.sort(owner, fileOrder, fileDescending);
+  if (!ownsFileView(owner) || fileQuery !== query) return;
+
+  if (query.trim() !== "") {
+    const result = await api().files.search(owner, query, 200);
+    if (!ownsFileView(owner) || fileQuery !== query) return;
+    if (!result.ok) {
+      fileUnavailable = t("files.unavailable");
+      return;
+    }
+    fileEntries = result.hits.map((hit) => hit.entry);
+    fileTotal = result.hits.length;
+    return;
+  }
+
+  fileTotal = scanned.count;
+  await needFilePage(0, visibleRows);
 };
 
 const searchFiles = async (query: string) => {
