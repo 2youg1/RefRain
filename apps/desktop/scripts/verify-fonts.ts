@@ -44,7 +44,6 @@ Object.assign(window.refrain, {
   commit: async () => ({ ok: true, text: "" }), ledger: async () => [], reply: async () => "",
   displayProfile: async () => ({ refreshHz: 60, scaleFactor: 1, css: {} }),
   onDisplayChange: () => {}, onCloseRequest: () => () => {},
-  fonts: async () => ["Probe Serif One", "Probe Sans Two"],
   systemFonts: async () => ["Probe Serif One", "Probe Sans Two"],
 });`);
 await page.goto(`http://localhost:${server.port}`);

@@ -69,6 +69,7 @@ const bridge = `
     revertAll: async (t) => t,
     describeEdits: async () => "",
     files: {
+      ...window.refrain.files,
       scan: async () => ({ ok: true, count: ${ENTRIES.length} }),
       page: async (_root, offset, limit) => ({
         ok: true,
@@ -83,7 +84,6 @@ const bridge = `
       trash: async () => ({ ok: true, outcomes: [] }),
       link: async () => ({ ok: true, path: "" }),
       createDirectory: async () => ({ ok: true, path: "" }),
-      uniqueName: async () => ({ ok: true, path: "" }),
       admits: async () => ({ ok: true, admitted: true }),
     },
     // A 165 Hz panel at 200%: the frame budget and the hairline both differ

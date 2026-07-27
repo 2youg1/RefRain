@@ -72,6 +72,7 @@ await page.addInitScript(`
     revertAll: async (text) => text,
     describeEdits: async () => "",
     files: {
+      ...window.refrain.files,
       scan: async (root) => { window.__fileRoots.push(root); return { ok: true, count: 1 }; },
       page: async (root) => ({
         ok: true,

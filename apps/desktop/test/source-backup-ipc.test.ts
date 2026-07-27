@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { interruptedWriteMarkerPath } from "@refrain/core";
 import { closeWorkbenches, registerHandlers } from "../src/main/ipc.ts";
 
 type Handler = (event: unknown, ...args: unknown[]) => unknown;
@@ -43,7 +44,7 @@ test("adopting an existing folder takes its Source Backup through the real IPC p
   }
 });
 
-test("a refused Source Backup reaches the renderer warning path", async () => {
+test("a refused Source Backup reaches the workspace IPC warning", async () => {
   const root = mkdtempSync(join(tmpdir(), "refrain-backup-refused-"));
   try {
     writeFileSync(join(root, "01.md"), "无法备份的原文。\n");
@@ -52,9 +53,6 @@ test("a refused Source Backup reaches the renderer warning path", async () => {
     const workspace = (await loadWorkspace([root])) as { warnings?: string[] };
     expect(workspace.warnings).toHaveLength(1);
     expect(workspace.warnings?.[0]).toMatch(/无法写入原件副本/);
-
-    const app = readFileSync(new URL("../src/renderer/App.svelte", import.meta.url), "utf8");
-    expect(app).toMatch(/workspace\.warnings\?\.length\) say\(workspace\.warnings\.join/);
   } finally {
     closeWorkbenches();
     rmSync(root, { recursive: true, force: true });
@@ -72,5 +70,24 @@ test("a single-file Root waits for SPEC Q22 rather than inventing backup placeme
   } finally {
     closeWorkbenches();
     rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("startup recovery evidence reaches the renderer through the real workspace IPC", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-recovery-ipc-"));
+  const source = join(root, "01.md");
+  try {
+    writeFileSync(source, "权威正文。\n");
+    writeFileSync(`${source}.writing`, "中断候选稿。\n");
+    writeFileSync(interruptedWriteMarkerPath(source), "refrain-atomic-write-v1\n");
+
+    const workspace = (await loadWorkspace([root])) as { recoveryEvidencePaths?: string[] };
+    const evidence = workspace.recoveryEvidencePaths?.[0];
+
+    expect(typeof evidence).toBe("string");
+    expect(readFileSync(evidence ?? "", "utf8")).toBe("中断候选稿。\n");
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
   }
 });

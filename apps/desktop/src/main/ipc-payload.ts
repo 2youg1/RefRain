@@ -26,7 +26,13 @@ interface IpcArguments {
   "agent:trust": [root: string, id: string];
   "agent:probe": [root: string, id: string];
   "agent:remove": [root: string, id: string];
-  "agent:add": [root: string, name: string, command: string];
+  "agent:add": [
+    root: string,
+    name: string,
+    command: string,
+    model: string,
+    reasoningEffort: string,
+  ];
   "agent:enqueue": [root: string, task: ReviewTask];
   "agent:manifest": [root: string];
   "agent:send": [root: string];
@@ -48,7 +54,6 @@ interface IpcArguments {
   "files:trash-via-home": [root: string, target: string];
   "files:link": [root: string, target: string, linkPath: string];
   "files:create-directory": [root: string, path: string];
-  "files:unique-name": [root: string, desired: string];
   "files:admits": [root: string, path: string];
   "window:fullscreen": [on: boolean];
   "display:profile": [];
@@ -86,7 +91,6 @@ export type RootIpcChannel =
   | "files:trash-via-home"
   | "files:link"
   | "files:create-directory"
-  | "files:unique-name"
   | "files:admits";
 
 export type IpcArgs<C extends IpcChannel> = IpcArguments[C];
@@ -100,6 +104,11 @@ const refuse = (path: string, expected: string): never => {
 
 const text: Decode<string> = (value, path) =>
   typeof value === "string" ? value : refuse(path, "a string");
+
+const nonEmptyText: Decode<string> = (value, path) => {
+  const decoded = text(value, path);
+  return decoded.trim().length > 0 ? decoded : refuse(path, "a non-empty string");
+};
 
 const boolean: Decode<boolean> = (value, path) =>
   typeof value === "boolean" ? value : refuse(path, "a boolean");
@@ -132,8 +141,20 @@ const list =
   (value, path) => {
     if (!Array.isArray(value)) return refuse(path, "an array");
     if (value.length > 100_000) return refuse(path, "at most 100000 items");
-    return value.map((entry, index) => decode(entry, `${path}[${index}]`));
+    const decoded: T[] = [];
+    for (let index = 0; index < value.length; index += 1) {
+      if (!(index in value)) refuse(`${path}[${index}]`, "an array item");
+      decoded.push(decode(value[index], `${path}[${index}]`));
+    }
+    return decoded;
   };
+
+const uniqueNonEmptyTexts: Decode<string[]> = (value, path) => {
+  const decoded = list(nonEmptyText)(value, path);
+  return new Set(decoded).size === decoded.length
+    ? decoded
+    : refuse(path, "unique non-empty strings");
+};
 
 const record = (value: unknown, path: string, keys: readonly string[]): Record<string, unknown> => {
   if (value === null || typeof value !== "object" || Array.isArray(value))
@@ -210,8 +231,8 @@ const edit: Decode<Edit> = (value, path) => {
 
 const taskScope: Decode<ReviewTask["editScopes"][number]> = (value, path) => {
   const held = record(value, path, ["id", "blockIds", "text"]);
-  text(held.id, `${path}.id`);
-  list(text)(held.blockIds, `${path}.blockIds`);
+  nonEmptyText(held.id, `${path}.id`);
+  uniqueNonEmptyTexts(held.blockIds, `${path}.blockIds`);
   text(held.text, `${path}.text`);
   return held as unknown as ReviewTask["editScopes"][number];
 };
@@ -225,23 +246,25 @@ const reviewTask: Decode<ReviewTask> = (value, path) => {
     "contextScope",
     "editScopes",
   ]);
-  text(held.id, `${path}.id`);
-  text(held.agentId, `${path}.agentId`);
-  text(held.baseline, `${path}.baseline`);
-  text(held.prompt, `${path}.prompt`);
-  list(text)(held.contextScope, `${path}.contextScope`);
-  list(taskScope)(held.editScopes, `${path}.editScopes`);
+  nonEmptyText(held.id, `${path}.id`);
+  nonEmptyText(held.agentId, `${path}.agentId`);
+  nonEmptyText(held.baseline, `${path}.baseline`);
+  nonEmptyText(held.prompt, `${path}.prompt`);
+  uniqueNonEmptyTexts(held.contextScope, `${path}.contextScope`);
+  const editScopes = list(taskScope)(held.editScopes, `${path}.editScopes`);
+  if (new Set(editScopes.map((scope) => scope.id)).size !== editScopes.length)
+    refuse(`${path}.editScopes`, "unique scope ids");
   return held as unknown as ReviewTask;
 };
 
 const proposal: Decode<Proposal> = (value, path) => {
   const held = record(value, path, ["id", "runId", "baseline", "scope", "before", "after"]);
-  text(held.id, `${path}.id`);
-  text(held.runId, `${path}.runId`);
-  text(held.baseline, `${path}.baseline`);
+  nonEmptyText(held.id, `${path}.id`);
+  nonEmptyText(held.runId, `${path}.runId`);
+  nonEmptyText(held.baseline, `${path}.baseline`);
   const scope = record(held.scope, `${path}.scope`, ["id", "blockIds"]);
-  text(scope.id, `${path}.scope.id`);
-  list(text)(scope.blockIds, `${path}.scope.blockIds`);
+  nonEmptyText(scope.id, `${path}.scope.id`);
+  uniqueNonEmptyTexts(scope.blockIds, `${path}.scope.blockIds`);
   text(held.before, `${path}.before`);
   if (held.after !== null) text(held.after, `${path}.after`);
   return held as unknown as Proposal;
@@ -360,7 +383,7 @@ const parsers = {
   "agent:trust": tuple(absolutePath, text),
   "agent:probe": tuple(absolutePath, text),
   "agent:remove": tuple(absolutePath, text),
-  "agent:add": tuple(absolutePath, text, text),
+  "agent:add": tuple(absolutePath, text, text, text, text),
   "agent:enqueue": tuple(absolutePath, reviewTask),
   "agent:manifest": tuple(absolutePath),
   "agent:send": tuple(absolutePath),
@@ -396,7 +419,6 @@ const parsers = {
     return [root, under(root, target, `${channel}[1]`), under(root, linkPath, `${channel}[2]`)];
   },
   "files:create-directory": rootedPath,
-  "files:unique-name": tuple(absolutePath, text),
   "files:admits": rootedPath,
   "window:fullscreen": tuple(boolean),
   "display:profile": tuple(),

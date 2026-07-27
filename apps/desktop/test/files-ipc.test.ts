@@ -15,7 +15,7 @@
  */
 
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, normalize } from "node:path";
 import { closeWorkbenches, registerHandlers } from "../src/main/ipc.ts";
@@ -81,7 +81,6 @@ test("every file channel the renderer calls is registered", () => {
     "files:trash",
     "files:link",
     "files:create-directory",
-    "files:unique-name",
     "files:admits",
   ]) {
     expect(handlers.has(channel)).toBe(true);
@@ -167,22 +166,50 @@ test("loading through IPC remembers enough to refuse an external overwrite", asy
   }
 });
 
-test("an interrupted write is reported without replacing either file", async () => {
+test("an interrupted write is preserved, the new save proceeds, and the evidence path is reported", async () => {
   const root = mkdtempSync(join(tmpdir(), "refrain-ipc-interrupted-"));
   const path = join(root, "01.md");
   const temporary = `${path}.writing`;
   try {
     writeFileSync(path, "权威正文。\n", "utf8");
-    writeFileSync(temporary, "强杀前同步完的候选正文。\n", "utf8");
     await call("project:load", root);
+    // The startup sweep already ran. This simulates a residue that appears
+    // afterwards, so the write-time fallback still has to preserve and report it.
+    writeFileSync(temporary, "强杀前同步完的候选正文。\n", "utf8");
 
-    await expect(call("project:save", root, "01.md", "窗口里的未保存正文。")).rejects.toThrow();
+    const outcome = (await call("project:save", root, "01.md", "窗口里的未保存正文。")) as {
+      ok: boolean;
+      recoveryEvidencePath?: string;
+    };
 
-    expect(readFileSync(path, "utf8")).toBe("权威正文。\n");
-    expect(readFileSync(temporary, "utf8")).toBe("强杀前同步完的候选正文。\n");
+    const evidence = outcome.recoveryEvidencePath;
+    expect(outcome.ok).toBe(true);
+    expect(typeof evidence).toBe("string");
+    expect(readFileSync(path, "utf8")).toBe("窗口里的未保存正文。\n");
+    expect(readFileSync(evidence ?? "", "utf8")).toBe("强杀前同步完的候选正文。\n");
+    expect(existsSync(temporary)).toBe(false);
   } finally {
     closeWorkbenches();
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a Root-internal directory symlink cannot redirect a manuscript save outside the Root", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-ipc-root-"));
+  const outside = mkdtempSync(join(tmpdir(), "refrain-ipc-outside-"));
+  const escaped = join(outside, "pwn.md");
+  try {
+    symlinkSync(outside, join(root, "escape"), process.platform === "win32" ? "junction" : "dir");
+    await call("project:load", root);
+
+    await expect(call("project:save", root, "escape/pwn.md", "不得写出 Root。")).rejects.toThrow(
+      /outside.*Root|inside Root/i,
+    );
+    expect(existsSync(escaped)).toBe(false);
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
   }
 });
 

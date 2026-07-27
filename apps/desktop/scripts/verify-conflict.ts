@@ -38,7 +38,7 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 
 // The bridge is stubbed whole. `saveChapter` refuses the way main does when the
 // file has moved on; `resolveConflict` is the only operation allowed after the
-// author chooses. The old reload-then-save pair remains as a tripwire.
+// author chooses. Any attempt to call the deleted reload path now throws.
 await page.addInitScript(`
   window.__calls = [];
   ${BRIDGE_STUB}
@@ -65,10 +65,7 @@ await page.addInitScript(`
       window.__calls.push(["resolve", title, choice]);
       return { ok: true, text: choice === "disk" ? ${JSON.stringify(THEIRS)} : ${JSON.stringify(MINE)} };
     },
-    reloadChapter: async (root, title) => {
-      window.__calls.push(["reload", title]);
-      return { ok: true, text: ${JSON.stringify(THEIRS)} };
-    },
+
     listAgents: async () => [], addAgent: async () => ({}), removeAgent: async () => true,
     probeAgent: async () => ({ ok: true }), enqueue: async () => true, manifest: async () => [],
     send: async () => [], collect: async () => ({ proposals: [], comments: [] }),
@@ -77,6 +74,7 @@ await page.addInitScript(`
     revertEdit: async (t) => t, revertAll: async (t) => t, describeEdits: async () => "",
     systemFonts: async () => [], openProjectUrl: async () => true,
     files: {
+      ...window.refrain.files,
       scan: async () => ({ ok: true, count: 0 }), page: async () => ({ ok: true, entries: [], total: 0 }),
       search: async () => ({ ok: true, hits: [] }), sort: async () => ({ ok: true }),
       trash: async () => ({ ok: true, outcomes: [] }), trashViaHome: async () => ({ ok: true, path: "" }),

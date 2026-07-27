@@ -51,6 +51,7 @@ await page.addInitScript(`
     describeEdits: async () => "", systemFonts: async () => [],
     openProjectUrl: async (url) => { window.__opened.push(url); return true; },
     files: {
+      ...window.refrain.files,
       scan: async () => ({ total: 0, entries: [] }), page: async () => ({ total: 0, entries: [] }),
       search: async () => ({ total: 0, entries: [] }), sort: async () => true, trash: async () => ({ ok: true }),
     },

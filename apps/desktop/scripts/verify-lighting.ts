@@ -57,7 +57,7 @@ Object.assign(window.refrain, {
   commit: async () => ({ ok: true, text: "" }),
   ledger: async () => ({ ok: true, verdicts: [] }), reply: async () => "",
   displayProfile: async () => ({ refreshHz: 60, scaleFactor: 1, css: {} }),
-  onDisplayChange: () => () => {}, fonts: async () => [], systemFonts: async () => [],
+  onDisplayChange: () => () => {}, systemFonts: async () => [],
 });`;
 
 interface Sample {

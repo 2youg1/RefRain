@@ -151,11 +151,6 @@ export const registerFileHandlers = (
     return outcome.ok ? { ok: true as const, path: outcome.value } : outcome;
   });
 
-  handleRoot("files:unique-name", async (_e, root: string, desired: string) => {
-    const files = await filesFor(root);
-    return files ? { ok: true as const, path: files.uniqueName(desired) } : unavailable(root);
-  });
-
   /** Whether a destination would be admitted, so the interface can grey it out. */
   handleRoot("files:admits", async (_e, root: string, path: string) => {
     const files = await filesFor(root);
