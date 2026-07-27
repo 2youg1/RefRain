@@ -325,6 +325,12 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-run-refresh.ts
 
+      # Cancellation is an author action, not an adapter-only method. The open
+      # panel must expose it and refresh the terminal Run state immediately.
+      - name: a dispatched Run can be stopped
+        working-directory: apps/desktop
+        run: bun scripts/verify-run-cancel.ts
+
       # An outside edit is the one moment two versions of the manuscript exist.
       # This asserts the dialog shows both and that neither wins on its own.
       - name: an outside edit offers a real choice

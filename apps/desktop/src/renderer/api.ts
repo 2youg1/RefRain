@@ -79,7 +79,7 @@ export interface ManifestEntryView {
 
 export interface RunView {
   id: string;
-  state: string;
+  state: "dispatched" | "completed" | "failed" | "cancelled";
   resultPath: string;
   agentId: string;
   /**
@@ -182,6 +182,7 @@ interface RefRainApi {
   enqueue(root: string, task: unknown): Promise<boolean>;
   manifest(root: string): Promise<ManifestEntryView[]>;
   send(root: string): Promise<{ id: string; requestPath: string; resultPath: string }[]>;
+  cancel(root: string, runId: string): Promise<boolean>;
   collect(
     root: string,
     runId: string,

@@ -36,6 +36,7 @@ interface IpcArguments {
   "agent:enqueue": [root: string, task: ReviewTask];
   "agent:manifest": [root: string];
   "agent:send": [root: string];
+  "agent:cancel": [root: string, runId: string];
   "agent:runs": [root: string];
   "agent:collect": [root: string, runId: string];
   "review:slice": [proposal: Proposal];
@@ -74,6 +75,7 @@ export type RootIpcChannel =
   | "agent:enqueue"
   | "agent:manifest"
   | "agent:send"
+  | "agent:cancel"
   | "agent:runs"
   | "agent:collect"
   | "review:commit"
@@ -387,6 +389,7 @@ const parsers = {
   "agent:enqueue": tuple(absolutePath, reviewTask),
   "agent:manifest": tuple(absolutePath),
   "agent:send": tuple(absolutePath),
+  "agent:cancel": tuple(absolutePath, nonEmptyText),
   "agent:runs": tuple(absolutePath),
   "agent:collect": tuple(absolutePath, text),
   "review:slice": tuple(proposal),

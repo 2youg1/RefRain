@@ -171,6 +171,20 @@ describe("Agent Host queue", () => {
 });
 
 describe("Run completion lifecycle", () => {
+  test("the author can cancel an active Run and the terminal state survives restart", async () => {
+    const host = new AgentHost(root);
+    host.register(agent()).enqueue(task());
+    const [run] = await host.send();
+
+    expect(await host.cancel(run!.id)).toBe(true);
+    expect(run!.state).toBe("cancelled");
+    expect(await host.cancel(run!.id)).toBe(false);
+
+    const restarted = new AgentHost(root);
+    expect(restarted.runs()[0]).toMatchObject({ id: run!.id, state: "cancelled" });
+    expect(await restarted.cancel(run!.id)).toBe(false);
+  });
+
   test("collect refuses a visible partial result until its producer finishes", async () => {
     let finish!: () => void;
     const finished = new Promise<void>((resolve) => {

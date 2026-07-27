@@ -319,6 +319,7 @@ export const dict = {
     en: "the manuscript moved; you decide whether to re-read",
   },
   "dispatch.collect": { zh: "读取结果", en: "Collect" },
+  "dispatch.cancel": { zh: "停止", en: "Cancel" },
 
   "review.title": { zh: "审阅", en: "Review" },
   "review.empty": {
