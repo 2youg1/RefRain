@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -118,6 +118,145 @@ describe("Agent Host queue", () => {
     expect(restarted.commentsFor("run1")).toEqual([
       expect.objectContaining({ target: "s1", text: "保留冷意。" }),
     ]);
+  });
+
+  test("invalid task and run records are reported without emptying valid HostState", () => {
+    const warnings = spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      writeFileSync(
+        join(root, "host.json"),
+        JSON.stringify({
+          version: 1,
+          sequence: 5,
+          queue: [
+            task({ id: "t2" }),
+            { ...task({ id: "bad-task" }), prompt: 42 },
+            task({ id: "t3" }),
+          ],
+          runs: [
+            {
+              id: "run4",
+              state: "completed",
+              task: task({ id: "sent-1" }),
+              comments: [],
+              proposals: [],
+            },
+            { id: "bad-run", state: "completed" },
+            {
+              id: "run5",
+              state: "failed",
+              task: task({ id: "sent-2" }),
+              failure: "kept failure",
+              comments: [],
+              proposals: [],
+            },
+          ],
+          drifted: [],
+        }),
+        "utf8",
+      );
+
+      const restarted = new AgentHost(root);
+
+      expect(restarted.pending().map((entry) => entry.id)).toEqual(["t2", "t3"]);
+      expect(restarted.runs().map((entry) => entry.id)).toEqual(["run4", "run5"]);
+      expect(restarted.failureFor("run5")).toBe("kept failure");
+      expect(warnings).toHaveBeenCalledTimes(2);
+      expect(warnings).toHaveBeenNthCalledWith(1, expect.stringContaining("queue[1]"));
+      expect(warnings).toHaveBeenNthCalledWith(2, expect.stringContaining("runs[1]"));
+    } finally {
+      warnings.mockRestore();
+    }
+  });
+});
+
+describe("Run completion lifecycle", () => {
+  test("collect refuses a visible partial result until its producer finishes", async () => {
+    let finish!: () => void;
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const adapter = new (class {
+      readonly id = "controlled";
+      readonly tier = "L1" as const;
+      async dispatch(run: { workspace: string; resultPath: string }): Promise<void> {
+        mkdirSync(run.workspace, { recursive: true });
+        writeFileSync(run.resultPath, '# Agent reply\n\n<agent-result version="1"><replacement');
+      }
+      awaitCompletion(): Promise<void> {
+        return finished;
+      }
+      async cancel(): Promise<void> {
+        // Nothing to stop; the test controls completion directly.
+      }
+      usage() {
+        return { kind: "unknown" } as const;
+      }
+      effectiveModel() {
+        return { kind: "unknown" } as const;
+      }
+    })();
+    const host = new AgentHost(root, [adapter]);
+    host.register(
+      agent({
+        binding: { harness: "controlled", model: "unspecified", reasoningEffort: "unspecified" },
+      }),
+    );
+    host.enqueue(task());
+    const [run] = await host.send();
+
+    await expect(host.collect(run!.id)).rejects.toThrow(/still running/);
+    expect(run!.state).toBe("dispatched");
+    expect(host.failureFor(run!.id)).toBeUndefined();
+
+    writeFileSync(
+      run!.resultPath,
+      '# Agent reply\n\n<agent-result version="1"><replacement scope="s1">剑没有松。</replacement></agent-result>',
+    );
+    finish();
+    await host.settled(run!.id);
+
+    expect(run!.state).toBe("completed");
+    expect((await host.collect(run!.id))[0]).toMatchObject({ after: "剑没有松。" });
+  });
+
+  test("a restarted dispatched Run stays recoverable and visibly requires attention", async () => {
+    const first = new AgentHost(root);
+    first.register(agent()).enqueue(task());
+    const [run] = await first.send();
+
+    const restarted = new AgentHost(root);
+    const recovered = restarted.runs()[0];
+
+    expect(recovered).toMatchObject({ id: run!.id, state: "dispatched" });
+    expect(restarted.failureFor(run!.id)).toMatch(/restarted.*manual/i);
+
+    writeFileSync(recovered!.resultPath, '# Agent reply\n\n<agent-result version="1"><replacement');
+    await expect(restarted.collect(run!.id)).rejects.toThrow(/missing-root/);
+    expect(recovered!.state).toBe("dispatched");
+    expect(restarted.failureFor(run!.id)).toMatch(/Last collection attempt: missing-root/);
+
+    writeFileSync(
+      recovered!.resultPath,
+      '# Agent reply\n\n<agent-result version="1"><replacement scope="invented">错误范围。</replacement></agent-result>',
+    );
+    await expect(restarted.collect(run!.id)).rejects.toThrow(/unknown scope invented/);
+    expect(recovered!.state).toBe("dispatched");
+    expect(restarted.failureFor(run!.id)).toMatch(
+      /Last collection attempt: unknown scope invented/,
+    );
+
+    writeFileSync(
+      recovered!.resultPath,
+      '# Agent reply\n\n<agent-result version="1"><replacement scope="s1">重启后收回。</replacement></agent-result>',
+    );
+    expect((await restarted.collect(run!.id))[0]).toMatchObject({ after: "重启后收回。" });
+    expect(recovered!.state).toBe("completed");
+    expect(restarted.failureFor(run!.id)).toBeUndefined();
+
+    const completed = new AgentHost(root);
+    expect(completed.runs()[0]).toMatchObject({ id: run!.id, state: "completed" });
+    expect(completed.failureFor(run!.id)).toBeUndefined();
   });
 });
 
