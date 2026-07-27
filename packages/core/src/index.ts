@@ -74,6 +74,8 @@ export {
 } from "./roundtrip.ts";
 export type { TextAction, UndoResult } from "./selective-undo.ts";
 export { selectiveUndo } from "./selective-undo.ts";
+export type { BackupOutcome } from "./source-backup.ts";
+export { SOURCE_BACKUP_DIR, takeSourceBackup } from "./source-backup.ts";
 export { applyTextAction, blockAt, currentText } from "./text-engine.ts";
 export type { Verdict, VerdictKind } from "./verdict.ts";
 export { isAccepted } from "./verdict.ts";
