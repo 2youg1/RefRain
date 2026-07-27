@@ -1,21 +1,25 @@
 #!/usr/bin/env bash
-# Toolchain for RefRain's native layer.
+# Toolchain for RefRain's native layer, on a machine that has no C compiler.
 #
-# This machine has no C compiler, no libc headers, and no root to install them.
-# Zig ships all three in one relocatable tarball, so cargo links through zig cc.
-# Source this file before any cargo invocation.
+# `cargo build` needs a linker, libc headers, and CRT objects. A machine with
+# no `cc` and no root to install one has none of them, and rustup will happily
+# report "Rust is installed now. Great!" while leaving you unable to link a
+# single binary. Zig ships all three in one relocatable tarball, so cargo can
+# link through `zig cc` without touching the system.
 #
 # CI needs none of this: GitHub's runners carry MSVC, clang, and gcc already.
-# The Zig detour exists for development boxes without a system toolchain.
+# This exists for development boxes without a system toolchain.
+#
+# Usage:
+#   REFRAIN_ZIG=/path/to/zig-dir source scripts/native-env.sh
+#
+# where the directory holds a `zigcc` shim one line long:
+#
+#   #!/bin/sh
+#   exec /path/to/zig cc "$@"
 
 export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
 export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
-
-# Fall back to the sandbox install when the default location is empty.
-if [ ! -x "$CARGO_HOME/bin/cargo" ] && [ -x /hermes/profiles/nothin/home/.cargo/bin/cargo ]; then
-  export CARGO_HOME=/hermes/profiles/nothin/home/.cargo
-  export RUSTUP_HOME=/hermes/profiles/nothin/home/.rustup
-fi
 
 # Append rather than replace: an earlier version of this file overwrote PATH
 # and took bun with it, so every command after `source` failed with "bun: not
@@ -25,12 +29,15 @@ case ":$PATH:" in
   *) export PATH="$CARGO_HOME/bin:$PATH" ;;
 esac
 
-if [ -x /workspace/.zig/zigcc ]; then
+# Point REFRAIN_ZIG at the directory holding the shim. Left unset, this script
+# configures cargo and nothing else, which is correct on any machine that has
+# a working compiler.
+if [ -n "${REFRAIN_ZIG:-}" ] && [ -x "$REFRAIN_ZIG/zigcc" ]; then
   case ":$PATH:" in
-    *":/workspace/.zig:"*) ;;
-    *) export PATH="/workspace/.zig:$PATH" ;;
+    *":$REFRAIN_ZIG:"*) ;;
+    *) export PATH="$REFRAIN_ZIG:$PATH" ;;
   esac
-  export CC=/workspace/.zig/zigcc
-  export CXX=/workspace/.zig/zigcc
-  export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/workspace/.zig/zigcc
+  export CC="$REFRAIN_ZIG/zigcc"
+  export CXX="$REFRAIN_ZIG/zigcc"
+  export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$REFRAIN_ZIG/zigcc"
 fi

@@ -16,9 +16,10 @@ bun test
 ```
 
 `bun run native` needs a Rust toolchain and a system C compiler. On a machine
-without `cc`, `source scripts/native-env.sh` first — it points cargo at Zig,
-which ships a complete C toolchain in one relocatable tarball. CI needs none of
-this; GitHub's runners already carry MSVC, clang, and gcc.
+without `cc` and without root to install one, `REFRAIN_ZIG=/path/to/zig source
+scripts/native-env.sh` points cargo at Zig, which ships a linker, libc headers,
+and CRT objects in one relocatable tarball. CI needs none of this; GitHub's
+runners already carry MSVC, clang, and gcc.
 
 The file layer is a build artefact, so `packages/fs/test/boundary.test.ts`
 skips when the binary is absent and says so rather than reporting green.
