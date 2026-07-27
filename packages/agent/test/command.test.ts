@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Agent, ReviewTask } from "../src/index.ts";
@@ -112,15 +112,28 @@ describe("command adapter", () => {
     expect(performance.now() - started).toBeLessThan(1_000);
   });
 
-  test("cancellation reaches a terminal state", async () => {
-    const adapter = new CommandAdapter({ id: "command", template: ["sh", "-c", "sleep 30"] });
+  test("cancellation resolves only after the harness has exited", async () => {
+    const ready = join(root, "ready");
+    const exited = join(root, "exited");
+    const adapter = new CommandAdapter({
+      id: "command",
+      template: [
+        "sh",
+        "-c",
+        'trap \'sleep 0.1; printf exited > "$EXITED"; exit 0\' TERM; printf ready > "$READY"; while :; do :; done',
+      ],
+      env: { READY: ready, EXITED: exited },
+    });
     const host = new AgentHost(root, [adapter]);
     host.register(agent).enqueue(task);
 
     const [run] = await host.send();
+    for (let attempt = 0; attempt < 100 && !existsSync(ready); attempt += 1) await Bun.sleep(5);
+    expect(existsSync(ready)).toBe(true);
     await adapter.cancel(run!);
 
     expect(run!.state).toBe("cancelled");
+    expect(existsSync(exited)).toBe(true);
   });
 
   test("cancelling after completion cannot rewrite the terminal state", async () => {
