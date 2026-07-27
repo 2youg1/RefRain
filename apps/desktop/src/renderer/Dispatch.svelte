@@ -59,7 +59,7 @@ $effect(() => {
     .listAgents(root)
     .then((list) => {
       agents = list;
-      chosen ??= list[0]?.id ?? null;
+      if (!list.some((agent) => agent.id === chosen)) chosen = list[0]?.id ?? null;
     });
   void api()
     .manifest(root)

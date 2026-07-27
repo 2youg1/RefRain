@@ -62,14 +62,14 @@
       "sha256": "5fc12a7da3839a6ee6246f64345514a22d39a1092b8641a09800a67871307b1d"
     },
     {
-      "path": "dist/renderer/assets/index-DjJP7Pvd.js",
-      "bytes": 155782,
-      "sha256": "28ab24c8c0e192a981c7740cbfcf43e95734bd2dc2c9372cd1deb31099836638"
+      "path": "dist/renderer/assets/index-CoJdwkNt.js",
+      "bytes": 155800,
+      "sha256": "65ea1afef0f1e7e82e69666eb8c9c6e4b8111aab4ded224eb2f78987f2e0538f"
     },
     {
       "path": "dist/renderer/index.html",
       "bytes": 620,
-      "sha256": "38d635929f19c44a80e950e36399b8f23c6b2ca65fce7152fa6973234df434c6"
+      "sha256": "8666b0f8d1a5c27d8de62d27a92bd0facee7778dfca22e57d03bf54cf8520464"
     }
   ]
 }
