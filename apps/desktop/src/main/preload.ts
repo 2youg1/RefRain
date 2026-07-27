@@ -49,6 +49,7 @@ const api = {
   enqueue: (root: string, task: unknown) => ipcRenderer.invoke("agent:enqueue", root, task),
   manifest: (root: string) => ipcRenderer.invoke("agent:manifest", root),
   send: (root: string) => ipcRenderer.invoke("agent:send", root),
+  cancel: (root: string, runId: string) => ipcRenderer.invoke("agent:cancel", root, runId),
   collect: (root: string, runId: string) => ipcRenderer.invoke("agent:collect", root, runId),
   runs: (root: string) => ipcRenderer.invoke("agent:runs", root),
 

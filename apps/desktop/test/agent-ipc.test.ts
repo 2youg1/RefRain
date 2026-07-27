@@ -149,6 +149,26 @@ test("same-name command agents keep distinct argv and still run after a restart"
   }
 });
 
+test("an active Run can be cancelled through the public IPC channel", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-agent-cancel-"));
+  try {
+    const added = (await call("agent:add", root, "manual", "", "unknown", "unknown")) as {
+      id: string;
+    };
+    await call("agent:enqueue", root, task("cancel-me", added.id));
+    const [run] = (await call("agent:send", root)) as { id: string }[];
+
+    expect(await call("agent:cancel", root, run!.id)).toBe(true);
+    expect(await call("agent:cancel", root, run!.id)).toBe(false);
+    expect(await call("agent:runs", root)).toEqual([
+      expect.objectContaining({ id: run!.id, state: "cancelled" }),
+    ]);
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a malformed command line is refused before the roster changes", async () => {
   const root = mkdtempSync(join(tmpdir(), "refrain-agent-command-"));
   try {

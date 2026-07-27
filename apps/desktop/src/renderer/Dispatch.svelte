@@ -12,6 +12,7 @@ interface Props {
   runs: RunView[];
   t: (key: Key) => string;
   onDispatched: () => void;
+  onCancel: (runId: string) => void;
   onCollect: (runId: string) => void;
   /**
    * The instruction the author is writing for this dispatch.
@@ -33,6 +34,7 @@ const {
   runs,
   t,
   onDispatched,
+  onCancel,
   onCollect,
   prompt,
   onPrompt,
@@ -171,8 +173,11 @@ const send = async (): Promise<void> => {
         <div class="run">
           <span class="run-id">{run.id}</span>
           <span class="run-state {run.state}">{run.state}</span>
-          <!-- Collecting a failed run has nothing to collect. -->
-          {#if run.state !== "failed"}
+          {#if run.state === "dispatched"}
+            <button onclick={() => onCancel(run.id)}>{t("dispatch.cancel")}</button>
+          {/if}
+          <!-- Only completed or manually recovered Runs have material to collect. -->
+          {#if run.state === "completed" || (run.state === "dispatched" && run.failure)}
             <button onclick={() => onCollect(run.id)}>{t("dispatch.collect")}</button>
           {/if}
         </div>

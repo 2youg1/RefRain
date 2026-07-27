@@ -134,6 +134,19 @@ export class AgentHost {
     return this.dispatched;
   }
 
+  /** Stop one active producer; a restarted orphan has no process handle to kill. */
+  async cancel(runId: string): Promise<boolean> {
+    const run = this.dispatched.find((candidate) => candidate.id === runId);
+    if (run?.state !== "dispatched") return false;
+    const adapter = this.adapterFor.get(runId);
+    if (!adapter) return false;
+
+    await adapter.cancel(run);
+    run.state = "cancelled";
+    this.persist();
+    return true;
+  }
+
   commentsFor(runId: string): readonly AgentComment[] {
     return this.comments.get(runId) ?? [];
   }

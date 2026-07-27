@@ -790,6 +790,17 @@ const setZen = async (on: boolean): Promise<void> => {
   await api().fullscreen(on);
 };
 
+const cancelRun = async (runId: string): Promise<void> => {
+  const owner = runOwner ?? activeChapter?.root ?? root;
+  if (!owner) return;
+  try {
+    await api().cancel(owner, runId);
+    runs = await api().runs(owner);
+  } catch (error) {
+    say(error instanceof Error ? error.message : String(error));
+  }
+};
+
 const collect = async (runId: string): Promise<void> => {
   const owner = runOwner ?? activeChapter?.root ?? root;
   if (!owner) return;
@@ -1220,6 +1231,7 @@ const onScroll = (): void => {
         runs = await api().runs(owner);
       }
     }}
+    onCancel={cancelRun}
     onCollect={collect}
   />
 </Sheet>

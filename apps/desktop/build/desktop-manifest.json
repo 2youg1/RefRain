@@ -8,13 +8,13 @@
     },
     {
       "path": "dist/main/main.cjs",
-      "bytes": 135894,
-      "sha256": "9a0a5dd0820d8ef0618e5dfe31c784639a6422cc8fb8de65acd4533a52707d82"
+      "bytes": 136392,
+      "sha256": "0a6878ae04000aa1c39b72bb078f4cde786ca091b28a7d43b1c62e8ee10dab1b"
     },
     {
       "path": "dist/main/preload.cjs",
-      "bytes": 6016,
-      "sha256": "59714c420e9264c7e5a3af1f469b8ea3c2e6581237915c736ae023697a951728"
+      "bytes": 6108,
+      "sha256": "4917d4ffbe7900788013feb10679a8d68548ac17d880de7602e7410ac92ecf7a"
     },
     {
       "path": "dist/renderer/assets/AnticDidone-Bk4I4Inl.woff2",
@@ -57,19 +57,19 @@
       "sha256": "a3c02a9ae41b87b1811bc4aef6a1399b7a5c8349c947da1fd81b7671aa67ddc2"
     },
     {
-      "path": "dist/renderer/assets/index-COI71DId.js",
-      "bytes": 150144,
-      "sha256": "7e51c8c29e85f31a35a8d7af367f704de375fe5a732a336120ed6741b142f449"
-    },
-    {
       "path": "dist/renderer/assets/index-CZz8fgVc.css",
       "bytes": 62673,
       "sha256": "9755f8ae78a5a7cde5462f1d66903b68e94aa695aa85063ccb0714ebbd827bba"
     },
     {
+      "path": "dist/renderer/assets/index-eMqNp1V-.js",
+      "bytes": 150585,
+      "sha256": "8b71bddbede4f95047a4bdc18c1aee02f480a6c74444d0ab2359d2cde3caf2f2"
+    },
+    {
       "path": "dist/renderer/index.html",
       "bytes": 620,
-      "sha256": "481fe751e8e049db04c6d9596d97c68ef02e5c0b740f83bc42f3b5913cf42035"
+      "sha256": "2c7729cc11052dd0999846209e48d627f8de86b3c73a33c158de058bec5b1f10"
     }
   ]
 }

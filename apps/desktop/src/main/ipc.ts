@@ -680,6 +680,11 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): IpcAuthority => 
     return runs.map((r) => ({ id: r.id, requestPath: r.requestPath, resultPath: r.resultPath }));
   });
 
+  /** The author alone may stop a live producer; terminal Runs remain terminal. */
+  handlers.handleRoot("agent:cancel", (_e, root: string, runId: string) =>
+    openWorkbench(root).host.cancel(runId),
+  );
+
   /**
    * The runs, each carrying why it failed.
    *

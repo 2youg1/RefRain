@@ -66,6 +66,7 @@ const valid: { [C in IpcChannel]: IpcArgs<C> } = {
   "agent:enqueue": [root, task],
   "agent:manifest": [root],
   "agent:send": [root],
+  "agent:cancel": [root, "run-1"],
   "agent:runs": [root],
   "agent:collect": [root, "run-1"],
   "review:slice": [proposal],
