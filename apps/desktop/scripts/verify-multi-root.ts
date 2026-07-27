@@ -135,6 +135,31 @@ try {
   if (last?.[1] !== "/b" || last[2] !== "01.md" || !last[3]?.includes("第二个根"))
     throw new Error(`saving /b/01.md targeted the wrong chapter: ${JSON.stringify(calls)}`);
 
+  // Removing a Root is one click from emptying the rail, and the way back is
+  // remembering the folder's path. It waits for an answer, and the answer that
+  // does nothing is the default one.
+  await page.locator(".root").nth(1).hover();
+  await page.locator(".root").nth(1).locator(".drop-root").click();
+  await page.waitForTimeout(200);
+
+  const offer = page.locator(".offer[role=alertdialog]");
+  if ((await offer.count()) === 0) throw new Error("removing a Root asked nothing");
+  const offered = await offer.innerText();
+  if (!offered.includes("/b")) throw new Error(`the offer did not name the Root: ${offered}`);
+
+  await offer.getByRole("button", { name: "留着" }).click();
+  await page.waitForTimeout(200);
+  if ((await page.locator(".root").count()) !== 2)
+    throw new Error("declining the offer removed the Root anyway");
+
+  await page.locator(".root").nth(1).hover();
+  await page.locator(".root").nth(1).locator(".drop-root").click();
+  await page.waitForTimeout(200);
+  await page.locator(".offer[role=alertdialog]").getByRole("button", { name: "移出" }).click();
+  await page.waitForTimeout(400);
+  if ((await page.locator(".root").count()) !== 1)
+    throw new Error("accepting the offer left the Root in place");
+
   console.log("PASS  duplicate chapter titles stay isolated by file path across workspace roots");
 } finally {
   await browser.close();

@@ -399,6 +399,13 @@ export const dict = {
     zh: "这个位置打不开了。文件可能被移动、改名，或所在的盘没有挂载。",
     en: "This location cannot be opened. It may have been moved or renamed, or its drive is not mounted.",
   },
+  "root.drop": { zh: "把这个 Root 从工作区移出？", en: "Remove this Root from the workspace?" },
+  "root.dropHint": {
+    zh: "磁盘上的文件一个都不会动，只是这里不再显示它。要看回来，重新选一次这个文件夹就行。",
+    en: "Nothing on disk is touched; it only stops being shown here. Pick the folder again to bring it back.",
+  },
+  "root.keep": { zh: "留着", en: "Keep it" },
+  "root.dropConfirm": { zh: "移出", en: "Remove" },
   "chapter.pickOne": {
     zh: "从左边选一章，或者开一章新的。",
     en: "Choose a chapter, or start a new one.",
