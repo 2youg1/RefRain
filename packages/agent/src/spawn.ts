@@ -96,6 +96,18 @@ const drain = (stream: NodeJS.ReadableStream | null): Promise<string> => {
  * PATH lookup happens here, in the one place that knows how the process is
  * started.
  */
+/**
+ * Resolved program paths, keyed by the name and the PATH that resolved it.
+ *
+ * A miss costs one `accessSync` per directory per extension, and Windows has
+ * many of both — the search for a program that is not there walks the whole
+ * product. The command-adapter suite launches dozens of children and started
+ * timing out at five seconds each once Git's directories joined the PATH.
+ * Within one process the answer cannot change unless the PATH does, which is
+ * why the PATH is part of the key rather than assumed constant.
+ */
+const resolved = new Map<string, string | undefined>();
+
 const resolveProgram = (program: string, environment: NodeJS.ProcessEnv): string | undefined => {
   const exists = (path: string): boolean => {
     try {
@@ -119,21 +131,33 @@ const resolveProgram = (program: string, environment: NodeJS.ProcessEnv): string
   // whatever case the platform used, so the lookup has to be case-insensitive
   // too.
   const fromEnvironment = (variable: string): string | undefined => {
+    // Exact spelling first. Windows can carry both `Path` and `PATH` — a caller
+    // that set one deliberately must get that one, and taking whichever key
+    // enumerated first made the choice depend on insertion order.
+    if (environment[variable] !== undefined) return environment[variable];
     const match = Object.keys(environment).find((key) => key.toUpperCase() === variable);
     return match === undefined ? undefined : environment[match];
   };
+
+  const search = fromEnvironment("PATH") ?? "";
+  const key = `${program}\u0000${search}`;
+  if (resolved.has(key)) return resolved.get(key);
 
   const suffixes =
     process.platform === "win32"
       ? ["", ...(fromEnvironment("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)]
       : [""];
 
-  for (const dir of (fromEnvironment("PATH") ?? "").split(delimiter).filter(Boolean))
+  for (const dir of search.split(delimiter).filter(Boolean))
     for (const suffix of suffixes) {
       const candidate = join(dir, program + suffix);
-      if (exists(candidate)) return candidate;
+      if (exists(candidate)) {
+        resolved.set(key, candidate);
+        return candidate;
+      }
     }
 
+  resolved.set(key, undefined);
   return undefined;
 };
 
