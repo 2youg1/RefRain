@@ -334,6 +334,33 @@ if ((await pane.count()) > 0) {
   );
   check("the delete control is disabled with nothing selected", await trash.isDisabled());
 
+  const listbox = page.locator('section.files [role="listbox"]');
+  await listbox.focus();
+  await page.keyboard.press("ArrowDown");
+  const firstFocused = await listbox.getAttribute("aria-activedescendant");
+  check(
+    "ArrowDown gives the listbox a real active option",
+    firstFocused !== null && (await page.locator(`#${firstFocused}`).count()) === 1,
+    `active descendant: ${firstFocused}`,
+  );
+  await page.keyboard.press("Space");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Control+Space");
+  check(
+    "Space and Control+Space select through the listbox focus",
+    (await page.locator('section.files [role="option"][aria-selected="true"]').count()) === 2,
+  );
+
+  await page.keyboard.press("End");
+  await page.waitForTimeout(300);
+  const lastFocused = await listbox.getAttribute("aria-activedescendant");
+  check(
+    "End reaches the final option without rendering the intervening workspace",
+    lastFocused === `files-option-${ENTRIES.length - 1}` &&
+      (await page.locator(`#files-option-${ENTRIES.length - 1}`).count()) === 1,
+    `active descendant: ${lastFocused}`,
+  );
+
   await page.screenshot({ path: join(root, "shots", "07-files.png") });
 }
 
