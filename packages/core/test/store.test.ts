@@ -136,6 +136,23 @@ describe("Verdict Ledger", () => {
     reopened.close();
   });
 
+  test("legacy baseline ids survive a ledger reopen byte-for-byte", () => {
+    const path = join(root, "legacy-ledger.db");
+    const baselines = ["h7", "/old/path.md@load", "01.md@1720000000000", "01.md@current"];
+    const ledger = new VerdictLedger(path);
+    ledger.recordAll(
+      baselines.map((baseline, index) => ({
+        ...verdict({ id: `legacy-${index}` }),
+        baseline,
+      })),
+    );
+    ledger.close();
+
+    const reopened = new VerdictLedger(path);
+    expect(reopened.all().map((entry) => entry.baseline)).toEqual(baselines);
+    reopened.close();
+  });
+
   test("an unstated reason stays absent rather than becoming an empty string", () => {
     const ledger = new VerdictLedger(join(root, "ledger.db"));
     ledger.record(verdict());

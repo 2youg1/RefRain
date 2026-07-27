@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Block, BlockId, TextChange, TextHead } from "./domain.ts";
 import { splitBlocks } from "./roundtrip.ts";
+import { newTextHeadId } from "./text-head-id.ts";
 
 /** Blocks are separated by a blank line, which is also Markdown's paragraph break. */
 const SEPARATOR = "\n\n";
@@ -10,9 +11,6 @@ export const currentText = (head: TextHead): string =>
 
 export const blockAt = (head: TextHead, id: BlockId): Block | undefined =>
   head.blocks.find((b) => b.id === id);
-
-let sequence = 0;
-const nextHeadId = (): string => `h${++sequence}`;
 
 /**
  * The only function that advances the manuscript (SPEC 3.1). Agent output never
@@ -72,7 +70,7 @@ export const applyTextAction = (
   // land before so the result is assembled in a single pass instead of by
   // repeated splicing, which is itself linear per call.
   const inserts = changes.filter((change) => change.kind === "insert");
-  if (inserts.length === 0) return { id: nextHeadId(), blocks, cause };
+  if (inserts.length === 0) return { id: newTextHeadId(), blocks, cause };
 
   const present = new Map(blocks.map((block, index) => [block.id, index] as const));
   const byId = new Map(inserts.map((change) => [change.blockId, change] as const));
@@ -167,5 +165,5 @@ export const applyTextAction = (
   }
   out.push(...ordered(blocks.length));
 
-  return { id: nextHeadId(), blocks: out, cause };
+  return { id: newTextHeadId(), blocks: out, cause };
 };

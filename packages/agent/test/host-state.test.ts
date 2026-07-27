@@ -91,6 +91,29 @@ describe("HostState recovery", () => {
     expect(readFileSync(join(root, "host.json"), "utf8")).not.toBe(serialized);
   });
 
+  test("legacy baseline ids remain opaque through HostState read and rewrite", () => {
+    const baselines = ["h7", "/old/path.md@load", "01.md@1720000000000", "01.md@current"];
+    writeFileSync(
+      join(root, "host.json"),
+      JSON.stringify({
+        version: 1,
+        sequence: 0,
+        queue: baselines.map((baseline, index) => ({
+          ...task(`legacy-${index}`),
+          baseline,
+        })),
+        runs: [],
+        drifted: [],
+      }),
+      "utf8",
+    );
+
+    const restored = readHostState(root);
+    expect(restored.queue.map((entry) => entry.baseline)).toEqual(baselines);
+    writeHostState(root, restored);
+    expect(readHostState(root).queue.map((entry) => entry.baseline)).toEqual(baselines);
+  });
+
   test("a bad drift marker does not erase valid queued work", () => {
     writeFileSync(
       join(root, "host.json"),
