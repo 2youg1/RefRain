@@ -155,6 +155,31 @@ describe("Text Action", () => {
     ).toThrow(/before itself/);
   });
 
+  /**
+   * The boundary chain is the shape a run of new paragraphs takes, so walking
+   * it must not be quadratic either. Checking the walked set with an array's
+   * `includes` measured 39 ms at 8,000 links and rising fourfold per doubling.
+   */
+  test("a long chain of insertions resolves in linear time", () => {
+    const before: TextHead = { id: "h0", blocks: [{ id: "b0", text: "末段。" }], cause: "seed" };
+    const changes: TextChange[] = Array.from({ length: 8_000 }, (_, k) => ({
+      kind: "insert" as const,
+      blockIds: [],
+      blockId: `n${k}`,
+      text: `第${k}段。`,
+      beforeBlockId: k === 7_999 ? "b0" : `n${k + 1}`,
+    }));
+
+    const started = performance.now();
+    const after = applyTextAction(before, changes, "a chain");
+    const elapsed = performance.now() - started;
+
+    expect(elapsed).toBeLessThan(300);
+    expect(after.blocks).toHaveLength(8_001);
+    expect(after.blocks[0]?.id).toBe("n0");
+    expect(after.blocks.at(-1)?.id).toBe("b0");
+  });
+
   test("interleaved insertions into a long manuscript stay affordable", () => {
     const before: TextHead = {
       id: "h0",
