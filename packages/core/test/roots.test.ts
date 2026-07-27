@@ -112,6 +112,22 @@ test("two roots keep their own chapters, even under the same names", () => {
   }
 });
 
+test("numbered chapters sort by their number rather than character order", () => {
+  const dir = scratch();
+  try {
+    for (const name of ["chapter-10.md", "chapter-2.md", "chapter-1.md"])
+      writeFileSync(join(dir, name), name, "utf8");
+
+    expect(loadWorkspace([dir]).chapters.map((chapter) => chapter.id)).toEqual([
+      "chapter-1.md",
+      "chapter-2.md",
+      "chapter-10.md",
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("the source backup is not collected, whatever it holds", () => {
   const dir = scratch();
   try {
