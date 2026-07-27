@@ -13,32 +13,19 @@
  */
 
 import { Glob } from "bun";
+import { runsBunFile, runsBunScript, runsCommand, workflowRuns } from "./workflow-commands.ts";
 
 // `Glob.scan` skips dotted directories by default, so `.github` needs asking
 // for explicitly — the first draft of this script found nothing and would have
 // passed for exactly the reason it exists to catch.
-let ci = "";
+const runs: string[] = [];
+let workflows = 0;
 for await (const file of new Glob("workflows/*.yml").scan({ cwd: ".github" })) {
-  ci += await Bun.file(`.github/${file}`).text();
+  workflows += 1;
+  runs.push(...workflowRuns(await Bun.file(`.github/${file}`).text()));
 }
 
-/*
- * Only lines that actually execute something count.
- *
- * Matching the whole file as one string meant a script's name appearing in a
- * comment satisfied the check. Disabling a gate — `run: echo skipped` — while
- * leaving "verify-themes.ts is temporarily disabled" above it passed here,
- * which is this gate's own failure mode wearing its own uniform.
- */
-const commands = ci
-  .split("\n")
-  .map((line) => line.replace(/#.*$/, "").trim())
-  .filter(
-    (line) => /^(run:|-\s*run:|\S+:\s*bun\s)/.test(line) || /^\s*(bun|npm|cargo)\s/.test(line),
-  )
-  .join("\n");
-
-if (ci === "") {
+if (workflows === 0) {
   console.error("FAIL  no workflow files found — the scan is looking in the wrong place");
   process.exit(1);
 }
@@ -65,8 +52,8 @@ for (const pattern of ["**/scripts/verify-*.ts"]) {
     const name = file.split(/[/\\]/).pop() ?? file;
     checked.push(name);
     // Either invoked by path, or through a package.json script that CI calls.
-    const byPath = commands.includes(name);
-    const byScript = commands.includes(`verify:${name.replace(/^verify-|\.ts$/g, "")}`);
+    const byPath = runsBunFile(runs, name);
+    const byScript = runsBunScript(runs, `verify:${name.replace(/^verify-|\.ts$/g, "")}`);
     if (!byPath && !byScript) orphans.push(file);
   }
 }
@@ -78,19 +65,19 @@ const root = JSON.parse(await Bun.file("package.json").text()) as {
 for (const script of Object.keys(root.scripts ?? {})) {
   if (!script.startsWith("verify:")) continue;
   checked.push(script);
-  if (!commands.includes(script)) orphans.push(`package.json script "${script}"`);
+  if (!runsBunScript(runs, script)) orphans.push(`package.json script "${script}"`);
 }
 
 /*
  * The packaging configuration. Its schema is validated only when the packager
  * runs, and three of this release's defects lived there.
  */
-if (!ci.includes("electron-builder")) {
+if (!runsCommand(runs, "electron-builder")) {
   orphans.push("electron-builder (the packaging configuration is never validated)");
 }
 
 /* The native layer, whose tests only run where its platform binary builds. */
-if (!ci.includes("cargo test")) {
+if (!runsCommand(runs, "cargo test")) {
   orphans.push("cargo test (the native file layer is never tested)");
 }
 
