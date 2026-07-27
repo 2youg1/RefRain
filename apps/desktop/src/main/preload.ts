@@ -44,8 +44,8 @@ const api = {
   /** The author read the command and accepts it; only then may it run. */
   trustAgent: (root: string, id: string) => ipcRenderer.invoke("agent:trust", root, id),
   removeAgent: (root: string, id: string) => ipcRenderer.invoke("agent:remove", root, id),
-  addAgent: (root: string, name: string, command: string) =>
-    ipcRenderer.invoke("agent:add", root, name, command),
+  addAgent: (root: string, name: string, command: string, model: string, reasoningEffort: string) =>
+    ipcRenderer.invoke("agent:add", root, name, command, model, reasoningEffort),
   enqueue: (root: string, task: unknown) => ipcRenderer.invoke("agent:enqueue", root, task),
   manifest: (root: string) => ipcRenderer.invoke("agent:manifest", root),
   send: (root: string) => ipcRenderer.invoke("agent:send", root),
@@ -87,8 +87,6 @@ const api = {
       ipcRenderer.invoke("files:link", root, target, linkPath),
     createDirectory: (root: string, path: string) =>
       ipcRenderer.invoke("files:create-directory", root, path),
-    uniqueName: (root: string, desired: string) =>
-      ipcRenderer.invoke("files:unique-name", root, desired),
     admits: (root: string, path: string) => ipcRenderer.invoke("files:admits", root, path),
   },
 

@@ -70,6 +70,7 @@ await page.addInitScript(`
     searchLedger: async () => [],
     reply: async () => "",
     files: {
+      ...window.refrain.files,
       scan: async () => ({ ok: true, count: 0 }),
       page: async () => ({ ok: true, entries: [], total: 0 }),
       search: async () => ({ ok: true, hits: [] }),
@@ -81,7 +82,6 @@ await page.addInitScript(`
       trashViaHome: async () => ({ ok: false, detail: "not expected" }),
       link: async () => ({ ok: false, detail: "not expected" }),
       createDirectory: async () => ({ ok: false, detail: "not expected" }),
-      uniqueName: async () => ({ ok: false, detail: "not expected" }),
       admits: async () => ({ ok: true, admitted: true }),
     },
   });

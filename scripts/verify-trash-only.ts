@@ -94,7 +94,11 @@ const ipc = readdirSync(mainDir)
   .map((name) => readFileSync(join(mainDir, name), "utf8"))
   .join("\n");
 
-const channels = [...ipc.matchAll(/ipc\.handle\(\s*"([^"]+)"/g)].map((match) => match[1] ?? "");
+const channels = [
+  ...ipc.matchAll(
+    /(?:\bipc\.handle|\bhandlers\.handle(?:OpenRoots|Root)?|\bhandleRoot)\(\s*"([^"]+)"/g,
+  ),
+].map((match) => match[1] ?? "");
 check("the channel scan found handlers at all", channels.length > 0, `${channels.length} channels`);
 const destructive = channels.filter((channel) =>
   /^files:(delete|remove|unlink|destroy|purge)/.test(channel),

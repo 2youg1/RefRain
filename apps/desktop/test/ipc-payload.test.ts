@@ -62,7 +62,7 @@ const valid: { [C in IpcChannel]: IpcArgs<C> } = {
   "agent:trust": [root, "agent-1"],
   "agent:probe": [root, "agent-1"],
   "agent:remove": [root, "agent-1"],
-  "agent:add": [root, "Reader", "reader --stdio"],
+  "agent:add": [root, "Reader", "reader --stdio", "gpt-5", "high"],
   "agent:enqueue": [root, task],
   "agent:manifest": [root],
   "agent:send": [root],
@@ -84,7 +84,6 @@ const valid: { [C in IpcChannel]: IpcArgs<C> } = {
   "files:trash-via-home": [root, inside],
   "files:link": [root, inside, join(root, "linked.md")],
   "files:create-directory": [root, join(root, "notes")],
-  "files:unique-name": [root, "chapter.md"],
   "files:admits": [root, inside],
   "window:fullscreen": [true],
   "display:profile": [],
@@ -121,4 +120,43 @@ test("domain payloads reject unknown fields and missing conditional text", () =>
   expect(() => parseIpcArgs("files:admits", [root, join(root, "..", "outside.md")])).toThrow(
     /Root/i,
   );
+});
+
+test("Review Tasks reject ambiguous or empty identities at the IPC boundary", () => {
+  expect(() =>
+    parseIpcArgs("agent:enqueue", [root, { ...task, contextScope: ["chapter.md", "chapter.md"] }]),
+  ).toThrow(/unique/);
+  expect(() =>
+    parseIpcArgs("agent:enqueue", [
+      root,
+      {
+        ...task,
+        editScopes: [
+          { id: "same", blockIds: ["b1"], text: "one" },
+          { id: "same", blockIds: ["b2"], text: "two" },
+        ],
+      },
+    ]),
+  ).toThrow(/scope ids/);
+  expect(() =>
+    parseIpcArgs("agent:enqueue", [
+      root,
+      { ...task, editScopes: [{ id: "scope", blockIds: ["b1", "b1"], text: "before" }] },
+    ]),
+  ).toThrow(/unique/);
+  expect(() => parseIpcArgs("agent:enqueue", [root, { ...task, agentId: " " }])).toThrow(
+    /non-empty/,
+  );
+});
+
+test("list decoders reject sparse arrays instead of persisting their holes as null", () => {
+  const sparse = Array(1);
+
+  expect(() => parseIpcArgs("agent:enqueue", [root, { ...task, contextScope: sparse }])).toThrow(
+    /contextScope\[0\]/,
+  );
+  expect(() =>
+    parseIpcArgs("review:commit", [root, { chapter: "chapter.md", verdicts: sparse }]),
+  ).toThrow(/verdicts\[0\]/);
+  expect(() => parseIpcArgs("files:trash", [root, sparse])).toThrow(/files:trash\[1\]\[0\]/);
 });

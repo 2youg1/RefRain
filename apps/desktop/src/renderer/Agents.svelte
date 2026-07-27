@@ -15,6 +15,8 @@ import { api } from "./api.ts";
     adding: boolean;
     name: string;
     command: string;
+    model: string;
+    reasoningEffort: string;
   }
 
   interface Props {
@@ -28,6 +30,8 @@ import { api } from "./api.ts";
   const adding = $derived(draft.adding);
   const name = $derived(draft.name);
   const command = $derived(draft.command);
+  const model = $derived(draft.model);
+  const reasoningEffort = $derived(draft.reasoningEffort);
 
   type Status = "ready" | "checking" | "unreachable" | "file" | "untrusted";
 
@@ -104,14 +108,26 @@ import { api } from "./api.ts";
   };
 
   const add = async (): Promise<void> => {
-    if (!root || name.trim().length === 0) return;
-    const agent = await api().addAgent(root, name.trim(), command.trim());
+    if (
+      !root ||
+      name.trim().length === 0 ||
+      model.trim().length === 0 ||
+      reasoningEffort.trim().length === 0
+    )
+      return;
+    const agent = await api().addAgent(
+      root,
+      name.trim(),
+      command.trim(),
+      model.trim(),
+      reasoningEffort.trim(),
+    );
     agents = [
       ...agents,
       { ...agent, status: command.trim().length === 0 ? "file" : "checking" },
     ];
     if (command.trim().length > 0) void probe(agent.id);
-    onDraft({ adding: false, name: "", command: "" });
+    onDraft({ adding: false, name: "", command: "", model: "", reasoningEffort: "" });
   };
 
   const remove = async (id: string): Promise<void> => {
@@ -161,6 +177,7 @@ import { api } from "./api.ts";
         {agent.binding.harness === "file"
           ? t("agents.fileChannel")
           : agent.binding.harness.replace(/^command:/, "")}
+        · {agent.binding.model} · {agent.binding.reasoningEffort}
       </p>
 
       {#if agent.status === "untrusted"}
@@ -186,6 +203,7 @@ import { api } from "./api.ts";
       <div class="field">
         <span class="label">{t("agents.name")}</span>
         <input
+          name="agent-name"
           value={name}
           oninput={(event) => onDraft({ ...draft, name: event.currentTarget.value })}
           placeholder="kimi"
@@ -196,12 +214,36 @@ import { api } from "./api.ts";
       <div class="field">
         <span class="label">{t("agents.command")}</span>
         <input
+          name="agent-command"
           value={command}
           oninput={(event) => onDraft({ ...draft, command: event.currentTarget.value })}
           placeholder={t("agents.placeholderCmd")}
           spellcheck="false"
         />
         <p class="hint">{t("agents.commandHint")}</p>
+      </div>
+
+      <div class="field">
+        <span class="label">{t("agents.model")}</span>
+        <input
+          name="agent-model"
+          value={model}
+          oninput={(event) => onDraft({ ...draft, model: event.currentTarget.value })}
+          placeholder={t("agents.modelPlaceholder")}
+          spellcheck="false"
+        />
+      </div>
+
+      <div class="field">
+        <span class="label">{t("agents.reasoningEffort")}</span>
+        <input
+          name="agent-reasoning-effort"
+          value={reasoningEffort}
+          oninput={(event) => onDraft({ ...draft, reasoningEffort: event.currentTarget.value })}
+          placeholder={t("agents.reasoningPlaceholder")}
+          spellcheck="false"
+        />
+        <p class="hint">{t("agents.bindingLocked")}</p>
       </div>
 
       <div class="presets">
@@ -220,7 +262,13 @@ import { api } from "./api.ts";
       </div>
 
       <div class="actions">
-        <button class="primary" onclick={add} disabled={name.trim().length === 0}>
+        <button
+          class="primary"
+          onclick={add}
+          disabled={name.trim().length === 0 ||
+            model.trim().length === 0 ||
+            reasoningEffort.trim().length === 0}
+        >
           {t("agents.add")}
         </button>
         <button onclick={() => onDraft({ ...draft, adding: false })}>{t("review.cancel")}</button>

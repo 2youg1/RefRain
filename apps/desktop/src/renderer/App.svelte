@@ -524,7 +524,13 @@ const reload = async (): Promise<void> => {
     const workspace = await api().loadWorkspace(roots);
     rootViews = workspace.roots;
     chapters = workspace.chapters;
-    if (workspace.warnings?.length) say(workspace.warnings.join("\n"));
+    const messages = [
+      ...(workspace.warnings ?? []),
+      ...(workspace.recoveryEvidencePaths ?? []).map(
+        (path) => `${t("chapter.recoveredWrite")}\n${path}`,
+      ),
+    ];
+    if (messages.length > 0) say(messages.join("\n"));
     if (!chapters.some((chapter) => chapter.path === active)) select(chapters[0]?.path ?? null);
   } catch (error) {
     say(error instanceof Error ? error.message : String(error));
@@ -659,6 +665,8 @@ const save = async (): Promise<boolean> => {
     }
 
     edits = [...edits, ...outcome.edits];
+    if (outcome.recoveryEvidencePath)
+      say(`${t("chapter.recoveredWrite")}\n${outcome.recoveryEvidencePath}`);
     chapters = chapters.map((entry) =>
       entry.path === chapter.path ? { ...entry, text: written } : entry,
     );
@@ -735,6 +743,8 @@ const resolveConflict = async (choice: "mine" | "disk"): Promise<void> => {
 
   conflict = null;
   if (outcome.edits) edits = [...edits, ...outcome.edits];
+  if (outcome.recoveryEvidencePath)
+    say(`${t("chapter.recoveredWrite")}\n${outcome.recoveryEvidencePath}`);
   chapters = chapters.map((chapter) =>
     chapter.path === pending.path ? { ...chapter, text: outcome.text } : chapter,
   );
@@ -818,7 +828,13 @@ let staged = $state<Record<string, VerdictView>>({});
 let dispatchPrompt = $state("");
 let reviewDraft = $state("");
 let reviewEditing = $state<string | null>(null);
-let agentDraft = $state({ adding: false, name: "", command: "" });
+let agentDraft = $state({
+  adding: false,
+  name: "",
+  command: "",
+  model: "",
+  reasoningEffort: "",
+});
 
 const commit = async (verdicts: VerdictView[]): Promise<void> => {
   // The main process merges against its own head. With unsaved text in the
@@ -843,6 +859,8 @@ const commit = async (verdicts: VerdictView[]): Promise<void> => {
       return;
     }
     text = result.text;
+    if (result.recoveryEvidencePath)
+      say(`${t("chapter.recoveredWrite")}\n${result.recoveryEvidencePath}`);
     render(result.text);
     chapters = chapters.map((entry) =>
       entry.path === chapter.path ? { ...entry, text: result.text } : entry,

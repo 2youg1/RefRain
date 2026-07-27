@@ -58,6 +58,7 @@ await page.addInitScript(`
     revertAll: async (text) => text,
     describeEdits: async () => "",
     files: {
+      ...window.refrain.files,
       scan: async () => ({ ok: true, count: 0 }),
       page: async () => ({ ok: true, entries: [], total: 0 }),
       search: async () => ({ ok: true, hits: [] }),

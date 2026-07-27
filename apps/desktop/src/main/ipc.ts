@@ -300,11 +300,14 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): IpcAuthority => 
   /** Several roots at once: a folder kept empty for tidiness locks out nothing. */
   handlers.handleOpenRoots("project:load-workspace", (_e, roots: string[]) => {
     const workspace = loadWorkspace(roots);
-    const warnings = workspace.roots.flatMap((root) => {
-      if (root.kind !== "folder" || root.missing === true) return [];
-      const outcome = takeSourceBackup(root.path);
-      return outcome.kind === "refused" ? [outcome.reason ?? "无法保存原件副本。"] : [];
-    });
+    const warnings = [
+      ...workspace.recoveryWarnings,
+      ...workspace.roots.flatMap((root) => {
+        if (root.kind !== "folder" || root.missing === true) return [];
+        const outcome = takeSourceBackup(root.path);
+        return outcome.kind === "refused" ? [outcome.reason ?? "无法保存原件副本。"] : [];
+      }),
+    ];
     const pathOf = new Map(workspace.roots.map((root) => [root.id, root.path]));
 
     for (const chapter of workspace.chapters) {
@@ -323,6 +326,9 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): IpcAuthority => 
 
     return {
       ...(warnings.length === 0 ? {} : { warnings }),
+      ...(workspace.recoveryEvidencePaths.length === 0
+        ? {}
+        : { recoveryEvidencePaths: workspace.recoveryEvidencePaths }),
       roots: workspace.roots.map((root) => ({
         id: root.id,
         path: root.path,
@@ -396,7 +402,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): IpcAuthority => 
 
     const known = workbench.onDisk.get(chapterId);
     const outcome = known
-      ? writeChapter(known.path, head, known.stamp)
+      ? writeChapter(known.path, head, known.stamp, root)
       : saveChapter(loadProject(root), chapterId, head);
 
     if (!outcome.ok) {
@@ -412,7 +418,13 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): IpcAuthority => 
     workbench.conflicts.delete(chapterId);
     workbench.heads.set(chapterId, head);
     workbench.onDisk.set(chapterId, { path: outcome.path, stamp: outcome.stamp });
-    return { ok: true as const, edits: advanced.edits };
+    return {
+      ok: true as const,
+      edits: advanced.edits,
+      ...(outcome.recoveryEvidencePath === undefined
+        ? {}
+        : { recoveryEvidencePath: outcome.recoveryEvidencePath }),
+    };
   });
 
   handlers.handleRoot(
@@ -461,7 +473,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): IpcAuthority => 
         "author resolved an external edit",
       );
       const head = advanced.head;
-      const outcome = writeChapter(pending.path, head, pending.stamp);
+      const outcome = writeChapter(pending.path, head, pending.stamp, root);
       if (!outcome.ok) {
         workbench.conflicts.set(chapterId, {
           path: outcome.path,
@@ -475,7 +487,14 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): IpcAuthority => 
       workbench.conflicts.delete(chapterId);
       workbench.heads.set(chapterId, head);
       workbench.onDisk.set(chapterId, { path: pending.path, stamp: outcome.stamp });
-      return { ok: true as const, text: pending.mine, edits: advanced.edits };
+      return {
+        ok: true as const,
+        text: pending.mine,
+        edits: advanced.edits,
+        ...(outcome.recoveryEvidencePath === undefined
+          ? {}
+          : { recoveryEvidencePath: outcome.recoveryEvidencePath }),
+      };
     },
   );
 
@@ -550,16 +569,14 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): IpcAuthority => 
   handlers.handleRoot("agent:list", (_e, root: string) =>
     openWorkbench(root).roster.map((entry) => ({
       ...entry.agent,
-      ...(entry.template === undefined ? {} : { command: entry.template.join(" ") }),
+      ...(entry.template === undefined ? {} : { command: JSON.stringify(entry.template) }),
       trusted: entry.template === undefined || entry.trusted === true,
     })),
   );
 
   /**
-   * Record that the author read this agent's command and accepted it.
-   *
-   * Trust is per project, because it is a judgment about this project's
-   * `agents.json` and not about an agent's name.
+   * Record that the author read this agent's command in this application
+   * session. The project file cannot persist its own permission to execute.
    */
   handlers.handleRoot("agent:trust", (_e, root: string, id: string) => {
     const workbench = openWorkbench(root);
@@ -569,7 +586,6 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): IpcAuthority => 
 
     const next: RosterEntry = { ...entry, trusted: true };
     workbench.roster.splice(index, 1, next);
-    writeRoster(join(root, ".refrain"), workbench.roster);
     workbench.host.addAdapter(
       new CommandAdapter({ id: next.agent.binding.harness, template: entry.template }),
     );
@@ -591,7 +607,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): IpcAuthority => 
     // A probe is an execution. An agent restored from a project file the author
     // has not vouched for does not get run just because a screen was opened.
     if (entry.template !== undefined && entry.trusted !== true)
-      return { ok: false, reason: "untrusted", detail: entry.template.join(" ") };
+      return { ok: false, reason: "untrusted", detail: JSON.stringify(entry.template) };
 
     const program = entry.template?.[0];
     if (!program) return { ok: false, detail: "no command configured" };
@@ -609,37 +625,55 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): IpcAuthority => 
     return true;
   });
 
-  handlers.handleRoot("agent:add", (_e, root: string, name: string, command: string) => {
-    const workbench = openWorkbench(root);
-    const id = randomUUID();
-    const template = command.trim().length > 0 ? parseCommandLine(command) : undefined;
-    const harness = template === undefined ? "file" : `command:${id}`;
-    const agent: Agent = {
-      id,
-      name,
-      binding: { harness, model: "unspecified", reasoningEffort: "unspecified" },
-    };
-    // Typed here, in this window, a moment ago: the author is the source, so
-    // there is nothing to confirm. Consent is owed for commands that arrive
-    // with a project, not for the ones someone just wrote.
-    const entry = { agent, ...(template === undefined ? {} : { template, trusted: true }) };
-    const next = [...workbench.roster, entry];
-    writeRoster(join(root, ".refrain"), next);
-    if (template !== undefined)
-      workbench.host.addAdapter(new CommandAdapter({ id: harness, template }));
-    workbench.host.register(agent);
-    workbench.roster.push(entry);
-    return agent;
-  });
+  handlers.handleRoot(
+    "agent:add",
+    (_e, root: string, name: string, command: string, model: string, reasoningEffort: string) => {
+      const workbench = openWorkbench(root);
+      const agentName = name.trim();
+      const boundModel = model.trim();
+      const boundEffort = reasoningEffort.trim();
+      if (agentName.length === 0 || boundModel.length === 0 || boundEffort.length === 0)
+        throw new Error("Agent name, model, and reasoning effort are required");
+      const id = randomUUID();
+      const template = command.trim().length > 0 ? parseCommandLine(command) : undefined;
+      const harness = template === undefined ? "file" : `command:${id}`;
+      const agent: Agent = {
+        id,
+        name: agentName,
+        binding: { harness, model: boundModel, reasoningEffort: boundEffort },
+      };
+      // Typed here, in this window, a moment ago: the author is the source, so
+      // there is nothing to confirm. Consent is owed for commands that arrive
+      // with a project, not for the ones someone just wrote.
+      const entry = { agent, ...(template === undefined ? {} : { template, trusted: true }) };
+      const next = [...workbench.roster, entry];
+      writeRoster(join(root, ".refrain"), next);
+      if (template !== undefined)
+        workbench.host.addAdapter(new CommandAdapter({ id: harness, template }));
+      workbench.host.register(agent);
+      workbench.roster.push(entry);
+      return agent;
+    },
+  );
 
   handlers.handleRoot("agent:enqueue", (_e, root: string, task: ReviewTask) => {
     openWorkbench(root).host.enqueue(task);
     return true;
   });
 
-  handlers.handleRoot("agent:manifest", (_e, root: string) =>
-    sendManifest(openWorkbench(root).host),
-  );
+  handlers.handleRoot("agent:manifest", (_e, root: string) => {
+    const workbench = openWorkbench(root);
+    return sendManifest(workbench.host).map((entry) => {
+      const configured = workbench.roster.find(
+        (candidate) => candidate.agent.binding.harness === entry.harness,
+      );
+      return {
+        ...entry,
+        harness:
+          configured?.template === undefined ? entry.harness : JSON.stringify(configured.template),
+      };
+    });
+  });
 
   handlers.handleRoot("agent:send", async (_e, root: string) => {
     const runs = await openWorkbench(root).host.send();
@@ -728,7 +762,13 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): IpcAuthority => 
 
       workbench.heads.set(payload.chapter, result.head);
       workbench.onDisk.set(payload.chapter, { path: written.path, stamp: written.stamp });
-      return { ok: true, text: currentText(result.head) };
+      return {
+        ok: true,
+        text: currentText(result.head),
+        ...(written.recoveryEvidencePath === undefined
+          ? {}
+          : { recoveryEvidencePath: written.recoveryEvidencePath }),
+      };
     },
   );
 

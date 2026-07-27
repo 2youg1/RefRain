@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Agent } from "@refrain/agent";
-import { replaceFileAtomically } from "@refrain/core";
+import { replaceStateFileAtomically } from "@refrain/core";
 
 /**
  * The agent roster, on disk.
@@ -31,26 +31,15 @@ interface StoredAgent {
    * dropped it.
    */
   readonly template?: readonly string[];
-  /** Set once the author has confirmed the argv; absent means never confirmed. */
-  readonly trusted?: boolean;
 }
 
 export interface RosterEntry {
   readonly agent: Agent;
   readonly template?: readonly string[];
   /**
-   * Whether the author has seen this command and agreed to run it.
-   *
-   * `agents.json` lives inside the project folder, so it arrives with whatever
-   * the project arrived with — a clone, a shared drive, an archive from a
-   * colleague. Restoring it used to register the command adapter outright, and
-   * merely opening the Agents screen probed every agent, which runs the binary.
-   * Opening someone else's writing project was enough to execute their choice
-   * of program.
-   *
-   * A restored command is untrusted until the author reads the argv and says
-   * yes. Trust is recorded per project, because it is a statement about this
-   * project's file and not about the agent's name.
+   * Whether the author has confirmed the command during this application
+   * session. It is deliberately absent from the stored roster: a project file
+   * cannot authorize the command it asks RefRain to execute.
    */
   readonly trusted?: boolean;
 }
@@ -72,25 +61,37 @@ export const readRoster = (stateDir: string): RosterEntry[] => {
     const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
     if (!Array.isArray(parsed)) return [];
 
+    const seenIds = new Set<string>();
+    const seenHarnesses = new Set<string>();
     return parsed.flatMap((raw): RosterEntry[] => {
       const entry = raw as Partial<StoredAgent>;
       // Identity and binding are the minimum; anything less is not an agent.
       if (
         typeof entry.id !== "string" ||
+        entry.id.trim().length === 0 ||
         typeof entry.name !== "string" ||
+        entry.name.trim().length === 0 ||
         typeof entry.harness !== "string"
       )
         return [];
 
+      const commandHarness = entry.harness.startsWith("command:") && entry.harness.length > 8;
+      if (entry.harness !== "file" && !commandHarness) return [];
       const template =
         Array.isArray(entry.template) &&
         entry.template.length > 0 &&
+        typeof entry.template[0] === "string" &&
+        entry.template[0].trim().length > 0 &&
         entry.template.every(
           (part): part is string => typeof part === "string" && !part.includes("\0"),
         )
           ? entry.template
           : undefined;
-      if (entry.harness.startsWith("command:") && template === undefined) return [];
+      if (commandHarness && template === undefined) return [];
+      if (seenIds.has(entry.id) || (entry.harness !== "file" && seenHarnesses.has(entry.harness)))
+        return [];
+      seenIds.add(entry.id);
+      if (entry.harness !== "file") seenHarnesses.add(entry.harness);
 
       return [
         {
@@ -99,15 +100,20 @@ export const readRoster = (stateDir: string): RosterEntry[] => {
             name: entry.name,
             binding: {
               harness: entry.harness,
-              model: typeof entry.model === "string" ? entry.model : "unspecified",
+              model:
+                typeof entry.model === "string" && entry.model.trim().length > 0
+                  ? entry.model
+                  : "unknown",
               reasoningEffort:
-                typeof entry.reasoningEffort === "string" ? entry.reasoningEffort : "unspecified",
+                typeof entry.reasoningEffort === "string" && entry.reasoningEffort.trim().length > 0
+                  ? entry.reasoningEffort
+                  : "unknown",
             },
           },
           ...(template === undefined ? {} : { template }),
-          // Anything but a literal `true` reads as untrusted, so a hand-edited
-          // or truncated file fails closed.
-          trusted: entry.trusted === true,
+          // Trust is local to this application session. Even a literal
+          // `trusted: true` in the project file is untrusted input.
+          trusted: false,
         },
       ];
     });
@@ -123,15 +129,14 @@ export const readRoster = (stateDir: string): RosterEntry[] => {
  * truncated roster, because the recovery from that is retyping every agent.
  */
 export const writeRoster = (stateDir: string, entries: readonly RosterEntry[]): void => {
-  const stored: StoredAgent[] = entries.map(({ agent, template, trusted }) => ({
+  const stored: StoredAgent[] = entries.map(({ agent, template }) => ({
     id: agent.id,
     name: agent.name,
     harness: agent.binding.harness,
     model: agent.binding.model,
     reasoningEffort: agent.binding.reasoningEffort,
     ...(template === undefined ? {} : { template }),
-    ...(trusted === true ? { trusted: true } : {}),
   }));
 
-  replaceFileAtomically(fileFor(stateDir), `${JSON.stringify(stored, null, 2)}\n`);
+  replaceStateFileAtomically(fileFor(stateDir), `${JSON.stringify(stored, null, 2)}\n`);
 };

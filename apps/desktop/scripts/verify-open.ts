@@ -29,6 +29,7 @@ const server = Bun.serve({
 const LONE = "一个人打开一份稿子，它就应当出现在眼前。";
 const CHAPTER = "第一章的正文。";
 const MATERIAL = "一九〇五年，年表里的一行。";
+const RECOVERY = "/work/01.md.writing.2026-07-27T00-00-00.000Z";
 
 /**
  * The bridge answers as the real main process does: a single file is its own
@@ -66,6 +67,7 @@ Object.assign(window.refrain, {
           rootId: id, root: path, role: "material", path: path + "/资料/年表.md" });
       }
     }
+    if (roots.includes("/work")) out.recoveryEvidencePaths = [${JSON.stringify(RECOVERY)}];
     return out;
   },
   listAgents: async () => [], addAgent: async () => ({}), enqueue: async () => true,
@@ -73,7 +75,7 @@ Object.assign(window.refrain, {
   collect: async () => ({ proposals: [], comments: [] }),
   commit: async () => ({ ok: true, text: "" }), ledger: async () => [], reply: async () => "",
   displayProfile: async () => ({ refreshHz: 60, scaleFactor: 1, css: {} }),
-  onDisplayChange: () => {}, onCloseRequest: () => () => {}, fonts: async () => [],
+  onDisplayChange: () => {}, onCloseRequest: () => () => {},
 });`;
 
 const failures: string[] = [];
@@ -129,6 +131,7 @@ const browser = await launchBrowser();
     ),
     materialShown: document.querySelectorAll(".rail .chapter.material").length,
     hasFold: !!document.querySelector(".rail .material-head"),
+    notice: document.querySelector(".notice")?.textContent ?? "",
   }));
 
   if (!before.chapters.includes("01")) failures.push("the top-level chapter is missing");
@@ -136,6 +139,10 @@ const browser = await launchBrowser();
     failures.push("material was filed into the chapter sequence, which corrupts its numbering");
   if (!before.hasFold) failures.push("material has no disclosure to open");
   if (before.materialShown !== 0) failures.push("material is expanded before it is asked for");
+  if (!before.notice.includes(RECOVERY))
+    failures.push(
+      "startup recovery evidence was preserved but its path was not shown to the writer",
+    );
 
   await page.evaluate(() => document.querySelector<HTMLElement>(".rail .material-head")?.click());
   await page.waitForTimeout(250);

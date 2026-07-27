@@ -34,6 +34,8 @@ export interface WorkspaceView {
   chapters: ChapterView[];
   /** Safety copies that could not be taken; editing remains available, but never silently. */
   warnings?: string[];
+  /** Interrupted candidates preserved before any project writer opened. */
+  recoveryEvidencePaths?: string[];
 }
 
 export interface EditView {
@@ -157,7 +159,7 @@ interface RefRainApi {
     chapterId: string,
     text: string,
   ): Promise<
-    | { ok: true; edits: EditView[] }
+    | { ok: true; edits: EditView[]; recoveryEvidencePath?: string }
     | { ok: false; reason: "changed-underneath"; path: string; onDisk: string }
   >;
   /** Resolves only the two versions the conflict dialog displayed. */
@@ -166,11 +168,17 @@ interface RefRainApi {
     chapterId: string,
     choice: "mine" | "disk",
   ): Promise<
-    | { ok: true; text: string; edits?: EditView[] }
+    | { ok: true; text: string; edits?: EditView[]; recoveryEvidencePath?: string }
     | { ok: false; reason: string; path?: string; onDisk?: string }
   >;
   listAgents(root: string): Promise<AgentView[]>;
-  addAgent(root: string, name: string, command: string): Promise<AgentView>;
+  addAgent(
+    root: string,
+    name: string,
+    command: string,
+    model: string,
+    reasoningEffort: string,
+  ): Promise<AgentView>;
   enqueue(root: string, task: unknown): Promise<boolean>;
   manifest(root: string): Promise<ManifestEntryView[]>;
   send(root: string): Promise<{ id: string; requestPath: string; resultPath: string }[]>;
@@ -182,7 +190,10 @@ interface RefRainApi {
   commit(
     root: string,
     payload: { chapter: string; verdicts: VerdictView[] },
-  ): Promise<{ ok: true; text: string } | { ok: false; reason: string; detail: string[] }>;
+  ): Promise<
+    | { ok: true; text: string; recoveryEvidencePath?: string }
+    | { ok: false; reason: string; detail: string[] }
+  >;
   /**
    * Every judgment recorded for this project, or why there are none to read.
    *
@@ -245,7 +256,6 @@ interface RefRainApi {
     trashViaHome(root: string, target: string): Promise<FileResult<{ path: string }>>;
     link(root: string, target: string, linkPath: string): Promise<FileResult<{ path: string }>>;
     createDirectory(root: string, path: string): Promise<FileResult<{ path: string }>>;
-    uniqueName(root: string, desired: string): Promise<FileResult<{ path: string }>>;
     admits(root: string, path: string): Promise<FileResult<{ admitted: boolean }>>;
   };
 

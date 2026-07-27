@@ -86,19 +86,50 @@ test("same-name command agents keep distinct argv and still run after a restart"
       root,
       "审稿人",
       `"${process.execPath}" "${script}" "{request}" "{result}" "第一位的改写。"`,
-    )) as { id: string; binding: { harness: string } };
+      "model-one",
+      "high",
+    )) as {
+      id: string;
+      binding: { harness: string; model: string; reasoningEffort: string };
+    };
     const second = (await call(
       "agent:add",
       root,
       "审稿人",
       `"${process.execPath}" "${script}" "{request}" "{result}" "第二位的改写。"`,
-    )) as { id: string; binding: { harness: string } };
+      "model-two",
+      "low",
+    )) as {
+      id: string;
+      binding: { harness: string; model: string; reasoningEffort: string };
+    };
 
     expect(first.binding.harness).not.toBe(second.binding.harness);
     closeWorkbenches();
 
+    const restored = (await call("agent:list", root)) as {
+      id: string;
+      binding: { model: string; reasoningEffort: string };
+    }[];
+    expect(
+      restored.map((agent) => ({
+        model: agent.binding.model,
+        reasoningEffort: agent.binding.reasoningEffort,
+      })),
+    ).toEqual([
+      { model: "model-one", reasoningEffort: "high" },
+      { model: "model-two", reasoningEffort: "low" },
+    ]);
+
+    await call("agent:trust", root, first.id);
+    await call("agent:trust", root, second.id);
     await call("agent:enqueue", root, task("t1", first.id));
     await call("agent:enqueue", root, task("t2", second.id));
+    const manifest = (await call("agent:manifest", root)) as { harness: string }[];
+    expect(manifest.map((entry) => JSON.parse(entry.harness) as string[])).toEqual([
+      [process.execPath, script, "{request}", "{result}", "第一位的改写。"],
+      [process.execPath, script, "{request}", "{result}", "第二位的改写。"],
+    ]);
     await call("agent:send", root);
 
     const runs = await waitForRuns(root, 2);
@@ -121,9 +152,9 @@ test("same-name command agents keep distinct argv and still run after a restart"
 test("a malformed command line is refused before the roster changes", async () => {
   const root = mkdtempSync(join(tmpdir(), "refrain-agent-command-"));
   try {
-    await expect(call("agent:add", root, "broken", '"unterminated')).rejects.toThrow(
-      /unterminated/i,
-    );
+    await expect(
+      call("agent:add", root, "broken", '"unterminated', "model", "default"),
+    ).rejects.toThrow(/unterminated/i);
     expect(await call("agent:list", root)).toEqual([]);
   } finally {
     closeWorkbenches();
@@ -135,11 +166,13 @@ test("a roster write failure changes neither memory nor the canonical file", asy
   const root = mkdtempSync(join(tmpdir(), "refrain-agent-transaction-"));
   const stateDir = join(root, ".refrain");
   try {
-    const kept = (await call("agent:add", root, "kept", "")) as { id: string };
+    const kept = (await call("agent:add", root, "kept", "", "unknown", "unknown")) as {
+      id: string;
+    };
     const before = readFileSync(join(stateDir, "agents.json"), "utf8");
     mkdirSync(join(stateDir, "agents.json.writing"));
 
-    await expect(call("agent:add", root, "not saved", "")).rejects.toThrow();
+    await expect(call("agent:add", root, "not saved", "", "unknown", "unknown")).rejects.toThrow();
     expect((await call("agent:list", root)) as { id: string }[]).toEqual([
       expect.objectContaining({ id: kept.id }),
     ]);
@@ -160,7 +193,9 @@ const preparedDecision = async (root: string) => {
   const path = join(root, "01.md");
   writeFileSync(path, "原文。\n", "utf8");
   await call("project:load", root);
-  const agent = (await call("agent:add", root, "file", "")) as { id: string };
+  const agent = (await call("agent:add", root, "file", "", "unknown", "unknown")) as {
+    id: string;
+  };
   await call("agent:enqueue", root, task("decision", agent.id));
   const [run] = (await call("agent:send", root)) as { id: string; resultPath: string }[];
   if (!run) throw new Error("no run");
@@ -299,17 +334,27 @@ test("a command restored from the project file cannot run until it is trusted", 
           id: "a1",
           name: "别人的",
           harness: "command:a1",
-          model: "unspecified",
-          reasoningEffort: "unspecified",
+          model: "unknown",
+          reasoningEffort: "unknown",
           template: ["refrain-not-a-real-binary", "--version"],
+          // An untrusted project cannot grant itself permission by writing this.
+          trusted: true,
         },
       ]),
       "utf8",
     );
 
-    const listed = (await call("agent:list", root)) as { id: string; trusted: boolean }[];
+    const listed = (await call("agent:list", root)) as {
+      id: string;
+      trusted: boolean;
+      command: string;
+    }[];
     expect(listed).toHaveLength(1);
     expect(listed[0]?.trusted).toBe(false);
+    expect(JSON.parse(listed[0]?.command ?? "[]")).toEqual([
+      "refrain-not-a-real-binary",
+      "--version",
+    ]);
 
     expect(await call("agent:probe", root, "a1")).toMatchObject({
       ok: false,
@@ -319,9 +364,10 @@ test("a command restored from the project file cannot run until it is trusted", 
     expect(await call("agent:trust", root, "a1")).toBe(true);
     expect(((await call("agent:list", root)) as { trusted: boolean }[])[0]?.trusted).toBe(true);
 
-    // Consent survives a reopen: it is recorded in the project file.
+    // Consent does not survive a reopen: persisting it in this same untrusted
+    // project file would let the project authorize its own command.
     closeWorkbenches();
-    expect(((await call("agent:list", root)) as { trusted: boolean }[])[0]?.trusted).toBe(true);
+    expect(((await call("agent:list", root)) as { trusted: boolean }[])[0]?.trusted).toBe(false);
   } finally {
     closeWorkbenches();
     rmSync(root, { recursive: true, force: true });

@@ -255,6 +255,20 @@ export const dict = {
     zh: "例如 codex exec --file {request}",
     en: "e.g. codex exec --file {request}",
   },
+  "agents.model": { zh: "模型", en: "Model" },
+  "agents.modelPlaceholder": {
+    zh: "例如 gpt-5.4；不知道就写 unknown",
+    en: "e.g. gpt-5.4; use unknown if unavailable",
+  },
+  "agents.reasoningEffort": { zh: "思考策略", en: "Reasoning effort" },
+  "agents.reasoningPlaceholder": {
+    zh: "例如 high；不知道就写 unknown",
+    en: "e.g. high; use unknown if unavailable",
+  },
+  "agents.bindingLocked": {
+    zh: "模型与思考策略会锁定在这个 Agent 上；每次运行都沿用，并在发送前列出。",
+    en: "Model and reasoning effort are locked to this agent, inherited by every run, and shown before sending.",
+  },
   "agents.add": { zh: "建立", en: "Create" },
   "agents.none": {
     zh: "还没有 Agent。任何能读写文件的都可以。",
@@ -349,6 +363,10 @@ export const dict = {
   "chapter.none": { zh: "未选择章节", en: "No chapter open" },
   "chapter.saved": { zh: "已保存", en: "Saved" },
   "chapter.unsaved": { zh: "未保存", en: "Unsaved" },
+  "chapter.recoveredWrite": {
+    zh: "已保存。上次中断时留下的候选稿保存在：",
+    en: "Saved. The candidate left by the interrupted write is preserved at:",
+  },
   "chapter.empty": {
     zh: "这个文件夹里还没有 Markdown 文件",
     en: "No Markdown files in this folder yet",

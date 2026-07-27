@@ -38,7 +38,7 @@ Object.assign(window.refrain, {
   collect: async () => ({ proposals: [], comments: [] }),
   commit: async () => ({ ok: true, text: "" }), ledger: async () => [], reply: async () => "",
   displayProfile: async () => ({ refreshHz: 60, scaleFactor: 1, css: {} }),
-  onDisplayChange: () => {}, onCloseRequest: () => () => {}, fonts: async () => [],
+  onDisplayChange: () => {}, onCloseRequest: () => () => {},
 });`);
 await page.goto(`http://localhost:${server.port}`);
 await page.waitForTimeout(500);

@@ -45,6 +45,7 @@ const bridge = `
 localStorage.setItem("refrain.roots", JSON.stringify(["/work"]));
 window.__probes = [];
 window.__trusted = [];
+window.__added = [];
 ${BRIDGE_STUB}
 Object.assign(window.refrain, {
   openProject: async () => "/work",
@@ -62,7 +63,7 @@ Object.assign(window.refrain, {
   },
   listAgents: async () => [{
     id: "a1", name: "从别人的项目里来的",
-    binding: { harness: "command:a1", model: "unspecified", reasoningEffort: "unspecified" },
+    binding: { harness: "command:a1", model: "unknown", reasoningEffort: "unknown" },
     command: ${JSON.stringify(HOSTILE)},
     trusted: false,
   }],
@@ -73,12 +74,16 @@ Object.assign(window.refrain, {
     return { ok: true };
   },
   trustAgent: async (root, id) => { window.__trusted.push(id); return true; },
-  removeAgent: async () => true, addAgent: async () => ({}),
+  removeAgent: async () => true,
+  addAgent: async (root, name, command, model, reasoningEffort) => {
+    window.__added.push({ root, name, command, model, reasoningEffort });
+    return { id: "new", name, binding: { harness: "file", model, reasoningEffort } };
+  },
   enqueue: async () => true, manifest: async () => [], send: async () => [], runs: async () => [],
   collect: async () => ({ proposals: [], comments: [] }),
   commit: async () => ({ ok: true, text: "" }), ledger: async () => [], reply: async () => "",
   displayProfile: async () => ({ refreshHz: 60, scaleFactor: 1, css: {} }),
-  onDisplayChange: () => () => {}, fonts: async () => [], systemFonts: async () => [],
+  onDisplayChange: () => () => {}, systemFonts: async () => [],
 });`;
 
 const failures: string[] = [];
@@ -109,6 +114,10 @@ const onOpen = await page.evaluate(() => ({
   hasConsent: !!document.querySelector(".consent .trust"),
   argv: document.querySelector(".consent .argv")?.textContent ?? "",
 }));
+await page.screenshot({
+  path: join(desktop, "shots", "agent-trust-prompt.png"),
+  fullPage: true,
+});
 
 if (onOpen.probes.length > 0)
   failures.push(
@@ -141,6 +150,27 @@ const afterTrust = await page.evaluate(() => ({
 
 if (afterTrust.trusted.length === 0) failures.push("agreeing did not record consent");
 if (afterTrust.probes.length === 0) failures.push("agreeing did not then check the harness");
+
+// A runtime binding is immutable, so creation captures the whole binding. It
+// may not quietly substitute "unspecified" for fields the author never saw.
+await page.click(".open-new");
+const createDisabled = await page.locator(".actions .primary").isDisabled();
+if (!createDisabled) failures.push("agent creation did not require model and reasoning effort");
+await page.fill('input[name="agent-name"]', "Reader");
+await page.fill('input[name="agent-model"]', "model-explicit");
+await page.fill('input[name="agent-reasoning-effort"]', "high");
+await page.screenshot({
+  path: join(desktop, "shots", "agent-runtime-binding.png"),
+  fullPage: true,
+});
+await page.click(".actions .primary");
+await page.waitForTimeout(200);
+
+const added = await page.evaluate(
+  () => (window as unknown as { __added: Record<string, string>[] }).__added,
+);
+if (added[0]?.model !== "model-explicit" || added[0]?.reasoningEffort !== "high")
+  failures.push(`creation did not carry the visible runtime binding: ${JSON.stringify(added[0])}`);
 
 await browser.close();
 server.stop(true);

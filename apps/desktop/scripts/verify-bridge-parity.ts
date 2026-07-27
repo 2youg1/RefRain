@@ -41,11 +41,30 @@ const keysOf = (source: string, start: number): Set<string> => {
   const keys = new Set<string>();
   let depth = 0;
   let inString: string | null = null;
+  let inLineComment = false;
+  let inBlockComment = false;
 
   for (let i = start; i < source.length; i++) {
     const ch = source[i];
     const prev = source[i - 1];
+    const next = source[i + 1];
 
+    if (inLineComment) {
+      if (ch === "\n") inLineComment = false;
+      else continue;
+    }
+    if (inBlockComment) {
+      if (prev === "*" && ch === "/") inBlockComment = false;
+      continue;
+    }
+    if (!inString && ch === "/" && next === "/") {
+      inLineComment = true;
+      continue;
+    }
+    if (!inString && ch === "/" && next === "*") {
+      inBlockComment = true;
+      continue;
+    }
     if (inString) {
       if (ch === inString && prev !== "\\") inString = null;
       continue;
@@ -72,7 +91,70 @@ const keysOf = (source: string, start: number): Set<string> => {
   return keys;
 };
 
-const realBridge = (): Set<string> => {
+const memberObjectKeys = (
+  source: string,
+  start: number,
+  member: string,
+): Set<string> | undefined => {
+  let depth = 0;
+  let inString: string | null = null;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let index = start; index < source.length; index += 1) {
+    const character = source[index];
+    const previous = source[index - 1];
+    const next = source[index + 1];
+    if (inLineComment) {
+      if (character === "\n") inLineComment = false;
+      else continue;
+    }
+    if (inBlockComment) {
+      if (previous === "*" && character === "/") inBlockComment = false;
+      continue;
+    }
+    if (!inString && character === "/" && next === "/") {
+      inLineComment = true;
+      continue;
+    }
+    if (!inString && character === "/" && next === "*") {
+      inBlockComment = true;
+      continue;
+    }
+    if (inString) {
+      if (character === inString && previous !== "\\") inString = null;
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      inString = character;
+      continue;
+    }
+    if (character === "{" || character === "(" || character === "[") depth += 1;
+    else if (character === ")" || character === "]") depth -= 1;
+    else if (character === "}") {
+      depth -= 1;
+      if (depth === 0) return undefined;
+    } else if (depth === 1 && (previous === "\n" || previous === "," || previous === "{")) {
+      const match = new RegExp(`^\\s*${member}\\s*:\\s*\\{`).exec(source.slice(index));
+      if (match) return keysOf(source, index + match[0].lastIndexOf("{"));
+    }
+  }
+  return undefined;
+};
+
+interface BridgeShape {
+  readonly keys: Set<string>;
+  readonly files: Set<string>;
+}
+
+const shapeOf = (source: string, start: number): BridgeShape => {
+  const files = memberObjectKeys(source, start, "files");
+  if (files === undefined)
+    throw new Error("bridge literal has no files object — nested parity is blind");
+  return { keys: keysOf(source, start), files };
+};
+
+const realBridge = (): BridgeShape => {
   const source = readFileSync(join(DESKTOP, "src/main/preload.ts"), "utf8");
   const call = source.search(/exposeInMainWorld\(\s*"refrain"\s*,\s*(\w+)\s*\)/);
   if (call < 0) throw new Error("preload.ts no longer exposes 'refrain' — this gate is blind");
@@ -81,21 +163,21 @@ const realBridge = (): Set<string> => {
   const declaration = exposed ? source.search(new RegExp(`const\\s+${exposed}\\s*[:=]`)) : -1;
   if (declaration < 0) throw new Error(`cannot find the definition of '${exposed}' in preload.ts`);
   const literal = source.indexOf("{", source.indexOf("=", declaration));
-  const keys = keysOf(source, literal);
-  if (keys.size === 0)
+  const shape = shapeOf(source, literal);
+  if (shape.keys.size === 0)
     throw new Error("parsed zero keys from preload — the gate would pass vacuously");
-  return keys;
+  return shape;
 };
 
 /** The shared base every gate is expected to spread before overriding. */
-const baseKeys = (): Set<string> => {
+const baseShape = (): BridgeShape => {
   const source = readFileSync(join(SCRIPTS, "browser.ts"), "utf8");
   const assign = source.search(/BRIDGE_STUB\s*=/);
   if (assign < 0) throw new Error("browser.ts no longer exports BRIDGE_STUB — this gate is blind");
-  return keysOf(source, source.indexOf("{", assign));
+  return shapeOf(source, source.indexOf("{", assign));
 };
 
-const BASE = baseKeys();
+const BASE = baseShape();
 
 const stubs = readdirSync(SCRIPTS)
   .filter((name) => name.startsWith("verify-") && name.endsWith(".ts"))
@@ -106,9 +188,22 @@ const stubs = readdirSync(SCRIPTS)
     // stub was rebased — it found nothing and would have passed vacuously.
     const assign = source.search(/window\.refrain\s*=|Object\.assign\(window\.refrain\s*,/);
     if (assign < 0) return [];
-    const inherited = source.includes("BRIDGE_STUB") ? BASE : new Set<string>();
+    const literal = source.indexOf("{", assign);
+    const inheritsBase = source.includes("BRIDGE_STUB");
+    const inheritedKeys = inheritsBase ? BASE.keys : new Set<string>();
+    const ownFiles = memberObjectKeys(source, literal, "files");
+    const inheritsFiles = inheritsBase && source.includes("...window.refrain.files");
     return [
-      { name, keys: new Set([...inherited, ...keysOf(source, source.indexOf("{", assign))]) },
+      {
+        name,
+        keys: new Set([...inheritedKeys, ...keysOf(source, literal)]),
+        files:
+          ownFiles === undefined
+            ? inheritsBase
+              ? BASE.files
+              : new Set<string>()
+            : new Set([...(inheritsFiles ? BASE.files : []), ...ownFiles]),
+      },
     ];
   });
 
@@ -120,27 +215,36 @@ if (stubs.length === 0) {
 const real = realBridge();
 let failed = false;
 
-const baseMissing = [...real].filter((key) => !BASE.has(key)).sort();
-if (baseMissing.length > 0) {
-  failed = true;
-  console.error(`FAIL  BRIDGE_STUB is behind preload.ts, missing: ${baseMissing.join(", ")}`);
-}
-
-for (const stub of stubs) {
-  const exempt = new Set(EXEMPT[stub.name]?.keys ?? []);
-  const missing = [...real].filter((key) => !stub.keys.has(key) && !exempt.has(key)).sort();
-  if (missing.length === 0) continue;
+const reportDrift = (
+  label: string,
+  expected: Set<string>,
+  actual: Set<string>,
+  missingExempt: Set<string> = new Set(),
+): void => {
+  const missing = [...expected].filter((key) => !actual.has(key) && !missingExempt.has(key)).sort();
+  const extra = [...actual].filter((key) => !expected.has(key)).sort();
+  if (missing.length === 0 && extra.length === 0) return;
   failed = true;
   console.error(
-    `FAIL  ${stub.name} stubs ${stub.keys.size}/${real.size}, missing: ${missing.join(", ")}`,
+    `FAIL  ${label} drifted from preload` +
+      `${missing.length > 0 ? `; missing: ${missing.join(", ")}` : ""}` +
+      `${extra.length > 0 ? `; extra: ${extra.join(", ")}` : ""}`,
   );
+};
+
+reportDrift("BRIDGE_STUB", real.keys, BASE.keys);
+reportDrift("BRIDGE_STUB.files", real.files, BASE.files);
+
+for (const stub of stubs) {
+  reportDrift(stub.name, real.keys, stub.keys, new Set(EXEMPT[stub.name]?.keys ?? []));
+  reportDrift(`${stub.name}.files`, real.files, stub.files);
 }
 
 if (failed) {
   console.error(
-    "\nA missing key is undefined at call time, so the component takes its empty\n" +
-      "branch and the gate passes on a screen no user will see. Add the key to the\n" +
-      "stub, or declare it in EXEMPT with the reason that gate cannot reach it.",
+    "\nA missing key is undefined at call time; an extra key gives the gate a\n" +
+      "capability production does not have. Keep top-level and files methods in exact\n" +
+      "parity, or declare a missing top-level key in EXEMPT with a concrete reason.",
   );
   process.exit(1);
 }
@@ -172,6 +276,6 @@ if (uncalled.length > 0) {
 }
 
 console.log(
-  `PASS  ${stubs.length} stubbed bridges cover all ${real.size} real bridge methods; ` +
-    `all ${onDisk.length} gates are wired into CI`,
+  `PASS  ${stubs.length} stubbed bridges match ${real.keys.size} top-level and ` +
+    `${real.files.size} files methods; all ${onDisk.length} gates are wired into CI`,
 );
