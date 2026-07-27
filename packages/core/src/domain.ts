@@ -37,3 +37,18 @@ export interface InsertTextChange {
 
 /** One independently locatable item inside a Text Action. */
 export type TextChange = RangeTextChange | InsertTextChange;
+
+/**
+ * The blocks a change touches — the single authority for that question.
+ *
+ * `InsertTextChange.blockIds` is `readonly []`, an empty tuple: the type
+ * promises the field never names a block, and the block being created lives in
+ * `blockId`. Anything that reads `change.blockIds` directly is therefore blind
+ * to insertions. Selective undo read it five times and reported a clean undo
+ * for an inserted block a later action had rewritten — success, on a check
+ * that had looked at nothing.
+ *
+ * Read this instead of the field.
+ */
+export const touchedBlocks = (change: TextChange): readonly BlockId[] =>
+  change.kind === "insert" ? [change.blockId] : change.blockIds;
