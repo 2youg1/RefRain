@@ -467,6 +467,12 @@ mod tests {
     /// names this application creates, which are the ones below the root; the
     /// ancestors are the author's existing filesystem and are not ours to
     /// judge. On Windows the drive letter would otherwise fail the same way.
+    ///
+    /// Unix-only because of how it is built, not because of what it proves:
+    /// Windows refuses to *create* `refrain-guard-colon:dir` at all, so the
+    /// fixture cannot exist there. The rule it checks holds on both platforms
+    /// — a Windows drive letter is exactly the ancestor colon this admits.
+    #[cfg(unix)]
     #[test]
     fn allows_an_illegal_character_in_an_ancestor_of_the_root() {
         let base = std::env::temp_dir().join("refrain-guard-colon:dir");

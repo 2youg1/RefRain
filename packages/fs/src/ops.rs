@@ -787,6 +787,12 @@ mod tests {
     /// apart — it passed with the guard deleted. The destination here is one a
     /// copy would happily succeed at, so the only way the source survives is
     /// the guard refusing before the fallback runs.
+    ///
+    /// Unix-only because of the lock it uses, not the rule it proves. A
+    /// read-only directory on Windows does not stop a rename out of it — the
+    /// ACL that would is not something `set_readonly` reaches — so the fixture
+    /// produces a successful move there and the assertion cannot be built.
+    #[cfg(unix)]
     #[test]
     fn a_move_that_fails_for_another_reason_leaves_the_source_alone() {
         let root = scratch("move-not-exdev");
