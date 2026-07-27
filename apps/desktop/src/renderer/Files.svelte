@@ -73,9 +73,15 @@ let scrollTop = $state(0);
  */
 let height = $state(0);
 let selected = $state(new Set<string>());
+let focusedIndex = $state<number | null>(null);
 
 const first = $derived(Math.max(0, Math.floor(scrollTop / ROW) - MARGIN));
 const visible = $derived(Math.ceil(height / ROW) + MARGIN * 2);
+const focusedId = $derived(
+  focusedIndex !== null && focusedIndex >= first && focusedIndex < first + entries.length
+    ? `files-option-${focusedIndex}`
+    : undefined,
+);
 
 // Asking for the page is an effect of where the viewport is, not of a click:
 // scrolling with the keyboard has to fetch as readily as scrolling with a wheel.
@@ -91,6 +97,46 @@ const onScroll = (event: Event) => {
   const target = event.currentTarget as HTMLElement;
   scrollTop = target.scrollTop;
   height = target.clientHeight;
+};
+
+const focus = (index: number) => {
+  if (!viewport || total === 0) return;
+  focusedIndex = Math.max(0, Math.min(total - 1, index));
+  const top = focusedIndex * ROW;
+  if (top < viewport.scrollTop) viewport.scrollTop = top;
+  else if (top + ROW > viewport.scrollTop + viewport.clientHeight)
+    viewport.scrollTop = top + ROW - viewport.clientHeight;
+  scrollTop = viewport.scrollTop;
+  height = viewport.clientHeight;
+};
+
+const onListKey = (event: KeyboardEvent) => {
+  const page = Math.max(1, Math.floor(height / ROW));
+  const current = focusedIndex ?? first;
+  const target =
+    event.key === "ArrowDown"
+      ? current + (focusedIndex === null ? 0 : 1)
+      : event.key === "ArrowUp"
+        ? current - (focusedIndex === null ? 0 : 1)
+        : event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? total - 1
+            : event.key === "PageDown"
+              ? current + page
+              : event.key === "PageUp"
+                ? current - page
+                : null;
+  if (target !== null) {
+    event.preventDefault();
+    focus(target);
+    return;
+  }
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const entry = focusedIndex === null ? undefined : entries[focusedIndex - first];
+  if (!entry) return;
+  event.preventDefault();
+  toggle(entry, event.metaKey || event.ctrlKey);
 };
 
 const toggle = (entry: FileEntry, additive: boolean) => {
@@ -174,27 +220,36 @@ const columns: { order: SortOrder; label: Key }[] = [
       class="viewport"
       bind:this={viewport}
       onscroll={onScroll}
+      onkeydown={onListKey}
       role="listbox"
       tabindex="0"
       aria-label={t("files.title")}
       aria-multiselectable="true"
+      aria-activedescendant={focusedId}
     >
       <!-- One spacer holds the full scroll height so the scrollbar reflects the
            whole workspace while only the visible rows exist in the DOM. -->
       <div class="spacer" style="height: {total * ROW}px">
         {#each entries as entry, index (entry.path)}
           <div
+            id={`files-option-${first + index}`}
             class="row"
             class:selected={selected.has(entry.path)}
+            class:focused={focusedIndex === first + index}
             class:active={active === entry.path}
             class:directory={entry.kind === "directory"}
             style="top: {(first + index) * ROW}px"
             role="option"
             aria-selected={selected.has(entry.path)}
             tabindex="-1"
-            onclick={(event) => toggle(entry, event.metaKey || event.ctrlKey)}
+            onclick={(event) => {
+              focusedIndex = first + index;
+              toggle(entry, event.metaKey || event.ctrlKey);
+            }}
             onkeydown={(event) => {
-              if (event.key === "Enter" || event.key === " ") toggle(entry, event.ctrlKey);
+              if (event.key !== "Enter" && event.key !== " ") return;
+              focusedIndex = first + index;
+              toggle(entry, event.metaKey || event.ctrlKey);
             }}
           >
             <span
@@ -311,6 +366,11 @@ input[type="search"] {
   contain: paint;
 }
 
+.viewport:focus-visible {
+  outline: var(--hairline, 1px) solid var(--rule-strong);
+  outline-offset: calc(-1 * var(--hairline, 1px));
+}
+
 .spacer {
   position: relative;
 }
@@ -332,6 +392,11 @@ input[type="search"] {
 
 .row.selected {
   background: var(--role-pending-wash);
+}
+
+.row.focused {
+  outline: var(--hairline, 1px) solid var(--role-pending);
+  outline-offset: calc(-1 * var(--hairline, 1px));
 }
 
 .row.active {
