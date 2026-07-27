@@ -42,6 +42,7 @@ const server = Bun.serve({
 const bridge = `
 localStorage.setItem("refrain.roots", JSON.stringify(["/work"]));
 window.__loads = 0;
+window.__failLoad = false;
 ${BRIDGE_STUB}
 Object.assign(window.refrain, {
   openProject: async () => "/work",
@@ -52,6 +53,7 @@ Object.assign(window.refrain, {
   saveChapter: async () => ({ ok: true, edits: [] }),
   loadWorkspace: async (roots) => {
     window.__loads += 1;
+    if (window.__failLoad) throw new Error("EACCES: workspace cannot be read");
     const p = roots[0]; const id = "r-work";
     return { roots: [{ id, path: p, name: "work", kind: "folder" }],
       chapters: [{ id: "01.md", title: "第一章 序", text: "去年的稿子还在。", rootId: id,
@@ -98,6 +100,23 @@ await page.waitForTimeout(700);
 const after = await page.evaluate(() => (window as unknown as { __loads: number }).__loads);
 if (after <= before)
   failures.push("re-opening the same folder did nothing — the one self-rescue is closed");
+
+// A later read failure keeps the loaded manuscript and says why refresh stopped.
+await page.evaluate(() => {
+  (window as unknown as { __failLoad: boolean }).__failLoad = true;
+  [...document.querySelectorAll<HTMLElement>(".rail-foot button")]
+    .find((button) => /打开文件夹|Open folder/.test(button.textContent ?? ""))
+    ?.click();
+});
+await page.waitForTimeout(400);
+const failedReload = await page.evaluate(() => ({
+  body: document.body.textContent ?? "",
+  manuscript: document.querySelector(".manuscript")?.textContent ?? "",
+}));
+if (!failedReload.body.includes("EACCES: workspace cannot be read"))
+  failures.push("a rejected workspace reload said nothing on screen");
+if (!failedReload.manuscript.includes("去年的稿子"))
+  failures.push("a rejected workspace reload erased the loaded manuscript");
 
 await browser.close();
 server.stop(true);
