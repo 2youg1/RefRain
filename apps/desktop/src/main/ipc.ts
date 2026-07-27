@@ -332,6 +332,51 @@ const advanceChapter = (workbench: Workbench, chapterId: string, text: string, c
     cause,
   );
 
+let systemFontLauncher = launch;
+let systemFontList: Promise<string[]> | undefined;
+
+/** Test seam for a platform command whose real output depends on the host. */
+export const __setSystemFontLauncher = (launcher: typeof launch | undefined): void => {
+  systemFontLauncher = launcher ?? launch;
+  systemFontList = undefined;
+};
+
+const enumerateSystemFonts = async (): Promise<string[]> => {
+  const argv =
+    process.platform === "win32"
+      ? [
+          "powershell",
+          "-NoProfile",
+          "-Command",
+          "Add-Type -AssemblyName System.Drawing; " +
+            "(New-Object System.Drawing.Text.InstalledFontCollection).Families | " +
+            "ForEach-Object { $_.Name }",
+        ]
+      : ["fc-list", "--format", "%{family[0]}\\n"];
+  const child = systemFontLauncher({ argv });
+  const code = await child.exited;
+  if (code !== 0) throw new Error(`font enumeration exited ${code}`);
+  const text = await child.stdout;
+  return [
+    ...new Set(
+      text
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean),
+    ),
+  ].sort();
+};
+
+const cachedSystemFonts = (): Promise<string[]> => {
+  if (systemFontList !== undefined) return systemFontList;
+  const attempt = enumerateSystemFonts();
+  systemFontList = attempt;
+  void attempt.catch(() => {
+    if (systemFontList === attempt) systemFontList = undefined;
+  });
+  return attempt;
+};
+
 export const registerHandlers = (
   ipc: IpcMain,
   dialog: Dialog,
@@ -624,30 +669,8 @@ export const registerHandlers = (
    * list rather than throwing — the bundled faces still work.
    */
   handlers.handle("fonts:list", async () => {
-    const argv =
-      process.platform === "win32"
-        ? [
-            "powershell",
-            "-NoProfile",
-            "-Command",
-            "Add-Type -AssemblyName System.Drawing; " +
-              "(New-Object System.Drawing.Text.InstalledFontCollection).Families | " +
-              "ForEach-Object { $_.Name }",
-          ]
-        : ["fc-list", "--format", "%{family[0]}\\n"];
-
     try {
-      const child = launch({ argv });
-      await child.exited;
-      const text = await child.stdout;
-      return [
-        ...new Set(
-          text
-            .split(/\r?\n/)
-            .map((s) => s.trim())
-            .filter(Boolean),
-        ),
-      ].sort();
+      return await cachedSystemFonts();
     } catch {
       return [];
     }
