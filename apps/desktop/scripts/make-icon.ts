@@ -13,7 +13,7 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright";
+import { launchBrowser } from "./browser.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = dirname(here);
@@ -43,7 +43,7 @@ const style = [
   `      height: ${Math.round(SIZE * MARK_FRACTION)}px; }`,
 ].join("\n");
 
-const browser = await chromium.launch();
+const browser = await launchBrowser();
 const page = await browser.newPage({
   viewport: { width: SIZE, height: SIZE },
   deviceScaleFactor: 1,

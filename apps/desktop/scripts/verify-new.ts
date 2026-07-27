@@ -12,7 +12,7 @@
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright";
+import { launchBrowser } from "./browser.ts";
 
 const desktop = dirname(dirname(fileURLToPath(import.meta.url)));
 const html = (await Bun.file(join(desktop, "dist", "renderer", "index.html")).text()).replace(
@@ -58,7 +58,7 @@ window.refrain = {
 };`;
 
 const failures: string[] = [];
-const browser = await chromium.launch();
+const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
 await page.addInitScript(bridge);
 await page.goto(`http://localhost:${server.port}`);
