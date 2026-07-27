@@ -36,7 +36,13 @@ const checked: string[] = [];
  */
 for (const pattern of ["scripts/verify-*.ts", "apps/desktop/scripts/verify-*.ts"]) {
   for await (const file of new Glob(pattern).scan(".")) {
-    const name = file.split("/").pop() ?? file;
+    // Split on either separator. Glob returns `scripts\verify-gate.ts` on
+    // Windows, so splitting on "/" alone left the whole path as the filename
+    // and every comparison against the workflow YAML — which spells its paths
+    // with forward slashes — failed. This gate then reported all thirty-two
+    // verification surfaces as orphans and failed the release, on the platform
+    // the installer ships to and nowhere else.
+    const name = file.split(/[/\\]/).pop() ?? file;
     checked.push(name);
     // Either invoked by path, or through a package.json script that CI calls.
     const byPath = ci.includes(name);

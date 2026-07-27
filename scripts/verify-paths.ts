@@ -29,8 +29,26 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 /** Where scripts live. A script is the only place `import.meta.url` becomes a path. */
 const DIRS = ["scripts", "apps/desktop/scripts", "packages/fs/scripts", "docs"];
 
-/** `.pathname` or `.href` read off a URL built from `import.meta.url`, used as a path. */
-const PATHNAME_OF_FILE_URL = /new URL\([^)]*import\.meta\.url[^)]*\)\s*\.\s*(pathname|href)/;
+/**
+ * Two ways a script can assume the filesystem uses forward slashes.
+ *
+ * Both were live in this repository and both failed only on Windows, in the
+ * release job, having passed on Linux forever.
+ */
+const OFFENCES: ReadonlyArray<readonly [RegExp, string]> = [
+  [
+    /new URL\([^)]*import\.meta\.url[^)]*\)\s*\.\s*(pathname|href)/,
+    "use fileURLToPath(new URL(...)) — .pathname yields /D:/… on Windows",
+  ],
+  [
+    // Only where the string came from the filesystem. A stub splitting a
+    // made-up POSIX path like "/work/01.md" inside a browser fixture is not
+    // touching a real path and must not be flagged, or the gate cries wolf
+    // and gets ignored — which is how a gate stops being read at all.
+    /\b(?:file|entry|found|dirent|relative|resolved|full|abs)\w*\.split\(\s*["'`]\/["'`]\s*\)/i,
+    'split(/[/\\\\]/) — Glob and path APIs return backslashes on Windows, so split("/") keeps the whole path',
+  ],
+];
 
 const walk = (dir: string): string[] => {
   let entries: string[];
@@ -53,11 +71,10 @@ for (const path of files) {
   const lines = readFileSync(path, "utf8").split("\n");
   lines.forEach((line, index) => {
     if (line.trimStart().startsWith("*") || line.trimStart().startsWith("//")) return;
-    if (!PATHNAME_OF_FILE_URL.test(line)) return;
-    failures.push(
-      `${path.slice(root.length)}:${index + 1}  ${line.trim()}\n` +
-        "      use fileURLToPath(new URL(...)) — .pathname yields /D:/… on Windows",
-    );
+    for (const [pattern, advice] of OFFENCES) {
+      if (!pattern.test(line)) continue;
+      failures.push(`${path.slice(root.length)}:${index + 1}  ${line.trim()}\n      ${advice}`);
+    }
   });
 }
 
