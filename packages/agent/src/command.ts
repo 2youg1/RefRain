@@ -135,7 +135,7 @@ export class CommandAdapter implements HarnessAdapter {
     if (run.state !== "dispatched") return;
     run.state = "cancelled";
     this.running.get(run.id)?.kill();
-    void this.awaitCompletion(run).catch(() => undefined);
+    await this.awaitCompletion(run).catch(() => undefined);
   }
 
   /**
