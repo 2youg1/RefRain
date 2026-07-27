@@ -21,6 +21,7 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 await page.addInitScript(`
   localStorage.clear();
   window.__calls = [];
+  window.__fileRoots = [];
   window.__openCount = 0;
   const roots = [
     { id: "r-a", path: "/a", name: "a", kind: "folder" },
@@ -71,7 +72,7 @@ await page.addInitScript(`
     revertAll: async (text) => text,
     describeEdits: async () => "",
     files: {
-      scan: async () => ({ ok: true, count: 0 }),
+      scan: async (root) => { window.__fileRoots.push(root); return { ok: true, count: 0 }; },
       page: async () => ({ ok: true, entries: [], total: 0 }),
       search: async () => ({ ok: true, hits: [] }),
       sort: async () => ({ ok: true }),
@@ -95,6 +96,18 @@ try {
   const before = (await page.locator(".manuscript").innerText()).replace(/\s+/g, "");
   if (!before.includes("第二个根的正文"))
     throw new Error(`selecting /b/01.md showed the wrong chapter: ${before}`);
+
+  await page.keyboard.press("Control+k");
+  await page.getByRole("button", { name: "文件浏览" }).click();
+  await page.waitForTimeout(100);
+  const fileRoots: string[] = await page.evaluate(() =>
+    JSON.parse(JSON.stringify((window as unknown as { __fileRoots: string[] }).__fileRoots)),
+  );
+  if (fileRoots.at(-1) !== "/b")
+    throw new Error(
+      `the file browser scanned the first root instead of the active one: ${fileRoots}`,
+    );
+  await page.keyboard.press("Escape");
 
   await page.locator(".manuscript > p").click();
   await page.keyboard.press("End");
