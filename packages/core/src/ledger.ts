@@ -75,6 +75,22 @@ export class VerdictLedger {
 
   constructor(path: string) {
     this.db = openDatabase(path);
+    // Everything after the open is guarded. A file that is not a database opens
+    // fine and fails on the first statement, and a constructor that throws
+    // never hands the object back — so the handle it already holds could not be
+    // closed by anyone. Unix lets the orphan sit there quietly; Windows keeps a
+    // lock on the file, so the workspace could not even be cleaned up
+    // afterwards. C-1 requires a corrupt ledger to be survivable, and a leaked
+    // handle is not survivable, only invisible.
+    try {
+      this.migrate();
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
+  }
+
+  private migrate(): void {
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec(`CREATE TABLE IF NOT EXISTS verdicts (
       id TEXT PRIMARY KEY,

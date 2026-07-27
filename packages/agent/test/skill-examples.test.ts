@@ -12,9 +12,12 @@
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { type ArtifactErrorCode, parseAgentResult } from "../../core/src/artifact";
 
-const read = (path: string) => readFileSync(new URL(path, import.meta.url).pathname, "utf8");
+// fileURLToPath, not .pathname: the latter yields /D:/… on Windows, which is
+// where this release ships and where this test read a path that does not exist.
+const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
 
 const skill = read("../../../docs/refrain-skill/SKILL.md");
 const channel = read("../src/file-channel.ts");

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { VerdictLedger } from "../src/ledger.ts";
@@ -118,6 +118,33 @@ test("a note is not a Verdict and does not appear among them", () => {
     expect(ledger.search("旁念")).toEqual([]);
   } finally {
     ledger.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+/**
+ * A ledger that fails to open closes the handle it already took.
+ *
+ * A file that is not a database opens fine and fails on the first statement.
+ * The constructor threw from there, so it never handed back the object holding
+ * that handle and nobody could close it. Unix leaves the orphan sitting
+ * quietly; Windows keeps a lock on the file, and the workspace could not be
+ * removed afterwards — which is how this surfaced, in a release job.
+ *
+ * Asserted by repetition: one leak is invisible, five hundred exhaust the
+ * descriptor table if they are really leaking.
+ */
+test("a ledger that cannot migrate does not leak the file handle it opened", () => {
+  const home = mkdtempSync(join(tmpdir(), "refrain-ledger-leak-"));
+  const path = join(home, "not-a-database.db");
+  writeFileSync(path, "这不是一个数据库。\n", "utf8");
+  try {
+    for (let attempt = 0; attempt < 500; attempt += 1) {
+      expect(() => new VerdictLedger(path)).toThrow();
+    }
+    // The proof the handles were released: the file can be replaced.
+    writeFileSync(path, "仍然不是。\n", "utf8");
+  } finally {
     rmSync(home, { recursive: true, force: true });
   }
 });
