@@ -230,10 +230,17 @@ export const advanceTextHead = (
 ): { readonly head: TextHead; readonly edits: readonly Edit[] } => {
   const after: TextHead = { id: "candidate", blocks: stableBlocks(before.blocks, text), cause };
   const edits = editsBetween(before, after);
+
+  // Each insertion needs to name the block it goes before, and asking the new
+  // head to find it scans the whole manuscript once per insertion. A chapter
+  // where the author added many paragraphs then cost quadratic time: measured
+  // 1659 ms at 20,000 blocks and 6668 ms at 40,000.
+  const positionOf = new Map(after.blocks.map((block, index) => [block.id, index] as const));
+
   const changes: TextChange[] = edits.map((edit) => {
     if (edit.kind === "remove") return { blockIds: [edit.blockId], text: null };
     if (edit.kind === "replace") return { blockIds: [edit.blockId], text: edit.after ?? "" };
-    const index = after.blocks.findIndex((block) => block.id === edit.blockId);
+    const index = positionOf.get(edit.blockId) ?? -1;
     const next = after.blocks[index + 1]?.id;
     return {
       kind: "insert",

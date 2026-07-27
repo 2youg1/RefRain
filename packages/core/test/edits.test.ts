@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { TextHead } from "../src/index.ts";
 import {
+  advanceTextHead,
   currentText,
   describeEditsForAgent,
   type Edit,
@@ -186,6 +187,37 @@ describe("telling an agent what changed", () => {
 
   test("no edits produces no report rather than an empty element", () => {
     expect(describeEditsForAgent([])).toBe("");
+  });
+
+  /**
+   * Every inserted block asked the new head where it was, by scanning it. That
+   * is linear inside a loop over the edits, so a manuscript with many new
+   * paragraphs costs quadratic time: measured 1659 ms at 20,000 blocks and
+   * 6668 ms at 40,000, each doubling costing four times as much.
+   *
+   * A no-change advance never reaches that line, which is why the scale figures
+   * taken for the review of this module missed it entirely.
+   */
+  test("advancing a head full of insertions stays affordable", () => {
+    const before: TextHead = {
+      id: "h0",
+      blocks: Array.from({ length: 20_000 }, (_, i) => ({
+        id: `b${i}`,
+        text: `第${i}段的正文内容。`,
+      })),
+      cause: "seed",
+    };
+    const text = before.blocks
+      .flatMap((block, i) => [block.text, `新插入的第${i}段。`])
+      .join("\n\n");
+
+    const started = performance.now();
+    const { head: after, edits } = advanceTextHead(before, text, "many insertions");
+    const elapsed = performance.now() - started;
+
+    expect(elapsed).toBeLessThan(600);
+    expect(after.blocks).toHaveLength(40_000);
+    expect(edits.filter((edit) => edit.kind === "insert")).toHaveLength(20_000);
   });
 
   test("text that would close the CDATA section cannot break out of it", () => {
