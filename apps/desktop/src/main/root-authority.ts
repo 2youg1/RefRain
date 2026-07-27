@@ -58,8 +58,8 @@ const validPermit = (value: unknown): value is RootPermit =>
  *
  * The renderer may remember which Roots it wants to show, but cannot grant a
  * path permission by putting that path in localStorage. A picker, drop, create,
- * or OS-open event calls `approve`; opening the Root and every later mutation
- * recheck the pinned identity so a retargeted symlink loses access.
+ * or OS-open event calls `approve`; every later mutation rechecks the pinned
+ * canonical path and filesystem identity so a retargeted symlink loses access.
  */
 export class RootAuthority {
   readonly #storagePath: string | undefined;
