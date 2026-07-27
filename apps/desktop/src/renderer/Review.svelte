@@ -8,12 +8,20 @@ interface Props {
   t: (key: Key) => string;
   refusal: { reason: string; detail: string[] } | null;
   onCommit: (verdicts: VerdictView[]) => void;
+  /**
+   * Staged judgments, keyed by slice. Nothing here has touched the manuscript.
+   *
+   * Held by the shell rather than by this component. The sheet unmounts on
+   * Escape, so owning them here meant a reader who had judged forty slices and
+   * dismissed the panel to check the paragraph they were judging came back to
+   * nothing. Judgments are what this application is for; they are the last
+   * thing that should be cheap to lose.
+   */
+  staged: Record<string, VerdictView>;
+  onStaged: (next: Record<string, VerdictView>) => void;
 }
 
-const { proposals, comments, t, refusal, onCommit }: Props = $props();
-
-// Staged judgments, keyed by slice. Nothing here has touched the manuscript.
-let staged = $state<Record<string, VerdictView>>({});
+const { proposals, comments, t, refusal, onCommit, staged, onStaged }: Props = $props();
 let editing = $state<string | null>(null);
 let draft = $state("");
 let reasonFor = $state<string | null>(null);
@@ -29,11 +37,11 @@ const judge = (
   const existing = staged[slice.id];
   if (existing?.kind === kind && finalText === undefined) {
     const { [slice.id]: _removed, ...rest } = staged;
-    staged = rest;
+    onStaged(rest);
     return;
   }
 
-  staged = {
+  onStaged({
     ...staged,
     [slice.id]: {
       id: `v-${slice.id}-${Date.now()}`,
@@ -45,7 +53,7 @@ const judge = (
       ...(finalText === undefined ? {} : { finalText }),
       ...(existing?.reason === undefined ? {} : { reason: existing.reason }),
     },
-  };
+  });
 };
 
 /**
@@ -75,7 +83,7 @@ const judgeAll = (proposal: ProposalView, kind: "accept" | "reject"): void => {
       ...(staged[slice.id]?.reason === undefined ? {} : { reason: staged[slice.id]?.reason }),
     };
   }
-  staged = next;
+  onStaged(next);
 };
 
 /** How many of this proposal's judgable slices already carry a verdict. */
@@ -90,7 +98,7 @@ const setReason = (sliceId: string, reason: string): void => {
   if (!verdict) return;
   const trimmed = reason.trim();
   const { reason: _dropped, ...rest } = verdict;
-  staged = { ...staged, [sliceId]: trimmed.length === 0 ? rest : { ...rest, reason: trimmed } };
+  onStaged({ ...staged, [sliceId]: trimmed.length === 0 ? rest : { ...rest, reason: trimmed } });
   reasonFor = null;
 };
 </script>
@@ -207,13 +215,10 @@ const setReason = (sliceId: string, reason: string): void => {
   <div class="commit-bar">
     <span>{stagedCount} {t("review.staged")}</span>
     <div>
-      <button onclick={() => (staged = {})}>{t("review.clear")}</button>
+      <button onclick={() => onStaged({})}>{t("review.clear")}</button>
       <button
         class="primary"
-        onclick={() => {
-          onCommit(Object.values(staged));
-          staged = {};
-        }}>{t("review.commit")}</button
+        onclick={() => onCommit(Object.values(staged))}>{t("review.commit")}</button
       >
     </div>
   </div>

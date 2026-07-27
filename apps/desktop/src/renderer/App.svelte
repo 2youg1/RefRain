@@ -747,6 +747,18 @@ const collect = async (runId: string): Promise<void> => {
   runs = await api().runs(owner);
 };
 
+/**
+ * Staged judgments, held here rather than inside the review panel.
+ *
+ * The panel lives in a sheet that unmounts on Escape, so owning them there
+ * meant a reader who had judged forty slices and dismissed the panel to look
+ * at the paragraph they were judging came back to an empty list. The same
+ * component also cleared them the moment Merge was pressed, before knowing
+ * whether the merge succeeded — a refused commit destroyed the judgments it
+ * had just refused to apply.
+ */
+let staged = $state<Record<string, VerdictView>>({});
+
 const commit = async (verdicts: VerdictView[]): Promise<void> => {
   // The main process merges against its own head. With unsaved text in the
   // editor that head is stale, and `result.text` would overwrite characters
@@ -769,6 +781,9 @@ const commit = async (verdicts: VerdictView[]): Promise<void> => {
     entry.path === chapter.path ? { ...entry, text: result.text } : entry,
   );
   proposals = proposals.filter((p) => !verdicts.some((v) => v.proposalId === p.id));
+  // Cleared only now: the merge is on disk, so the judgments have somewhere
+  // else to live. Anything refused above still sits in the panel.
+  staged = {};
   saved = true;
   if (proposals.length === 0) sheet = null;
 };
@@ -1110,7 +1125,15 @@ const onScroll = (): void => {
 </Sheet>
 
 <Sheet open={sheet === "review"} title={t("review.title")} width="540px" onClose={() => (sheet = null)}>
-  <Review {proposals} {comments} {t} {refusal} onCommit={commit} />
+  <Review
+    {proposals}
+    {comments}
+    {t}
+    {refusal}
+    {staged}
+    onStaged={(next) => (staged = next)}
+    onCommit={commit}
+  />
 </Sheet>
 
 <Sheet open={sheet === "files"} title={t("files.title")} width="420px" onClose={() => (sheet = null)}>

@@ -188,6 +188,15 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-relaunch.ts
 
+      # Verdicts lived inside the review panel, which unmounts on Escape: an
+      # author who judged a run, dismissed the panel to reread the paragraph,
+      # and came back found an empty list. The same component also cleared them
+      # on Merge before knowing the merge succeeded, so a refused commit
+      # destroyed the judgments it had just declined to apply.
+      - name: staged verdicts survive Escape and a refused merge
+        working-directory: apps/desktop
+        run: bun scripts/verify-staged-verdicts.ts
+
       # Saving resolves normally on failure, so switching chapters on `.then`
       # walked away from unsaved text and overwrote the only copy of it.
       - name: a failed save keeps the author on the text
