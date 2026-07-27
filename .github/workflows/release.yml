@@ -53,7 +53,7 @@ jobs:
       # travelled, not that this runner can execute them.
       - name: Test the native file layer
         working-directory: packages/fs
-        run: cargo test --lib
+        run: cargo test --all-targets
 
       - name: Build the platform binary
         run: bun run native
