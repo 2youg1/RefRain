@@ -331,6 +331,10 @@ export const dict = {
     en: "The ledger is empty. Every judgment and its stated reason stays here, and goes back to the agent next round.",
   },
   "ledger.count": { zh: "项裁决", en: "judgments" },
+  "ledger.unavailable": {
+    zh: "账本打不开，这个项目暂时无法记录裁决。写作和保存不受影响。",
+    en: "The ledger will not open, so judgments cannot be recorded for this project. Writing and saving are unaffected.",
+  },
   "ledger.noReason": { zh: "未写理由", en: "no reason stated" },
   "ledger.reply": { zh: "送回 Agent 的内容", en: "What goes back to the agent" },
   "ledger.close": { zh: "关闭", en: "Close" },

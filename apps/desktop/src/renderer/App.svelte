@@ -485,10 +485,17 @@ const reload = async (): Promise<void> => {
     rootViews = [];
     return select(null);
   }
-  const workspace = await api().loadWorkspace(roots);
-  rootViews = workspace.roots;
-  chapters = workspace.chapters;
-  if (!chapters.some((chapter) => chapter.path === active)) select(chapters[0]?.path ?? null);
+  // Loading a workspace opens it in main, and that used to throw for an
+  // unwritable state directory or a damaged ledger. Nothing caught it here, so
+  // the whole gesture — open, drop, create — ended in silence.
+  try {
+    const workspace = await api().loadWorkspace(roots);
+    rootViews = workspace.roots;
+    chapters = workspace.chapters;
+    if (!chapters.some((chapter) => chapter.path === active)) select(chapters[0]?.path ?? null);
+  } catch (error) {
+    say(error instanceof Error ? error.message : String(error));
+  }
 };
 
 const createProject = async (): Promise<void> => {
@@ -555,11 +562,15 @@ const createNamed = async (title: string): Promise<void> => {
   // Material lives under a folder of its own; a chapter sits at the top level,
   // which is what makes it part of the sequence (SPEC Q11).
   const id = request.kind === "chapter" ? `${title}.md` : `${t("rail.materialDir")}/${title}.md`;
-  const outcome = await api().saveChapter(request.rootPath, id, "");
-  if (!outcome.ok) return say(outcome.reason ?? t("chapter.createFailed"));
+  try {
+    const outcome = await api().saveChapter(request.rootPath, id, "");
+    if (!outcome.ok) return say(outcome.reason ?? t("chapter.createFailed"));
 
-  await reload();
-  select(chapters.find((chapter) => chapter.id === id)?.path ?? null);
+    await reload();
+    select(chapters.find((chapter) => chapter.id === id)?.path ?? null);
+  } catch (error) {
+    say(error instanceof Error ? error.message : String(error));
+  }
 };
 
 const newChapter = (kind: AskKind = "chapter"): void => {
@@ -874,8 +885,21 @@ const onDrop = async (event: DragEvent): Promise<void> => {
   dragging = false;
   const file = event.dataTransfer?.files?.[0];
   if (!file) return;
-  const path = await api().resolveDrop(api().pathFor(file));
-  if (path) await addRoot(path);
+
+  // Every step here could fail silently before: an unreadable path answered
+  // `null`, and a workbench that would not open rejected the load — both
+  // arriving as unhandled rejections, which is a red line in a console the
+  // author never opens and nothing whatever on screen.
+  try {
+    const resolved = await api().resolveDrop(api().pathFor(file));
+    if (!resolved.ok) {
+      say(resolved.detail);
+      return;
+    }
+    await addRoot(resolved.path);
+  } catch (error) {
+    say(error instanceof Error ? error.message : String(error));
+  }
 };
 
 /**

@@ -75,6 +75,35 @@ describe("files are truth", () => {
     }
   });
 
+  /*
+   * Material lives in a folder of its own, so the interface asks for
+   * `资料/年表.md` — and every request failed. `basename(id) === id` is false
+   * once there is a separator, so the whole string fell through to the title
+   * branch, where the illegal-character set contains the very separator that
+   * put it there. Creating material could not succeed in either language, with
+   * the folder present or absent.
+   *
+   * A relative id is a path within the root: each segment is checked, the
+   * parent is created, and nothing may climb out.
+   */
+  test("material can be created inside a folder", () => {
+    const project = loadProject(root);
+    const head = { id: "h1", blocks: [{ id: "b1", text: "年表。" }], cause: "test" };
+
+    const written = saveChapter(project, "资料/年表.md", head);
+
+    expect(written.ok).toBe(true);
+    expect(readFileSync(join(root, "资料", "年表.md"), "utf8")).toBe("年表。\n");
+  });
+
+  test("a nested id is still refused when a segment is illegal", () => {
+    const project = loadProject(root);
+    const head = { id: "h1", blocks: [{ id: "b1", text: "甲。" }], cause: "test" };
+
+    for (const id of ["../外面/年表.md", "资料/../../外面.md", "资料/nul.md", "资料/年表 .md"])
+      expect(() => saveChapter(project, id, head)).toThrow(/invalid chapter title/);
+  });
+
   test("blocks carry stable identifiers across a reload", () => {
     writeFileSync(join(root, "01.md"), "甲。\n\n乙。\n");
 

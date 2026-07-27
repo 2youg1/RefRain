@@ -55,7 +55,24 @@ interface PendingConflict {
 
 interface Workbench {
   readonly host: AgentHost;
-  readonly ledger: VerdictLedger;
+  /**
+   * The Verdict Ledger, when SQLite could open one.
+   *
+   * Optional for the same reason the file index is: a project must open
+   * without it. Opening a project used to require opening the database first,
+   * so a read-only folder, a synced folder holding a conflicted copy, or a
+   * `verdicts.db` truncated by an earlier crash made every one of nineteen IPC
+   * channels reject — and neither main nor the renderer caught it, so the
+   * application answered a click with nothing at all.
+   *
+   * The ledger records judgments. Opening, writing and saving do not need it,
+   * and `files` next door has been degrading correctly all along with the
+   * comment that says why: the file browser is an enhancement on top of the
+   * editor. So is the ledger.
+   */
+  readonly ledger?: VerdictLedger;
+  /** Why the ledger is absent, so the interface can say which one it is. */
+  readonly ledgerError?: string;
   readonly heads: Map<string, TextHead>;
   /**
    * Where each chapter lives, and what its file looked like when read.
@@ -94,7 +111,7 @@ interface Workbench {
 const workbenches = new Map<string, Workbench>();
 
 export const closeWorkbenches = (): void => {
-  for (const workbench of workbenches.values()) workbench.ledger.close();
+  for (const workbench of workbenches.values()) workbench.ledger?.close();
   workbenches.clear();
 };
 
@@ -103,7 +120,11 @@ const openWorkbench = (root: string): Workbench => {
   if (existing) return existing;
 
   const stateDir = join(root, ".refrain");
-  mkdirSync(stateDir, { recursive: true });
+  try {
+    mkdirSync(stateDir, { recursive: true });
+  } catch (error) {
+    throw new Error(`无法建立项目状态目录 ${stateDir}：${String(error)}`);
+  }
 
   const host = new AgentHost(stateDir, [new FileChannelAdapter(stateDir)]);
   const roster = readRoster(stateDir);
@@ -128,11 +149,33 @@ const openWorkbench = (root: string): Workbench => {
     host.register(entry.agent);
   }
 
-  const ledger = new VerdictLedger(join(stateDir, "verdicts.db"));
-  const recovery = recoverDecisionCommit(stateDir, ledger);
+  /*
+   * A ledger that will not open is a lost capability, not a lost project.
+   *
+   * This threw, and nothing caught it — not here, and not in the renderer's
+   * `reload()`. Nineteen of twenty-seven channels pass through this function,
+   * so one unwritable folder or one truncated `verdicts.db` turned opening,
+   * saving, dispatching and judging into clicks that produced silence. The
+   * dialogs that did work were exactly the ones that skip this function, which
+   * is why choosing a file felt fine and nothing followed it.
+   *
+   * Two causes are measured: a state directory that cannot be written yields
+   * "unable to open database file", and a corrupted database yields "file is
+   * not a database" — both ordinary on a synced or removable volume.
+   */
+  let ledger: VerdictLedger | undefined;
+  let ledgerError: string | undefined;
+  try {
+    ledger = new VerdictLedger(join(stateDir, "verdicts.db"));
+  } catch (error) {
+    ledgerError = String(error instanceof Error ? error.message : error);
+  }
+
+  const recovery = ledger ? recoverDecisionCommit(stateDir, ledger) : { ok: true as const };
   const workbench: Workbench = {
     host,
-    ledger,
+    ...(ledger === undefined ? {} : { ledger }),
+    ...(ledgerError === undefined ? {} : { ledgerError }),
     heads: new Map(),
     onDisk: new Map(),
     conflicts: new Map(),
@@ -221,11 +264,23 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
   });
 
   /** A dropped file opens its folder; a dropped folder opens itself. */
+  /*
+   * A refusal carries its reason, the way the file layer's do.
+   *
+   * `null` meant "cannot use this", and the renderer answered it with nothing
+   * at all — so dropping a file from an unreadable volume, a disconnected
+   * network share, or a cloud placeholder that had not materialised looked
+   * exactly like dropping it onto a program that ignores drops.
+   */
   ipc.handle("project:resolve-drop", (_e, path: string) => {
     try {
-      return statSync(path).isDirectory() ? path : dirname(path);
-    } catch {
-      return null;
+      return { ok: true, path: statSync(path).isDirectory() ? path : dirname(path) };
+    } catch (error) {
+      return {
+        ok: false,
+        reason: "unreadable-path",
+        detail: error instanceof Error ? error.message : String(error),
+      };
     }
   });
 
@@ -646,6 +701,18 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
       const result = commitDecisionBatch(head, staged, payload.verdicts);
       if (!result.ok) return { ok: false, reason: result.reason, detail: result.detail };
 
+      // A merge and its verdicts land together or not at all. Without a ledger
+      // the judgments have nowhere to go, and merging anyway would move the
+      // manuscript while losing the record of who decided what and why — which
+      // is the one thing this application exists to keep.
+      const { ledger } = workbench;
+      if (!ledger)
+        return {
+          ok: false,
+          reason: "ledger-unavailable",
+          detail: [workbench.ledgerError ?? "the ledger could not be opened"],
+        };
+
       let written: WriteOutcome;
       try {
         written = persistDecisionCommit(
@@ -654,10 +721,10 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
           known.stamp,
           result.head,
           result.verdicts,
-          workbench.ledger,
+          ledger,
         );
       } catch (error) {
-        const recovery = recoverDecisionCommit(join(root, ".refrain"), workbench.ledger);
+        const recovery = recoverDecisionCommit(join(root, ".refrain"), ledger);
         if (!recovery.ok) workbench.commitRecovery = recovery.detail ?? String(error);
         throw error;
       }
@@ -669,20 +736,43 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     },
   );
 
-  ipc.handle("ledger:all", (_e, root: string) => openWorkbench(root).ledger.all());
+  /*
+   * The ledger's three channels answer with a reason rather than an exception.
+   *
+   * An empty list would be a lie the author cannot tell apart from an empty
+   * ledger, and an exception crossing the bridge arrives as an opaque string.
+   * The refusal carries what SQLite said, so the panel can name the cause.
+   */
+  const ledgerOf = (root: string): { ledger: VerdictLedger } | { detail: string } => {
+    const workbench = openWorkbench(root);
+    return workbench.ledger
+      ? { ledger: workbench.ledger }
+      : { detail: workbench.ledgerError ?? "the ledger could not be opened" };
+  };
 
-  ipc.handle("ledger:reply", (_e, root: string, proposalId: string) =>
-    serializeVerdicts(openWorkbench(root).ledger.forProposal(proposalId)),
-  );
+  ipc.handle("ledger:all", (_e, root: string) => {
+    const held = ledgerOf(root);
+    return "ledger" in held
+      ? { ok: true, verdicts: held.ledger.all() }
+      : { ok: false, reason: "ledger-unavailable", detail: held.detail };
+  });
+
+  ipc.handle("ledger:reply", (_e, root: string, proposalId: string) => {
+    const held = ledgerOf(root);
+    return "ledger" in held ? serializeVerdicts(held.ledger.forProposal(proposalId)) : "";
+  });
 
   /*
    * Retrieval over stated reasoning. The ledger informs the author when they
    * revise an agent's persona; it does not compile one for them, which would
    * require an inference this application has no way to perform.
    */
-  ipc.handle("ledger:search", (_e, root: string, fragment: string) =>
-    openWorkbench(root).ledger.search(fragment),
-  );
+  ipc.handle("ledger:search", (_e, root: string, fragment: string) => {
+    const held = ledgerOf(root);
+    return "ledger" in held
+      ? { ok: true, verdicts: held.ledger.search(fragment) }
+      : { ok: false, reason: "ledger-unavailable", detail: held.detail };
+  });
 
   // The file layer's channels live in their own module: they degrade as a
   // group when the platform binary is missing, and that rule is easier to hold

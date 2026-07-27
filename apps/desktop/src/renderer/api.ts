@@ -128,7 +128,10 @@ interface RefRainApi {
   revertAll(root: string, chapterId: string, edits: EditView[]): Promise<string>;
   describeEdits(edits: EditView[]): Promise<string>;
   pathFor(file: File): string;
-  resolveDrop(path: string): Promise<string | null>;
+  /** The folder a dropped path belongs to, or why it could not be read. */
+  resolveDrop(
+    path: string,
+  ): Promise<{ ok: true; path: string } | { ok: false; reason: string; detail: string }>;
   fullscreen(on: boolean): Promise<boolean>;
   /**
    * Runs before the window closes, and holds it open until the promise settles.
@@ -176,7 +179,16 @@ interface RefRainApi {
     root: string,
     payload: { chapter: string; verdicts: VerdictView[] },
   ): Promise<{ ok: true; text: string } | { ok: false; reason: string; detail: string[] }>;
-  ledger(root: string): Promise<VerdictView[]>;
+  /**
+   * Every judgment recorded for this project, or why there are none to read.
+   *
+   * An array could not say the difference between a ledger with nothing in it
+   * and a ledger that would not open — and the second is a state the author
+   * has to be told about, because their judgments are not being kept.
+   */
+  ledger(
+    root: string,
+  ): Promise<{ ok: true; verdicts: VerdictView[] } | { ok: false; reason: string; detail: string }>;
   /** Search the ledger over stated reasoning, to inform a persona revision. */
   searchLedger(root: string, fragment: string): Promise<VerdictView[]>;
   reply(root: string, proposalId: string): Promise<string>;
