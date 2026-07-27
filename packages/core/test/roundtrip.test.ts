@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseSource, serializeSource, sourceBlocks } from "../src/roundtrip.ts";
+import { applyBlocks, parseSource, serializeSource, sourceBlocks } from "../src/roundtrip.ts";
 
 /**
  * INV-5: bytes the author did not edit come back unchanged.
@@ -149,5 +149,31 @@ describe("block identity is stable across a reload", () => {
     const second = sourceBlocks(parseSource(source, "ch1")).map((b) => b.id);
     expect(first).toEqual(second);
     expect(first).toEqual(["ch1:b0", "ch1:b1", "ch1:b2"]);
+  });
+});
+
+describe("reordering keeps whitespace at its document position", () => {
+  test("moving the second block first neither injects its old gap nor joins the old first block", () => {
+    const doc = parseSource("A\n\n\nB\n\nC\n", "chapter");
+    const [first, second, third] = sourceBlocks(doc);
+    if (!first || !second || !third) throw new Error("fixture did not parse into three blocks");
+
+    expect(applyBlocks(doc, [second, first, third])).toBe("B\n\n\nA\n\nC\n");
+  });
+
+  test("the document prefix and both interior gaps survive a complete reversal", () => {
+    const doc = parseSource("\nA\n\n\nB\n\nC\n", "chapter");
+    const [first, second, third] = sourceBlocks(doc);
+    if (!first || !second || !third) throw new Error("fixture did not parse into three blocks");
+
+    expect(applyBlocks(doc, [third, second, first])).toBe("\nC\n\n\nB\n\nA\n");
+  });
+
+  test("inserting before the old first block keeps the prefix and a default separator", () => {
+    const doc = parseSource("\nA\n\n\nB\n", "chapter");
+    const [first, second] = sourceBlocks(doc);
+    if (!first || !second) throw new Error("fixture did not parse into two blocks");
+
+    expect(applyBlocks(doc, [{ id: "new", text: "N" }, first, second])).toBe("\nN\n\nA\n\n\nB\n");
   });
 });
