@@ -109,6 +109,8 @@ let fileUnavailable = $state<string | null>(null);
 let fileQuery = $state("");
 let fileOrder = $state<SortOrder>("name");
 let fileDescending = $state(false);
+/** Invalidates every async file-view request, including clears and Root changes. */
+let fileRequest = 0;
 /**
  * How many rows the viewport last asked for. The list measures itself and
  * reports it, so a refresh after a sort or a trash fetches what is on screen
@@ -255,6 +257,7 @@ $effect(() => {
 
 /** Move the one file view to another Root without carrying any of its cache across. */
 const claimFileView = (owner: string): void => {
+  fileRequest += 1;
   fileOwner = owner;
   fileEntries = [];
   fileTotal = 0;
@@ -264,6 +267,9 @@ const claimFileView = (owner: string): void => {
 
 /** A late native response may only update the Root that asked for it. */
 const ownsFileView = (owner: string): boolean => fileOwner === owner && root === owner;
+
+const ownsFileRequest = (request: number, owner: string, query: string): boolean =>
+  request === fileRequest && ownsFileView(owner) && fileQuery === query;
 
 /**
  * Open the browser, scanning on first use.
@@ -290,9 +296,11 @@ $effect(() => {
 const needFilePage = async (offset: number, limit: number) => {
   visibleRows = limit;
   const owner = root;
-  if (!owner || fileUnavailable) return;
+  const query = fileQuery;
+  const request = fileRequest;
+  if (!owner || fileUnavailable || query.trim() !== "") return;
   const result = await api().files.page(owner, offset, limit);
-  if (!ownsFileView(owner)) return;
+  if (!ownsFileRequest(request, owner, query)) return;
   if (!result.ok) {
     fileUnavailable = t("files.unavailable");
     return;
@@ -304,19 +312,20 @@ const needFilePage = async (offset: number, limit: number) => {
 const refreshFileView = async (owner: string): Promise<void> => {
   if (sheet !== "files" || !ownsFileView(owner)) return;
   const query = fileQuery;
+  const request = ++fileRequest;
   const scanned = await api().files.scan(owner);
-  if (!ownsFileView(owner) || fileQuery !== query) return;
+  if (!ownsFileRequest(request, owner, query)) return;
   if (!scanned.ok) {
     fileUnavailable = t("files.unavailable");
     return;
   }
   fileUnavailable = null;
   await api().files.sort(owner, fileOrder, fileDescending);
-  if (!ownsFileView(owner) || fileQuery !== query) return;
+  if (!ownsFileRequest(request, owner, query)) return;
 
   if (query.trim() !== "") {
     const result = await api().files.search(owner, query, 200);
-    if (!ownsFileView(owner) || fileQuery !== query) return;
+    if (!ownsFileRequest(request, owner, query)) return;
     if (!result.ok) {
       fileUnavailable = t("files.unavailable");
       return;
@@ -327,13 +336,20 @@ const refreshFileView = async (owner: string): Promise<void> => {
     return;
   }
 
-  fileTotal = scanned.count;
-  await needFilePage(0, visibleRows);
+  const page = await api().files.page(owner, 0, visibleRows);
+  if (!ownsFileRequest(request, owner, query)) return;
+  if (!page.ok) {
+    fileUnavailable = t("files.unavailable");
+    return;
+  }
+  fileEntries = page.entries;
+  fileTotal = page.total;
   await reload();
 };
 
 const searchFiles = async (query: string) => {
   fileQuery = query;
+  const request = ++fileRequest;
   const owner = root;
   if (!owner) return;
 
@@ -341,20 +357,27 @@ const searchFiles = async (query: string) => {
   // clearing the box should show the folder, not an empty list.
   if (query.trim() === "") {
     const scanned = await api().files.scan(owner);
-    if (!ownsFileView(owner)) return;
+    if (!ownsFileRequest(request, owner, query)) return;
     if (!scanned.ok) {
       fileUnavailable = t("files.unavailable");
       return;
     }
     await api().files.sort(owner, fileOrder, fileDescending);
-    if (!ownsFileView(owner)) return;
-    fileTotal = scanned.count;
-    await needFilePage(0, visibleRows);
+    if (!ownsFileRequest(request, owner, query)) return;
+    const page = await api().files.page(owner, 0, visibleRows);
+    if (!ownsFileRequest(request, owner, query)) return;
+    if (!page.ok) {
+      fileUnavailable = t("files.unavailable");
+      return;
+    }
+    fileUnavailable = null;
+    fileEntries = page.entries;
+    fileTotal = page.total;
     return;
   }
 
   const result = await api().files.search(owner, query, 200);
-  if (!ownsFileView(owner)) return;
+  if (!ownsFileRequest(request, owner, query)) return;
   if (!result.ok) {
     fileUnavailable = t("files.unavailable");
     return;
