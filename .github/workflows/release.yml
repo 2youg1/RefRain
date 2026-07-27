@@ -109,8 +109,7 @@ jobs:
 
       - name: Build renderer, main, and preload
         working-directory: apps/desktop
-        shell: bash
-        run: ./make.sh
+        run: bun scripts/build-desktop.ts
 
       - name: Generated desktop bytes match the reviewed manifest
         run: git diff --exit-code -- apps/desktop/build/desktop-manifest.json

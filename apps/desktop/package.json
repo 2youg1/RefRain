@@ -9,7 +9,7 @@
   "main": "dist/main/main.cjs",
   "scripts": {
     "dev": "REFRAIN_DEV=1 bun x vite",
-    "build": "./make.sh",
+    "build": "bun scripts/build-desktop.ts",
     "pack": "bun scripts/verify-package-assets.ts empty && electron-builder --publish never",
     "smoke": "bun test test/smoke.test.ts"
   },
