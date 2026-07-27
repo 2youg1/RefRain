@@ -1,8 +1,10 @@
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell } from "electron";
 import { cssVariables, profileForBounds } from "./display.ts";
 import { closeWorkbenches, registerHandlers } from "./ipc.ts";
 import { mayOpenExternally, rendererMayNavigate } from "./navigation.ts";
+import { receiveSecondInstance, secondInstancePaths } from "./single-instance.ts";
 
 /**
  * Windowing and packaging only (SPEC 5.2 rule 4). Business logic lives in
@@ -145,44 +147,66 @@ const createWindow = (): BrowserWindow => {
   return window;
 };
 
-app.whenReady().then(() => {
-  // A writing application has no use for File/Edit/View/Window: every command
-  // lives in the palette, which is reachable from one key. The default menu was
-  // a black strip of affordances that duplicated nothing the app offers.
-  Menu.setApplicationMenu(null);
-
-  registerHandlers(ipcMain, dialog);
-  const window = createWindow();
-
-  // CI launches the built app with --smoke: the window must actually finish
-  // loading, then the process exits. Files on disk prove nothing about launch.
-  //
-  // The failure path needs its own exit. Without a deadline a window that never
-  // loads hangs the job until the runner kills it, which reports as a timeout
-  // rather than as the launch failure it is.
-  if (process.argv.includes("--smoke")) {
-    const deadline = setTimeout(() => {
-      console.error("SMOKE_FAIL window did not finish loading within 30s");
-      app.exit(1);
-    }, 30_000);
-
-    window.webContents.once("did-finish-load", () => {
-      clearTimeout(deadline);
-      console.log("SMOKE_OK window loaded");
-      setTimeout(() => app.exit(0), 500);
-    });
-
-    window.webContents.once("did-fail-load", (_event, code, description) => {
-      clearTimeout(deadline);
-      console.error(`SMOKE_FAIL ${code} ${description}`);
-      app.exit(1);
-    });
-  }
-
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+/*
+ * One project has one main-process owner.
+ *
+ * Without the lock, two ordinary launches could open the same root, each with
+ * its own cached Text Head and ledger connection, and whichever one saved last
+ * silently overwrote the other. The second process does not become an error:
+ * it brings the existing window back and hands over the file or folder the OS
+ * asked it to open.
+ */
+const primaryInstance = app.requestSingleInstanceLock();
+if (!primaryInstance) app.quit();
+else
+  app.on("second-instance", (_event, argv) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (!window) return;
+    receiveSecondInstance(
+      window,
+      secondInstancePaths(argv, process.execPath, app.getAppPath(), existsSync),
+    );
   });
-});
+
+if (primaryInstance)
+  app.whenReady().then(() => {
+    // A writing application has no use for File/Edit/View/Window: every command
+    // lives in the palette, which is reachable from one key. The default menu was
+    // a black strip of affordances that duplicated nothing the app offers.
+    Menu.setApplicationMenu(null);
+
+    registerHandlers(ipcMain, dialog);
+    const window = createWindow();
+
+    // CI launches the built app with --smoke: the window must actually finish
+    // loading, then the process exits. Files on disk prove nothing about launch.
+    //
+    // The failure path needs its own exit. Without a deadline a window that never
+    // loads hangs the job until the runner kills it, which reports as a timeout
+    // rather than as the launch failure it is.
+    if (process.argv.includes("--smoke")) {
+      const deadline = setTimeout(() => {
+        console.error("SMOKE_FAIL window did not finish loading within 30s");
+        app.exit(1);
+      }, 30_000);
+
+      window.webContents.once("did-finish-load", () => {
+        clearTimeout(deadline);
+        console.log("SMOKE_OK window loaded");
+        setTimeout(() => app.exit(0), 500);
+      });
+
+      window.webContents.once("did-fail-load", (_event, code, description) => {
+        clearTimeout(deadline);
+        console.error(`SMOKE_FAIL ${code} ${description}`);
+        app.exit(1);
+      });
+    }
+
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  });
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
