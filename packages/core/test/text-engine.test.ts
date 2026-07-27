@@ -21,6 +21,22 @@ describe("Text Action", () => {
     expect(after.id).not.toBe(before.id);
   });
 
+  test("two changes on one block are refused rather than silently merged", () => {
+    // A run returning several Review Slices for one Edit Scope produces exactly
+    // this. The map was keyed on blockIds[0], so the second verdict overwrote
+    // the first and the reader lost a judgment they had signed, with no message.
+    expect(() =>
+      applyTextAction(
+        head(),
+        [
+          { blockIds: ["b2"], text: "剑没有松。" },
+          { blockIds: ["b2"], text: "剑落下了。" },
+        ],
+        "test",
+      ),
+    ).toThrow(/two changes address block b2/);
+  });
+
   test("an untouched block keeps its identity across the action", () => {
     const before = head();
     const after = applyTextAction(before, [{ blockIds: ["b2"], text: "剑没有松。" }], "test");
