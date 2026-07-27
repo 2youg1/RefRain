@@ -53,6 +53,26 @@ await page.addInitScript(`window.refrain = {
 await page.goto(`http://localhost:${server.port}`);
 await page.waitForTimeout(400);
 
+/**
+ * Every failure path has to close the browser and the port. Exiting straight
+ * from a check leaves a Chromium and a listening socket behind on a CI runner,
+ * which is the same defect the type gate in this repository just learned to
+ * avoid — one file learning `finally` while another grows four leaks.
+ */
+let torndown = false;
+const teardown = async (): Promise<void> => {
+  if (torndown) return;
+  torndown = true;
+  await browser.close();
+  server.stop();
+};
+
+const fail = async (why: string): Promise<never> => {
+  console.error(`FAIL  ${why}`);
+  await teardown();
+  process.exit(1);
+};
+
 const openedWorkspace = await page.evaluate(() => {
   const button = [...document.querySelectorAll<HTMLElement>("button")].find((node) =>
     /打开文件夹|Open folder/.test(node.textContent ?? ""),
@@ -60,10 +80,7 @@ const openedWorkspace = await page.evaluate(() => {
   button?.click();
   return button !== undefined;
 });
-if (!openedWorkspace) {
-  console.error("FAIL  the welcome screen offers no way to open a folder");
-  process.exit(1);
-}
+if (!openedWorkspace) await fail("the welcome screen offers no way to open a folder");
 await page.waitForTimeout(600);
 
 // Turn the grid on through the interface, the way an author would. Typography
@@ -79,10 +96,8 @@ const openedSettings = await page.evaluate(() => {
   entry?.click();
   return entry !== undefined;
 });
-if (!openedSettings) {
-  console.error("FAIL  the command palette has no Settings entry to reach typography through");
-  process.exit(1);
-}
+if (!openedSettings)
+  await fail("the command palette has no Settings entry to reach typography through");
 await page.waitForTimeout(450);
 
 const openedTypography = await page.evaluate(() => {
@@ -92,10 +107,7 @@ const openedTypography = await page.evaluate(() => {
   tab?.click();
   return tab !== undefined;
 });
-if (!openedTypography) {
-  console.error("FAIL  Settings has no typography section");
-  process.exit(1);
-}
+if (!openedTypography) await fail("Settings has no typography section");
 await page.waitForTimeout(400);
 
 // The switch carries no text of its own; its name is on the aria-label.
@@ -106,10 +118,7 @@ const gridToggled = await page.evaluate(() => {
   toggle?.click();
   return toggle !== undefined;
 });
-if (!gridToggled) {
-  console.error("FAIL  the typography panel offers no baseline-grid control");
-  process.exit(1);
-}
+if (!gridToggled) await fail("the typography panel offers no baseline-grid control");
 await page.waitForTimeout(400);
 
 const report = await page.evaluate(() => {
@@ -171,22 +180,12 @@ const report = await page.evaluate(() => {
 
 console.log(JSON.stringify(report, null, 2));
 
-await browser.close();
-server.stop();
+await teardown();
 
-/**
- * This printed its verdict and exited zero either way, so the rule could cross
- * the glyphs in every theme and CI stayed green — the gate named the defect it
- * was watching for and then did not fail on it.
- */
-const fail = (why: string): never => {
-  console.error(`FAIL  ${why}`);
-  process.exit(1);
-};
-
-if ("error" in report) fail(`the page did not render a paragraph to measure: ${report.error}`);
+if ("error" in report)
+  await fail(`the page did not render a paragraph to measure: ${report.error}`);
 if (!report.lines || report.lines.length < 2)
-  fail(
+  await fail(
     `expected the sample paragraph to wrap onto at least two lines, saw ${report.lines?.length ?? 0}`,
   );
 
@@ -202,7 +201,7 @@ console.log(`line 2 glyph top    : ${second.top}px`);
 console.log(`gap between lines   : ${gap}px`);
 
 if (ruleAt < first.bottom)
-  fail(
+  await fail(
     `the baseline rule is drawn ${ruleAt}px down, above the first line's glyph bottom at ` +
       `${first.bottom}px — it crosses the glyphs`,
   );
