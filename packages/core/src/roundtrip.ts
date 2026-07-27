@@ -151,12 +151,14 @@ const leadingGap = (doc: SourceDocument, at: number): string =>
 /**
  * Write a manuscript back from the blocks the application is holding.
  *
- * A block still carrying an identifier the file minted is written into its own
- * place, keeping the blank lines that stood before it — so rewriting one
- * paragraph does not quietly reformat the two around it. A block with an
- * unfamiliar identifier was inserted and takes the ordinary separator. What
- * follows the last block is copied verbatim, which is how a file that ends
- * without a newline does not grow one.
+ * A block still carrying an identifier the file minted keeps the blank lines
+ * that stood before it while old blocks stay in order. Once old blocks are
+ * reordered, whitespace belongs to the document position instead: carrying a
+ * paragraph's former gap with it would either inject blank lines at the front
+ * or join the old first paragraph to its new predecessor. An unfamiliar block
+ * was inserted and takes the ordinary separator. What follows the last block
+ * is copied verbatim, which is how a file that ends without a newline does not
+ * grow one.
  *
  * Matching on identity rather than on text costs nothing and gets the case
  * that matters right: an edited paragraph is still the same paragraph, and its
@@ -171,11 +173,28 @@ export const applyBlocks = (
   if (doc.blocks.length === 0 && blocks.length === 0) return doc.bytes;
 
   const at = new Map(doc.blocks.map((block, index) => [block.id, index]));
-  let out = "";
-  for (const block of blocks) {
+  let previous = -1;
+  const reordered = blocks.some((block) => {
     const found = at.get(block.id);
-    if (found === undefined) out += (out.length === 0 ? "" : DEFAULT_SEPARATOR) + block.text;
-    else out += (out.length === 0 && found !== 0 ? "" : leadingGap(doc, found)) + block.text;
+    if (found === undefined) return false;
+    const movedBack = found < previous;
+    previous = found;
+    return movedBack;
+  });
+
+  let out = leadingGap(doc, 0);
+  for (const [position, block] of blocks.entries()) {
+    const found = at.get(block.id);
+    if (position > 0) {
+      if (
+        found === undefined ||
+        (reordered && position >= doc.blocks.length) ||
+        (!reordered && found === 0)
+      )
+        out += DEFAULT_SEPARATOR;
+      else out += leadingGap(doc, reordered ? position : found);
+    }
+    out += block.text;
   }
   const last = doc.blocks[doc.blocks.length - 1];
   return out + (last === undefined ? "" : doc.bytes.slice(last.end));
