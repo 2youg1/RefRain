@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { basename, delimiter, join } from "node:path";
 import { launch } from "../src/spawn.ts";
 
 /**
@@ -168,6 +168,43 @@ for (let i = 0; i < 10; i++) process.stdout.write(chunk);
     } finally {
       delete process.env.REFRAIN_TEST_SECRET;
       delete process.env.ANTHROPIC_API_KEY;
+    }
+  });
+
+  /**
+   * Windows spells it `Path`, and the lookup used to read `PATH` exactly.
+   *
+   * `inherited` keeps the variable under whatever case the platform supplied,
+   * so on Windows the resolver read `undefined` and reported every harness
+   * named without a directory — which is every harness an author configures by
+   * name — as not installed. Nothing could be launched at all.
+   *
+   * Simulated here rather than skipped off-Windows: the defect is a string
+   * comparison, and a case-insensitive resolver has to answer the same on both.
+   */
+  test("a PATH spelled the way Windows spells it still resolves a program", async () => {
+    const home = mkdtempSync(join(tmpdir(), "refrain-spawn-path-case-"));
+    const probe = script("probe.js", "process.stdout.write('found');\n");
+
+    const originalPath = process.env.PATH;
+    const originalHome = process.env.HOME;
+    try {
+      // Hand the resolver the directory holding a real interpreter, spelled the
+      // way Windows would spell it and with no all-caps twin to fall back on.
+      delete process.env.PATH;
+      process.env.Path = originalPath ?? "";
+      process.env.HOME = home;
+
+      // A bare name is what exercises the lookup; an absolute path skips it
+      // entirely, which is how the first version of this test proved nothing.
+      const name = basename(process.execPath);
+      const run = launch({ argv: [name, probe] });
+      await run.exited;
+      expect(await run.stdout).toBe("found");
+    } finally {
+      delete process.env.Path;
+      if (originalPath !== undefined) process.env.PATH = originalPath;
+      if (originalHome !== undefined) process.env.HOME = originalHome;
     }
   });
 

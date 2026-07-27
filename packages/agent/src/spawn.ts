@@ -111,12 +111,24 @@ const resolveProgram = (program: string, environment: NodeJS.ProcessEnv): string
 
   // PATHEXT is why `claude` resolves to `claude.cmd` on Windows. Returning the
   // resolved path matters: libuv cannot execute the bare script name itself.
+  //
+  // Windows environment variable names are case-insensitive and arrive spelled
+  // `Path`, so reading `environment.PATH` found nothing there and every harness
+  // named without a directory — which is every harness an author configures by
+  // name — was reported as not installed. `inherited` keeps the variable under
+  // whatever case the platform used, so the lookup has to be case-insensitive
+  // too.
+  const fromEnvironment = (variable: string): string | undefined => {
+    const match = Object.keys(environment).find((key) => key.toUpperCase() === variable);
+    return match === undefined ? undefined : environment[match];
+  };
+
   const suffixes =
     process.platform === "win32"
-      ? ["", ...(environment.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)]
+      ? ["", ...(fromEnvironment("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)]
       : [""];
 
-  for (const dir of (environment.PATH ?? "").split(delimiter).filter(Boolean))
+  for (const dir of (fromEnvironment("PATH") ?? "").split(delimiter).filter(Boolean))
     for (const suffix of suffixes) {
       const candidate = join(dir, program + suffix);
       if (exists(candidate)) return candidate;
