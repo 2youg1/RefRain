@@ -255,10 +255,28 @@ const derive = (t: Theme): Record<string, Oklch> => {
   const railC = night ? pC * 2.0 : light ? pC * 1.5 : Math.max(0.03, iC * 0.92);
   const railInkL = night ? 0.884 : light ? iL - 0.008 : 0.902;
 
+  // The lamp, and the corner it does not reach.
+  //
+  // The page carried a fixed white wash — `oklch(1 0 0 / 0.5)` at the upper
+  // left, the same in all eight themes. On day paper already at L 0.95 that
+  // pushed the column to within a hair of pure white, which this project's own
+  // brief forbids; on 墨's L 0.24 it read as a lamp bulb sitting on the page.
+  //
+  // Light falling on paper does not turn the paper white. It raises the paper's
+  // own lightness and leaves its hue alone, so both tokens are the paper moved
+  // along L — up for the lamp, down for the far corner. Night lifts further
+  // because a dark room needs a visible source; day barely lifts at all,
+  // because the page is already bright and the gesture is a suggestion of a
+  // desk rather than an effect.
+  const lampL = night ? Math.min(0.46, pL + 0.13) : Math.min(0.985, pL + 0.028);
+  const shadeL = night ? Math.max(0.13, pL - 0.05) : Math.max(0.2, pL - 0.1);
+
   return {
     paper: [pL, pC, pH],
     "paper-raised": [Math.min(0.966, pL + 0.03), pC * 0.9, pH],
     "paper-sunk": [Math.max(0.105, pL - 0.026), pC * 1.1, pH],
+    lamp: [lampL, pC * 0.55, pH],
+    shade: [shadeL, pC * 1.2, pH],
     // The sheet is the page: lightest by day, lit by the lamp at night. Always
     // a step further from the desk, never toward it.
     sheet: [night ? pL + 0.016 : Math.min(0.972, pL + 0.014), pC * 0.82, pH],
@@ -383,6 +401,26 @@ const block = (t: Theme): string => {
     if (reasons.length > 0)
       failures.push(`${t.cn} --${name} ${hex(colour)} 擦边纯黑白（${reasons.join("，")}）`);
   }
+
+  /*
+   * The lamp lights the paper; it does not replace it.
+   *
+   * The page used to carry a fixed `oklch(1 0 0 / 0.5)` wash at the upper left,
+   * identical in all eight themes. On day paper at L 0.95 the column came out
+   * within a hair of pure white — the thing the surface check three lines up
+   * exists to forbid — and on 墨's L 0.24 it read as a bulb resting on the page.
+   * These bounds keep the lit corner inside the theme it belongs to.
+   */
+  const lamp = v.lamp as Oklch;
+  const shade = v.shade as Oklch;
+  const lift = lamp[0] - paperL;
+  if (lift <= 0) failures.push(`${t.cn} 灯 L${lamp[0].toFixed(3)} 不亮于纸面 L${paperL.toFixed(3)}`);
+  if (lift > (t.mode === "night" ? 0.16 : 0.045))
+    failures.push(`${t.cn} 灯比纸面亮 ${lift.toFixed(3)}，超出该时段上限`);
+  if (shade[0] >= paperL)
+    failures.push(`${t.cn} 影 L${shade[0].toFixed(3)} 不暗于纸面 L${paperL.toFixed(3)}`);
+  if (lamp[2] !== (v.paper as Oklch)[2])
+    failures.push(`${t.cn} 灯的色相 ${lamp[2]} 偏离纸面 ${(v.paper as Oklch)[2]}——灯照在纸上不会把纸变白`);
 
   const head = `${t.cn} ${t.slug} · ${t.mode === "day" ? "日间" : "夜间"} · ${t.lineage}`;
   const out = [`/* ── ${head} ${"─".repeat(Math.max(2, 56 - head.length * 2))} */`, "/*"];
