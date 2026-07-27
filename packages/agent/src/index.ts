@@ -9,6 +9,7 @@ export type { Grant, GrantRefusal, GrantRequest, GrantVerdict } from "./grant.ts
 export { grantAllows, issueGrant, revokeGrant, spendGrant } from "./grant.ts";
 export type { ManifestEntry } from "./host.ts";
 export { AgentHost, sendManifest } from "./host.ts";
+export { reviewTaskScopeConflict } from "./review-task.ts";
 export type { DiscussionRound, RunOutcome } from "./round.ts";
 export { closeRound, isRoundOver, lateArrival, openRound, settleRun } from "./round.ts";
 export type {
@@ -38,6 +39,7 @@ export type {
   RunState,
   RuntimeBinding,
   SessionUsage,
+  TaskContextScope,
   TaskEditScope,
   Tier,
   TokenUsage,

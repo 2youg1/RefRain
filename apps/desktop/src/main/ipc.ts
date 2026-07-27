@@ -41,6 +41,7 @@ import {
 } from "@refrain/core";
 import type { Workspace as FileWorkspace } from "@refrain/fs";
 import type { Dialog, IpcMain, WebContents } from "electron";
+import type { ReviewTaskIntent } from "../shared/review-task.ts";
 import { parseCommandLine } from "./command-line.ts";
 import { type RootChangeWatch, watchRootChanges } from "./file-watch.ts";
 import { registerFileHandlers } from "./files-ipc.ts";
@@ -798,8 +799,33 @@ export const registerHandlers = (
     },
   );
 
-  handlers.handleRoot("agent:enqueue", (_e, root: string, task: ReviewTask) => {
-    openWorkbench(root).host.enqueue(task);
+  handlers.handleRoot("agent:enqueue", (_e, root: string, intent: ReviewTaskIntent) => {
+    const workbench = openWorkbench(root);
+    if (!workbench.host.agentFor(intent.agentId))
+      throw new Error(`unknown Agent ${intent.agentId}`);
+    const head = headFor(root, intent.chapter);
+    const contextId = `chapter:${intent.chapter}`;
+    const blockById = new Map(head.blocks.map((block) => [block.id, block]));
+    const editScopes = intent.editScopes.map((scope) => {
+      const text = scope.blockIds
+        .map((id) => {
+          const block = blockById.get(id);
+          if (!block) throw new Error(`stale Edit Scope ${scope.id}: block ${id} is absent`);
+          return block.text;
+        })
+        .join("\n\n");
+      if (text !== scope.text) throw new Error(`stale Edit Scope ${scope.id}: text changed`);
+      return { id: scope.id, blockIds: scope.blockIds, text };
+    });
+    const task: ReviewTask = {
+      id: intent.id,
+      agentId: intent.agentId,
+      baseline: head.id,
+      prompt: intent.prompt,
+      contextScope: [{ kind: "material", id: contextId, text: currentText(head) }],
+      editScopes,
+    };
+    workbench.host.enqueue(task);
     return true;
   });
 

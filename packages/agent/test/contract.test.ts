@@ -8,8 +8,13 @@ const task: ReviewTask = {
   agentId: "a1",
   baseline: "rev7",
   prompt: "把第二段改短。",
-  contextScope: ["ch01"],
+  contextScope: [],
   editScopes: [{ id: "s1", blockIds: ["b7"], text: "雾从下游漫上来。" }],
+};
+
+const taskWithMaterialContext: ReviewTask = {
+  ...task,
+  contextScope: [{ kind: "material", id: "chapter:ch01", text: "雾从下游漫上来。船没有灯。" }],
 };
 
 /**
@@ -58,6 +63,25 @@ describe("Reply contract", () => {
     };
 
     expect(scaffold(many)).toContain("<!-- scope s9 -->");
+  });
+
+  test("the scaffold carries readable context separately from writable scopes", () => {
+    const text = scaffold(taskWithMaterialContext);
+
+    expect(text).toContain("# Context");
+    expect(text).toContain("<!-- context chapter:ch01 -->");
+    expect(text).toContain("雾从下游漫上来。船没有灯。");
+    expect(text).toContain("<!-- scope s1 -->");
+  });
+
+  test("legacy context ids are labelled unavailable instead of posing as empty material", () => {
+    const text = scaffold({
+      ...task,
+      contextScope: [{ kind: "legacy-reference", id: "chapter:legacy.md" }],
+    });
+
+    expect(text).toContain("<!-- context chapter:legacy.md; unavailable legacy reference -->");
+    expect(text).toContain("[Unavailable: this legacy task retained only a context identifier.]");
   });
 
   test("a memo is optional", () => {

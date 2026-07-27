@@ -20,9 +20,8 @@ const edit = {
 const task = {
   id: "task-1",
   agentId: "agent-1",
-  baseline: "revision-1",
+  chapter: "chapter.md",
   prompt: "Read this.",
-  contextScope: ["chapter.md"],
   editScopes: [{ id: "scope-1", blockIds: ["b1"], text: "before" }],
 };
 const verdict = {
@@ -117,10 +116,13 @@ test("domain payloads reject unknown fields and missing conditional text", () =>
   );
 });
 
-test("Review Tasks reject ambiguous or empty identities at the IPC boundary", () => {
+test("Review Task intents reject ambiguous or empty identities at the IPC boundary", () => {
   expect(() =>
-    parseIpcArgs("agent:enqueue", [root, { ...task, contextScope: ["chapter.md", "chapter.md"] }]),
-  ).toThrow(/unique/);
+    parseIpcArgs("agent:enqueue", [
+      root,
+      { ...task, editScopes: [{ id: "empty", blockIds: [], text: "" }] },
+    ]),
+  ).toThrow(/one or more/);
   expect(() =>
     parseIpcArgs("agent:enqueue", [
       root,
@@ -139,16 +141,58 @@ test("Review Tasks reject ambiguous or empty identities at the IPC boundary", ()
       { ...task, editScopes: [{ id: "scope", blockIds: ["b1", "b1"], text: "before" }] },
     ]),
   ).toThrow(/unique/);
+  expect(() =>
+    parseIpcArgs("agent:enqueue", [
+      root,
+      {
+        ...task,
+        editScopes: [
+          { id: "first", blockIds: ["b1"], text: "one" },
+          { id: "second", blockIds: ["b1"], text: "one" },
+        ],
+      },
+    ]),
+  ).toThrow(/disjoint/);
   expect(() => parseIpcArgs("agent:enqueue", [root, { ...task, agentId: " " }])).toThrow(
     /non-empty/,
   );
 });
 
+test("enqueue accepts an intent but refuses renderer-authored Revision and Context Scope", () => {
+  const intent = {
+    id: "task-1",
+    agentId: "agent-1",
+    chapter: "chapter.md",
+    prompt: "Read this.",
+    editScopes: [],
+  };
+
+  expect(() => parseIpcArgs("agent:enqueue", [root, intent])).not.toThrow();
+  expect(() =>
+    parseIpcArgs("agent:enqueue", [
+      root,
+      {
+        ...intent,
+        editScopes: [{ id: "chapter:chapter.md", blockIds: ["chapter.md:b1"], text: "Read this." }],
+      },
+    ]),
+  ).toThrow(/chapter context/);
+  expect(() =>
+    parseIpcArgs("agent:enqueue", [root, { ...intent, chapter: "../outside.md" }]),
+  ).toThrow(/Root/);
+  expect(() =>
+    parseIpcArgs("agent:enqueue", [root, { ...intent, baseline: "renderer-claim" }]),
+  ).toThrow(/baseline/);
+  expect(() =>
+    parseIpcArgs("agent:enqueue", [root, { ...intent, contextScope: ["renderer-claim"] }]),
+  ).toThrow(/contextScope/);
+});
+
 test("list decoders reject sparse arrays instead of persisting their holes as null", () => {
   const sparse = Array(1);
 
-  expect(() => parseIpcArgs("agent:enqueue", [root, { ...task, contextScope: sparse }])).toThrow(
-    /contextScope\[0\]/,
+  expect(() => parseIpcArgs("agent:enqueue", [root, { ...task, editScopes: sparse }])).toThrow(
+    /editScopes\[0\]/,
   );
   expect(() =>
     parseIpcArgs("review:commit", [root, { chapter: "chapter.md", verdicts: sparse }]),

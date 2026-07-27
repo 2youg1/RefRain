@@ -59,15 +59,16 @@ preamble, no closing remark, no code fence. Text outside the element is
 rejected and the run fails.
 
 <agent-result version="1">
-  <replacement scope="SCOPE-ID">the rewritten text</replacement>
+  <replacement scope="BEFORE-SCOPE-ID">the rewritten text</replacement>
   <comments>
-    <comment target="SCOPE-ID">an observation that changes nothing</comment>
+    <comment target="CONTEXT-OR-BEFORE-ID">an observation that changes nothing</comment>
   </comments>
   <memo topic="optional label">what you want to still know next time</memo>
 </agent-result>
 
 Rules:
-- Use the scope ids marked in "# Before" above, exactly as written.
+- Only scope ids marked in "# Before" may appear in <replacement>.
+- Context ids are readable comment targets, never replacement scopes.
 - One <replacement> per scope at most. Repeating a scope fails the run.
 - An empty <replacement> deletes that scope's text.
 - Every <comment> goes inside <comments>, and uses target= rather than scope=.
@@ -83,13 +84,23 @@ already settled, traps you found. Skip anything a reader could see by opening
 the manuscript. It is optional, it is read by a human before it is reused, and
 it is the only thing you carry across a lost context.`;
 
+const contextLines = (task: ReviewTask): string[] =>
+  task.contextScope.flatMap((scope) => [
+    `<!-- context ${scope.id}${scope.kind === "legacy-reference" ? "; unavailable legacy reference" : ""} -->`,
+    scope.kind === "material"
+      ? scope.text
+      : "[Unavailable: this legacy task retained only a context identifier.]",
+    "",
+  ]);
+
 /**
- * The app generates Before and Request; the agent fills only Agent reply.
- * Keeping the first two sections app-authored is what makes the artifact's
- * provenance checkable rather than merely claimed.
+ * The app generates Context, Before and Request; the agent fills only Agent
+ * reply. Keeping those inputs app-authored makes provenance checkable.
  */
-export const scaffold = (task: ReviewTask): string =>
-  [
+export const scaffold = (task: ReviewTask): string => {
+  const context = contextLines(task);
+  return [
+    ...(context.length === 0 ? [] : ["# Context", "", ...context]),
     "# Before",
     "",
     ...task.editScopes.flatMap((scope) => [`<!-- scope ${scope.id} -->`, scope.text, ""]),
@@ -106,3 +117,4 @@ export const scaffold = (task: ReviewTask): string =>
     "<!-- Your <agent-result> element replaces this comment. -->",
     "",
   ].join("\n");
+};

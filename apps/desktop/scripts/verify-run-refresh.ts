@@ -52,7 +52,8 @@ await page.addInitScript(`
     enqueue: async () => { queued = true; return true; },
     manifest: async () => queued ? [{
       agentName: "slow", harness: "command:a1", model: "unknown", reasoningEffort: "unknown",
-      runCount: 1, scopes: ["s1"], prompts: ["改写"], drifted: [],
+      runCount: 1, contexts: ["chapter:01.md"],
+      scopes: [{ id: "s1", blockIds: ["01.md:b1"] }], prompts: ["改写"], drifted: ["s1"],
     }] : [],
     send: async () => { sent = true; return [{ id: "run1", requestPath: "/request", resultPath: "/result" }]; },
     collect: async () => ({ proposals: [], comments: [] }),
@@ -102,6 +103,12 @@ try {
   await page.keyboard.press("Control+d");
   await page.locator(".dispatch textarea").fill("改写这一段。");
   await page.locator(".dispatch .queue").click();
+  const manifest = await page.locator(".dispatch .manifest").innerText();
+  if (!manifest.includes("01.md:b1"))
+    throw new Error(`the pre-send manifest hid the writable block range: ${manifest}`);
+  const drift = await page.locator(".dispatch .drift").innerText();
+  if (!drift.includes("01.md:b1") || drift.includes("s1"))
+    throw new Error(`the drift warning exposed an opaque scope instead of its blocks: ${drift}`);
   await page.locator(".dispatch .send").click();
 
   await page.locator(".run-state.failed").waitFor({ timeout: 2500 });

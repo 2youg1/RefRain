@@ -1,7 +1,8 @@
 import { isAbsolute, normalize, relative, resolve, sep } from "node:path";
-import type { ReviewTask } from "@refrain/agent";
+import { reviewTaskScopeConflict } from "@refrain/agent";
 import type { Edit, Verdict } from "@refrain/core";
 import type { SortOrder } from "@refrain/fs";
+import type { ReviewTaskIntent } from "../shared/review-task.ts";
 
 interface ReviewCommit {
   readonly chapter: string;
@@ -33,7 +34,7 @@ interface IpcArguments {
     model: string,
     reasoningEffort: string,
   ];
-  "agent:enqueue": [root: string, task: ReviewTask];
+  "agent:enqueue": [root: string, task: ReviewTaskIntent];
   "agent:manifest": [root: string];
   "agent:send": [root: string];
   "agent:cancel": [root: string, runId: string];
@@ -163,6 +164,11 @@ const uniqueNonEmptyTexts: Decode<string[]> = (value, path) => {
     : refuse(path, "unique non-empty strings");
 };
 
+const nonEmptyUniqueTexts: Decode<string[]> = (value, path) => {
+  const decoded = uniqueNonEmptyTexts(value, path);
+  return decoded.length > 0 ? decoded : refuse(path, "one or more unique non-empty strings");
+};
+
 const record = (value: unknown, path: string, keys: readonly string[]): Record<string, unknown> => {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     return refuse(path, "an object");
@@ -236,32 +242,26 @@ const edit: Decode<Edit> = (value, path) => {
   return held as unknown as Edit;
 };
 
-const taskScope: Decode<ReviewTask["editScopes"][number]> = (value, path) => {
+const taskScope: Decode<ReviewTaskIntent["editScopes"][number]> = (value, path) => {
   const held = record(value, path, ["id", "blockIds", "text"]);
   nonEmptyText(held.id, `${path}.id`);
-  uniqueNonEmptyTexts(held.blockIds, `${path}.blockIds`);
+  nonEmptyUniqueTexts(held.blockIds, `${path}.blockIds`);
   text(held.text, `${path}.text`);
-  return held as unknown as ReviewTask["editScopes"][number];
+  return held as unknown as ReviewTaskIntent["editScopes"][number];
 };
 
-const reviewTask: Decode<ReviewTask> = (value, path) => {
-  const held = record(value, path, [
-    "id",
-    "agentId",
-    "baseline",
-    "prompt",
-    "contextScope",
-    "editScopes",
-  ]);
+const reviewTaskIntent: Decode<ReviewTaskIntent> = (value, path) => {
+  const held = record(value, path, ["id", "agentId", "chapter", "prompt", "editScopes"]);
   nonEmptyText(held.id, `${path}.id`);
   nonEmptyText(held.agentId, `${path}.agentId`);
-  nonEmptyText(held.baseline, `${path}.baseline`);
+  nonEmptyText(held.chapter, `${path}.chapter`);
   nonEmptyText(held.prompt, `${path}.prompt`);
-  uniqueNonEmptyTexts(held.contextScope, `${path}.contextScope`);
   const editScopes = list(taskScope)(held.editScopes, `${path}.editScopes`);
-  if (new Set(editScopes.map((scope) => scope.id)).size !== editScopes.length)
-    refuse(`${path}.editScopes`, "unique scope ids");
-  return held as unknown as ReviewTask;
+  const conflict = reviewTaskScopeConflict([], editScopes);
+  if (conflict?.kind === "scope-id") refuse(`${path}.editScopes`, "unique scope ids");
+  if (conflict?.kind === "block-id")
+    refuse(`${path}.editScopes`, `disjoint block ids; ${conflict.id} repeats`);
+  return held as unknown as ReviewTaskIntent;
 };
 
 const verdict: Decode<Verdict> = (value, path) => {
@@ -399,7 +399,23 @@ const parsers = {
   "agent:probe": tuple(absolutePath, text),
   "agent:remove": tuple(absolutePath, text),
   "agent:add": tuple(absolutePath, text, text, text, text),
-  "agent:enqueue": tuple(absolutePath, reviewTask),
+  "agent:enqueue": (channel, values) => {
+    const [root, intent] = tuple<[string, ReviewTaskIntent]>(absolutePath, reviewTaskIntent)(
+      channel,
+      values,
+    );
+    chapterId(root, intent.chapter, `${channel}[1].chapter`);
+    const conflict = reviewTaskScopeConflict(
+      [{ kind: "legacy-reference", id: `chapter:${intent.chapter}` }],
+      intent.editScopes,
+    );
+    if (conflict?.kind === "scope-id")
+      refuse(
+        `${channel}[1].editScopes`,
+        `ids distinct from chapter context; ${conflict.id} repeats`,
+      );
+    return [root, intent];
+  },
   "agent:manifest": tuple(absolutePath),
   "agent:send": tuple(absolutePath),
   "agent:cancel": tuple(absolutePath, nonEmptyText),

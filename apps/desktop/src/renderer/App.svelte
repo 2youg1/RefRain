@@ -1,9 +1,18 @@
 <script lang="ts">
 import { splitBlocks } from "@refrain/core";
 import { onMount } from "svelte";
+import type { ReviewTaskIntent } from "../shared/review-task.ts";
 import Agents from "./Agents.svelte";
 import Ask from "./Ask.svelte";
-import type { ChapterView, EditView, ProposalView, RootView, RunView, VerdictView } from "./api.ts";
+import type {
+  ChapterView,
+  EditView,
+  ManifestEntryView,
+  ProposalView,
+  RootView,
+  RunView,
+  VerdictView,
+} from "./api.ts";
 import { api } from "./api.ts";
 import ContextMenu from "./ContextMenu.svelte";
 import Dispatch from "./Dispatch.svelte";
@@ -129,6 +138,39 @@ let display = $state<DisplayProfile>(FALLBACK);
 const activeChapter = $derived(chapters.find((chapter) => chapter.path === active) ?? null);
 /** The active manuscript owns project-scoped commands; first root is only the empty fallback. */
 const root = $derived(activeChapter?.root ?? roots[0] ?? null);
+
+let sheetReturnFocus = $state<(() => void) | null>(null);
+
+const focusReturnFor = (target: HTMLElement | null): (() => void) => () => {
+  const candidates = [target, surfaceEl, document.querySelector<HTMLElement>(".key")];
+  for (const candidate of new Set(candidates)) {
+    if (!candidate?.isConnected || candidate === document.body) continue;
+    candidate.focus();
+    if (document.activeElement === candidate) return;
+  }
+};
+
+const openSheet = (next: Exclude<SheetName, null>, restore?: () => void): void => {
+  if (sheet === null)
+    sheetReturnFocus =
+      restore ??
+      focusReturnFor(document.activeElement instanceof HTMLElement ? document.activeElement : null);
+  sheet = next;
+};
+
+const paletteFocusReturn = (): (() => void) =>
+  focusReturnFor(document.querySelector<HTMLElement>(".key"));
+
+const openSheetFromPalette = (next: Exclude<SheetName, null>): void =>
+  openSheet(next, paletteFocusReturn());
+
+const closeSheet = (): void => {
+  if (sheet === null) return;
+  sheet = null;
+  const restore = sheetReturnFocus;
+  sheetReturnFocus = null;
+  queueMicrotask(() => restore?.());
+};
 
 // Every durable choice is written back the moment it changes; the storage
 // keys and the CSS custom properties both live in preferences.ts.
@@ -277,8 +319,8 @@ const ownsFileRequest = (request: number, owner: string, query: string): boolean
  * The walk is deferred to the moment the pane is opened rather than run at
  * project load: a writer who never opens the browser should never pay for it.
  */
-const openFiles = async () => {
-  sheet = "files";
+const openFiles = async (restore?: () => void) => {
+  openSheet("files", restore);
   const owner = root;
   if (!owner) return;
   if (fileOwner !== owner) claimFileView(owner);
@@ -639,7 +681,7 @@ const selectNow = (path: string | null): void => {
   if (path !== proposalsFor) {
     proposals = [];
     comments = [];
-    if (sheet === "review") sheet = null;
+    if (sheet === "review") closeSheet();
   }
   queueMicrotask(() => render(text));
 };
@@ -752,6 +794,40 @@ const save = async (): Promise<boolean> => {
     saved = false;
     say(error instanceof Error ? error.message : String(error));
     return false;
+  }
+};
+
+let reviewEnqueueing = $state(false);
+
+type ReviewEnqueueResult = {
+  readonly accepted: boolean;
+  readonly manifest: ManifestEntryView[] | null;
+};
+
+const rejectedReviewEnqueue: ReviewEnqueueResult = { accepted: false, manifest: null };
+
+const enqueueReview = async (intent: ReviewTaskIntent): Promise<ReviewEnqueueResult> => {
+  const chapter = activeChapter;
+  if (reviewEnqueueing || !chapter || chapter.id !== intent.chapter)
+    return rejectedReviewEnqueue;
+
+  reviewEnqueueing = true;
+  try {
+    if (!(await save()) || !saved) return rejectedReviewEnqueue;
+    if (activeChapter?.path !== chapter.path) return rejectedReviewEnqueue;
+    if (!(await api().enqueue(chapter.root, intent))) return rejectedReviewEnqueue;
+
+    try {
+      return { accepted: true, manifest: await api().manifest(chapter.root) };
+    } catch (error) {
+      say(error instanceof Error ? error.message : String(error));
+      return { accepted: true, manifest: null };
+    }
+  } catch (error) {
+    say(error instanceof Error ? error.message : String(error));
+    return rejectedReviewEnqueue;
+  } finally {
+    reviewEnqueueing = false;
   }
 };
 
@@ -885,7 +961,7 @@ const collect = async (runId: string): Promise<void> => {
     proposals = [...proposals, ...result.proposals];
     comments = [...comments, ...result.comments];
     proposalsFor = active;
-    sheet = "review";
+    openSheet("review");
   } catch (error) {
     say(String(error));
   }
@@ -958,7 +1034,7 @@ const commit = async (verdicts: VerdictView[]): Promise<void> => {
     // else to live. Anything refused above still sits in the panel.
     staged = {};
     saved = true;
-    if (proposals.length === 0) sheet = null;
+    if (proposals.length === 0) closeSheet();
   } catch (error) {
     say(error instanceof Error ? error.message : String(error));
   }
@@ -988,9 +1064,9 @@ const format = (mark: "bold" | "italic" | "strike" | "code"): void => {
   onEdit();
 };
 
-const openSettings = (at: Section): void => {
+const openSettings = (at: Section, restore?: () => void): void => {
   section = at;
-  sheet = "settings";
+  openSheet("settings", restore);
 };
 
 const commands = $derived<Command[]>([
@@ -1000,17 +1076,17 @@ const commands = $derived<Command[]>([
   { id: "chapter", label: "cmd.newChapter", group: "group.project", keys: bindings.newChapter, run: () => newChapter("chapter"), when: () => root !== null },
   { id: "material", label: "cmd.newMaterial", group: "group.project", run: () => newChapter("material"), when: () => root !== null },
   { id: "save", label: "cmd.save", group: "group.write", keys: bindings.save, run: () => void save(), when: () => active !== null },
-  { id: "files", label: "cmd.files", group: "group.project", run: () => void openFiles(), when: () => root !== null },
-  { id: "edits", label: "cmd.edits", group: "group.write", keys: bindings.edits, run: () => (sheet = "edits"), when: () => root !== null },
+  { id: "files", label: "cmd.files", group: "group.project", run: () => void openFiles(paletteFocusReturn()), when: () => root !== null },
+  { id: "edits", label: "cmd.edits", group: "group.write", keys: bindings.edits, run: () => openSheetFromPalette("edits"), when: () => root !== null },
   { id: "zen", label: "cmd.zen", group: "group.view", keys: bindings.zen, run: () => void setZen(!zen), when: () => active !== null },
-  { id: "dispatch", label: "cmd.dispatch", group: "group.collab", keys: bindings.dispatch, run: () => (sheet = "dispatch"), when: () => root !== null },
-  { id: "review", label: "cmd.review", group: "group.collab", keys: bindings.review, run: () => (sheet = "review"), when: () => root !== null },
-  { id: "ledger", label: "cmd.ledger", group: "group.collab", keys: bindings.ledger, run: () => (sheet = "ledger"), when: () => root !== null },
-  { id: "agents", label: "cmd.agents", group: "group.collab", run: () => openSettings("agents"), when: () => root !== null },
+  { id: "dispatch", label: "cmd.dispatch", group: "group.collab", keys: bindings.dispatch, run: () => openSheetFromPalette("dispatch"), when: () => root !== null },
+  { id: "review", label: "cmd.review", group: "group.collab", keys: bindings.review, run: () => openSheetFromPalette("review"), when: () => root !== null },
+  { id: "ledger", label: "cmd.ledger", group: "group.collab", keys: bindings.ledger, run: () => openSheetFromPalette("ledger"), when: () => root !== null },
+  { id: "agents", label: "cmd.agents", group: "group.collab", run: () => openSettings("agents", paletteFocusReturn()), when: () => root !== null },
   // Typography and the day/night crossing are Settings, and only Settings.
   // Offering them here as well put the same two choices in two places, so an
   // author who changed one had to remember which surface they had used.
-  { id: "settings", label: "cmd.settings", group: "group.view", keys: bindings.settings, run: () => openSettings("appearance") },
+  { id: "settings", label: "cmd.settings", group: "group.view", keys: bindings.settings, run: () => openSettings("appearance", paletteFocusReturn()) },
 ]);
 
 const onKeydown = (event: KeyboardEvent): void => {
@@ -1030,7 +1106,7 @@ const onKeydown = (event: KeyboardEvent): void => {
   if (event.key === "Escape" && (menuAt !== null || sheet !== null)) {
     event.preventDefault();
     if (menuAt) menuAt = null;
-    else if (sheet !== null) sheet = null;
+    else if (sheet !== null) closeSheet();
     return;
   }
   if (!command) return;
@@ -1041,10 +1117,10 @@ const onKeydown = (event: KeyboardEvent): void => {
     save: () => void save(),
     zen: () => void setZen(!zen),
     settings: () => openSettings("appearance"),
-    dispatch: () => (sheet = "dispatch"),
-    review: () => (sheet = "review"),
-    ledger: () => (sheet = "ledger"),
-    edits: () => (sheet = "edits"),
+    dispatch: () => openSheet("dispatch"),
+    review: () => openSheet("review"),
+    ledger: () => openSheet("ledger"),
+    edits: () => openSheet("edits"),
     bold: () => format("bold"),
     italic: () => format("italic"),
     zoomIn: () => (type = { ...type, zoom: Math.min(type.zoom + 0.1, 3) }),
@@ -1222,12 +1298,12 @@ const onScroll = (): void => {
           <span class="title">{activeChapter?.title ?? t("chapter.none")}</span>
           <div class="right">
             {#if edits.length > 0}
-              <button class="chip" onclick={() => (sheet = "edits")}>
+              <button class="chip" onclick={() => openSheet("edits")}>
                 {edits.length} {t("edits.count")}
               </button>
             {/if}
             {#if proposals.length > 0}
-              <button class="chip accent" onclick={() => (sheet = "review")}>
+              <button class="chip accent" onclick={() => openSheet("review")}>
                 {proposals.length}
               </button>
             {/if}
@@ -1296,18 +1372,20 @@ const onScroll = (): void => {
     {t}
     onFormat={format}
     onAnnotate={() => {
+      const restore = focusReturnFor(surfaceEl);
       menuAt = null;
-      sheet = "edits";
+      openSheet("edits", restore);
     }}
     onDispatch={() => {
+      const restore = focusReturnFor(surfaceEl);
       menuAt = null;
-      sheet = "dispatch";
+      openSheet("dispatch", restore);
     }}
     onClose={() => (menuAt = null)}
   />
 {/if}
 
-<Sheet open={sheet === "dispatch"} title={t("dispatch.title")} onClose={() => (sheet = null)}>
+<Sheet open={sheet === "dispatch"} title={t("dispatch.title")} onClose={closeSheet}>
   <Dispatch
     root={activeChapter?.root ?? root}
     chapter={activeChapter?.id ?? null}
@@ -1315,6 +1393,8 @@ const onScroll = (): void => {
     {scope}
     {runs}
     {t}
+    enqueueing={reviewEnqueueing}
+    onEnqueue={enqueueReview}
     prompt={dispatchPrompt}
     onPrompt={(next) => (dispatchPrompt = next)}
     onDispatched={async () => {
@@ -1329,7 +1409,7 @@ const onScroll = (): void => {
   />
 </Sheet>
 
-<Sheet open={sheet === "review"} title={t("review.title")} width="540px" onClose={() => (sheet = null)}>
+<Sheet open={sheet === "review"} title={t("review.title")} width="540px" onClose={closeSheet}>
   <Review
     {proposals}
     {comments}
@@ -1345,7 +1425,7 @@ const onScroll = (): void => {
   />
 </Sheet>
 
-<Sheet open={sheet === "files"} title={t("files.title")} width="420px" onClose={() => (sheet = null)}>
+<Sheet open={sheet === "files"} title={t("files.title")} width="420px" onClose={closeSheet}>
   {#key fileOwner}
     <Files
       {t}
@@ -1373,7 +1453,7 @@ const onScroll = (): void => {
   {/key}
 </Sheet>
 
-<Sheet open={sheet === "edits"} title={t("edits.title")} width="480px" onClose={() => (sheet = null)}>
+<Sheet open={sheet === "edits"} title={t("edits.title")} width="480px" onClose={closeSheet}>
   <Edits
     {edits}
     {t}
@@ -1383,17 +1463,17 @@ const onScroll = (): void => {
       edits = edits.map((e) => (e.id === id ? { ...e, note } : e));
     }}
     onSendToAgent={() => {
-      sheet = "dispatch";
+      openSheet("dispatch");
       say(t("edits.attached"));
     }}
   />
 </Sheet>
 
-<Sheet open={sheet === "ledger"} title={t("ledger.title")} width="500px" onClose={() => (sheet = null)}>
+<Sheet open={sheet === "ledger"} title={t("ledger.title")} width="500px" onClose={closeSheet}>
   <Ledger {root} {t} />
 </Sheet>
 
-<Sheet open={sheet === "settings"} title={t("set.title")} width="600px" onClose={() => (sheet = null)}>
+<Sheet open={sheet === "settings"} title={t("set.title")} width="600px" onClose={closeSheet}>
   <Settings
     {lang}
     {version}

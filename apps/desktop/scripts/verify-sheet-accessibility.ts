@@ -43,6 +43,7 @@ try {
   await page.waitForSelector(".writing");
 
   const manuscript = page.getByRole("textbox", { name: "manuscript" });
+  const paletteKey = page.locator(".key").first();
   await manuscript.focus();
   await page.keyboard.press("Control+,");
 
@@ -94,9 +95,48 @@ try {
   if (!(await manuscript.evaluate((element) => document.activeElement === element)))
     throw new Error("closing the Sheet did not restore its direct trigger");
 
-  console.log(
-    "PASS  Sheet is labelled, nonmodal, initially focused, singly dismissed, and restores focus",
-  );
+  await manuscript.focus();
+  await page.keyboard.press("Control+,");
+  await sheet.waitFor();
+  await manuscript.evaluate((element) => {
+    (element as HTMLElement).inert = true;
+  });
+  await page.keyboard.press("Escape");
+  await sheet.waitFor({ state: "detached" });
+  if (!(await paletteKey.evaluate((element) => document.activeElement === element)))
+    throw new Error("an unfocusable direct trigger did not fall back to the Ctrl-K control");
+  await manuscript.evaluate((element) => {
+    (element as HTMLElement).inert = false;
+  });
+
+  await page.keyboard.press("Control+K");
+  await page.locator(".menu .row").filter({ hasText: "设置" }).click();
+  await sheet.waitFor();
+  await page.keyboard.press("Escape");
+  await sheet.waitFor({ state: "detached" });
+  if (!(await paletteKey.evaluate((element) => document.activeElement === element)))
+    throw new Error("a Palette-opened Sheet did not return to the persistent Ctrl-K control");
+
+  await manuscript.focus();
+  await manuscript.evaluate((element) => {
+    const paragraph = element.firstChild;
+    if (!paragraph) throw new Error("fixture manuscript has no paragraph");
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(paragraph);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  });
+  await manuscript.click({ button: "right" });
+  await page.locator("menu.menu .item.accent").click();
+  const dispatch = page.locator("dialog.sheet");
+  await dispatch.waitFor();
+  await page.keyboard.press("Escape");
+  await dispatch.waitFor({ state: "detached" });
+  if (!(await manuscript.evaluate((element) => document.activeElement === element)))
+    throw new Error("a context-menu Sheet did not return focus to the manuscript");
+
+  console.log("PASS  Sheet is nonmodal and restores direct, Palette, and context-menu focus paths");
 } finally {
   await browser.close();
   server.stop(true);

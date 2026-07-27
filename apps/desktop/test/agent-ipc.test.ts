@@ -56,9 +56,8 @@ const call = async (channel: string, ...args: unknown[]) => {
 const task = (id: string, agentId: string) => ({
   id,
   agentId,
-  baseline: "01.md@current",
+  chapter: "01.md",
   prompt: "改写这一段。",
-  contextScope: [],
   editScopes: [{ id: "s1", blockIds: ["01.md:b0"], text: "原文。" }],
 });
 
@@ -72,8 +71,76 @@ const waitForRuns = async (root: string, count: number) => {
   throw new Error("runs did not settle");
 };
 
+test("main binds one Review Task to its current Head and rejects a stale Edit Scope", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-agent-binding-"));
+  writeFileSync(join(root, "01.md"), "第一段。\n\n第二段。\n", "utf8");
+  try {
+    await call("project:load-workspace", [root]);
+    const added = (await call("agent:add", root, "manual", "", "unknown", "unknown")) as {
+      id: string;
+    };
+    const intent = {
+      id: "whole-chapter",
+      agentId: added.id,
+      chapter: "01.md",
+      prompt: "只评论全章。",
+      editScopes: [],
+    };
+
+    expect(await call("agent:enqueue", root, intent)).toBe(true);
+    const state = JSON.parse(readFileSync(join(root, ".refrain", "host.json"), "utf8"));
+    expect(state.queue[0]).toMatchObject({
+      id: "whole-chapter",
+      baseline: expect.stringMatching(/^th:[0-9a-f-]+$/),
+      contextScope: [
+        {
+          kind: "material",
+          id: "chapter:01.md",
+          text: "第一段。\n\n第二段。",
+        },
+      ],
+      editScopes: [],
+    });
+
+    await expect(
+      call("agent:enqueue", root, {
+        ...intent,
+        id: "ambiguous-scope",
+        editScopes: [{ id: "chapter:01.md", blockIds: ["01.md:b0"], text: "第一段。" }],
+      }),
+    ).rejects.toThrow(/chapter context/);
+    await expect(
+      call("agent:enqueue", root, {
+        ...intent,
+        id: "absent-selection",
+        editScopes: [{ id: "s2", blockIds: ["01.md:b99"], text: "不存在。" }],
+      }),
+    ).rejects.toThrow(/block 01\.md:b99 is absent/);
+    await expect(
+      call("agent:enqueue", root, {
+        ...intent,
+        id: "stale-selection",
+        editScopes: [{ id: "s1", blockIds: ["01.md:b0"], text: "不是第一段。" }],
+      }),
+    ).rejects.toThrow(/stale.*scope|scope.*stale/i);
+    await expect(
+      call("agent:enqueue", root, {
+        ...intent,
+        id: "missing-agent",
+        agentId: "removed-agent",
+      }),
+    ).rejects.toThrow(/unknown Agent removed-agent/);
+    const after = JSON.parse(readFileSync(join(root, ".refrain", "host.json"), "utf8"));
+    expect(after.queue.map((entry: { id: string }) => entry.id)).toEqual(["whole-chapter"]);
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("same-name command agents keep distinct argv and still run after a restart", async () => {
   const root = mkdtempSync(join(tmpdir(), "refrain-agent-ipc-"));
+  writeFileSync(join(root, "01.md"), "原文。\n", "utf8");
   const script = join(root, "worker with spaces.mjs");
   writeFileSync(
     script,
@@ -157,6 +224,7 @@ test("same-name command agents keep distinct argv and still run after a restart"
 
 test("an active Run can be cancelled through the public IPC channel", async () => {
   const root = mkdtempSync(join(tmpdir(), "refrain-agent-cancel-"));
+  writeFileSync(join(root, "01.md"), "原文。\n", "utf8");
   try {
     const added = (await call("agent:add", root, "manual", "", "unknown", "unknown")) as {
       id: string;
