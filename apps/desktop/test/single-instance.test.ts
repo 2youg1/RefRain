@@ -43,6 +43,16 @@ test("the primary window is restored before paths are delivered", () => {
   expect(events).toEqual(["restore", "show", "focus", "app:open-paths:C:\\书\\第一章.md"]);
 });
 
+test("the delivered path crosses preload and reaches workspace adoption", () => {
+  const preload = readFileSync(new URL("../src/main/preload.ts", import.meta.url), "utf8");
+  const renderer = readFileSync(new URL("../src/renderer/App.svelte", import.meta.url), "utf8");
+
+  expect(preload).toContain('ipcRenderer.on("app:open-paths"');
+  expect(preload).toContain('ipcRenderer.removeListener("app:open-paths"');
+  expect(renderer).toContain("api().onOpenPaths");
+  expect(renderer).toContain("void addRoots(paths)");
+});
+
 test("a destroyed window receives nothing", () => {
   let touched = false;
   receiveSecondInstance(

@@ -139,6 +139,8 @@ interface RefRainApi {
    * The one chance to write text that exists nowhere but this surface.
    */
   onCloseRequest(listener: () => Promise<void> | void): () => void;
+  /** Opens file-association paths in this one window when another launch arrives. */
+  onOpenPaths(listener: (paths: string[]) => void): () => void;
   /** Opens one of this project's own pages in the system browser. */
   openProjectUrl(url: string): Promise<boolean>;
   loadProject(root: string): Promise<ChapterView[]>;

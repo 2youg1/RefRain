@@ -98,6 +98,7 @@ const bridge = `
     pathFor: () => "/home/author/novel",
     resolveDrop: async (p) => p,
     fullscreen: async () => true,
+    onOpenPaths: () => () => {},
     loadProject: async () => ${JSON.stringify(CHAPTERS)},
     loadWorkspace: async () => ${JSON.stringify(CHAPTERS)},
     saveChapter: async () => ({ ok: true, edits: ${JSON.stringify(EDITS)} }),
@@ -187,7 +188,7 @@ const shot = async (name: string): Promise<void> => {
 
 // 1 — first run
 await page.addInitScript(`
-  window.refrain = { openProject: async () => null, openFile: async () => null, createProject: async () => null };
+  window.refrain = { openProject: async () => null, openFile: async () => null, createProject: async () => null, onOpenPaths: () => () => {}, onCloseRequest: () => () => {}, onDisplayChange: () => () => {} };
   localStorage.removeItem("refrain.roots");
 `);
 await page.goto(origin);
