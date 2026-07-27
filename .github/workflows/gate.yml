@@ -255,6 +255,13 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-emphasis.ts
 
+      # Three inputs reach the manuscript's own style. An emptied number box
+      # reads back as 0 and collapsed the page under the author; a family name
+      # goes into a style attribute, where a quote closes the string.
+      - name: typography refuses what would break the page
+        working-directory: apps/desktop
+        run: bun scripts/verify-typography-input.ts
+
       # Playwright cannot emulate Electron's webUtils path conversion, but the
       # File-to-resolveDrop-to-Root chain after it must not be a silent no-op.
       - name: a dropped path enters Root adoption

@@ -92,19 +92,35 @@ import { api } from "./api.ts";
   const probe = async (id: string): Promise<void> => {
     if (!root) return;
     checking = id;
-    const result = await api().probeAgent(root, id);
-    agents = agents.map((agent) =>
-      agent.id === id
-        ? {
-            ...agent,
-            // Main refuses to run an unvouched command even when asked, so the
-            // row returns to waiting for consent rather than reading as broken.
-            status: result.ok ? "ready" : result.reason === "untrusted" ? "untrusted" : "unreachable",
-            ...(result.detail === undefined ? {} : { detail: result.detail }),
-          }
-        : agent,
-    );
-    checking = null;
+    try {
+      const result = await api().probeAgent(root, id);
+      agents = agents.map((agent) =>
+        agent.id === id
+          ? {
+              ...agent,
+              // Main refuses to run an unvouched command even when asked, so the
+              // row returns to waiting for consent rather than reading as broken.
+              status: result.ok
+                ? "ready"
+                : result.reason === "untrusted"
+                  ? "untrusted"
+                  : "unreachable",
+              ...(result.detail === undefined ? {} : { detail: result.detail }),
+            }
+          : agent,
+      );
+    } catch (error) {
+      // An IPC rejection is itself an answer about reachability, and it has to
+      // reach the author: silence left the row mid-check with nothing to read.
+      const detail = error instanceof Error ? error.message : String(error);
+      agents = agents.map((agent) =>
+        agent.id === id ? { ...agent, status: "unreachable", detail } : agent,
+      );
+    } finally {
+      // Whatever happened, the dot stops spinning — a pulse that never ends
+      // reads as work still in progress that no longer exists.
+      checking = null;
+    }
   };
 
   const add = async (): Promise<void> => {

@@ -30,6 +30,34 @@ import type { Key } from "./i18n.ts";
   const set = <K extends keyof TypeSettings>(key: K, value: TypeSettings[K]): void =>
     onChange({ ...settings, [key]: value });
 
+  const clamp = (value: number, min: number, max: number): number =>
+    value < min ? min : value > max ? max : value;
+
+  /**
+   * A typed number is only an edit once it is a number.
+   *
+   * An emptied box reads back as `Number("") === 0` and a half-typed "-" or
+   * "1e" as NaN, and both used to be written straight into the settings: the
+   * author cleared the field to retype the size and the manuscript collapsed to
+   * 0px under them, or went blank on NaN. Nothing is written until the text
+   * parses, and what is written is inside the control's own range — the number
+   * box accepts keystrokes past min/max that the slider cannot produce.
+   */
+  const setNumber = (key: keyof TypeSettings, raw: string, min: number, max: number): void => {
+    const value = Number(raw);
+    if (raw.trim().length === 0 || !Number.isFinite(value)) return;
+    set(key as "size", clamp(value, min, max));
+  };
+
+  /**
+   * A family name reaches the DOM inside a `style` attribute, and the author's
+   * own font library is not a trusted source of CSS: a quote closes the string,
+   * a semicolon starts a new declaration, a backslash escapes out of both. No
+   * real family carries any of them, so such a name is refused rather than
+   * escaped, and the slot falls back to whatever it inherits.
+   */
+  const safeFamily = (family: string): string => (/["'\\;]/.test(family) ? "" : family);
+
   const matching = $derived(
     filter.trim().length === 0
       ? systemFonts.slice(0, 60)
@@ -41,7 +69,8 @@ import type { Key } from "./i18n.ts";
   <div
     class="specimen"
     style="
-      font-family: '{settings.latinFamily}', '{settings.jpFamily}', '{settings.cjkFamily}', serif;
+      font-family: '{safeFamily(settings.latinFamily)}', '{safeFamily(settings.jpFamily)}',
+        '{safeFamily(settings.cjkFamily)}', serif;
       font-size: {settings.size}px;
       font-weight: {settings.weight};
       line-height: {settings.leading};
@@ -59,7 +88,7 @@ import type { Key } from "./i18n.ts";
       {#each BUNDLED_CJK as family (family)}
         <button
           class:on={settings.cjkFamily === family}
-          style="font-family: '{family}'"
+          style="font-family: '{safeFamily(family)}'"
           onclick={() => set("cjkFamily", family)}>{family}</button
         >
       {/each}
@@ -78,7 +107,7 @@ import type { Key } from "./i18n.ts";
       {#each BUNDLED_JP as family (family)}
         <button
           class:on={settings.jpFamily === family}
-          style="font-family: '{family}'"
+          style="font-family: '{safeFamily(family)}'"
           onclick={() => set("jpFamily", family)}>{family}</button
         >
       {/each}
@@ -98,7 +127,7 @@ import type { Key } from "./i18n.ts";
       {#each BUNDLED_LATIN as family (family)}
         <button
           class:on={settings.latinFamily === family}
-          style="font-family: '{family}'"
+          style="font-family: '{safeFamily(family)}'"
           onclick={() => set("latinFamily", family)}>{family}</button
         >
       {/each}
@@ -128,7 +157,7 @@ import type { Key } from "./i18n.ts";
       <input bind:value={filter} placeholder={t("typo.searchFont")} class="typed" />
       <div class="font-list">
         {#each matching as family (family)}
-          <button style="font-family: '{family}'" onclick={() => set(slot, family)}>
+          <button style="font-family: '{safeFamily(family)}'" onclick={() => set(slot, family)}>
             {family}
           </button>
         {/each}
@@ -153,7 +182,7 @@ import type { Key } from "./i18n.ts";
         {max}
         {step}
         value={settings[key] as number}
-        oninput={(e) => set(key as "size", Number(e.currentTarget.value))}
+        oninput={(e) => setNumber(key, e.currentTarget.value, min, max)}
       />
       <!-- Typed as well as dragged: a slider cannot hit 1.875 on purpose. -->
       <input
@@ -163,7 +192,7 @@ import type { Key } from "./i18n.ts";
         {max}
         {step}
         value={settings[key] as number}
-        oninput={(e) => set(key as "size", Number(e.currentTarget.value))}
+        oninput={(e) => setNumber(key, e.currentTarget.value, min, max)}
       />
       <span class="unit">{unit}</span>
     </div>

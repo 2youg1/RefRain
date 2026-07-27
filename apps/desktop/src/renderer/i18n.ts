@@ -320,6 +320,12 @@ export const dict = {
   },
   "dispatch.collect": { zh: "读取结果", en: "Collect" },
   "dispatch.cancel": { zh: "停止", en: "Cancel" },
+  "dispatch.harness": { zh: "程序", en: "Harness" },
+  "dispatch.model": { zh: "模型", en: "Model" },
+  "dispatch.effort": { zh: "思考强度", en: "Effort" },
+  "dispatch.scope": { zh: "改写范围", en: "Edit Scope" },
+
+  "sheet.close": { zh: "关闭", en: "Close" },
 
   "review.title": { zh: "审阅", en: "Review" },
   "review.empty": {

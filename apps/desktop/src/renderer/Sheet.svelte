@@ -1,5 +1,7 @@
 <script lang="ts">
 import type { Snippet } from "svelte";
+import { type Key, translator } from "./i18n.ts";
+import { loadPreferences } from "./preferences.ts";
 
 interface Props {
   open: boolean;
@@ -8,9 +10,27 @@ interface Props {
   onClose: () => void;
   children: Snippet;
   footer?: Snippet;
+  /**
+   * Optional so the shell need not thread it through six call sites at once.
+   * When absent the stored language is read instead — see `localise`.
+   */
+  t?: (key: Key) => string;
 }
 
-const { open, title, width = "420px", onClose, children, footer }: Props = $props();
+const { open, title, width = "420px", onClose, children, footer, t }: Props = $props();
+
+/*
+ * The close button used to be labelled "close" in every language: the one
+ * control a screen reader announces on this surface, and it announced it in
+ * English to an author reading Chinese. The language is re-read whenever a
+ * sheet appears, so a switch made in Settings is spoken correctly the next
+ * time one opens; passing `t` in makes it immediate.
+ */
+const localise = $derived.by(() => {
+  if (t) return t;
+  void open;
+  return translator(loadPreferences().lang);
+});
 </script>
 
 {#if open}
@@ -21,7 +41,7 @@ const { open, title, width = "420px", onClose, children, footer }: Props = $prop
   <aside class="sheet" style="--sheet-width: {width}">
     <header>
       <h2>{title}</h2>
-      <button class="close" onclick={onClose} aria-label="close">✕</button>
+      <button class="close" onclick={onClose} aria-label={localise("sheet.close")}>✕</button>
     </header>
 
     <div class="body">
