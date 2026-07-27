@@ -12,9 +12,11 @@ import {
 import {
   advanceTextHead,
   type ChangedUnderneath,
+  claimRootStorage,
   commitDecisionBatch,
   currentText,
   describeEditsForAgent,
+  describeRoot,
   type Edit,
   type FileStamp,
   loadProject,
@@ -56,6 +58,8 @@ interface PendingConflict {
 }
 
 interface Workbench {
+  /** One authority for every mutable project-state path. */
+  readonly stateDir: string;
   readonly host: AgentHost;
   /**
    * The Verdict Ledger, when SQLite could open one.
@@ -121,7 +125,7 @@ const openWorkbench = (root: string): Workbench => {
   const existing = workbenches.get(root);
   if (existing) return existing;
 
-  const stateDir = join(root, ".refrain");
+  const stateDir = claimRootStorage(describeRoot(root)).stateDir;
   try {
     mkdirSync(stateDir, { recursive: true });
   } catch (error) {
@@ -175,6 +179,7 @@ const openWorkbench = (root: string): Workbench => {
 
   const recovery = ledger ? recoverDecisionCommit(stateDir, ledger) : { ok: true as const };
   const workbench: Workbench = {
+    stateDir,
     host,
     ...(ledger === undefined ? {} : { ledger }),
     ...(ledgerError === undefined ? {} : { ledgerError }),
@@ -303,8 +308,8 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): IpcAuthority => 
     const warnings = [
       ...workspace.recoveryWarnings,
       ...workspace.roots.flatMap((root) => {
-        if (root.kind !== "folder" || root.missing === true) return [];
-        const outcome = takeSourceBackup(root.path);
+        if (root.missing === true) return [];
+        const outcome = takeSourceBackup(root);
         return outcome.kind === "refused" ? [outcome.reason ?? "无法保存原件副本。"] : [];
       }),
     ];
@@ -619,7 +624,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): IpcAuthority => 
     const workbench = openWorkbench(root);
     if (!workbench.roster.some((entry) => entry.agent.id === id)) return false;
     const next = workbench.roster.filter((entry) => entry.agent.id !== id);
-    writeRoster(join(root, ".refrain"), next);
+    writeRoster(workbench.stateDir, next);
     workbench.host.unregister(id);
     workbench.roster.splice(0, workbench.roster.length, ...next);
     return true;
@@ -647,7 +652,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): IpcAuthority => 
       // with a project, not for the ones someone just wrote.
       const entry = { agent, ...(template === undefined ? {} : { template, trusted: true }) };
       const next = [...workbench.roster, entry];
-      writeRoster(join(root, ".refrain"), next);
+      writeRoster(workbench.stateDir, next);
       if (template !== undefined)
         workbench.host.addAdapter(new CommandAdapter({ id: harness, template }));
       workbench.host.register(agent);
@@ -751,7 +756,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): IpcAuthority => 
       let written: WriteOutcome;
       try {
         written = persistDecisionCommit(
-          join(root, ".refrain"),
+          workbench.stateDir,
           known.path,
           known.stamp,
           result.head,
@@ -759,7 +764,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): IpcAuthority => 
           ledger,
         );
       } catch (error) {
-        const recovery = recoverDecisionCommit(join(root, ".refrain"), ledger);
+        const recovery = recoverDecisionCommit(workbench.stateDir, ledger);
         if (!recovery.ok) workbench.commitRecovery = recovery.detail ?? String(error);
         throw error;
       }

@@ -169,6 +169,55 @@ test("an active Run can be cancelled through the public IPC channel", async () =
   }
 });
 
+test("a single-file Root keeps collaboration state and its original in one companion", async () => {
+  const parent = mkdtempSync(join(tmpdir(), "refrain-file-root-"));
+  const root = join(parent, "essay.md");
+  writeFileSync(root, "原稿。\n", "utf8");
+  try {
+    const workspace = (await call("project:load-workspace", [root])) as {
+      roots: { kind: string }[];
+      chapters: { id: string }[];
+    };
+    expect(workspace.roots).toEqual([expect.objectContaining({ kind: "file" })]);
+    expect(workspace.chapters.map((chapter) => chapter.id)).toEqual(["essay.md"]);
+
+    await call("agent:add", root, "manual", "", "unknown", "unknown");
+    const companion = join(parent, ".essay.md.refrain");
+    expect(
+      JSON.parse(readFileSync(join(companion, ".refrain", "agents.json"), "utf8")),
+    ).toHaveLength(1);
+    expect(readFileSync(join(companion, ".refrain-source", "essay.md"), "utf8")).toBe("原稿。\n");
+
+    expect(await call("project:save", root, "essay.md", "改过的正文。")).toMatchObject({
+      ok: true,
+    });
+    expect(readFileSync(root, "utf8")).toBe("改过的正文。\n");
+    expect(readFileSync(join(companion, ".refrain-source", "essay.md"), "utf8")).toBe("原稿。\n");
+  } finally {
+    closeWorkbenches();
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("a refused Source Backup warns but does not take away an editable folder Root", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-backup-refusal-"));
+  const chapter = join(root, "01.md");
+  writeFileSync(chapter, "原稿。\n", "utf8");
+  writeFileSync(join(root, ".refrain-source"), "这个名字已被文件占用。\n", "utf8");
+  try {
+    const workspace = (await call("project:load-workspace", [root])) as {
+      warnings?: string[];
+    };
+    expect(workspace.warnings?.join("\n")).toContain("无法写入原件副本");
+
+    expect(await call("project:save", root, "01.md", "仍然可以写。")).toMatchObject({ ok: true });
+    expect(readFileSync(chapter, "utf8")).toBe("仍然可以写。\n");
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a malformed command line is refused before the roster changes", async () => {
   const root = mkdtempSync(join(tmpdir(), "refrain-agent-command-"));
   try {

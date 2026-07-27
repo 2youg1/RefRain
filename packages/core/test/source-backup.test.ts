@@ -35,7 +35,7 @@ describe("the Source Backup", () => {
     mkdirSync(join(root, "資料"));
     writeFileSync(join(root, "資料", "年表.md"), "1931\n");
 
-    const outcome = takeSourceBackup(root);
+    const outcome = takeSourceBackup({ path: root, kind: "folder" });
     expect(outcome.kind).toBe("taken");
     expect(outcome.files).toBe(2);
 
@@ -47,10 +47,10 @@ describe("the Source Backup", () => {
   test("a second open does not overwrite the original with later edits", () => {
     const root = scratch();
     writeFileSync(join(root, "01.md"), "原文。\n");
-    takeSourceBackup(root);
+    takeSourceBackup({ path: root, kind: "folder" });
 
     writeFileSync(join(root, "01.md"), "作者改过的。\n");
-    const again = takeSourceBackup(root);
+    const again = takeSourceBackup({ path: root, kind: "folder" });
 
     expect(again.kind).toBe("already-present");
     expect(readFileSync(join(root, SOURCE_BACKUP_DIR, "01.md"), "utf8")).toBe("原文。\n");
@@ -58,11 +58,11 @@ describe("the Source Backup", () => {
 
   test("an empty adopted folder never turns later RefRain text into an original", () => {
     const root = scratch();
-    expect(takeSourceBackup(root).kind).toBe("nothing-to-copy");
+    expect(takeSourceBackup({ path: root, kind: "folder" }).kind).toBe("nothing-to-copy");
     expect(existsSync(join(root, SOURCE_BACKUP_DIR))).toBe(false);
 
     writeFileSync(join(root, "01.md"), "在 RefRain 内新写的。\n");
-    expect(takeSourceBackup(root).kind).toBe("already-present");
+    expect(takeSourceBackup({ path: root, kind: "folder" }).kind).toBe("already-present");
     expect(existsSync(join(root, SOURCE_BACKUP_DIR))).toBe(false);
   });
 
@@ -81,9 +81,39 @@ describe("the Source Backup", () => {
     mkdirSync(join(root, ".refrain"));
     writeFileSync(join(root, ".refrain", "notes.md"), "应用自己的\n");
 
-    expect(takeSourceBackup(root).files).toBe(1);
+    expect(takeSourceBackup({ path: root, kind: "folder" }).files).toBe(1);
     expect(existsSync(join(root, SOURCE_BACKUP_DIR, ".refrain"))).toBe(false);
     expect(existsSync(join(root, SOURCE_BACKUP_DIR, SOURCE_BACKUP_DIR))).toBe(false);
+  });
+
+  test("a single-file Root keeps state and its original without adopting neighbours", () => {
+    const parent = scratch();
+    const source = join(parent, "essay.md");
+    writeFileSync(source, "原稿。\n");
+    writeFileSync(join(parent, "neighbour.md"), "别人的。\n");
+
+    expect(takeSourceBackup({ path: source, kind: "file" })).toEqual({ kind: "taken", files: 1 });
+    const companion = join(parent, ".essay.md.refrain");
+    expect(readFileSync(join(companion, SOURCE_BACKUP_DIR, "essay.md"), "utf8")).toBe("原稿。\n");
+    expect(existsSync(join(companion, SOURCE_BACKUP_DIR, "neighbour.md"))).toBe(false);
+
+    writeFileSync(source, "后来改过的。\n");
+    expect(takeSourceBackup({ path: source, kind: "file" }).kind).toBe("already-present");
+    expect(readFileSync(join(companion, SOURCE_BACKUP_DIR, "essay.md"), "utf8")).toBe("原稿。\n");
+  });
+
+  test("an unowned single-file companion is refused instead of overwritten", () => {
+    const parent = scratch();
+    const source = join(parent, "essay.md");
+    writeFileSync(source, "原稿。\n");
+    mkdirSync(join(parent, ".essay.md.refrain"));
+    writeFileSync(join(parent, ".essay.md.refrain", "mine.txt"), "不是 RefRain 的。\n");
+
+    const outcome = takeSourceBackup({ path: source, kind: "file" });
+    expect(outcome.kind).toBe("refused");
+    expect(readFileSync(join(parent, ".essay.md.refrain", "mine.txt"), "utf8")).toBe(
+      "不是 RefRain 的。\n",
+    );
   });
 
   /*
@@ -97,7 +127,7 @@ describe("the Source Backup", () => {
     mkdirSync(join(root, SOURCE_BACKUP_DIR), { recursive: true });
     writeFileSync(join(root, SOURCE_BACKUP_DIR, "01.md"), "半截。\n");
 
-    expect(takeSourceBackup(root).kind).toBe("taken");
+    expect(takeSourceBackup({ path: root, kind: "folder" }).kind).toBe("taken");
     expect(readFileSync(join(root, SOURCE_BACKUP_DIR, "01.md"), "utf8")).toBe("原文。\n");
   });
 });

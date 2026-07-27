@@ -17,13 +17,13 @@
  * author's.
  */
 import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
+import { claimRootStorage, type RootLocation, type RootStorage } from "./root-storage.ts";
 
 /** Matches `SOURCE_BACKUP_DIR` in `guard.rs` and `project.ts`. */
 export const SOURCE_BACKUP_DIR = ".refrain-source";
 
 const MANIFEST = "taken.json";
-const EMPTY_ADOPTION_DIR = ".refrain";
 const EMPTY_ADOPTION_FILE = "source-backup.json";
 
 export interface BackupOutcome {
@@ -49,21 +49,28 @@ const manuscriptsUnder = (dir: string): string[] => {
 };
 
 /**
- * Take the backup if this root has never had one.
+ * Take the backup if this Root has never had one.
  *
- * Returns rather than throws: a root whose backup cannot be written is still a
- * root the author can edit, and refusing to open their manuscript over a
- * failed safety copy would trade a large loss for a small one.
+ * A folder copies its manuscript tree. A single-file Root copies only that
+ * file into its adjacent companion; nothing in the parent directory becomes
+ * part of the Project merely because it is nearby.
  */
-export const takeSourceBackup = (root: string): BackupOutcome => {
-  const backup = join(root, SOURCE_BACKUP_DIR);
-  const emptyAdoption = join(root, EMPTY_ADOPTION_DIR, EMPTY_ADOPTION_FILE);
+export const takeSourceBackup = (root: RootLocation): BackupOutcome => {
+  let storage: RootStorage;
+  try {
+    storage = claimRootStorage(root);
+  } catch (error) {
+    return { kind: "refused", files: 0, reason: `无法建立项目存储：${String(error)}` };
+  }
+
+  const backup = storage.sourceBackupDir;
+  const emptyAdoption = join(storage.stateDir, EMPTY_ADOPTION_FILE);
   if (existsSync(join(backup, MANIFEST)) || existsSync(emptyAdoption))
     return { kind: "already-present", files: 0 };
 
   let manuscripts: string[];
   try {
-    manuscripts = manuscriptsUnder(root);
+    manuscripts = root.kind === "file" ? [root.path] : manuscriptsUnder(root.path);
   } catch (error) {
     return { kind: "refused", files: 0, reason: `无法读取项目内容：${String(error)}` };
   }
@@ -87,8 +94,9 @@ export const takeSourceBackup = (root: string): BackupOutcome => {
   try {
     mkdirSync(backup, { recursive: true });
     for (const source of manuscripts) {
-      const target = join(backup, source.slice(root.length + 1));
-      mkdirSync(join(target, ".."), { recursive: true });
+      const name = root.kind === "file" ? basename(source) : relative(root.path, source);
+      const target = join(backup, name);
+      mkdirSync(dirname(target), { recursive: true });
       cpSync(source, target);
     }
     /*
@@ -100,6 +108,7 @@ export const takeSourceBackup = (root: string): BackupOutcome => {
     writeFileSync(
       join(backup, MANIFEST),
       `${JSON.stringify({ taken: new Date().toISOString(), files: manuscripts.length }, null, 2)}\n`,
+      { flush: true },
     );
   } catch (error) {
     return { kind: "refused", files: 0, reason: `无法写入原件副本：${String(error)}` };

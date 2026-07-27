@@ -17,6 +17,7 @@ import {
   replaceFileAtomically,
 } from "./atomic-file.ts";
 import type { TextHead } from "./domain.ts";
+import { storageForRoot } from "./root-storage.ts";
 import { applyBlocks, blockPrefix, parseSource, splitBlocks } from "./roundtrip.ts";
 
 /**
@@ -277,8 +278,8 @@ const recoverOwnedTarget = (target: string, report: RecoveryReport): void => {
 const STATE_TARGETS = ["host.json", "agents.json", "decision-commit.json"] as const;
 
 const recoverRootState = (root: Root, report: RecoveryReport): void => {
-  const state = join(root.path, ".refrain");
-  for (const name of STATE_TARGETS) recoverOwnedTarget(join(state, name), report);
+  for (const name of STATE_TARGETS)
+    recoverOwnedTarget(join(storageForRoot(root).stateDir, name), report);
 };
 
 const isManuscriptResidue = (name: string): boolean =>
@@ -344,7 +345,10 @@ const chaptersUnder = (root: Root, recovery?: RecoveryReport): Chapter[] => {
   const canRecover = recovery !== undefined && !isSourceBackupPath(root.path);
 
   if (root.kind === "file") {
-    if (canRecover && ownsInterruptedWrite(root.path)) recoverOwnedTarget(root.path, recovery);
+    if (canRecover) {
+      recoverRootState(root, recovery);
+      if (ownsInterruptedWrite(root.path)) recoverOwnedTarget(root.path, recovery);
+    }
     const snapshot = readChapterFile(root.path);
     // A lone file is a chapter: it is the thing the writer opened. Its id is
     // taken against its own directory so it reads as a name rather than a path.
