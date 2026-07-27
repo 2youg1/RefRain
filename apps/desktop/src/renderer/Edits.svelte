@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Key } from "./i18n.ts";
+  import { localTime } from "./time.ts";
 
   export interface EditView {
     id: string;
@@ -43,7 +44,7 @@
       <article>
         <div class="head">
           <span class="kind {edit.kind}">{t(kindKey(edit.kind))}</span>
-          <time>{edit.at.slice(11, 16)}</time>
+          <time datetime={edit.at}>{localTime(edit.at)}</time>
           <button class="revert" onclick={() => onRevert(edit.id)}>{t("edits.revert")}</button>
         </div>
 
