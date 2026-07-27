@@ -20,21 +20,14 @@ mv -f dist/main/preload.js dist/main/preload.cjs
 # that no test can see. This shipped once already.
 bun scripts/verify-no-bun.ts
 
-# core targets two runtimes; this proves the Node branch of the SQLite adapter,
-# which `bun test` cannot reach.
-#
-# `node` is not declared anywhere: no workflow calling this script installs it,
-# and it survives only because the runner image happens to ship one. A check
-# whose whole purpose is proving the Node branch runs must not vanish when the
-# runtime it tests is missing — say so instead of exiting 0 with it skipped.
-if ! command -v node >/dev/null 2>&1; then
-  echo "MISSING node — the Node branch of the SQLite adapter cannot be verified." >&2
-  echo "Install Node, or add actions/setup-node to the workflow calling make.sh." >&2
-  exit 1
-fi
+# core targets two runtimes; this proves the branch the shipped Electron main
+# process takes. `bun test` proves only the Bun SQLite adapter, while a system
+# `node` can differ from Electron's embedded Node and let an unavailable
+# `node:sqlite` cross the release gate. Run Electron as its own headless Node so
+# the probe exercises the exact executable without needing a display server.
 bun build scripts/node-ledger-check.ts --target=node --outdir=dist/checks --format=cjs
 mv -f dist/checks/node-ledger-check.js dist/checks/node-ledger-check.cjs
-node dist/checks/node-ledger-check.cjs
+ELECTRON_RUN_AS_NODE=1 bun x electron dist/checks/node-ledger-check.cjs
 
 # electron-builder only warns when the icon is missing and ships the default
 # Electron one, which reaches a user as a released application wearing another
