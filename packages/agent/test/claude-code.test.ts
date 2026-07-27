@@ -63,6 +63,32 @@ const stubClaude = (
   return { command: process.execPath, commandArgs: [path] };
 };
 
+/** Records three real launches so A -> B -> A can prove which Session was resumed. */
+const interleavedClaude = (): {
+  readonly config: ClaudeCodeConfig;
+  readonly callsPath: string;
+} => {
+  mkdirSync(binDir, { recursive: true });
+  const path = join(binDir, `claude-interleaved-${Math.random().toString(36).slice(2)}.js`);
+  const callsPath = join(root, "claude-interleaved-calls.json");
+  writeFileSync(
+    path,
+    [
+      `const callsPath = ${JSON.stringify(callsPath)};`,
+      `let calls = [];`,
+      `try { calls = JSON.parse(await Bun.file(callsPath).text()); } catch {}`,
+      `calls.push(process.argv.slice(2));`,
+      `await Bun.write(callsPath, JSON.stringify(calls));`,
+      `const asked = await Bun.stdin.text();`,
+      `const at = asked.match(/Write your reply to (.+)$/m)?.[1]?.trim();`,
+      `if (at) await Bun.write(at, ${JSON.stringify(RESULT)});`,
+      `const sessionIds = ["session-a", "session-b", "session-a-next"];`,
+      `process.stdout.write(JSON.stringify({ type: "result", is_error: false, result: "done", session_id: sessionIds[calls.length - 1] }));`,
+    ].join("\n"),
+  );
+  return { config: { command: process.execPath, commandArgs: [path] }, callsPath };
+};
+
 /** A report shaped like Claude Code's `--output-format json`. */
 const report = (over: Record<string, unknown> = {}): string =>
   JSON.stringify({
@@ -176,7 +202,37 @@ describe("Claude Code adapter", () => {
     const [run] = await host.send();
     await adapter.awaitCompletion(run!).catch(() => undefined);
 
-    expect(adapter.sessionId()).toBe("session-abc");
+    expect(adapter.sessionId(agent.id)).toBe("session-abc");
+  });
+
+  test("keeps each Agent on its exclusive Session across interleaved runs", async () => {
+    const agentB: Agent = { ...agent, id: "b1", name: "结构读者" };
+    const { config, callsPath } = interleavedClaude();
+    const adapter = new ClaudeCodeAdapter(config);
+    const host = new AgentHost(root, [adapter]);
+    host.register(agent).register(agentB);
+
+    host.enqueue({ ...task, id: "t-a1", agentId: agent.id });
+    const [runA1] = await host.send();
+    await adapter.awaitCompletion(runA1!);
+
+    host.enqueue({ ...task, id: "t-b1", agentId: agentB.id });
+    const [runB1] = await host.send();
+    await adapter.awaitCompletion(runB1!);
+
+    host.enqueue({ ...task, id: "t-a2", agentId: agent.id });
+    const [runA2] = await host.send();
+    await adapter.awaitCompletion(runA2!);
+
+    const calls = JSON.parse(readFileSync(callsPath, "utf8")) as string[][];
+    expect(
+      calls.map((argv) => {
+        const resume = argv.indexOf("--resume");
+        return resume === -1 ? undefined : argv[resume + 1];
+      }),
+    ).toEqual([undefined, undefined, "session-a"]);
+    expect(adapter.sessionId(agent.id)).toBe("session-a-next");
+    expect(adapter.sessionId(agentB.id)).toBe("session-b");
   });
 
   test("never labels a locally accumulated total as actual", async () => {

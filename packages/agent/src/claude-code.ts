@@ -84,7 +84,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
   private readonly reports = new Map<string, ClaudeResult>();
   /** One settled outcome per run, replayed to every later caller. */
   private readonly settled = new Map<string, Promise<void>>();
-  private lastSession: string | undefined;
+  private readonly sessions = new Map<string, string>();
 
   constructor(private readonly config: ClaudeCodeConfig = {}) {}
 
@@ -110,6 +110,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
    */
   private argv(agent: Agent, workspace: string): string[] {
     const binary = this.config.command ?? "claude";
+    const session = this.sessions.get(agent.id);
     const permissions = JSON.stringify({
       permissions: { allow: [`Write(${workspace}/**)`, `Edit(${workspace}/**)`] },
     });
@@ -137,7 +138,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
       '{"mcpServers":{}}',
       "--strict-mcp-config",
       "--disable-slash-commands",
-      ...(this.lastSession ? ["--resume", this.lastSession] : []),
+      ...(session ? ["--resume", session] : []),
       ...(this.config.extraArgs ?? []),
     ];
   }
@@ -206,7 +207,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
     const report = this.parse(stdout);
     if (report) {
       this.reports.set(run.id, report);
-      if (report.session_id) this.lastSession = report.session_id;
+      if (report.session_id) this.sessions.set(run.agentId, report.session_id);
     }
 
     if (run.state !== "dispatched") return;
@@ -277,8 +278,8 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
   }
 
   /** Session continuity, which is what `personaCarry: "first-round"` relies on. */
-  sessionId(): string | undefined {
-    return this.lastSession;
+  sessionId(agentId: string): string | undefined {
+    return this.sessions.get(agentId);
   }
 
   /** Turns the harness reported, for a manifest that says what a round took. */
