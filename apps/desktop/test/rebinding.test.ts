@@ -58,6 +58,13 @@ test("a reserved chord is allowed for the command that means the same thing", ()
   expect(inspectChord("Ctrl+S", "review", DEFAULT_BINDINGS)).toMatchObject({ kind: "reserved" });
 });
 
+test("an unmodified function key reaches its reserved meaning", () => {
+  expect(inspectChord("F1", "review", DEFAULT_BINDINGS)).toEqual({
+    kind: "reserved",
+    meaning: "帮助",
+  });
+});
+
 test("Escape remains reserved for cancellation", () => {
   // It is the one bare key RefRain accepts as a chord shape, but no writing
   // command may steal the cancellation reflex.

@@ -60,11 +60,11 @@ export const inspectChord = (
   command: string,
   bindings: Readonly<Record<string, string>>,
 ): ChordProblem | undefined => {
-  if (isBare(chord) && chord !== "Esc") return { kind: "bare-key" };
-
   const reserved = RESERVED.find((r) => r.chord.toLowerCase() === chord.toLowerCase());
   if (reserved && reserved.reusableAs !== command)
     return { kind: "reserved", meaning: reserved.meaning };
+
+  if (isBare(chord)) return { kind: "bare-key" };
 
   const clash = Object.entries(bindings).find(
     ([id, keys]) => id !== command && keys.toLowerCase() === chord.toLowerCase(),
