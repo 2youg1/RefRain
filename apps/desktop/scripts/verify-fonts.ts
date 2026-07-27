@@ -122,11 +122,27 @@ await page.keyboard.down("Control");
 await page.keyboard.press("k");
 await page.keyboard.up("Control");
 await page.waitForTimeout(350);
-await page.evaluate(() => {
-  [...document.querySelectorAll<HTMLElement>("button, li, [role=option]")]
-    .find((n) => /排版|Typography/.test(n.textContent ?? ""))
-    ?.click();
+// An optional chain here means a missing entry clicks nothing and the gate
+// carries on measuring a page it never navigated — the same shape as an
+// indexOf(-1) comparison that can never fail.
+const reachedSettings = await page.evaluate(() => {
+  const entry = [...document.querySelectorAll<HTMLElement>("button, li, [role=option]")].find(
+    (node) => /^\s*(设置…|Settings…)(\s|$)/.test(node.textContent ?? ""),
+  );
+  entry?.click();
+  return entry !== undefined;
 });
+if (!reachedSettings) failures.push("the command palette has no Settings entry");
+await page.waitForTimeout(450);
+
+const reachedTypography = await page.evaluate(() => {
+  const tab = [...document.querySelectorAll<HTMLElement>("button, li, [role=tab]")].find((node) =>
+    /排版|Typography/.test(node.textContent ?? ""),
+  );
+  tab?.click();
+  return tab !== undefined;
+});
+if (!reachedTypography) failures.push("Settings has no typography section");
 await page.waitForTimeout(700);
 
 const panel = await page.evaluate(() => !!document.querySelector(".typography .slot"));
