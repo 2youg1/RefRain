@@ -42,16 +42,47 @@ export interface Launched {
   kill(): void;
 }
 
+/**
+ * One stream may use this much memory before the rest becomes a count.
+ *
+ * Eight MiB is enough for a harness to return several long chapters and their
+ * diagnostics, while putting a hard ceiling under a debug loop. The old drain
+ * appended forever; one noisy child could consume the main process heap and
+ * take the window and every unsaved manuscript with it.
+ */
+const OUTPUT_LIMIT = 8 * 1024 * 1024;
+
 const drain = (stream: NodeJS.ReadableStream | null): Promise<string> => {
   if (!stream) return Promise.resolve("");
   return new Promise((resolve) => {
-    let text = "";
-    stream.setEncoding("utf8");
-    stream.on("data", (chunk: string) => {
-      text += chunk;
+    const kept: Buffer[] = [];
+    let keptBytes = 0;
+    let droppedBytes = 0;
+    let settled = false;
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      const text = Buffer.concat(kept, keptBytes).toString("utf8");
+      resolve(
+        droppedBytes === 0
+          ? text
+          : `${text}\n[REFRAIN_OUTPUT_TRUNCATED dropped=${droppedBytes} bytes]\n`,
+      );
+    };
+
+    stream.on("data", (chunk: Buffer | string) => {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const room = OUTPUT_LIMIT - keptBytes;
+      if (room > 0) {
+        const part = bytes.subarray(0, room);
+        kept.push(part);
+        keptBytes += part.length;
+      }
+      droppedBytes += Math.max(0, bytes.length - Math.max(0, room));
     });
-    stream.on("error", () => resolve(text));
-    stream.on("end", () => resolve(text));
+    stream.on("error", finish);
+    stream.on("end", finish);
   });
 };
 
