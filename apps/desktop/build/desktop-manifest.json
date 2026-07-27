@@ -3,13 +3,13 @@
   "files": [
     {
       "path": "dist/checks/node-ledger-check.cjs",
-      "bytes": 5232,
-      "sha256": "92469dfc71ef128a26ca18dee843e74c5e7328418ed1d02f5d9cd3390af07e43"
+      "bytes": 5305,
+      "sha256": "38125769a844b65b2a132adbc50f52df00b165f4243b0a25e15dc5d43179e355"
     },
     {
       "path": "dist/main/main.cjs",
-      "bytes": 154894,
-      "sha256": "1404e31709954470de0117619e24ca671699fab69b1858a10bb0871fe253affe"
+      "bytes": 155079,
+      "sha256": "ad7af485bc10727db1ca5df42a68ed4309077da7a5899458f649d6a8efb17fba"
     },
     {
       "path": "dist/main/preload.cjs",
