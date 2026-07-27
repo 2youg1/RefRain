@@ -90,6 +90,13 @@ jobs:
       - name: Every gate has a path that runs it
         run: bun run verify:gates-run
 
+      # make.sh verifies the Node branch of the SQLite adapter, which bun test
+      # cannot reach. Declare the runtime rather than relying on the runner
+      # image shipping one — a release must not depend on that accident.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
       - name: Build renderer, main, and preload
         working-directory: apps/desktop
         shell: bash

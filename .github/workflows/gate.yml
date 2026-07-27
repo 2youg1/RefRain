@@ -121,6 +121,14 @@ jobs:
       - name: test
         run: bun test
 
+      # make.sh verifies the Node branch of the SQLite adapter, which bun test
+      # cannot reach. Declare the runtime rather than relying on the runner
+      # image shipping one — without it that check exits and takes the build
+      # with it, which is the honest failure but a confusing one to read.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
       # The desktop build is part of the gate: a renderer that no longer
       # compiles must not reach a release branch.
       - name: build the desktop app
@@ -356,6 +364,14 @@ jobs:
           path: packages/fs
 
       - run: bun install --frozen-lockfile
+
+      # make.sh verifies the Node branch of the SQLite adapter, which bun test
+      # cannot reach. Declare the runtime rather than relying on the runner
+      # image shipping one — without it that check exits and takes the build
+      # with it, which is the honest failure but a confusing one to read.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
 
       - name: build the desktop app
         working-directory: apps/desktop
