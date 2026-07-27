@@ -319,6 +319,13 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-seam.ts
 
+      # The caret borrowed --seal, and on six of eight themes that left it
+      # fainter against the paper than the ink was. A one-pixel rule has no
+      # width to spend, so contrast is the only thing keeping it findable.
+      - name: the caret out-reads the text
+        working-directory: apps/desktop
+        run: bun scripts/verify-caret.ts
+
       # Held under continue-on-error as SPEC Q5, a 289px drift between the
       # chapter header and the manuscript. There was no drift: the fixture
       # never opened, and the gate measured a blank screen. It now opens, the
