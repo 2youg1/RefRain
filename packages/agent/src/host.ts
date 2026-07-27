@@ -224,8 +224,7 @@ export class AgentHost {
       this.persist();
       for (const { task, agent, adapter, run } of planned) await adapter.dispatch(run, task, agent);
     } catch (error) {
-      for (const { adapter, run } of planned)
-        if (run.workspace) await adapter.cancel(run).catch(() => undefined);
+      for (const { adapter, run } of planned) await adapter.cancel(run).catch(() => undefined);
       const plannedIds = new Set(planned.map(({ run }) => run.id));
       this.dispatched.splice(
         0,

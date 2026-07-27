@@ -118,7 +118,7 @@ fn subsequence(needle: &str, haystack: &str) -> Option<(i32, Vec<usize>)> {
 pub fn matches<'a>(entries: &'a [Entry], query: &str, limit: usize) -> Vec<Hit<'a>> {
     let query = query.trim();
     if query.is_empty() {
-        let mut hits: Vec<Hit<'a>> = entries
+        return entries
             .iter()
             .take(limit)
             .map(|entry| Hit {
@@ -127,8 +127,6 @@ pub fn matches<'a>(entries: &'a [Entry], query: &str, limit: usize) -> Vec<Hit<'
                 positions: Vec::new(),
             })
             .collect();
-        hits.truncate(limit);
-        return hits;
     }
 
     let folded = query.to_lowercase();

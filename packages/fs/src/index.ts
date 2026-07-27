@@ -92,11 +92,10 @@ let cached: Native | undefined;
  * `createRequire` rather than a bare import: the artefact is a CommonJS addon,
  * and Electron's main process resolves it through the same mechanism.
  *
- * Four locations, in the order they become true: the packaged app's resources
- * directory, the built binary beside this package, and the two Cargo output
- * paths a developer has before running the build script. A packaged app looks
- * in a place that does not exist during development and the reverse, so both
- * have to be tried rather than chosen.
+ * Two locations, in the order they become true: the packaged app's resources
+ * directory and the built binary beside this package. `scripts/build.ts` owns
+ * translating Cargo's platform-specific library into that `.node` artefact;
+ * the loader does not maintain a second build convention.
  */
 export const native = (): Native => {
   if (cached) return cached;
@@ -108,13 +107,7 @@ export const native = (): Native => {
   const resources = (process as { resourcesPath?: string }).resourcesPath;
   const packaged = resources ? [join(resources, binaryName())] : [];
 
-  const candidates = [
-    ...packaged,
-    `../${binaryName()}`,
-    "../target/release/librefrain_fs.so",
-    "../target/release/librefrain_fs.dylib",
-    "../target/release/refrain_fs.dll",
-  ];
+  const candidates = [...packaged, `../${binaryName()}`];
 
   const failures: string[] = [];
   for (const candidate of candidates) {
