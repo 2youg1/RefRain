@@ -72,8 +72,13 @@ await page.addInitScript(`
     revertAll: async (text) => text,
     describeEdits: async () => "",
     files: {
-      scan: async (root) => { window.__fileRoots.push(root); return { ok: true, count: 0 }; },
-      page: async () => ({ ok: true, entries: [], total: 0 }),
+      scan: async (root) => { window.__fileRoots.push(root); return { ok: true, count: 1 }; },
+      page: async (root) => ({
+        ok: true,
+        entries: [{ path: root + "/01.md", name: "01.md", kind: "file", size: 12,
+          modifiedMs: 0, depth: 0, manuscript: true }],
+        total: 1,
+      }),
       search: async () => ({ ok: true, hits: [] }),
       sort: async () => ({ ok: true }),
       trash: async () => ({ ok: true, outcomes: [] }),
@@ -90,6 +95,13 @@ try {
   await page.locator(".rail-foot button").first().click();
   await page.waitForTimeout(300);
 
+  // Seed a non-empty /a file cache first. Without this first open, fileTotal is
+  // zero and a stale cache bug accidentally scans /b anyway.
+  await page.keyboard.press("Control+k");
+  await page.getByRole("button", { name: "文件浏览" }).click();
+  await page.waitForTimeout(100);
+  await page.keyboard.press("Escape");
+
   const second = page.locator(".root").nth(1).locator(".chapter");
   await second.click();
   await page.waitForTimeout(100);
@@ -103,9 +115,9 @@ try {
   const fileRoots: string[] = await page.evaluate(() =>
     JSON.parse(JSON.stringify((window as unknown as { __fileRoots: string[] }).__fileRoots)),
   );
-  if (fileRoots.at(-1) !== "/b")
+  if (JSON.stringify(fileRoots) !== JSON.stringify(["/a", "/b"]))
     throw new Error(
-      `the file browser scanned the first root instead of the active one: ${fileRoots}`,
+      `the file browser kept another Root's cache instead of following the active one: ${fileRoots}`,
     );
   await page.keyboard.press("Escape");
 
