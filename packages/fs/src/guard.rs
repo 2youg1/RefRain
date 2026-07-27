@@ -109,7 +109,12 @@ impl Guard {
             });
         }
 
-        if self.roots.is_empty() || self.roots.iter().any(|root| resolved.starts_with(root)) {
+        // No roots admits nothing. The empty list used to admit everything,
+        // which made the guard that owns "Source Backup is never written to"
+        // vanish under the one input a caller can reach by passing an empty
+        // vector — a probe confirmed `/etc/shadow` came back admitted. Every
+        // test here builds a real root, so nothing depended on the old default.
+        if !self.roots.is_empty() && self.roots.iter().any(|root| resolved.starts_with(root)) {
             return Ok(resolved);
         }
 
@@ -212,6 +217,25 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir.canonicalize().unwrap()
+    }
+
+    /// An empty root list admits nothing.
+    ///
+    /// It used to admit everything: `roots.is_empty() ||` short-circuited the
+    /// containment check, so the guard holding "Source Backup is never written
+    /// to" and "no path outside a workspace" disappeared entirely under an
+    /// input a caller can produce by passing an empty vector. A probe run
+    /// against the old code came back with `/etc/shadow` admitted.
+    #[test]
+    fn a_guard_with_no_roots_admits_nothing() {
+        let guard = Guard::new(Vec::<PathBuf>::new());
+
+        for candidate in ["/etc/passwd", "/etc/shadow", "/"] {
+            assert!(
+                guard.admit(Path::new(candidate)).is_err(),
+                "an empty root list admitted {candidate}"
+            );
+        }
     }
 
     #[test]

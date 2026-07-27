@@ -92,10 +92,12 @@ interface Element {
   readonly body: string;
 }
 
+const CDATA_OPEN = "<![CDATA[";
+const CDATA_CLOSE = "]]>";
+
 const scan = (source: string): ParseResult<Element[]> => {
   const elements: Element[] = [];
   let cursor = 0;
-  let depth = 0;
 
   while (cursor < source.length) {
     const open = source.indexOf("<", cursor);
@@ -106,6 +108,18 @@ const scan = (source: string): ParseResult<Element[]> => {
     }
     if (source.slice(cursor, open).trim().length > 0)
       return fail("text-outside-root", `stray text: ${source.slice(cursor, open).trim()}`);
+
+    // A CDATA run is skipped whole. The module comment above has claimed this
+    // since it was written and the scanner never did it, so an agent that
+    // mentioned `</replacement>` while explaining this format to its successor
+    // had the entire run refused — with the error pointing at that sentence and
+    // calling it stray text.
+    if (source.startsWith(CDATA_OPEN, open)) {
+      const finish = source.indexOf(CDATA_CLOSE, open + CDATA_OPEN.length);
+      if (finish === -1) return fail("malformed", "unterminated CDATA");
+      cursor = finish + CDATA_CLOSE.length;
+      continue;
+    }
 
     const close = source.indexOf(">", open);
     if (close === -1) return fail("malformed", "unterminated tag");
@@ -125,11 +139,15 @@ const scan = (source: string): ParseResult<Element[]> => {
     if (end === -1) return fail("malformed", `unclosed <${name}>`);
     const body = source.slice(close + 1, end);
 
-    if (++depth > MAX_DEPTH) return fail("too-deep", `nesting exceeds ${MAX_DEPTH}`);
-    depth--;
+    // The closing tag has to finish. `indexOf` answering -1 used to become
+    // `cursor = 0`, and the loop rescanned the same element until the array
+    // exhausted memory — reachable from any harness that wrote one truncated
+    // byte, which is the single untrusted input this parser exists to survive.
+    const after = source.indexOf(">", end);
+    if (after === -1) return fail("malformed", `unterminated </${name}>`);
 
     elements.push({ name, attrs, body });
-    cursor = source.indexOf(">", end) + 1;
+    cursor = after + 1;
   }
 
   return { ok: true, value: elements };

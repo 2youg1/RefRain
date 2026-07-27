@@ -100,7 +100,20 @@ export const launch = ({ argv, cwd, env, input }: Launch): Launched => {
   if (!program) throw new Error("launch needs a program");
   if (!runnable(program)) throw new Error(`cannot run ${program}: not found`);
 
-  const child = spawn(program, args, {
+  // A `.cmd` is a script, not an image Windows can execute. `runnable` finds
+  // `claude.cmd` through PATHEXT and `shell: false` then hands it to libuv,
+  // which answers ENOENT — so every harness installed by npm, which is all of
+  // them on Windows, failed to start on the platform this ships to first. The
+  // failure arrived as exit code -1, indistinguishable from a timeout.
+  //
+  // `cmd.exe /d /s /c` runs the script without a profile and without parsing
+  // the arguments as a command line: the prompt stays author text.
+  const script = process.platform === "win32" && /\.(cmd|bat)$/i.test(program);
+  const [image, imageArgs] = script
+    ? [process.env.COMSPEC ?? "cmd.exe", ["/d", "/s", "/c", program, ...args]]
+    : [program, args];
+
+  const child = spawn(image, imageArgs, {
     cwd,
     env: { ...process.env, ...env },
     stdio: ["pipe", "pipe", "pipe"],
@@ -131,6 +144,12 @@ export const launch = ({ argv, cwd, env, input }: Launch): Launched => {
     child.on("close", (code, signal) => settle(code ?? (signal ? -1 : 0)));
   });
 
+  // A harness that exits before reading its input leaves this pipe broken, and
+  // an unhandled `error` on a Node stream is an uncaughtException — so a
+  // harness rejecting its arguments took the whole main process down, and with
+  // it the window and every unsaved manuscript in it. The write failing is
+  // ordinary; `exited` already carries the outcome the caller acts on.
+  child.stdin?.on("error", () => undefined);
   if (input !== undefined) child.stdin?.end(input);
   else child.stdin?.end();
 
