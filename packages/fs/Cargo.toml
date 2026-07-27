@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 name = "refrain_fs"
 
 [dependencies]
-napi = { version = "2", default-features = false, features = ["napi4", "serde-json"] }
+napi = { version = "3", default-features = false, features = ["napi4", "serde-json"] }
 napi-derive = "2"
 
 # Parallel directory traversal. `ignore` carries the .gitignore machinery ripgrep
