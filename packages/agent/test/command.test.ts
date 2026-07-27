@@ -112,29 +112,45 @@ describe("command adapter", () => {
     expect(performance.now() - started).toBeLessThan(1_000);
   });
 
-  test("cancellation resolves only after the harness has exited", async () => {
-    const ready = join(root, "ready");
-    const exited = join(root, "exited");
-    const adapter = new CommandAdapter({
-      id: "command",
-      template: [
-        "sh",
-        "-c",
-        'trap \'sleep 0.1; printf exited > "$EXITED"; exit 0\' TERM; printf ready > "$READY"; while :; do :; done',
-      ],
-      env: { READY: ready, EXITED: exited },
-    });
-    const host = new AgentHost(root, [adapter]);
-    host.register(agent).enqueue(task);
+  /**
+   * The graceful half of cancellation, which only POSIX signals can express.
+   *
+   * The harness traps TERM and writes a file on its way out, so the assertion
+   * can tell "the process is gone" from "we stopped waiting for it". Windows
+   * has no signal to trap — `kill` terminates the process outright — so the
+   * trap never runs and the fixture cannot be built there.
+   *
+   * What the Windows path guarantees is weaker and is covered by
+   * `cancelling after completion cannot rewrite the terminal state`: the Run
+   * reaches `cancelled` and stays there. The stronger promise is asserted where
+   * the platform can express it.
+   */
+  test.skipIf(process.platform === "win32")(
+    "cancellation resolves only after the harness has exited",
+    async () => {
+      const ready = join(root, "ready");
+      const exited = join(root, "exited");
+      const adapter = new CommandAdapter({
+        id: "command",
+        template: [
+          "sh",
+          "-c",
+          'trap \'sleep 0.1; printf exited > "$EXITED"; exit 0\' TERM; printf ready > "$READY"; while :; do :; done',
+        ],
+        env: { READY: ready, EXITED: exited },
+      });
+      const host = new AgentHost(root, [adapter]);
+      host.register(agent).enqueue(task);
 
-    const [run] = await host.send();
-    for (let attempt = 0; attempt < 100 && !existsSync(ready); attempt += 1) await Bun.sleep(5);
-    expect(existsSync(ready)).toBe(true);
-    await adapter.cancel(run!);
+      const [run] = await host.send();
+      for (let attempt = 0; attempt < 100 && !existsSync(ready); attempt += 1) await Bun.sleep(5);
+      expect(existsSync(ready)).toBe(true);
+      await adapter.cancel(run!);
 
-    expect(run!.state).toBe("cancelled");
-    expect(existsSync(exited)).toBe(true);
-  });
+      expect(run!.state).toBe("cancelled");
+      expect(existsSync(exited)).toBe(true);
+    },
+  );
 
   test("cancelling after completion cannot rewrite the terminal state", async () => {
     const adapter = new CommandAdapter({
