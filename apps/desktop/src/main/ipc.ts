@@ -4,7 +4,6 @@ import { dirname, join } from "node:path";
 import type { Agent, ReviewTask } from "@refrain/agent";
 import {
   AgentHost,
-  after,
   CommandAdapter,
   FileChannelAdapter,
   launch,
@@ -40,6 +39,7 @@ import type { Workspace as FileWorkspace } from "@refrain/fs";
 import type { Dialog, IpcMain } from "electron";
 import { parseCommandLine } from "./command-line.ts";
 import { registerFileHandlers } from "./files-ipc.ts";
+import { probeCommand } from "./probe.ts";
 import { type RosterEntry, readRoster, writeRoster } from "./roster.ts";
 
 /**
@@ -583,26 +583,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     const program = entry.template?.[0];
     if (!program) return { ok: false, detail: "no command configured" };
 
-    try {
-      const child = launch({ argv: [program, "--version"] });
-      const timer = after(4000);
-      const code = await Promise.race([child.exited, timer.promise.then(() => -1)]);
-      timer.cancel();
-      if (code === -1) {
-        child.kill();
-        return { ok: false, detail: "timed out after 4s" };
-      }
-      // A missing binary surfaces as -1 from the spawn error event; saying so
-      // beats "exited -1", which tells an author nothing about what to fix.
-      if (code === -1) return { ok: false, detail: `cannot run ${program}` };
-      const version = (await child.stdout).trim().split("\n")[0];
-      const failure = (await child.stderr).trim().split("\n")[0];
-      return code === 0
-        ? { ok: true, detail: version || undefined }
-        : { ok: false, detail: failure || `exited ${code}` };
-    } catch (error) {
-      return { ok: false, detail: error instanceof Error ? error.message : String(error) };
-    }
+    return probeCommand(program);
   });
 
   ipc.handle("agent:remove", (_e, root: string, id: string) => {
