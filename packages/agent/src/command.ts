@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { scaffold } from "./file-channel.ts";
-import { after, type Launched, launch } from "./spawn.ts";
+import { type ProcessOutcome, processLifecycle } from "./process-lifecycle.ts";
+import { launch } from "./spawn.ts";
 import type { Agent, Capability, HarnessAdapter, ReviewTask, Run, SessionUsage } from "./types.ts";
 
 export interface CommandAdapterConfig {
@@ -23,9 +24,6 @@ export interface CommandAdapterConfig {
  * what makes the compatibility claim affordable: an L2 adapter reads a
  * harness's native event stream, but reaching L1 costs a template.
  */
-/** Distinguishes a timeout from an exit code, which can also be a number. */
-const TIMED_OUT = Symbol("timed-out");
-
 /**
  * How long a harness may run before RefRain stops waiting for it.
  *
@@ -40,8 +38,7 @@ export const DEFAULT_TIMEOUT_MS = 20 * 60 * 1_000;
 
 export class CommandAdapter implements HarnessAdapter {
   readonly tier = "L1" as const;
-  private readonly running = new Map<string, Launched>();
-  private readonly settled = new Map<string, Promise<void>>();
+  private readonly processes = processLifecycle();
 
   constructor(private readonly config: CommandAdapterConfig) {}
 
@@ -67,14 +64,12 @@ export class CommandAdapter implements HarnessAdapter {
     // Output is drained from the moment the process starts. A harness that
     // writes past the pipe buffer before anyone reads blocks on its own write,
     // and the parent then waits forever for an exit that cannot come.
-    this.running.set(
-      run.id,
-      launch({
-        argv,
-        cwd: this.config.cwd ?? run.workspace,
-        env: this.config.env,
-      }),
-    );
+    const child = launch({
+      argv,
+      cwd: this.config.cwd ?? run.workspace,
+      env: this.config.env,
+    });
+    this.processes.start(run.id, child, this.timeoutMs);
   }
 
   /**
@@ -86,41 +81,19 @@ export class CommandAdapter implements HarnessAdapter {
    * writer made.
    */
   awaitCompletion(run: Run): Promise<void> {
-    const existing = this.settled.get(run.id);
-    if (existing) return existing;
-
-    const settling = this.settle(run);
-    settling.catch(() => undefined);
-    this.settled.set(run.id, settling);
-    return settling;
+    return this.processes.complete(run.id, (outcome) => this.finish(run, outcome));
   }
 
-  private async settle(run: Run): Promise<void> {
-    const child = this.running.get(run.id);
-    if (!child) return;
-
-    const timeout = this.timeoutMs;
-    const timer = after(timeout);
-    const exited = await Promise.race([child.exited, timer.promise.then(() => TIMED_OUT)]);
-    timer.cancel();
-
-    if (exited === TIMED_OUT) {
-      child.kill();
-      await child.exited;
-      this.running.delete(run.id);
+  private finish(run: Run, outcome: ProcessOutcome): void {
+    if (outcome.reason === "timed-out") {
       if (run.state === "dispatched") run.state = "failed";
-      throw new Error(`${this.id} exceeded ${timeout}ms for run ${run.id}`);
+      throw new Error(`${this.id} exceeded ${this.timeoutMs}ms for run ${run.id}`);
     }
 
-    this.running.delete(run.id);
-
     if (run.state !== "dispatched") return;
-    // Narrowed by the timeout branch above, but stated so the exit code cannot
-    // be a symbol in the message a person reads.
-    const code = typeof exited === "number" ? exited : -1;
-    if (code !== 0) {
+    if (outcome.code !== 0) {
       run.state = "failed";
-      throw new Error(`${this.id} exited ${code} for run ${run.id}`);
+      throw new Error(`${this.id} exited ${outcome.code} for run ${run.id}`);
     }
   }
 
@@ -134,7 +107,7 @@ export class CommandAdapter implements HarnessAdapter {
   async cancel(run: Run): Promise<void> {
     if (run.state !== "dispatched") return;
     run.state = "cancelled";
-    this.running.get(run.id)?.kill();
+    await this.processes.cancel(run.id);
     await this.awaitCompletion(run).catch(() => undefined);
   }
 

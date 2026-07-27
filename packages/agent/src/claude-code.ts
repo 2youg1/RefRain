@@ -1,7 +1,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { DEFAULT_TIMEOUT_MS } from "./command.ts";
 import { scaffold } from "./file-channel.ts";
-import { after, type Launched, launch } from "./spawn.ts";
+import { type ProcessOutcome, processLifecycle } from "./process-lifecycle.ts";
+import { launch } from "./spawn.ts";
 import type {
   Agent,
   Capability,
@@ -56,8 +57,6 @@ interface ClaudeResult {
   readonly total_cost_usd?: number;
 }
 
-const TIMED_OUT = Symbol("timed-out");
-
 /**
  * Claude Code reports four token counts. They map onto `TokenUsage` without
  * arithmetic: adding cache reads into the input total would produce a number
@@ -80,10 +79,8 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
   // compaction signal before this adapter may claim L2.
   readonly tier = "L1" as const;
 
-  private readonly running = new Map<string, Launched>();
+  private readonly processes = processLifecycle();
   private readonly reports = new Map<string, ClaudeResult>();
-  /** One settled outcome per run, replayed to every later caller. */
-  private readonly settled = new Map<string, Promise<void>>();
   private readonly sessions = new Map<string, string>();
 
   constructor(private readonly config: ClaudeCodeConfig = {}) {}
@@ -151,7 +148,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
       input: `${readFileSync(run.requestPath, "utf8")}\n\nWrite your reply to ${run.resultPath}`,
     });
 
-    this.running.set(run.id, child);
+    this.processes.start(run.id, child, this.config.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   }
 
   /**
@@ -164,42 +161,19 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
    * replays the same settled promise — including its rejection.
    */
   awaitCompletion(run: Run): Promise<void> {
-    const existing = this.settled.get(run.id);
-    if (existing) return existing;
-
-    const settling = this.settle(run);
-    // Attach a sink so a rejection nobody awaits cannot become an unhandled
-    // rejection, which in Electron's main process takes the window with it.
-    settling.catch(() => undefined);
-    this.settled.set(run.id, settling);
-    return settling;
+    return this.processes.complete(run.id, (outcome) => this.finish(run, outcome));
   }
 
-  private async settle(run: Run): Promise<void> {
-    const child = this.running.get(run.id);
-    if (!child) return;
-
+  private finish(run: Run, outcome: ProcessOutcome): void {
     const timeout = this.config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    const timer = after(timeout);
-    const exited = await Promise.race([child.exited, timer.promise.then(() => TIMED_OUT)]);
-    timer.cancel();
-
-    if (exited === TIMED_OUT) {
-      child.kill();
-      await child.exited;
-      this.running.delete(run.id);
+    if (outcome.reason === "timed-out") {
       if (run.state === "dispatched") run.state = "failed";
       throw new Error(`claude-code exceeded ${timeout}ms for run ${run.id}`);
     }
 
-    // Already draining since dispatch; this awaits the accumulated text rather
-    // than starting to read a pipe the harness may have filled long ago.
-    const stdout = await child.stdout;
-    this.running.delete(run.id);
-
     // The report is kept even on a failed run: a harness that errored still
     // spent tokens, and hiding that would understate what the round cost.
-    const report = this.parse(stdout);
+    const report = this.parse(outcome.stdout);
     if (report) {
       this.reports.set(run.id, report);
       if (report.session_id) this.sessions.set(run.agentId, report.session_id);
@@ -207,10 +181,11 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
 
     if (run.state !== "dispatched") return;
 
-    const code = typeof exited === "number" ? exited : -1;
-    if (code !== 0 || report?.is_error) {
+    if (outcome.code !== 0 || report?.is_error) {
       run.state = "failed";
-      throw new Error(`claude-code failed for run ${run.id}: ${report?.result ?? `exit ${code}`}`);
+      throw new Error(
+        `claude-code failed for run ${run.id}: ${report?.result ?? `exit ${outcome.code}`}`,
+      );
     }
   }
 
@@ -240,7 +215,7 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
   async cancel(run: Run): Promise<void> {
     if (run.state !== "dispatched") return;
     run.state = "cancelled";
-    this.running.get(run.id)?.kill();
+    await this.processes.cancel(run.id);
     await this.awaitCompletion(run).catch(() => undefined);
   }
 
