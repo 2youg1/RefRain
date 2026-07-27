@@ -18,6 +18,12 @@ interface Props {
 }
 
 const { open, title, width = "420px", onClose, children, footer, t }: Props = $props();
+const componentId = $props.id();
+const titleId = `${componentId}-title`;
+
+let closeButton = $state<HTMLButtonElement | null>(null);
+let returnFocus: HTMLElement | null = null;
+let wasOpen = false;
 
 /*
  * The close button used to be labelled "close" in every language: the one
@@ -31,17 +37,41 @@ const localise = $derived.by(() => {
   void open;
   return translator(loadPreferences().lang);
 });
+
+$effect(() => {
+  if (open && !wasOpen) {
+    returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    queueMicrotask(() => closeButton?.focus());
+  } else if (!open && wasOpen) {
+    const target = returnFocus;
+    returnFocus = null;
+    queueMicrotask(() => {
+      // A nonmodal Sheet may yield focus to the manuscript before it closes.
+      // Restore only when removing the Sheet itself left focus nowhere useful.
+      if (target?.isConnected && document.activeElement === document.body) target.focus();
+    });
+  }
+  wasOpen = open;
+});
 </script>
 
 {#if open}
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="scrim" onclick={onClose}></div>
+  <div class="scrim" aria-hidden="true"></div>
 
-  <aside class="sheet" style="--sheet-width: {width}">
+  <dialog
+    open
+    class="sheet"
+    style="--sheet-width: {width}"
+    aria-labelledby={titleId}
+  >
     <header>
-      <h2>{title}</h2>
-      <button class="close" onclick={onClose} aria-label={localise("sheet.close")}>✕</button>
+      <h2 id={titleId}>{title}</h2>
+      <button
+        class="close"
+        bind:this={closeButton}
+        onclick={onClose}
+        aria-label={localise("sheet.close")}>✕</button
+      >
     </header>
 
     <div class="body">
@@ -51,7 +81,7 @@ const localise = $derived.by(() => {
     {#if footer}
       <footer>{@render footer()}</footer>
     {/if}
-  </aside>
+  </dialog>
 {/if}
 
 <style>
@@ -60,6 +90,7 @@ const localise = $derived.by(() => {
     inset: 0;
     z-index: 70;
     background: color-mix(in oklab, var(--paper-sunk) 50%, transparent);
+    pointer-events: none;
     animation: fade 140ms var(--ease);
   }
 
@@ -68,12 +99,19 @@ const localise = $derived.by(() => {
     top: 0;
     right: 0;
     bottom: 0;
+    left: auto;
     z-index: 71;
     width: var(--sheet-width);
+    height: 100vh;
     max-width: 92vw;
+    max-height: none;
+    margin: 0 0 0 auto;
+    padding: 0;
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     background: var(--paper-raised);
+    border: 0;
     border-left: 1px solid var(--rule-strong);
     box-shadow: var(--shadow-float);
     animation: slide 200ms var(--ease);
