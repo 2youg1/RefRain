@@ -882,7 +882,7 @@ const onKeydown = (event: KeyboardEvent): void => {
    * well, so the same bubbling event closed both a context menu and its drawer.
    * 空 is deliberately absent: SPEC Q19 gives it only Ctrl+Enter as an exit.
    */
-  if (event.key === "Escape") {
+  if (event.key === "Escape" && (menuAt !== null || sheet !== null)) {
     event.preventDefault();
     if (menuAt) menuAt = null;
     else if (sheet !== null) sheet = null;
