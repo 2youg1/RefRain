@@ -84,7 +84,7 @@ bun run native     # builds the Rust file layer for this platform
 bun run dev
 ```
 
-`bun run native` needs a Rust toolchain and a system C compiler. On a machine without `cc`, `source scripts/native-env.sh` first — it points cargo at Zig, which ships a complete C toolchain in one archive.
+`bun run native` needs a Rust toolchain and a system C compiler. On a machine without `cc` and without root to install one, `REFRAIN_ZIG=/path/to/zig source scripts/native-env.sh` points cargo at Zig, which ships a linker, libc headers, and CRT objects in one relocatable archive. CI needs none of this.
 
 A project is a plain folder of Markdown files. Open one, and `Ctrl K` brings up every command.
 
@@ -134,6 +134,32 @@ Green assertions are not correctness. Beyond the unit tests:
 | [`docs/TEST-MATRIX.md`](docs/TEST-MATRIX.md) | Every test that exists and every one that should. |
 | [`docs/project-layout.md`](docs/project-layout.md) | The portable project folder, ownership, and write permissions. |
 | [`docs/flow.md`](docs/flow.md) | The complete dispatch, review, decision, merge, and reply path. |
+
+## Where this came from
+
+Two of my own projects are upstream of RefRain's design, in ways specific
+enough to name.
+
+**[apostle-skills](https://github.com/kaile9/apostle-skills)** — a library of
+agent skills, one of which, `apostle-artifacts-loops`, is the memory discipline
+behind the Verdict Ledger. Its argument is that long work spanning
+conversations, compactions and several agents survives on **artifacts on disk**
+rather than on a process: a judgment that leaves no readable, contestable
+object behind has not been recorded, whatever the transcript says. RefRain
+takes that literally. A Verdict is a file, not a UI event, for the same reason
+that skill insists a Memo is a file — an agent's report is what it believes
+happened, and only the artifact is inspectable.
+
+**[md2prompt](https://github.com/kaile9/md2prompt)** — the Markdown-to-prompt
+tool RefRain succeeds, and the source of two decisions this codebase would
+otherwise have had to learn the hard way. First, **the ledger is a diff of two
+snapshots, not an accumulated event stream**: paste, undo and bulk replace are
+then correct by construction rather than by careful bookkeeping. Second,
+**block identity has two layers** — a deterministic id so interface state
+survives a commit, and a lifelong sequence number so the text handed to an
+agent is byte-stable and its cache hits. It also went the wrong way once, on
+word-level inline diffs, and reverted to sentence level; RefRain started where
+that ended.
 
 ## Licence
 

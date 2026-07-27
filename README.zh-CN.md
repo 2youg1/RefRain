@@ -84,7 +84,7 @@ bun run native     # 为当前平台构建 Rust 文件层
 bun run dev
 ```
 
-`bun run native` 需要 Rust 工具链和系统 C 编译器。机器上没有 `cc` 时，先 `source scripts/native-env.sh`——它让 cargo 走 Zig，后者在一个压缩包里带了完整的 C 工具链。
+`bun run native` 需要 Rust 工具链和系统 C 编译器。机器上没有 `cc`、又没有 root 去装一个时，用 `REFRAIN_ZIG=/path/to/zig source scripts/native-env.sh` 让 cargo 走 Zig——它在一个可重定位的压缩包里带齐了链接器、libc 头文件与 CRT。CI 不需要这一步。
 
 项目就是一个装着 Markdown 文件的普通文件夹。打开它，`Ctrl K` 唤出全部命令。
 
@@ -134,6 +134,14 @@ cd apps/desktop && ./make.sh && bun x electron-builder --win --x64
 | [`docs/TEST-MATRIX.md`](docs/TEST-MATRIX.md) | 已有的每一项测试，和应该有的每一项。 |
 | [`docs/project-layout.md`](docs/project-layout.md) | 可搬移的项目目录、文件归属与写入权限。 |
 | [`docs/flow.md`](docs/flow.md) | 派发、审阅、裁决、合并与回传的完整路径。 |
+
+## 灵感来源
+
+RefRain 的设计上游有我自己的两个项目，影响具体到可以指名。
+
+**[apostle-skills](https://github.com/kaile9/apostle-skills)** —— 一个 agent skill 库，其中的 `apostle-artifacts-loops` 是裁决账本背后的记忆纪律。它主张：跨对话、跨上下文压缩、跨多个 agent 的长期工作，靠的是**落盘的工件**而非某个流程——一次判断如果没有留下可读、可反驳的对象，它就没有被记录，无论对话记录怎么说。RefRain 把这句话当字面意思执行。裁决是文件而不是界面事件，理由与那个 skill 坚持备忘录必须是文件的理由相同：agent 的汇报只是它以为发生了什么，只有工件是可检查的。
+
+**[md2prompt](https://github.com/kaile9/md2prompt)** —— RefRain 所承接的 Markdown 转 prompt 工具，也是两个决定的来源；没有它，这个仓库得自己撞一遍才学到。其一，**账本是两份快照的 diff，不是累加的事件流**：这样一来粘贴、撤销、批量替换天然正确，而不必靠小心记账。其二，**块的身份分两层**——确定性 id 让界面状态跨 commit 存活，终身不变的序号让交给 agent 的文本逐字节稳定、缓存能命中。它也走错过一次：行内 diff 曾做到词级，后来退回句级；RefRain 是从它停下的地方开始的。
 
 ## 许可
 
