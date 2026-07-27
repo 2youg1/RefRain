@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["esnext", "dom", "dom.iterable"],
+    "types": ["svelte"]
+  },
+  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.svelte"]
+}

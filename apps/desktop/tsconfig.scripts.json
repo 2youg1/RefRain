@@ -2,7 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["esnext", "dom"],
-    "types": ["bun", "svelte"]
+    "types": ["bun"]
   },
-  "include": ["src/**/*.ts", "src/**/*.svelte", "vite.config.ts"]
+  "include": ["scripts/**/*.ts", "vite.config.ts"]
 }
