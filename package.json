@@ -22,6 +22,7 @@
     "verify:no-network": "bun scripts/verify-no-network.ts",
     "verify:trash-only": "bun scripts/verify-trash-only.ts",
     "verify:gates-run": "bun scripts/verify-gates-run.ts",
+    "verify:actions-pinned": "bun scripts/verify-actions-pinned.ts",
     "verify:roundtrip": "bun scripts/verify-roundtrip.ts",
     "verify:scale": "bun scripts/verify-scale.ts",
     "verify:paths": "bun scripts/verify-paths.ts",
