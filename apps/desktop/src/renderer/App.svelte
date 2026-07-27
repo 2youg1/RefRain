@@ -120,8 +120,9 @@ let visibleRows = $state(40);
  */
 let display = $state<DisplayProfile>(FALLBACK);
 
-const root = $derived(roots[0] ?? null);
 const activeChapter = $derived(chapters.find((chapter) => chapter.path === active) ?? null);
+/** The active manuscript owns project-scoped commands; first root is only the empty fallback. */
+const root = $derived(activeChapter?.root ?? roots[0] ?? null);
 
 // Every durable choice is written back the moment it changes; the storage
 // keys and the CSS custom properties both live in preferences.ts.
