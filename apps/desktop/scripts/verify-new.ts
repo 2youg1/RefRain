@@ -10,8 +10,18 @@
  * refusals, because a name field that accepts a duplicate writes over a chapter
  * that already exists.
  */
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  currentText,
+  loadProject,
+  loadWorkspace,
+  saveChapter,
+  splitBlocks,
+  type TextHead,
+} from "@refrain/core";
 import { BRIDGE_STUB, launchBrowser } from "./browser.ts";
 
 const desktop = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -20,10 +30,44 @@ const html = (await Bun.file(join(desktop, "dist", "renderer", "index.html")).te
   "",
 );
 
+const work = mkdtempSync(join(tmpdir(), "refrain-new-gate-"));
+writeFileSync(join(work, "01.md"), "已有的一章。\n", "utf8");
+
+let coreSaves = 0;
 const server = Bun.serve({
   port: 0,
-  fetch(request) {
-    const path = new URL(request.url).pathname;
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === "/api/save") {
+      const body = (await request.json()) as { id: string; text: string };
+      if (body.id === "失败.md")
+        return new Response("EACCES: cannot create chapter", { status: 403 });
+      const head = {
+        id: `gate:${body.id}`,
+        blocks: splitBlocks(body.text).map((text, index) => ({ id: `${body.id}:b${index}`, text })),
+        cause: "verify-new",
+      } as TextHead;
+      const outcome = saveChapter(loadProject(work), body.id, head);
+      coreSaves += 1;
+      return Response.json(outcome);
+    }
+    if (url.pathname === "/api/load") {
+      const workspace = loadWorkspace([work]);
+      const pathOf = new Map(workspace.roots.map((root) => [root.id, root.path]));
+      return Response.json({
+        roots: workspace.roots,
+        chapters: workspace.chapters.map((chapter) => ({
+          id: chapter.id,
+          title: chapter.title,
+          text: currentText(chapter.head),
+          rootId: chapter.rootId,
+          root: pathOf.get(chapter.rootId) ?? "",
+          role: chapter.role,
+          path: chapter.path,
+        })),
+      });
+    }
+    const path = url.pathname;
     if (path === "/") return new Response(html, { headers: { "content-type": "text/html" } });
     return new Response(Bun.file(join(desktop, "dist", "renderer", path)));
   },
@@ -34,25 +78,23 @@ const bridge = `
 window.__created = [];
 ${BRIDGE_STUB}
 Object.assign(window.refrain, {
-  openProject: async () => "/work",
+  openProject: async () => ${JSON.stringify(work)},
   openFile: async () => null,
   createProject: async () => null,
   pathFor: () => "", resolveDrop: async () => null, fullscreen: async () => true,
   loadProject: async () => [],
-  saveChapter: async (root, id) => {
-    if (id === "失败.md") throw new Error("EACCES: cannot create chapter");
-    if (!window.__created.includes(id)) window.__created.push(id);
-    return { ok: true, edits: [] };
+  saveChapter: async (_root, id, text) => {
+    const response = await fetch("/api/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id, text }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const outcome = await response.json();
+    if (outcome.ok && !window.__created.includes(id)) window.__created.push(id);
+    return outcome;
   },
-  loadWorkspace: async (roots) => {
-    const p = roots[0]; const id = "r-work";
-    const made = window.__created.map((cid) => ({
-      id: cid, title: cid.split("/").pop().replace(/\\.md$/, ""), text: "",
-      rootId: id, root: p, role: cid.includes("/") ? "material" : "chapter", path: p + "/" + cid }));
-    return { roots: [{ id, path: p, name: "work", kind: "folder" }],
-      chapters: [{ id: "01.md", title: "01", text: "已有的一章。", rootId: id, root: p,
-        role: "chapter", path: p + "/01.md" }, ...made] };
-  },
+  loadWorkspace: async () => fetch("/api/load").then((response) => response.json()),
   listAgents: async () => [], addAgent: async () => ({}), enqueue: async () => true,
   manifest: async () => [], send: async () => [], runs: async () => [],
   collect: async () => ({ proposals: [], comments: [] }),
@@ -124,6 +166,9 @@ const afterCreate = await page.evaluate(() => ({
 }));
 if (!afterCreate.created.includes("第三章 雨.md"))
   failures.push(`Enter did not create the chapter: ${JSON.stringify(afterCreate.created)}`);
+if (!existsSync(join(work, "第三章 雨.md")))
+  failures.push("the chapter appeared in the stub but not in the real project store");
+if (coreSaves !== 1) throw new Error("the UI path did not call the real project save");
 if (afterCreate.dialog) failures.push("the dialog stayed open after creating");
 if (!afterCreate.rail.includes("第三章 雨"))
   failures.push(`the new chapter is not in the rail: ${JSON.stringify(afterCreate.rail)}`);
@@ -165,6 +210,8 @@ else {
   );
   if (!created.some((id) => id.includes("/") && id.endsWith("年表.md")))
     failures.push(`material was not filed under a folder: ${JSON.stringify(created)}`);
+  if (!existsSync(join(work, "资料", "年表.md")))
+    failures.push("nested material appeared in the UI but not in the real project store");
   // Material must not join the chapter sequence, which is the whole of Q11.
   const inSequence = await page.evaluate(() =>
     [...document.querySelectorAll(".rail .chapter:not(.material)")].map((n) =>
@@ -192,15 +239,18 @@ if (!failedCreate.body.includes("EACCES: cannot create chapter"))
   failures.push("a rejected chapter creation said nothing on screen");
 if (failedCreate.created.includes("失败.md"))
   failures.push("a rejected chapter creation still entered the workspace");
+if (existsSync(join(work, "失败.md")))
+  failures.push("a rejected chapter creation changed the real project store");
 
 console.log(
   `  created ${JSON.stringify(await page.evaluate(() => (window as never as { __created: string[] }).__created))}`,
 );
 
 await browser.close();
-server.stop();
+server.stop(true);
+rmSync(work, { recursive: true, force: true });
 
-if (failures.length > 0) {
+if (failures.length) {
   for (const line of failures) console.error(`FAIL  ${line}`);
   process.exit(1);
 }
