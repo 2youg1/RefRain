@@ -323,9 +323,13 @@ jobs:
       # The check is wired in reporting-only until the defect is fixed — a
       # verification script that lives outside CI stops being true without
       # anyone noticing, which is exactly what happened to this one.
-      - name: chapter header alignment (SPEC Q5, known defect)
+      # Held under continue-on-error as SPEC Q5, a 289px drift between the
+      # chapter header and the manuscript. There was no drift: the fixture
+      # never opened, and the gate measured a blank screen. It now opens, the
+      # two edges agree to the pixel, and the exemption is gone — a gate whose
+      # failure is pre-forgiven reports nothing.
+      - name: chapter header alignment
         working-directory: apps/desktop
-        continue-on-error: true
         run: bun scripts/verify-anchor.ts
 
       # Speed is the file layer's reason to exist, so it is measured on every

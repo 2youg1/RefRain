@@ -1,4 +1,4 @@
-import type { TextChange, TextHead } from "./domain.ts";
+import { type TextChange, type TextHead, touchedBlocks } from "./domain.ts";
 import { applyTextAction, blockAt } from "./text-engine.ts";
 
 /**
@@ -41,7 +41,7 @@ export type UndoResult =
     };
 
 const blocksOf = (action: TextAction): Set<string> =>
-  new Set(action.changes.flatMap((c) => c.blockIds));
+  new Set(action.changes.flatMap(touchedBlocks));
 
 /**
  * Only the actions that came after need checking, and only for shared blocks —
@@ -54,7 +54,7 @@ const intersectingBlock = (
   const touched = blocksOf(action);
   for (const laterAction of later)
     for (const change of laterAction.changes)
-      for (const id of change.blockIds) if (touched.has(id)) return id;
+      for (const id of touchedBlocks(change)) if (touched.has(id)) return id;
   return undefined;
 };
 
@@ -64,14 +64,14 @@ export const selectiveUndo = (
   later: readonly TextAction[],
 ): UndoResult => {
   const conflict = intersectingBlock(action, later);
-  const missing = action.undoes
-    .flatMap((change) => change.blockIds)
-    .find((id) => !blockAt(head, id));
-  const affected = conflict ?? missing ?? action.changes[0]?.blockIds[0];
+  const missing = action.undoes.flatMap(touchedBlocks).find((id) => !blockAt(head, id));
+  const first = action.changes[0];
+  const affected = conflict ?? missing ?? (first && touchedBlocks(first)[0]);
   const before =
-    action.undoes.find((change) => change.blockIds.some((id) => id === affected))?.text ?? "";
+    action.undoes.find((change) => touchedBlocks(change).some((id) => id === affected))?.text ?? "";
   const after =
-    action.changes.find((change) => change.blockIds.some((id) => id === affected))?.text ?? "";
+    action.changes.find((change) => touchedBlocks(change).some((id) => id === affected))?.text ??
+    "";
   const current = affected === undefined ? "" : (blockAt(head, affected)?.text ?? "");
 
   if (conflict !== undefined)
