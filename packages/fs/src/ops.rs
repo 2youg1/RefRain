@@ -313,7 +313,7 @@ fn copy_symlink(from: &Path, to: &Path) -> Result<(), OpError> {
         if file_type.is_symlink_dir() {
             return std::os::windows::fs::symlink_dir(target, to).map_err(|error| io(to, error));
         }
-        return std::os::windows::fs::symlink_file(target, to).map_err(|error| io(to, error));
+        std::os::windows::fs::symlink_file(target, to).map_err(|error| io(to, error))
     }
 
     #[cfg(not(any(unix, windows)))]

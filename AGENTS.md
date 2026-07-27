@@ -24,6 +24,22 @@ runners already carry MSVC, clang, and gcc.
 The file layer is a build artefact, so `packages/fs/test/boundary.test.ts`
 skips when the binary is absent and says so rather than reporting green.
 
+**Clippy on Linux does not see the Windows branches**, and Windows is the only
+platform 0.1.x releases on: a lint inside `#[cfg(windows)]` first goes red on
+the release runner, after a push. Lint the release target locally instead —
+`--target` type-checks without linking, so the toolchain is all that is needed:
+
+```bash
+rustup target add x86_64-pc-windows-gnu
+mkdir -p /tmp/fakenode && touch /tmp/fakenode/libnode.dll
+cd packages/fs && LIBNODE_PATH=/tmp/fakenode \
+  cargo clippy --target x86_64-pc-windows-gnu --lib --tests
+```
+
+The empty `libnode.dll` satisfies napi's build script, which checks that the
+path exists before a link step clippy never reaches. `bun run verify:unix-guards`
+covers the other half — a Unix-only construct that would not compile there at all.
+
 ## Before you edit
 
 Read `SPEC.md`, then the target module in full, then its tests. Read a function's callers before changing its signature.
