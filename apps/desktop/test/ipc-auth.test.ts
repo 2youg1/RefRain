@@ -1,0 +1,163 @@
+import { expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+import { closeWorkbenches, registerHandlers } from "../src/main/ipc.ts";
+
+type Handler = (event: unknown, ...args: unknown[]) => unknown;
+
+interface FakeFrame {
+  isDestroyed(): boolean;
+}
+
+const mainFrame: FakeFrame = { isDestroyed: () => false };
+const sender = { isDestroyed: () => false, mainFrame };
+const trustedEvent = { sender, senderFrame: mainFrame };
+const noFrameEvent = { sender, senderFrame: null };
+const foreignFrameEvent = { sender, senderFrame: { isDestroyed: () => false } };
+
+const collectHandlers = (dialog?: {
+  showOpenDialog?: () => Promise<{ canceled: boolean; filePaths: string[] }>;
+  showSaveDialog?: () => Promise<{ canceled: boolean; filePath?: string }>;
+}) => {
+  const handlers = new Map<string, Handler>();
+  registerHandlers(
+    { handle: (channel: string, handler: Handler) => handlers.set(channel, handler) } as never,
+    {
+      showOpenDialog: dialog?.showOpenDialog ?? (async () => ({ canceled: true, filePaths: [] })),
+      showSaveDialog:
+        dialog?.showSaveDialog ?? (async () => ({ canceled: true, filePath: undefined })),
+    } as never,
+  );
+  return handlers;
+};
+
+const invoke = async (
+  handlers: Map<string, Handler>,
+  event: unknown,
+  channel: string,
+  ...args: unknown[]
+) => {
+  const handler = handlers.get(channel);
+  if (!handler) throw new Error(`no handler for ${channel}`);
+  return await handler(event, ...args);
+};
+
+test("an invoke with no sender frame is rejected before the dialog body", async () => {
+  let opened = 0;
+  const handlers = collectHandlers({
+    showOpenDialog: async () => {
+      opened += 1;
+      return { canceled: true, filePaths: [] };
+    },
+  });
+
+  await expect(invoke(handlers, noFrameEvent, "project:open")).rejects.toThrow(/main frame/i);
+  expect(opened).toBe(0);
+});
+
+test("a foreign or child frame is rejected before the dialog body", async () => {
+  let created = 0;
+  const handlers = collectHandlers({
+    showSaveDialog: async () => {
+      created += 1;
+      return { canceled: true, filePath: undefined };
+    },
+  });
+
+  await expect(invoke(handlers, foreignFrameEvent, "project:create")).rejects.toThrow(
+    /main frame/i,
+  );
+  expect(created).toBe(0);
+});
+
+test("an unopened root cannot enter files:scan or project:save", async () => {
+  const handlers = collectHandlers();
+  const root = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-unopened-"));
+  try {
+    await expect(invoke(handlers, trustedEvent, "files:scan", root)).rejects.toThrow(
+      /opened root/i,
+    );
+    await expect(
+      invoke(handlers, trustedEvent, "project:save", root, "new.md", "not authorised"),
+    ).rejects.toThrow(/opened root/i);
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("load-workspace normalizes and deduplicates roots before admitting later calls", async () => {
+  const handlers = collectHandlers();
+  const root = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-opened-"));
+  try {
+    const workspace = (await invoke(handlers, trustedEvent, "project:load-workspace", [
+      root,
+      `${root}${sep}.`,
+    ])) as { roots: { path: string }[] };
+
+    expect(workspace.roots).toEqual([expect.objectContaining({ path: root })]);
+    await expect(invoke(handlers, trustedEvent, "files:scan", root)).resolves.toMatchObject({
+      ok: expect.any(Boolean),
+    });
+    await expect(
+      invoke(handlers, trustedEvent, "project:save", root, "new.md", "author text"),
+    ).resolves.toMatchObject({ ok: true });
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("load-workspace rejects malformed root lists without partially admitting them", async () => {
+  const handlers = collectHandlers();
+  const root = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-shape-"));
+  try {
+    await expect(
+      invoke(handlers, trustedEvent, "project:load-workspace", [root, 7]),
+    ).rejects.toThrow(/absolute path strings/i);
+    await expect(
+      invoke(handlers, trustedEvent, "project:save", root, "new.md", "not authorised"),
+    ).rejects.toThrow(/opened root/i);
+    await expect(
+      invoke(handlers, trustedEvent, "project:load-workspace", ["relative/root"]),
+    ).rejects.toThrow(/absolute path strings/i);
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("path pickers and the legacy project:load channel do not admit a root", async () => {
+  const root = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-candidate-"));
+  const handlers = collectHandlers({
+    showOpenDialog: async () => ({ canceled: false, filePaths: [root] }),
+    showSaveDialog: async () => ({ canceled: false, filePath: root }),
+  });
+  try {
+    expect(await invoke(handlers, trustedEvent, "project:open")).toBe(root);
+    expect(await invoke(handlers, trustedEvent, "project:create")).toBe(root);
+    expect(await invoke(handlers, trustedEvent, "project:resolve-drop", root)).toEqual({
+      ok: true,
+      path: root,
+    });
+    await expect(invoke(handlers, trustedEvent, "project:load", root)).rejects.toThrow(
+      /opened root/i,
+    );
+    await expect(
+      invoke(handlers, trustedEvent, "project:save", root, "new.md", "not authorised"),
+    ).rejects.toThrow(/opened root/i);
+  } finally {
+    closeWorkbenches();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("both handler modules register exclusively through the shared authority", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const name of ["ipc.ts", "files-ipc.ts"]) {
+    const source = readFileSync(join(here, "../src/main", name), "utf8");
+    expect(source).not.toMatch(/\bipc\.handle\s*\(/);
+  }
+});

@@ -39,6 +39,7 @@ import type { Workspace as FileWorkspace } from "@refrain/fs";
 import type { Dialog, IpcMain } from "electron";
 import { parseCommandLine } from "./command-line.ts";
 import { registerFileHandlers } from "./files-ipc.ts";
+import { createIpcAuthority } from "./ipc-auth.ts";
 import { probeCommand } from "./probe.ts";
 import { type RosterEntry, readRoster, writeRoster } from "./roster.ts";
 
@@ -244,7 +245,9 @@ const advanceChapter = (workbench: Workbench, chapterId: string, text: string, c
   );
 
 export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
-  ipc.handle("project:open", async () => {
+  const handlers = createIpcAuthority(ipc);
+
+  handlers.handle("project:open", async () => {
     const result = await dialog.showOpenDialog({
       properties: ["openDirectory", "createDirectory"],
       title: "Open a project folder",
@@ -252,7 +255,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });
 
-  ipc.handle("project:create", async () => {
+  handlers.handle("project:create", async () => {
     const result = await dialog.showSaveDialog({
       title: "New project",
       properties: ["createDirectory"],
@@ -272,7 +275,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
    * network share, or a cloud placeholder that had not materialised looked
    * exactly like dropping it onto a program that ignores drops.
    */
-  ipc.handle("project:resolve-drop", (_e, path: string) => {
+  handlers.handle("project:resolve-drop", (_e, path: string) => {
     try {
       return { ok: true, path: statSync(path).isDirectory() ? path : dirname(path) };
     } catch (error) {
@@ -284,7 +287,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     }
   });
 
-  ipc.handle("project:open-file", async () => {
+  handlers.handle("project:open-file", async () => {
     const result = await dialog.showOpenDialog({
       properties: ["openFile"],
       filters: [{ name: "Markdown", extensions: ["md", "markdown", "mdown", "txt"] }],
@@ -294,7 +297,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
   });
 
   /** Several roots at once: a folder kept empty for tidiness locks out nothing. */
-  ipc.handle("project:load-workspace", (_e, roots: string[]) => {
+  handlers.handleOpenRoots("project:load-workspace", (_e, roots: string[]) => {
     const workspace = loadWorkspace(roots);
     const pathOf = new Map(workspace.roots.map((root) => [root.id, root.path]));
 
@@ -332,23 +335,23 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     };
   });
 
-  ipc.handle("edits:revert", (_e, root: string, chapterId: string, edit: Edit) => {
+  handlers.handleRoot("edits:revert", (_e, root: string, chapterId: string, edit: Edit) => {
     const workbench = openWorkbench(root);
     const head = revertEdit(headFor(root, chapterId), edit);
     workbench.heads.set(chapterId, head);
     return currentText(head);
   });
 
-  ipc.handle("edits:revert-all", (_e, root: string, chapterId: string, edits: Edit[]) => {
+  handlers.handleRoot("edits:revert-all", (_e, root: string, chapterId: string, edits: Edit[]) => {
     const workbench = openWorkbench(root);
     const head = revertAll(headFor(root, chapterId), edits);
     workbench.heads.set(chapterId, head);
     return currentText(head);
   });
 
-  ipc.handle("edits:describe", (_e, edits: Edit[]) => describeEditsForAgent(edits));
+  handlers.handle("edits:describe", (_e, edits: Edit[]) => describeEditsForAgent(edits));
 
-  ipc.handle("project:load", (_e, root: string) => {
+  handlers.handleRoot("project:load", (_e, root: string) => {
     const project = loadProject(root);
     const workbench = openWorkbench(root);
     for (const chapter of project.chapters) {
@@ -379,7 +382,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
    * a person has to decide, and the outcome carries the disk's text so the
    * interface can show them both.
    */
-  ipc.handle("project:save", (_e, root: string, chapterId: string, text: string) => {
+  handlers.handleRoot("project:save", (_e, root: string, chapterId: string, text: string) => {
     const workbench = openWorkbench(root);
     const advanced = advanceChapter(workbench, chapterId, text, "author edit");
     const head = advanced.head;
@@ -405,66 +408,69 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     return { ok: true as const, edits: advanced.edits };
   });
 
-  ipc.handle("project:resolve-conflict", (_e, root: string, chapterId: string, choice: unknown) => {
-    const workbench = openWorkbench(root);
-    const pending = workbench.conflicts.get(chapterId);
-    if (!pending) return { ok: false as const, reason: "no pending conflict" };
-    if (choice !== "mine" && choice !== "disk")
-      return { ok: false as const, reason: "invalid conflict choice" };
-    if (choice === "disk") {
-      const actual = readChapterFile(pending.path);
-      if (actual === undefined)
-        return { ok: false as const, reason: "chapter no longer exists on disk" };
-      if (actual.stamp.digest !== pending.stamp.digest) {
-        workbench.conflicts.set(chapterId, {
-          path: pending.path,
-          mine: pending.mine,
-          onDisk: actual.text,
-          stamp: actual.stamp,
-        });
-        return {
-          ok: false as const,
-          reason: "changed-underneath" as const,
-          path: pending.path,
-          onDisk: actual.text,
-          stamp: actual.stamp,
-        };
+  handlers.handleRoot(
+    "project:resolve-conflict",
+    (_e, root: string, chapterId: string, choice: unknown) => {
+      const workbench = openWorkbench(root);
+      const pending = workbench.conflicts.get(chapterId);
+      if (!pending) return { ok: false as const, reason: "no pending conflict" };
+      if (choice !== "mine" && choice !== "disk")
+        return { ok: false as const, reason: "invalid conflict choice" };
+      if (choice === "disk") {
+        const actual = readChapterFile(pending.path);
+        if (actual === undefined)
+          return { ok: false as const, reason: "chapter no longer exists on disk" };
+        if (actual.stamp.digest !== pending.stamp.digest) {
+          workbench.conflicts.set(chapterId, {
+            path: pending.path,
+            mine: pending.mine,
+            onDisk: actual.text,
+            stamp: actual.stamp,
+          });
+          return {
+            ok: false as const,
+            reason: "changed-underneath" as const,
+            path: pending.path,
+            onDisk: actual.text,
+            stamp: actual.stamp,
+          };
+        }
+        const head = advanceChapter(
+          workbench,
+          chapterId,
+          pending.onDisk,
+          "author accepted an external edit",
+        ).head;
+        workbench.conflicts.delete(chapterId);
+        workbench.heads.set(chapterId, head);
+        workbench.onDisk.set(chapterId, { path: pending.path, stamp: pending.stamp });
+        return { ok: true as const, text: pending.onDisk };
       }
-      const head = advanceChapter(
+
+      const advanced = advanceChapter(
         workbench,
         chapterId,
-        pending.onDisk,
-        "author accepted an external edit",
-      ).head;
+        pending.mine,
+        "author resolved an external edit",
+      );
+      const head = advanced.head;
+      const outcome = writeChapter(pending.path, head, pending.stamp);
+      if (!outcome.ok) {
+        workbench.conflicts.set(chapterId, {
+          path: outcome.path,
+          mine: pending.mine,
+          onDisk: outcome.onDisk,
+          stamp: outcome.stamp,
+        });
+        return outcome;
+      }
+
       workbench.conflicts.delete(chapterId);
       workbench.heads.set(chapterId, head);
-      workbench.onDisk.set(chapterId, { path: pending.path, stamp: pending.stamp });
-      return { ok: true as const, text: pending.onDisk };
-    }
-
-    const advanced = advanceChapter(
-      workbench,
-      chapterId,
-      pending.mine,
-      "author resolved an external edit",
-    );
-    const head = advanced.head;
-    const outcome = writeChapter(pending.path, head, pending.stamp);
-    if (!outcome.ok) {
-      workbench.conflicts.set(chapterId, {
-        path: outcome.path,
-        mine: pending.mine,
-        onDisk: outcome.onDisk,
-        stamp: outcome.stamp,
-      });
-      return outcome;
-    }
-
-    workbench.conflicts.delete(chapterId);
-    workbench.heads.set(chapterId, head);
-    workbench.onDisk.set(chapterId, { path: pending.path, stamp: outcome.stamp });
-    return { ok: true as const, text: pending.mine, edits: advanced.edits };
-  });
+      workbench.onDisk.set(chapterId, { path: pending.path, stamp: outcome.stamp });
+      return { ok: true as const, text: pending.mine, edits: advanced.edits };
+    },
+  );
 
   /**
    * Faces installed on this machine.
@@ -473,7 +479,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
    * the registry on Windows, fontconfig elsewhere. Failure returns an empty
    * list rather than throwing — the bundled faces still work.
    */
-  ipc.handle("fonts:list", async () => {
+  handlers.handle("fonts:list", async () => {
     const argv =
       process.platform === "win32"
         ? [
@@ -511,7 +517,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
    * and the no-network invariant would hold only in the letter. The four
    * addresses here are the ones the About page offers.
    */
-  ipc.handle("shell:open-project-url", async (_e, url: string) => {
+  handlers.handle("shell:open-project-url", async (_e, url: string) => {
     const allowed = [
       "https://github.com/kaile9/RefRain",
       "https://github.com/kaile9/RefRain/issues",
@@ -534,7 +540,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
    * "trust this agent?" without showing what it executes asks the author to
    * agree to something they cannot read.
    */
-  ipc.handle("agent:list", (_e, root: string) =>
+  handlers.handleRoot("agent:list", (_e, root: string) =>
     openWorkbench(root).roster.map((entry) => ({
       ...entry.agent,
       ...(entry.template === undefined ? {} : { command: entry.template.join(" ") }),
@@ -548,7 +554,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
    * Trust is per project, because it is a judgment about this project's
    * `agents.json` and not about an agent's name.
    */
-  ipc.handle("agent:trust", (_e, root: string, id: string) => {
+  handlers.handleRoot("agent:trust", (_e, root: string, id: string) => {
     const workbench = openWorkbench(root);
     const index = workbench.roster.findIndex((entry) => entry.agent.id === id);
     const entry = workbench.roster[index];
@@ -570,7 +576,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
    * discover the mistake when a run fails silently an hour later. This spawns
    * the command's first token with a version flag and reports what came back.
    */
-  ipc.handle("agent:probe", async (_e, root: string, id: string) => {
+  handlers.handleRoot("agent:probe", async (_e, root: string, id: string) => {
     const entry = openWorkbench(root).roster.find((candidate) => candidate.agent.id === id);
     if (!entry) return { ok: false, detail: "unknown agent" };
     if (entry.agent.binding.harness === "file") return { ok: true };
@@ -586,7 +592,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     return probeCommand(program);
   });
 
-  ipc.handle("agent:remove", (_e, root: string, id: string) => {
+  handlers.handleRoot("agent:remove", (_e, root: string, id: string) => {
     const workbench = openWorkbench(root);
     if (!workbench.roster.some((entry) => entry.agent.id === id)) return false;
     const next = workbench.roster.filter((entry) => entry.agent.id !== id);
@@ -596,7 +602,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     return true;
   });
 
-  ipc.handle("agent:add", (_e, root: string, name: string, command: string) => {
+  handlers.handleRoot("agent:add", (_e, root: string, name: string, command: string) => {
     const workbench = openWorkbench(root);
     const id = randomUUID();
     const template = command.trim().length > 0 ? parseCommandLine(command) : undefined;
@@ -619,14 +625,16 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     return agent;
   });
 
-  ipc.handle("agent:enqueue", (_e, root: string, task: ReviewTask) => {
+  handlers.handleRoot("agent:enqueue", (_e, root: string, task: ReviewTask) => {
     openWorkbench(root).host.enqueue(task);
     return true;
   });
 
-  ipc.handle("agent:manifest", (_e, root: string) => sendManifest(openWorkbench(root).host));
+  handlers.handleRoot("agent:manifest", (_e, root: string) =>
+    sendManifest(openWorkbench(root).host),
+  );
 
-  ipc.handle("agent:send", async (_e, root: string) => {
+  handlers.handleRoot("agent:send", async (_e, root: string) => {
     const runs = await openWorkbench(root).host.send();
     return runs.map((r) => ({ id: r.id, requestPath: r.requestPath, resultPath: r.resultPath }));
   });
@@ -638,7 +646,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
    * interface could show that a run failed but never what went wrong — which
    * for a harness misconfiguration is the only useful part.
    */
-  ipc.handle("agent:runs", (_e, root: string) => {
+  handlers.handleRoot("agent:runs", (_e, root: string) => {
     const workbench = openWorkbench(root);
     return workbench.host.runs().map((r) => {
       const failure = workbench.host.failureFor(r.id);
@@ -652,7 +660,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     });
   });
 
-  ipc.handle("agent:collect", async (_e, root: string, runId: string) => {
+  handlers.handleRoot("agent:collect", async (_e, root: string, runId: string) => {
     const workbench = openWorkbench(root);
     const proposals = await workbench.host.collect(runId);
     for (const proposal of proposals) workbench.proposals.set(proposal.id, proposal);
@@ -662,9 +670,9 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
     };
   });
 
-  ipc.handle("review:slice", (_e, proposal: Proposal) => sliceProposal(proposal));
+  handlers.handle("review:slice", (_e, proposal: Proposal) => sliceProposal(proposal));
 
-  ipc.handle(
+  handlers.handleRoot(
     "review:commit",
     (_e, root: string, payload: { chapter: string; verdicts: Verdict[] }) => {
       const workbench = openWorkbench(root);
@@ -731,14 +739,14 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
       : { detail: workbench.ledgerError ?? "the ledger could not be opened" };
   };
 
-  ipc.handle("ledger:all", (_e, root: string) => {
+  handlers.handleRoot("ledger:all", (_e, root: string) => {
     const held = ledgerOf(root);
     return "ledger" in held
       ? { ok: true, verdicts: held.ledger.all() }
       : { ok: false, reason: "ledger-unavailable", detail: held.detail };
   });
 
-  ipc.handle("ledger:reply", (_e, root: string, proposalId: string) => {
+  handlers.handleRoot("ledger:reply", (_e, root: string, proposalId: string) => {
     const held = ledgerOf(root);
     return "ledger" in held ? serializeVerdicts(held.ledger.forProposal(proposalId)) : "";
   });
@@ -748,7 +756,7 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
    * revise an agent's persona; it does not compile one for them, which would
    * require an inference this application has no way to perform.
    */
-  ipc.handle("ledger:search", (_e, root: string, fragment: string) => {
+  handlers.handleRoot("ledger:search", (_e, root: string, fragment: string) => {
     const held = ledgerOf(root);
     return "ledger" in held
       ? { ok: true, verdicts: held.ledger.search(fragment) }
@@ -758,5 +766,5 @@ export const registerHandlers = (ipc: IpcMain, dialog: Dialog): void => {
   // The file layer's channels live in their own module: they degrade as a
   // group when the platform binary is missing, and that rule is easier to hold
   // where it is the only rule in the file.
-  registerFileHandlers(ipc, filesFor, (root) => openWorkbench(root).fileError);
+  registerFileHandlers(handlers.handleRoot, filesFor, (root) => openWorkbench(root).fileError);
 };
