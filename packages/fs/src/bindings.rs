@@ -109,6 +109,7 @@ fn op_error_code(error: &ops::OpError) -> &'static str {
         ops::OpError::Io { .. } => "IO",
         ops::OpError::Occupied { .. } => "OCCUPIED",
         ops::OpError::IntoItself { .. } => "INTO_ITSELF",
+        ops::OpError::SameFile { .. } => "SAME_FILE",
         // The interface keys the "move it to the system trash" offer off this
         // code, so it must stay distinguishable from a plain IO failure.
         ops::OpError::NoTrashHere { .. } => "NO_TRASH_HERE",

@@ -89,7 +89,27 @@ impl Guard {
     pub fn admit(&self, candidate: &Path) -> Result<PathBuf, Refusal> {
         let resolved = resolve(candidate)?;
 
-        for component in resolved.components() {
+        // No roots admits nothing. The empty list used to admit everything,
+        // which made the guard that owns "Source Backup is never written to"
+        // vanish under the one input a caller can reach by passing an empty
+        // vector — a probe confirmed `/etc/shadow` came back admitted. Every
+        // test here builds a real root, so nothing depended on the old default.
+        let root = self
+            .roots
+            .iter()
+            .find(|root| resolved.starts_with(root))
+            .ok_or_else(|| Refusal::OutsideRoots {
+                path: resolved.display().to_string(),
+            })?;
+
+        // Only the part below the root is ours to name. The check used to run
+        // over the whole absolute path, and `:` is illegal on Windows — so a
+        // project under `/tmp/a:b/` had every save, move and delete refused for
+        // the lifetime of the folder, and on Windows the drive letter would
+        // have done the same. The ancestors are the author's existing
+        // filesystem; the names this application creates start here.
+        let inside = resolved.strip_prefix(root).unwrap_or(&resolved);
+        for component in inside.components() {
             if let Component::Normal(part) = component {
                 let name = part.to_string_lossy();
                 if is_illegal(&name) {
@@ -109,18 +129,7 @@ impl Guard {
             });
         }
 
-        // No roots admits nothing. The empty list used to admit everything,
-        // which made the guard that owns "Source Backup is never written to"
-        // vanish under the one input a caller can reach by passing an empty
-        // vector — a probe confirmed `/etc/shadow` came back admitted. Every
-        // test here builds a real root, so nothing depended on the old default.
-        if !self.roots.is_empty() && self.roots.iter().any(|root| resolved.starts_with(root)) {
-            return Ok(resolved);
-        }
-
-        Err(Refusal::OutsideRoots {
-            path: resolved.display().to_string(),
-        })
+        Ok(resolved)
     }
 
     pub fn roots(&self) -> &[PathBuf] {
@@ -327,5 +336,37 @@ mod tests {
             guard.admit(&root.join("chapter.")).unwrap_err(),
             Refusal::IllegalName { .. }
         ));
+    }
+
+    /// A colon in an ancestor directory used to refuse every write.
+    ///
+    /// The name check ran over the whole absolute path, and `:` is illegal on
+    /// Windows — so a project living under `/tmp/a:b/` had every save, move and
+    /// delete refused for the lifetime of the folder. The rule belongs to the
+    /// names this application creates, which are the ones below the root; the
+    /// ancestors are the author's existing filesystem and are not ours to
+    /// judge. On Windows the drive letter would otherwise fail the same way.
+    #[test]
+    fn allows_an_illegal_character_in_an_ancestor_of_the_root() {
+        let base = std::env::temp_dir().join("refrain-guard-colon:dir");
+        let _ = fs::remove_dir_all(&base);
+        let root = base.join("proj");
+        fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        fs::write(root.join("01.md"), "第一章").unwrap();
+
+        let guard = Guard::new([&root]);
+
+        assert!(
+            guard.admit(&root.join("01.md")).is_ok(),
+            "a colon above the root is the author's filesystem, not our name"
+        );
+        assert!(
+            matches!(
+                guard.admit(&root.join("bad:name.md")).unwrap_err(),
+                Refusal::IllegalName { .. }
+            ),
+            "a colon in a name we would create is still refused"
+        );
     }
 }
