@@ -38,9 +38,7 @@ export const dict = {
   "cmd.review": { zh: "审阅提案", en: "Review proposals" },
   "cmd.ledger": { zh: "裁决账本", en: "Verdict ledger" },
   "cmd.agents": { zh: "管理 Agent…", en: "Manage agents…" },
-  "cmd.typography": { zh: "排版…", en: "Typography…" },
   "cmd.settings": { zh: "设置…", en: "Settings…" },
-  "cmd.theme": { zh: "切换明暗", en: "Toggle theme" },
   "cmd.chapters": { zh: "跳到章节…", en: "Go to chapter…" },
 
   "group.project": { zh: "项目", en: "Project" },
