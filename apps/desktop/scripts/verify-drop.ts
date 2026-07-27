@@ -32,11 +32,13 @@ ${BRIDGE_STUB}
 Object.assign(window.refrain, {
   pathFor: (file) => {
     window.__dropCalls.push(["pathFor", file.name]);
-    return "/dropped";
+    return file.name === "broken" ? "/unreadable" : "/dropped";
   },
   resolveDrop: async (path) => {
     window.__dropCalls.push(["resolveDrop", path]);
-    return { ok: true, path };
+    return path === "/unreadable"
+      ? { ok: false, reason: "unreadable-path", detail: "EACCES: dropped path is unreadable" }
+      : { ok: true, path };
   },
   loadWorkspace: async (roots) => {
     window.__dropCalls.push(["loadWorkspace", ...roots]);
@@ -85,6 +87,30 @@ if (!observed.body.includes("落下来的第一章"))
   failures.push("the dropped project never reached the rail");
 if (!observed.body.includes("正文。"))
   failures.push("the dropped chapter never reached the editor");
+
+await page.evaluate(() => {
+  (window as unknown as { __dropCalls: string[][] }).__dropCalls = [];
+  const transfer = new DataTransfer();
+  transfer.items.add(new File(["drop"], "broken"));
+  window.dispatchEvent(
+    new DragEvent("drop", { dataTransfer: transfer, bubbles: true, cancelable: true }),
+  );
+});
+await page.waitForTimeout(300);
+const refused = await page.evaluate(() => ({
+  calls: (window as unknown as { __dropCalls: string[][] }).__dropCalls,
+  body: document.body.textContent ?? "",
+}));
+if (
+  JSON.stringify(refused.calls) !==
+  JSON.stringify([
+    ["pathFor", "broken"],
+    ["resolveDrop", "/unreadable"],
+  ])
+)
+  failures.push(`an unreadable drop continued into adoption: ${JSON.stringify(refused.calls)}`);
+if (!refused.body.includes("EACCES: dropped path is unreadable"))
+  failures.push("an unreadable dropped path did not say why it was refused");
 
 /*
  * The drop affordance used to flicker across the whole shell: `dragleave`
