@@ -5,6 +5,10 @@ import { FileChannelAdapter } from "./file-channel.ts";
 import { type HostState, readHostState, type StoredRun, writeHostState } from "./host-state.ts";
 import type { Agent, HarnessAdapter, ReviewTask, Run } from "./types.ts";
 
+const recoveryNotice = (runId: string): string =>
+  `run ${runId} was dispatched when the Agent Host restarted; completion can no longer be ` +
+  "observed. Confirm the producer has stopped, then collect the Result Artifact manually.";
+
 /** What the author sees before one click sends everything (SPEC 3.2). */
 export interface ManifestEntry {
   readonly agentName: string;
@@ -62,7 +66,9 @@ export class AgentHost {
       this.comments.set(run.id, [...stored.comments]);
       if (stored.state === "completed" || stored.proposals.length > 0)
         this.proposals.set(run.id, [...stored.proposals]);
+      if (stored.state === "dispatched") this.recoveryRequired.add(run.id);
       if (stored.failure !== undefined) this.failures.set(run.id, stored.failure);
+      else if (stored.state === "dispatched") this.failures.set(run.id, recoveryNotice(run.id));
     }
   }
 
@@ -236,6 +242,7 @@ export class AgentHost {
   private readonly tasks = new Map<string, ReviewTask>();
   private readonly adapterFor = new Map<string, HarnessAdapter>();
   private readonly watching = new Map<string, Promise<void>>();
+  private readonly producerFinished = new Set<string>();
 
   /**
    * Wait for one run and record what happened.
@@ -250,6 +257,7 @@ export class AgentHost {
     const settled = (async () => {
       try {
         await adapter.awaitCompletion?.(run);
+        this.producerFinished.add(run.id);
       } catch (error) {
         // A terminal state is final. A late failure must not rewrite a run the
         // author already cancelled, or one that already produced a result.
@@ -297,6 +305,7 @@ export class AgentHost {
   }
 
   private readonly failures = new Map<string, string>();
+  private readonly recoveryRequired = new Set<string>();
 
   private fail(run: Run, reason: string): never {
     if (run.state === "dispatched") run.state = "failed";
@@ -309,7 +318,18 @@ export class AgentHost {
     throw new Error(reason);
   }
 
-  /** Why a run failed, for the interface to show verbatim. */
+  private rejectArtifact(run: Run, reason: string): never {
+    if (!this.recoveryRequired.has(run.id)) this.fail(run, reason);
+    this.failures.set(run.id, `${recoveryNotice(run.id)} Last collection attempt: ${reason}`);
+    try {
+      this.persist();
+    } catch (error) {
+      this.failures.set(run.id, `${recoveryNotice(run.id)} State was not saved: ${error}`);
+    }
+    throw new Error(reason);
+  }
+
+  /** Why a run failed or needs manual attention, shown verbatim by the interface. */
   failureFor(runId: string): string | undefined {
     return this.failures.get(runId);
   }
@@ -344,21 +364,25 @@ export class AgentHost {
     if (frozen) return frozen;
     if (run.state !== "dispatched")
       throw new Error(`run ${runId} is already ${run.state}; late material cannot change it`);
-    if (!existsSync(run.resultPath)) this.fail(run, `run ${runId} has written no result yet`);
+    const producer = this.adapterFor.get(runId);
+    if (producer?.awaitCompletion && !this.producerFinished.has(runId))
+      throw new Error(`run ${runId} is still running; its result cannot be collected yet`);
+    if (!existsSync(run.resultPath))
+      this.rejectArtifact(run, `run ${runId} has written no result yet`);
 
     let source: string;
     try {
       source = new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(run.resultPath));
     } catch {
-      this.fail(run, `run ${runId} wrote invalid UTF-8`);
+      this.rejectArtifact(run, `run ${runId} wrote invalid UTF-8`);
     }
     const parsed = parseAgentResult(source);
-    if (!parsed.ok) this.fail(run, `${parsed.error.code}: ${parsed.error.detail}`);
+    if (!parsed.ok) this.rejectArtifact(run, `${parsed.error.code}: ${parsed.error.detail}`);
 
     const scopes = new Map(task.editScopes.map((scope) => [scope.id, scope]));
     const proposals = parsed.value.replacements.map((replacement) => {
       const scope = scopes.get(replacement.scope);
-      if (!scope) this.fail(run, `unknown scope ${replacement.scope} in run ${runId}`);
+      if (!scope) this.rejectArtifact(run, `unknown scope ${replacement.scope} in run ${runId}`);
       return {
         id: `${runId}:${scope.id}`,
         runId,
@@ -375,6 +399,9 @@ export class AgentHost {
     appendMemos(this.root, run.agentId, runId, parsed.value.memos);
     this.comments.set(runId, comments);
     this.proposals.set(runId, proposals);
+    const previousFailure = this.failures.get(runId);
+    const wasRecoveryRequired = this.recoveryRequired.delete(runId);
+    this.failures.delete(runId);
     run.state = "completed";
     try {
       this.persist();
@@ -382,6 +409,8 @@ export class AgentHost {
       run.state = "dispatched";
       this.comments.delete(runId);
       this.proposals.delete(runId);
+      if (wasRecoveryRequired) this.recoveryRequired.add(runId);
+      if (previousFailure !== undefined) this.failures.set(runId, previousFailure);
       throw error;
     }
     return proposals;
