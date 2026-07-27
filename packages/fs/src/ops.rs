@@ -224,9 +224,13 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), OpError> {
 /// variant: a caller that wants one has to go around this module, which makes
 /// the decision visible in review.
 pub fn trash(guard: &Guard, target: &Path) -> Result<PathBuf, OpError> {
-    let target = guard.admit(target)?;
+    // Literal, not resolved. `admit` still answers every safety question
+    // against the resolved path, but deleting a symlink means deleting the
+    // link — handing the resolved path to the operating system turned "remove
+    // this shortcut" into "remove the chapter it points at".
+    let target = guard.admit_literal(target)?;
 
-    if !target.exists() {
+    if fs::symlink_metadata(&target).is_err() {
         return Err(OpError::Io {
             path: target.display().to_string(),
             reason: "does not exist".into(),
@@ -729,6 +733,83 @@ mod tests {
 
         fs::copy(&from, &to).unwrap();
         assert!(verify_copy(&from, &to).is_ok(), "a full copy verifies");
+    }
+
+    /// Trashing a symlink must remove the link, not what it points at.
+    ///
+    /// `admit` resolves, and `trash` handed the resolved path to the operating
+    /// system — so removing a shortcut to chapter three deleted chapter three.
+    /// The file browser lists symlinks as entries of their own, which is how an
+    /// author reaches this in one click.
+    ///
+    /// **This test cannot prove the fix on a volume without a trash.** `/tmp`
+    /// here has none, so `trash::delete` refuses before it would remove
+    /// anything, and the assertion below passes under both the fixed and the
+    /// broken code. Injecting the old `admit` leaves it green — recorded here
+    /// rather than left for the next reader to discover. What it does pin is
+    /// the half that is checkable anywhere: `trash` must reach the delete with
+    /// the link, and `symlink_metadata` rather than `exists` is what lets a
+    /// broken link be removed at all.
+    ///
+    /// The real proof is `guard.admit_literal` returning the written path,
+    /// which is asserted directly in guard.rs.
+    #[test]
+    fn trashing_a_symlink_keeps_what_it_points_at() {
+        let root = scratch("trash-symlink");
+        let chapter = root.join("03.md");
+        fs::write(&chapter, "第三章的正文").unwrap();
+
+        let link = root.join("近道.md");
+        std::os::unix::fs::symlink(&chapter, &link).unwrap();
+
+        let guard = Guard::new([&root]);
+        let outcome = trash(&guard, &link);
+
+        assert!(
+            chapter.exists(),
+            "the chapter the link pointed at must survive"
+        );
+        assert_eq!(fs::read_to_string(&chapter).unwrap(), "第三章的正文");
+
+        match outcome {
+            Ok(_) => assert!(
+                fs::symlink_metadata(&link).is_err(),
+                "the link itself is what goes to the trash"
+            ),
+            Err(OpError::NoTrashHere { .. }) => assert!(
+                fs::symlink_metadata(&link).is_ok(),
+                "a refused delete leaves the link in place"
+            ),
+            Err(other) => panic!("unexpected refusal: {other:?}"),
+        }
+    }
+
+    /// A dangling symlink is still an entry the author can select and delete.
+    ///
+    /// `exists()` follows the link, so a link whose target had been moved away
+    /// reported "does not exist" and could not be removed — the file browser
+    /// listed it and nothing could clear it. `symlink_metadata` asks about the
+    /// link itself.
+    #[test]
+    fn a_dangling_symlink_can_still_be_reached() {
+        let root = scratch("trash-dangling");
+        let gone = root.join("moved-away.md");
+        fs::write(&gone, "x").unwrap();
+        let link = root.join("近道.md");
+        std::os::unix::fs::symlink(&gone, &link).unwrap();
+        fs::remove_file(&gone).unwrap();
+
+        let guard = Guard::new([&root]);
+
+        // Whatever the volume answers, it must not be "does not exist".
+        match trash(&guard, &link) {
+            Ok(_) => {}
+            Err(OpError::NoTrashHere { .. }) => {}
+            Err(OpError::Io { reason, .. }) => {
+                assert_ne!(reason, "does not exist", "a dangling link is still there")
+            }
+            Err(other) => panic!("unexpected refusal: {other:?}"),
+        }
     }
 
     #[test]
