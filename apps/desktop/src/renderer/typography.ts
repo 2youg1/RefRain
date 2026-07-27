@@ -87,6 +87,44 @@ export const BUNDLED_JP = ["Shippori Mincho", "Zen Kaku Gothic New", "Murecho"];
 export const BUNDLED_LATIN = ["Antic Didone", "Jost", "Courier Prime"];
 
 /**
+ * The manuscript's font stack — the single authority for that question.
+ *
+ * Latin, then Japanese, then Chinese, then a generic. Order is the whole
+ * mechanism: a browser walks the stack per character and takes the first face
+ * that has a glyph for it. Latin leads because the CJK faces also carry Latin.
+ * Japanese precedes Chinese because 直, 骨 and 令 exist in both and are drawn
+ * differently, so a writer quoting Japanese inside Chinese prose needs the
+ * kana-bearing face first.
+ *
+ * This exists because the stack was being written out twice — once to render
+ * (`applyTypography`) and once to measure the baseline grid — and the two
+ * copies disagreed. The measuring copy read `"latin", "cjk", serif` and had no
+ * `jp` slot at all, so on a manuscript set in Japanese the grid was measured
+ * against a face the text was not rendered in. `measureFontLine` returns the
+ * face's own ascent-plus-descent ratio, and Shippori Mincho does not agree
+ * with Chiron Sung HK about it; the rule was therefore drawn through the
+ * middle of the characters — the exact defect `measureFontLine` was written to
+ * prevent. Two expressions of one fact is one too many.
+ *
+ * Empty slots are dropped rather than quoted-empty: `""` is a parse error that
+ * discards the whole declaration. Each name is quoted, because a multi-word
+ * family unquoted is the same error. A name carrying a quote, a backslash or a
+ * semicolon is dropped entirely rather than escaped: the author's font library
+ * is not a trusted source of CSS, and no real family carries any of them.
+ */
+export const manuscriptStack = (type: {
+  latinFamily: string;
+  jpFamily: string;
+  cjkFamily: string;
+}): string =>
+  [
+    ...[type.latinFamily, type.jpFamily, type.cjkFamily]
+      .filter((name) => name.trim().length > 0 && !/["'\\;]/.test(name))
+      .map((name) => `"${name}"`),
+    "serif",
+  ].join(", ");
+
+/**
  * Measure a typeface's own line height instead of assuming a ratio.
  *
  * The baseline grid draws its rule one pixel under the glyphs, which sits at

@@ -262,6 +262,13 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-typography-input.ts
 
+      # The stack was written out twice, and the copies disagreed: the one used
+      # to measure the baseline grid had no Japanese slot, so a Japanese
+      # manuscript had its rule drawn through the middle of the characters.
+      - name: the manuscript font stack has one authority
+        working-directory: apps/desktop
+        run: bun scripts/verify-font-stack.ts
+
       # Playwright cannot emulate Electron's webUtils path conversion, but the
       # File-to-resolveDrop-to-Root chain after it must not be a silent no-op.
       - name: a dropped path enters Root adoption

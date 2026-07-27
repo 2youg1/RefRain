@@ -239,7 +239,7 @@ header {
   padding: 8px;
   /* One device pixel at every density: a 1px rule on a 300% panel is a blurry
      three-pixel smear, and this application is built out of hairlines. */
-  border-bottom: var(--hairline, 1px) solid var(--shell-hair);
+  border-bottom: var(--hairline, 1px) solid var(--rule);
 }
 
 input[type="search"] {
@@ -248,7 +248,7 @@ input[type="search"] {
   font: inherit;
   color: var(--ink);
   background: var(--paper);
-  border: var(--hairline, 1px) solid var(--shell-hair);
+  border: var(--hairline, 1px) solid var(--rule-strong);
   border-radius: 2px;
 }
 
@@ -327,7 +327,7 @@ input[type="search"] {
 }
 
 .row:hover {
-  background: var(--shell-hover);
+  background: var(--paper-sunk);
 }
 
 .row.selected {
@@ -378,7 +378,7 @@ footer {
   justify-content: space-between;
   gap: 8px;
   padding: 6px 8px;
-  border-top: var(--hairline, 1px) solid var(--shell-hair);
+  border-top: var(--hairline, 1px) solid var(--rule);
 }
 
 .count {
@@ -393,7 +393,7 @@ footer {
   font-size: 0.75rem;
   color: var(--ink-soft);
   background: none;
-  border: var(--hairline, 1px) solid var(--shell-hair);
+  border: var(--hairline, 1px) solid var(--rule-strong);
   border-radius: 2px;
   cursor: pointer;
 }
