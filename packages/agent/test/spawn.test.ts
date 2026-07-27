@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { launch } from "../src/spawn.ts";
 
 /**
@@ -117,6 +117,20 @@ for (let i = 0; i < 10; i++) process.stdout.write(chunk);
 
     expect((await run.stdout).trim()).toBe("甲");
   });
+
+  test.skipIf(process.platform !== "win32")(
+    "a bare npm shim resolves through PATH and PATHEXT",
+    async () => {
+      script("refrain-bare-shim.cmd", "@echo off\r\necho 乙\r\n");
+      const run = launch({
+        argv: ["refrain-bare-shim"],
+        env: { PATH: `${scratch}${delimiter}${process.env.PATH ?? ""}`, PATHEXT: ".CMD" },
+      });
+      await run.exited;
+
+      expect((await run.stdout).trim()).toBe("乙");
+    },
+  );
 
   test("a prompt full of shell metacharacters stays one argument", async () => {
     const argv = script(
