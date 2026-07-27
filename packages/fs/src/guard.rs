@@ -136,18 +136,41 @@ impl Guard {
         &self.roots
     }
 
-    /// Admit a candidate, then hand back the path as it was written.
+    /// Admit the directory entry named by `candidate` without following its
+    /// final symlink.
     ///
-    /// `admit` resolves, which is right for every check — `../` and a symlink
-    /// out of the tree are refused by one rule rather than two. It is wrong for
-    /// one caller. Deleting a symlink means deleting the link; `trash` took the
-    /// resolved path and so deleted the chapter the link pointed at, turning
-    /// "remove this shortcut" into "remove the manuscript". The safety
-    /// questions are still answered against the resolved path, because that is
-    /// what makes them answerable.
+    /// Deleting a symlink means deleting the link, but admission still validates
+    /// both sides of that entry: the canonical parent and literal name, then the
+    /// resolved referent. The reserved Source Backup component is also checked
+    /// as written so a symlink cannot launder `.refrain-source` into Root content.
     pub fn admit_literal(&self, candidate: &Path) -> Result<PathBuf, Refusal> {
-        self.admit(candidate)?;
-        Ok(candidate.to_path_buf())
+        if candidate
+            .components()
+            .any(|c| matches!(c, Component::Normal(p) if p == SOURCE_BACKUP_DIR))
+        {
+            return Err(Refusal::SourceBackup {
+                path: candidate.display().to_string(),
+            });
+        }
+
+        let name = candidate.file_name().ok_or_else(|| Refusal::Unresolvable {
+            path: candidate.display().to_string(),
+            reason: "has no file name".into(),
+        })?;
+        let name = name.to_string_lossy();
+        if is_illegal(&name) {
+            return Err(Refusal::IllegalName {
+                name: name.into_owned(),
+            });
+        }
+
+        let parent = candidate.parent().ok_or_else(|| Refusal::Unresolvable {
+            path: candidate.display().to_string(),
+            reason: "has no parent directory".into(),
+        })?;
+        let literal = self.admit(parent)?.join(name.as_ref());
+        self.admit(&literal)?;
+        Ok(literal)
     }
 }
 
@@ -205,7 +228,7 @@ fn resolve(candidate: &Path) -> Result<PathBuf, Refusal> {
                 return Err(Refusal::Unresolvable {
                     path: absolute.display().to_string(),
                     reason: "no existing ancestor".into(),
-                })
+                });
             }
         }
     }
@@ -358,6 +381,7 @@ mod tests {
     /// resolved path, so removing a shortcut to chapter three removed chapter
     /// three — and a sandbox without a trash directory cannot demonstrate that
     /// end to end, because the delete refuses first. It is provable here.
+    #[cfg(unix)]
     #[test]
     fn admit_literal_keeps_the_path_as_written() {
         let root = scratch("literal");
@@ -378,6 +402,48 @@ mod tests {
             link,
             "admit_literal hands back the link, which is what a delete needs"
         );
+    }
+
+    /// A link stored in the Source Backup stays immutable even when its target
+    /// is ordinary Root content. Canonical admission alone sees only the target.
+    #[cfg(unix)]
+    #[test]
+    fn admit_literal_refuses_a_symlink_entry_inside_the_source_backup() {
+        let root = scratch("literal-backup-entry");
+        let chapter = root.join("03.md");
+        fs::write(&chapter, "第三章").unwrap();
+        let backup = root.join(SOURCE_BACKUP_DIR);
+        fs::create_dir(&backup).unwrap();
+        let link = backup.join("03.md");
+        std::os::unix::fs::symlink(&chapter, &link).unwrap();
+        let guard = Guard::new([&root]);
+
+        assert_eq!(guard.admit(&link).unwrap(), chapter);
+        assert!(matches!(
+            guard.admit_literal(&link).unwrap_err(),
+            Refusal::SourceBackup { .. }
+        ));
+    }
+
+    /// The reserved component is protected as written too. A directory link
+    /// named `.refrain-source` must not launder the path into ordinary content.
+    #[cfg(unix)]
+    #[test]
+    fn admit_literal_refuses_a_lexical_source_backup_alias() {
+        let root = scratch("literal-backup-alias");
+        let ordinary = root.join("ordinary");
+        fs::create_dir(&ordinary).unwrap();
+        fs::write(ordinary.join("03.md"), "第三章").unwrap();
+        let alias = root.join(SOURCE_BACKUP_DIR);
+        std::os::unix::fs::symlink(&ordinary, &alias).unwrap();
+        let candidate = alias.join("03.md");
+        let guard = Guard::new([&root]);
+
+        assert_eq!(guard.admit(&candidate).unwrap(), ordinary.join("03.md"));
+        assert!(matches!(
+            guard.admit_literal(&candidate).unwrap_err(),
+            Refusal::SourceBackup { .. }
+        ));
     }
 
     /// The safety checks still run. A literal path is not an unchecked one.

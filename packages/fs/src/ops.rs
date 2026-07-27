@@ -152,7 +152,22 @@ pub fn move_to(guard: &Guard, from: &Path, to: &Path, replace: bool) -> Outcome 
 /// failure it guards against is likely to cost, while a short write — the
 /// realistic way a cross-device copy goes wrong — always changes the size.
 fn verify_copy(from: &Path, to: &Path) -> Result<(), OpError> {
-    if from.is_dir() {
+    let source_metadata = fs::symlink_metadata(from).map_err(|error| io(from, error))?;
+    if source_metadata.file_type().is_symlink() {
+        let copied_metadata = fs::symlink_metadata(to).map_err(|error| io(to, error))?;
+        let same_link = copied_metadata.file_type().is_symlink()
+            && fs::read_link(from).map_err(|error| io(from, error))?
+                == fs::read_link(to).map_err(|error| io(to, error))?;
+        if !same_link {
+            return Err(OpError::Io {
+                path: to.display().to_string(),
+                reason: "copy does not preserve the original symbolic link".into(),
+            });
+        }
+        return Ok(());
+    }
+
+    if source_metadata.is_dir() {
         for entry in fs::read_dir(from).map_err(|error| io(from, error))? {
             let entry = entry.map_err(|error| io(from, error))?;
             verify_copy(&entry.path(), &to.join(entry.file_name()))?;
@@ -160,7 +175,7 @@ fn verify_copy(from: &Path, to: &Path) -> Result<(), OpError> {
         return Ok(());
     }
 
-    let source = fs::metadata(from).map_err(|error| io(from, error))?.len();
+    let source = source_metadata.len();
     let copied = fs::metadata(to).map_err(|error| io(to, error))?.len();
     if source != copied {
         return Err(OpError::Io {
@@ -202,7 +217,12 @@ pub fn copy(guard: &Guard, from: &Path, to: &Path, replace: bool) -> Outcome {
 }
 
 fn copy_tree(from: &Path, to: &Path) -> Result<(), OpError> {
-    if from.is_dir() {
+    let metadata = fs::symlink_metadata(from).map_err(|error| io(from, error))?;
+    if metadata.file_type().is_symlink() {
+        return copy_symlink(from, to);
+    }
+
+    if metadata.is_dir() {
         fs::create_dir_all(to).map_err(|error| io(to, error))?;
         for entry in fs::read_dir(from).map_err(|error| io(from, error))? {
             let entry = entry.map_err(|error| io(from, error))?;
@@ -216,6 +236,35 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), OpError> {
     }
     fs::copy(from, to).map_err(|error| io(from, error))?;
     Ok(())
+}
+
+fn copy_symlink(from: &Path, to: &Path) -> Result<(), OpError> {
+    let target = fs::read_link(from).map_err(|error| io(from, error))?;
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent).map_err(|error| io(parent, error))?;
+    }
+
+    #[cfg(unix)]
+    return std::os::unix::fs::symlink(target, to).map_err(|error| io(to, error));
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::FileTypeExt;
+
+        let file_type = fs::symlink_metadata(from)
+            .map_err(|error| io(from, error))?
+            .file_type();
+        if file_type.is_symlink_dir() {
+            return std::os::windows::fs::symlink_dir(target, to).map_err(|error| io(to, error));
+        }
+        return std::os::windows::fs::symlink_file(target, to).map_err(|error| io(to, error));
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    Err(OpError::Io {
+        path: to.display().to_string(),
+        reason: "copying symbolic links is not supported on this platform".into(),
+    })
 }
 
 /// Delete to the system trash.
@@ -300,19 +349,37 @@ fn classify_trash_failure(target: &Path, error: &trash::Error) -> OpError {
 /// The move is a copy-verify-remove across devices, exactly as `rename` does
 /// for `EXDEV`; nothing is removed from the source until the copy is verified.
 pub fn trash_via_home(guard: &Guard, target: &Path) -> Result<PathBuf, OpError> {
-    let target = guard.admit(target)?;
+    let home = dirs_home().ok_or_else(|| OpError::Io {
+        path: target.display().to_string(),
+        reason: "no home directory to stage through".into(),
+    })?;
+    trash_via_home_at(guard, target, &home, |staged| {
+        trash::delete(staged).map_err(|error| classify_trash_failure(staged, &error))
+    })
+}
 
-    if !target.exists() {
+/// The body of `trash_via_home`, with the staging volume and the system trash
+/// supplied by the caller.
+///
+/// A sandbox has no working trash, so the one property that matters here — the
+/// staged entry is the selected directory entry, never its referent — could
+/// only be asserted against the host's real trash, which is to say not at all.
+fn trash_via_home_at(
+    guard: &Guard,
+    target: &Path,
+    home: &Path,
+    send_to_trash: impl Fn(&Path) -> Result<(), OpError>,
+) -> Result<PathBuf, OpError> {
+    // Literal, for the same reason `trash` is: staging a shortcut must stage
+    // the shortcut. Resolving here would move the chapter the link points at.
+    let target = guard.admit_literal(target)?;
+
+    if fs::symlink_metadata(&target).is_err() {
         return Err(OpError::Io {
             path: target.display().to_string(),
             reason: "does not exist".into(),
         });
     }
-
-    let home = dirs_home().ok_or_else(|| OpError::Io {
-        path: target.display().to_string(),
-        reason: "no home directory to stage through".into(),
-    })?;
 
     let staging = home.join(".refrain-trash");
     fs::create_dir_all(&staging).map_err(|error| OpError::Io {
@@ -355,9 +422,9 @@ pub fn trash_via_home(guard: &Guard, target: &Path) -> Result<PathBuf, OpError> 
     // If the home volume turns out to have no trash either, put the file back
     // where the author left it rather than leaving it in a staging directory
     // they never chose.
-    if let Err(error) = trash::delete(&staged) {
+    if let Err(error) = send_to_trash(&staged) {
         let _ = fs::rename(&staged, &target);
-        return Err(classify_trash_failure(&target, &error));
+        return Err(error);
     }
 
     Ok(target)
@@ -735,6 +802,28 @@ mod tests {
         assert!(verify_copy(&from, &to).is_ok(), "a full copy verifies");
     }
 
+    /// The via-home fallback crosses volumes, where rename cannot carry a link.
+    /// Its copy must preserve the selected directory entry, not dereference it.
+    #[cfg(unix)]
+    #[test]
+    fn a_cross_device_copy_preserves_a_symlink_entry() {
+        let root = scratch("copy-symlink-entry");
+        let chapter = root.join("03.md");
+        fs::write(&chapter, "第三章").unwrap();
+        let link = root.join("近道.md");
+        std::os::unix::fs::symlink(&chapter, &link).unwrap();
+        let staged = root.join("staged-link");
+
+        copy_tree(&link, &staged).unwrap();
+        verify_copy(&link, &staged).unwrap();
+
+        assert!(fs::symlink_metadata(&staged)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read_link(&staged).unwrap(), chapter);
+    }
+
     /// Trashing a symlink must remove the link, not what it points at.
     ///
     /// `admit` resolves, and `trash` handed the resolved path to the operating
@@ -753,6 +842,7 @@ mod tests {
     ///
     /// The real proof is `guard.admit_literal` returning the written path,
     /// which is asserted directly in guard.rs.
+    #[cfg(unix)]
     #[test]
     fn trashing_a_symlink_keeps_what_it_points_at() {
         let root = scratch("trash-symlink");
@@ -790,6 +880,7 @@ mod tests {
     /// reported "does not exist" and could not be removed — the file browser
     /// listed it and nothing could clear it. `symlink_metadata` asks about the
     /// link itself.
+    #[cfg(unix)]
     #[test]
     fn a_dangling_symlink_can_still_be_reached() {
         let root = scratch("trash-dangling");
@@ -827,6 +918,41 @@ mod tests {
             .unwrap()
             .file_type()
             .is_symlink());
+    }
+
+    /// Exercise the via-home path without asking the host for a working trash.
+    /// The injected trash is a rename, so the selected entry stays recoverable.
+    #[cfg(unix)]
+    #[test]
+    fn trashing_a_symlink_via_home_stages_the_link_not_its_referent() {
+        let root = scratch("via-home-symlink");
+        let chapter = root.join("03.md");
+        fs::write(&chapter, "第三章的正文").unwrap();
+        let link = root.join("近道.md");
+        std::os::unix::fs::symlink(&chapter, &link).unwrap();
+        let home = scratch("via-home-symlink-home");
+        let fake_trash = home.join("recoverable-link");
+        let guard = Guard::new([&root]);
+
+        trash_via_home_at(&guard, &link, &home, |staged| {
+            assert!(
+                fs::symlink_metadata(staged)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink(),
+                "the via-home staging entry must still be the selected link"
+            );
+            fs::rename(staged, &fake_trash).unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+        assert!(fs::symlink_metadata(&link).is_err());
+        assert!(fs::symlink_metadata(&fake_trash)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read_to_string(&chapter).unwrap(), "第三章的正文");
     }
 
     /// SPEC Q8's escape hatch. The file leaves the workspace and reaches a

@@ -12,13 +12,33 @@
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::guard::{Guard, Refusal};
 use crate::index::{self, Kind, ScanOptions};
 use crate::ops;
 use crate::search;
 use crate::sort::{self, Direction, Order};
+
+/// Keep one path spelling at the JavaScript boundary.
+///
+/// Windows `canonicalize` adds a verbatim `\\?\` prefix while the walker keeps
+/// the ordinary path supplied by Electron. Letting both escape makes a literal
+/// `startsWith(root)` fail for the same file. The prefix is a Win32 transport
+/// detail, not part of the Root identity the renderer presents.
+fn display_path(path: &Path) -> String {
+    let rendered = path.display().to_string();
+    #[cfg(windows)]
+    {
+        if let Some(rest) = rendered.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{rest}");
+        }
+        if let Some(rest) = rendered.strip_prefix(r"\\?\") {
+            return rest.to_string();
+        }
+    }
+    rendered
+}
 
 #[napi(object)]
 pub struct JsEntry {
@@ -37,7 +57,7 @@ pub struct JsEntry {
 impl From<&index::Entry> for JsEntry {
     fn from(entry: &index::Entry) -> Self {
         Self {
-            path: entry.path.display().to_string(),
+            path: display_path(&entry.path),
             name: entry.name.clone(),
             kind: match entry.kind {
                 Kind::File => "file",
@@ -208,7 +228,7 @@ impl Workspace {
                 return Err(refuse(
                     "UNKNOWN_ORDER",
                     format!("{other} is not a sort order"),
-                ))
+                ));
             }
         };
         let direction = if descending {
@@ -229,7 +249,7 @@ impl Workspace {
             &PathBuf::from(to),
             replace.unwrap_or(false),
         )
-        .map(|done| done.to.display().to_string())
+        .map(|done| display_path(&done.to))
         .map_err(op_error)
     }
 
@@ -241,7 +261,7 @@ impl Workspace {
             &PathBuf::from(to),
             replace.unwrap_or(false),
         )
-        .map(|done| done.to.display().to_string())
+        .map(|done| display_path(&done.to))
         .map_err(op_error)
     }
 
@@ -250,7 +270,7 @@ impl Workspace {
     #[napi(catch_unwind)]
     pub fn trash(&self, target: String) -> Result<String> {
         ops::trash(&self.guard, &PathBuf::from(target))
-            .map(|path| path.display().to_string())
+            .map(|path| display_path(&path))
             .map_err(op_error)
     }
 
@@ -262,7 +282,7 @@ impl Workspace {
     #[napi(catch_unwind)]
     pub fn trash_via_home(&self, target: String) -> Result<String> {
         ops::trash_via_home(&self.guard, &PathBuf::from(target))
-            .map(|path| path.display().to_string())
+            .map(|path| display_path(&path))
             .map_err(op_error)
     }
 
@@ -276,13 +296,13 @@ impl Workspace {
             .zip(paths.iter())
             .map(|(outcome, path)| match outcome {
                 Ok(trashed) => JsTrashOutcome {
-                    path: trashed.display().to_string(),
+                    path: display_path(&trashed),
                     trashed: true,
                     code: None,
                     error: None,
                 },
                 Err(error) => JsTrashOutcome {
-                    path: path.display().to_string(),
+                    path: display_path(path),
                     trashed: false,
                     // Code and sentence in separate fields. The interface has
                     // to branch on NO_TRASH_HERE to offer SPEC Q8's escape
@@ -301,23 +321,21 @@ impl Workspace {
             &PathBuf::from(target),
             &PathBuf::from(link_path),
         )
-        .map(|done| done.to.display().to_string())
+        .map(|done| display_path(&done.to))
         .map_err(op_error)
     }
 
     #[napi(catch_unwind)]
     pub fn create_directory(&self, path: String) -> Result<String> {
         ops::create_directory(&self.guard, &PathBuf::from(path))
-            .map(|path| path.display().to_string())
+            .map(|path| display_path(&path))
             .map_err(op_error)
     }
 
     /// A name that does not collide, for a paste or a duplicate.
     #[napi(catch_unwind)]
     pub fn unique_name(&self, desired: String) -> String {
-        ops::unique_name(&PathBuf::from(desired))
-            .display()
-            .to_string()
+        display_path(&ops::unique_name(&PathBuf::from(desired)))
     }
 
     /// Check a path without touching the disk. The interface calls this to grey
@@ -378,6 +396,24 @@ mod tests {
         let converted = JsEntry::from(&entry(Kind::File, 12));
         assert_eq!(converted.name, "第一章.md");
         assert!(converted.path.contains("第一章"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_drive_paths_leave_napi_in_the_same_form_electron_supplied() {
+        assert_eq!(
+            display_path(Path::new(r"\\?\C:\书稿\第一章.md")),
+            r"C:\书稿\第一章.md"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_unc_paths_leave_napi_as_ordinary_unc_paths() {
+        assert_eq!(
+            display_path(Path::new(r"\\?\UNC\server\share\第一章.md")),
+            r"\\server\share\第一章.md"
+        );
     }
 
     #[test]
