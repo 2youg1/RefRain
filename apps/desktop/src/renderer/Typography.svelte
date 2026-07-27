@@ -7,6 +7,7 @@ import type { Key } from "./i18n.ts";
     BUNDLED_JP,
     BUNDLED_LATIN,
     DEFAULTS,
+    manuscriptStack,
     type TypeSettings,
   } from "./typography.ts";
 
@@ -69,8 +70,7 @@ import type { Key } from "./i18n.ts";
   <div
     class="specimen"
     style="
-      font-family: '{safeFamily(settings.latinFamily)}', '{safeFamily(settings.jpFamily)}',
-        '{safeFamily(settings.cjkFamily)}', serif;
+      font-family: {manuscriptStack(settings)};
       font-size: {settings.size}px;
       font-weight: {settings.weight};
       line-height: {settings.leading};

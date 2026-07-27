@@ -70,8 +70,6 @@
   --source-wash: oklch(0.935 0.024 232); /* #daedf7 */
   --pending: oklch(0.583 0.168 38); /* #ca4d23 */
   --pending-wash: oklch(0.935 0.0504 38); /* #ffdfd2 */
-  --seal-pale: oklch(0.785 0.0571 42); /* #daae9d */
-  --agent-pale: oklch(0.926 0.0211 95.4); /* #ebe7d7 */
 
   --role-pending: var(--pending);
   --role-pending-wash: var(--pending-wash);
@@ -141,8 +139,6 @@
   --source-wash: oklch(0.94 0.024 232); /* #dceef9 */
   --pending: oklch(0.7 0.152 8); /* #eb728c */
   --pending-wash: oklch(0.94 0.0456 8); /* #ffdfe5 */
-  --seal-pale: oklch(0.902 0.0517 12); /* #ffd1d5 */
-  --agent-pale: oklch(0.946 0.0304 200); /* #d7f4f5 */
 
   --role-pending: var(--pending);
   --role-pending-wash: var(--pending-wash);
@@ -208,8 +204,6 @@
   --source-wash: oklch(0.947 0.024 232); /* #def1fb */
   --pending: oklch(0.52 0.132 262); /* #3d66b4 */
   --pending-wash: oklch(0.947 0.0396 262); /* #dfeeff */
-  --seal-pale: oklch(0.722 0.0449 266); /* #98a5c2 */
-  --agent-pale: oklch(0.896 0.0099 203); /* #d6dfdf */
 
   --role-pending: var(--pending);
   --role-pending-wash: var(--pending-wash);
@@ -275,8 +269,6 @@
   --source-wash: oklch(0.936 0.024 232); /* #dbedf7 */
   --pending: oklch(0.596 0.146 76); /* #af7000 */
   --pending-wash: oklch(0.936 0.0438 76); /* #fbe7ca */
-  --seal-pale: oklch(0.798 0.0496 80); /* #ceba9a */
-  --agent-pale: oklch(0.856 0.0141 159); /* #c8d3cc */
 
   --role-pending: var(--pending);
   --role-pending-wash: var(--pending-wash);
@@ -342,8 +334,6 @@
   --source-wash: oklch(0.941 0.024 232); /* #dceff9 */
   --pending: oklch(0.5 0.15 152); /* #007a34 */
   --pending-wash: oklch(0.941 0.045 152); /* #d6f5dd */
-  --seal-pale: oklch(0.702 0.051 156); /* #86a992 */
-  --agent-pale: oklch(0.892 0.0112 269); /* #d8dbe3 */
 
   --role-pending: var(--pending);
   --role-pending-wash: var(--pending-wash);
@@ -410,8 +400,6 @@
   --source-wash: oklch(0.25 0.024 232); /* #16242b */
   --pending: oklch(0.8 0.158 36); /* #ff9574 */
   --pending-wash: oklch(0.25 0.0474 36); /* #351911 */
-  --seal-pale: oklch(0.5 0.0537 40); /* #7e594c */
-  --agent-pale: oklch(0.5 0.0093 245); /* #5f6468 */
 
   --role-pending: var(--pending);
   --role-pending-wash: var(--pending-wash);
@@ -480,8 +468,6 @@
   --source-wash: oklch(0.232 0.024 232); /* #111f27 */
   --pending: oklch(0.88 0.07 228); /* #a7e1fc */
   --pending-wash: oklch(0.232 0.021 228); /* #131f25 */
-  --seal-pale: oklch(0.58 0.0238 232); /* #6d7d86 */
-  --agent-pale: oklch(0.49 0.0179 149); /* #5a635b */
 
   --role-pending: var(--pending);
   --role-pending-wash: var(--pending-wash);
@@ -547,8 +533,6 @@
   --source-wash: oklch(0.228 0.024 232); /* #111f26 */
   --pending: oklch(0.86 0.132 192); /* #47ece7 */
   --pending-wash: oklch(0.228 0.0396 192); /* #002221 */
-  --seal-pale: oklch(0.56 0.0449 196); /* #557d7d */
-  --agent-pale: oklch(0.542 0.0237 359); /* #7c6a6f */
 
   --role-pending: var(--pending);
   --role-pending-wash: var(--pending-wash);

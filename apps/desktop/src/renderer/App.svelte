@@ -33,7 +33,7 @@ import Settings, { type Section } from "./Settings.svelte";
 import Sheet from "./Sheet.svelte";
 import Shortcuts from "./Shortcuts.svelte";
 import Typography from "./Typography.svelte";
-import { DEFAULTS, measureFontLine, type TypeSettings } from "./typography.ts";
+import { DEFAULTS, manuscriptStack, measureFontLine, type TypeSettings } from "./typography.ts";
 import Welcome from "./Welcome.svelte";
 
 type SheetName = "dispatch" | "review" | "ledger" | "edits" | "settings" | "files" | null;
@@ -192,7 +192,7 @@ onMount(() =>
 
 $effect(() => {
   persist("type", type);
-  applyTypography(type, measureFontLine(`"${type.latinFamily}", "${type.cjkFamily}", serif`, type.size));
+  applyTypography(type, measureFontLine(manuscriptStack(type), type.size));
 });
 
 /*

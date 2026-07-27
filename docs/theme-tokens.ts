@@ -327,13 +327,12 @@ const derive = (t: Theme): Record<string, Oklch> => {
     "source-wash": [pL + up * 0.012, 0.024, 232],
     pending: [sL + (night ? 0.1 : 0), sC, sH],
     "pending-wash": [pL + up * 0.012, Math.min(0.052, sC * 0.3), sH],
-    // The pale end of each accent, for gradients and large washes. Decorative
-    // only: nothing legible sits on these, so they are exempt from the text
-    // floor — which is exactly why the seal itself must not be pushed here.
-    // 霞 asked to go "toward white"; pushing the cherry to L .740 dropped it
-    // to Lc 43.6 and the mark stopped reading. The pale end takes that job.
-    "seal-pale": [night ? Math.max(0.3, sL - 0.2) : Math.min(0.93, sL + 0.202), sC * 0.34, sH + 4],
-    "agent-pale": [night ? Math.max(0.3, aL - 0.2) : Math.min(0.95, aL + 0.336), aC * 0.16, aH + 7],
+    // 霞 asked to go "toward white". Pushing the cherry itself to L .740
+    // dropped it to Lc 43.6 and the mark stopped reading, so the seal holds its
+    // own lightness and anything that wants to be paler derives from it at the
+    // point of use. A pale end was emitted here for a while — sixteen lines
+    // across eight themes — and nothing ever consumed it; a token no rule reads
+    // is a value nobody can be wrong about, which is the same as not having it.
   };
 };
 

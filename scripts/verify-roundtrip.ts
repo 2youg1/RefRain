@@ -73,6 +73,35 @@ const CORPUS: ReadonlyArray<readonly [string, string]> = [
   ],
 ];
 
+/**
+ * Corpora saved with their blocks reordered rather than untouched.
+ *
+ * The loop above only ever writes back the blocks it read, so it exercises the
+ * one branch of `applyBlocks` where every block is still in its original
+ * position. Reordering takes the other branch: once old blocks move, the
+ * whitespace between them belongs to the document position instead of
+ * travelling with the paragraph, and nothing in the corpus above could tell a
+ * correct implementation of that rule from a broken one.
+ *
+ * What is asserted is not byte equality with the input — the author moved a
+ * paragraph, so the bytes must change. It is that the move is the *only*
+ * change: the paragraphs come back in the new order, all of them, with their
+ * own bytes intact, and a second load-and-save of the result is a fixed point.
+ * A serialiser that drops a blank line on reorder is stable but lossy, and one
+ * that carries the old gap along is lossless on the first save and drifts on
+ * the second; requiring both catches each.
+ *
+ * Injection proof that this bites: delete the `reordered` branch in
+ * `applyBlocks` (always `leadingGap(doc, found)`) and the swap corpora fail.
+ */
+const REORDER_CORPUS: ReadonlyArray<readonly [string, string]> = [
+  ["swap first and third paragraphs", "第一段。\n\n第二段。\n\n第三段。\n"],
+  ["swap across an ideographic indent", "　　甲段落。\n\n　　乙段落。\n\n　　丙段落。\n"],
+  ["swap across uneven blank runs", "one\n\n\n\ntwo\n\n three\n"],
+  ["swap with a fence in the middle", "前言\n\n```ts\nconst a = 1;\n```\n\n后记\n"],
+  ["swap without a trailing newline", "alpha\n\nbeta\n\ngamma"],
+];
+
 const dir = mkdtempSync(join(tmpdir(), "refrain-verify-roundtrip-"));
 const broken: string[] = [];
 
@@ -130,14 +159,81 @@ try {
           `      ${JSON.stringify(chapter.head.blocks.map((b) => b.text))}`,
       );
   }
+  for (const [name, source] of REORDER_CORPUS) {
+    const path = join(dir, `reorder-${name.replace(/[^a-z]+/gi, "-")}.md`);
+    writeFileSync(path, source, "utf8");
+
+    const chapter = loadWorkspace([path]).chapters[0];
+    if (chapter === undefined) {
+      broken.push(`${name}: the workspace did not load the file at all`);
+      continue;
+    }
+
+    const original = chapter.head.blocks;
+    if (original.length !== 3) {
+      broken.push(`${name}: expected 3 blocks to reorder, got ${original.length}`);
+      continue;
+    }
+
+    // The author's move: first paragraph and third change places. Identity
+    // travels with the block, which is what lets the serialiser tell a move
+    // from a rewrite.
+    const moved = [original[2], original[1], original[0]] as typeof original;
+    const outcome = writeChapter(path, { ...chapter.head, blocks: moved }, chapter.stamp);
+    if (!outcome.ok) {
+      broken.push(`${name}: the save refused with ${outcome.reason}`);
+      continue;
+    }
+
+    // Reload and compare block text, not file bytes: the author moved a
+    // paragraph, so the bytes are supposed to differ. What may not differ is
+    // any paragraph's own content, or how many there are.
+    const after = loadWorkspace([path]).chapters[0];
+    if (after === undefined) {
+      broken.push(`${name}: the reordered file no longer loads`);
+      continue;
+    }
+
+    const want = moved.map((block) => block.text);
+    const got = after.head.blocks.map((block) => block.text);
+    if (got.length !== want.length || got.some((text, index) => text !== want[index])) {
+      broken.push(
+        `${name}: reorder did not survive the save\n` +
+          `      want ${JSON.stringify(want)}\n` +
+          `      got  ${JSON.stringify(got)}`,
+      );
+      continue;
+    }
+
+    // A correct reorder is a fixed point: saving the already-moved order back
+    // unchanged must not shift whitespace again. A serialiser that mismatches
+    // gaps to positions is lossless once and drifts on every save after.
+    const settled = readFileSync(path, "utf8");
+    const second = writeChapter(path, after.head, after.stamp);
+    if (!second.ok) {
+      broken.push(`${name}: the second save refused with ${second.reason}`);
+      continue;
+    }
+    const twice = readFileSync(path, "utf8");
+    if (digest(twice) !== digest(settled))
+      broken.push(
+        `${name}: saving the settled order again changed it\n` +
+          `      once  ${JSON.stringify(settled)}\n` +
+          `      twice ${JSON.stringify(twice)}`,
+      );
+  }
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }
 
 if (broken.length > 0) {
-  console.error(`INV-5 violated: ${broken.length} of ${CORPUS.length} corpora changed on save\n`);
+  const total = CORPUS.length + REORDER_CORPUS.length;
+  console.error(`INV-5 violated: ${broken.length} of ${total} corpora changed on save\n`);
   for (const line of broken) console.error(`  ${line}`);
   process.exit(1);
 }
 
-console.log(`PASS  ${CORPUS.length} corpora survive a load and a save byte for byte`);
+console.log(
+  `PASS  ${CORPUS.length} corpora survive a load and a save byte for byte, ` +
+    `${REORDER_CORPUS.length} survive a block reorder`,
+);
