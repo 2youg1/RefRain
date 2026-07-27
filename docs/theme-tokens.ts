@@ -305,6 +305,18 @@ const derive = (t: Theme): Record<string, Oklch> => {
     seal: [sL, sC, sH],
     "seal-bright": [sL + 0.09, sC * 0.95, sH + 4],
     "seal-wash": [pL + up * 0.01, Math.min(0.052, sC * 0.3), sH],
+    // The caret owns a token because it does a different job from the seal it
+    // used to borrow. A seal marks; a caret says "you are here", and it says it
+    // as a one-pixel rule against a full page of text — so it has to out-read
+    // the text, not merely match it. Borrowing the seal put six of the eight
+    // themes below the ink they sit in: 霞 gave the caret |ΔL| 0.252 against
+    // paper while its text had 0.630, so the one thing the eye hunts for was
+    // the faintest thing on the page.
+    //
+    // The hue is the seal's, so the caret still reads as this theme's accent.
+    // The lightness is pushed away from the paper until it clears the ink,
+    // which is what `verify-caret` asserts rather than trusting these numbers.
+    caret: [night ? Math.min(0.94, pL + 0.68) : Math.max(0.24, pL - 0.68), sC * 1.15, sH],
     agent: [aL, aC, aH],
     "agent-wash": [pL + up * 0.012, Math.min(0.03, aC * 0.28), aH],
     accepted: [night ? 0.712 : 0.478, 0.096, 152],
@@ -421,6 +433,25 @@ const block = (t: Theme): string => {
     failures.push(`${t.cn} 影 L${shade[0].toFixed(3)} 不暗于纸面 L${paperL.toFixed(3)}`);
   if (lamp[2] !== (v.paper as Oklch)[2])
     failures.push(`${t.cn} 灯的色相 ${lamp[2]} 偏离纸面 ${(v.paper as Oklch)[2]}——灯照在纸上不会把纸变白`);
+
+  /*
+   * The caret has to out-read the text it sits in.
+   *
+   * It used to borrow --seal, and on six of the eight themes that left it
+   * fainter against the paper than the ink was: 霞 measured |ΔL| 0.252 for the
+   * caret against 0.630 for its own text. A one-pixel rule that loses to a
+   * page of characters is the wrong way round — the caret is the one thing the
+   * eye goes looking for.
+   */
+  const caret = v.caret as Oklch;
+  const caretDelta = Math.abs(caret[0] - paperL);
+  const inkDelta = Math.abs((v.ink as Oklch)[0] - paperL);
+  if (caretDelta <= inkDelta)
+    failures.push(
+      `${t.cn} 光标对纸面差 ${caretDelta.toFixed(3)}，不高于正文的 ${inkDelta.toFixed(3)}——光标该比正文更显眼`,
+    );
+  if (caret[2] !== (v.seal as Oklch)[2])
+    failures.push(`${t.cn} 光标色相 ${caret[2]} 偏离印章 ${(v.seal as Oklch)[2]}——光标仍应读作本主题的重点色`);
 
   const head = `${t.cn} ${t.slug} · ${t.mode === "day" ? "日间" : "夜间"} · ${t.lineage}`;
   const out = [`/* ── ${head} ${"─".repeat(Math.max(2, 56 - head.length * 2))} */`, "/*"];

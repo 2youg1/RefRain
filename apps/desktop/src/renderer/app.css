@@ -179,7 +179,7 @@ button {
   margin: 0 auto;
   outline: none;
   word-break: break-word;
-  caret-color: var(--seal);
+  caret-color: var(--caret);
 
   font-weight: var(--manuscript-weight, 400);
   word-spacing: var(--manuscript-word-spacing, 0);

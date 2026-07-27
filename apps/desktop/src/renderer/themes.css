@@ -59,6 +59,7 @@
   --seal: oklch(0.583 0.168 38); /* #ca4d23 */
   --seal-bright: oklch(0.673 0.1596 42); /* #e56f3e */
   --seal-wash: oklch(0.937 0.0504 38); /* #ffdfd2 */
+  --caret: oklch(0.267 0.1932 38); /* #660000 */
   --agent: oklch(0.59 0.132 88.4); /* #9d7700 */
   --agent-wash: oklch(0.935 0.03 88.4); /* #f2e9d3 */
   --accepted: oklch(0.478 0.096 152); /* #2b6c41 */
@@ -129,6 +130,7 @@
   --seal: oklch(0.7 0.152 8); /* #eb728c */
   --seal-bright: oklch(0.79 0.1444 12); /* #ff91a2 */
   --seal-wash: oklch(0.942 0.0456 8); /* #ffe0e6 */
+  --caret: oklch(0.272 0.1748 8); /* #600016 */
   --agent: oklch(0.61 0.19 193); /* #00a3a2 */
   --agent-wash: oklch(0.94 0.03 193); /* #d5f2f1 */
   --accepted: oklch(0.478 0.096 152); /* #2b6c41 */
@@ -195,6 +197,7 @@
   --seal: oklch(0.52 0.132 262); /* #3d66b4 */
   --seal-bright: oklch(0.61 0.1254 266); /* #6080ce */
   --seal-wash: oklch(0.949 0.0396 262); /* #e0efff */
+  --caret: oklch(0.279 0.1518 262); /* #001a71 */
   --agent: oklch(0.56 0.062 196); /* #458080 */
   --agent-wash: oklch(0.947 0.0174 196); /* #e1f1f1 */
   --accepted: oklch(0.478 0.096 152); /* #2b6c41 */
@@ -261,6 +264,7 @@
   --seal: oklch(0.596 0.146 76); /* #af7000 */
   --seal-bright: oklch(0.686 0.1387 80); /* #c68f11 */
   --seal-wash: oklch(0.938 0.0438 76); /* #fce7cb */
+  --caret: oklch(0.268 0.1679 76); /* #4f0400 */
   --agent: oklch(0.52 0.088 152); /* #3e774f */
   --agent-wash: oklch(0.936 0.0246 152); /* #deefe2 */
   --accepted: oklch(0.478 0.096 152); /* #2b6c41 */
@@ -327,6 +331,7 @@
   --seal: oklch(0.5 0.15 152); /* #007a34 */
   --seal-bright: oklch(0.59 0.1425 156); /* #039558 */
   --seal-wash: oklch(0.943 0.045 152); /* #d7f5de */
+  --caret: oklch(0.273 0.1725 152); /* #003a00 */
   --agent: oklch(0.556 0.07 262); /* #5d749d */
   --agent-wash: oklch(0.941 0.0196 262); /* #e4ecf9 */
   --accepted: oklch(0.478 0.096 152); /* #2b6c41 */
@@ -394,6 +399,7 @@
   --seal: oklch(0.7 0.158 36); /* #ef7555 */
   --seal-bright: oklch(0.79 0.1501 40); /* #ff966d */
   --seal-wash: oklch(0.248 0.0474 36); /* #341811 */
+  --caret: oklch(0.918 0.1817 36); /* #ffb48c */
   --agent: oklch(0.7 0.058 238); /* #7da4bf */
   --agent-wash: oklch(0.25 0.0162 238); /* #1a2329 */
   --accepted: oklch(0.712 0.096 152); /* #73b484 */
@@ -463,6 +469,7 @@
   --seal: oklch(0.78 0.07 228); /* #87c1db */
   --seal-bright: oklch(0.87 0.0665 232); /* #a8ddf9 */
   --seal-wash: oklch(0.23 0.021 228); /* #121f25 */
+  --caret: oklch(0.9 0.0805 228); /* #a5e9ff */
   --agent: oklch(0.69 0.112 142); /* #72ad6b */
   --agent-wash: oklch(0.232 0.03 142); /* #152114 */
   --accepted: oklch(0.712 0.096 152); /* #73b484 */
@@ -529,6 +536,7 @@
   --seal: oklch(0.76 0.132 192); /* #00cbc7 */
   --seal-bright: oklch(0.85 0.1254 196); /* #4fe7e8 */
   --seal-wash: oklch(0.226 0.0396 192); /* #002221 */
+  --caret: oklch(0.896 0.1518 192); /* #18fcf6 */
   --agent: oklch(0.742 0.148 352); /* #f181b5 */
   --agent-wash: oklch(0.228 0.03 352); /* #27171e */
   --accepted: oklch(0.712 0.096 152); /* #73b484 */
