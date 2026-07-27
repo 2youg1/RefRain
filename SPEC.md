@@ -190,28 +190,43 @@ The measured file workload justified one native module: walking and searching 20
 
 Domain logic remains TypeScript. Text Actions, Proposals, Verdicts, and harness contracts change for semantic reasons, not throughput, and their contributors work in the TypeScript ecosystem. Rust may enter only behind a measured boundary with its own cross-platform tests; it does not spread upward into `core`, `agent`, the editor, or the shell.
 
-### 4.3 Colour, and why the default is cool
+### 4.3 Colour: eight palettes, four anchors each
 
-Warm paper is the settled answer for writing tools, which is why they look
-alike. The default palette here is 雨 — a cool ground near hue 235 with chroma
-around 0.012 — and the reason is not novelty.
+An earlier draft of this section described three palettes — 雨, 楮, 夜 — and
+argued for a cool default ground near hue 235. None of those three exist, and
+the reasoning inverted: the default 濤 is warm paper (hue 87.5) carrying cool
+ink (hue 258.2). The section is rewritten against what ships rather than
+patched, because every claim in it had drifted.
 
-**Cinnabar needs a cool ground to read as heat.** On cream the same red merely
-sits there; against a cool sheet it is the only warm thing on screen, which is
-what an accent reserved for human decisions should be.
+**Eight palettes, grouped by hour rather than by polarity.** Day: 濤 tou
+(default), 霞 kasumi, 枯 kare, 林 hayashi, 瓷 seiji. Night: 墨 sumi, 幽 yu,
+時雨 shigure. Night is not day inverted — each is drawn from its own
+reference, so eight themes means eight, not four with a switch. The light/dark
+command crosses between the two groups and remembers where the writer was on
+each side (Q9).
 
-**Cool paper wants warm ink.** Matching the ink to the paper's hue produces a
-tinted PDF: technically harmonious, materially dead. The charcoal leans warm
-(hue 48) and is stated as solid values, never as a tint of the ground — dilute
-a warm charcoal with opacity and it becomes grey, which is how an earlier
-"warm ink" arrived on screen as no ink at all.
+**Four anchors, everything else derived.** A theme states `paper`, `ink`,
+`seal`, `agent`; `docs/theme-tokens.ts` derives some forty tokens from them
+and refuses to emit the stylesheet when any APCA threshold fails. Adding a
+theme is four colours, not forty. `themes.css` is generated and must not be
+hand-edited.
 
-**Chroma is the difference between a sheet and a callout.** At 0.034 a
-viewport of it reads as an information panel. Cool comes from hue.
+**Ink and paper lean apart, not together.** Matching the ink to the paper's
+hue produces a tinted PDF: technically harmonious, materially dead. 濤 puts
+cool ink on warm paper; 瓷 puts a colder ink on a green-leaning ground. Ink is
+stated as solid values, never as a tint of the ground — dilute it with opacity
+and it becomes grey, which is how an earlier "warm ink" arrived on screen as
+no ink at all.
 
-The warm palette remains as 楮, and the dark one as 夜. All three are stated in
-OKLCH: lightness can be lowered while chroma and hue hold, which is what lets
-the dark theme read as a lamp on paper rather than as an inverted screen.
+**Chroma is the difference between a sheet and a callout.** Day papers sit
+between chroma 0.006 and 0.022. At 0.034 a viewport of it reads as an
+information panel; the character of a palette comes from hue, not saturation.
+
+**Lightness moves; hue and chroma hold.** Everything is stated in OKLCH, which
+is what lets a night theme read as a lamp on paper rather than as an inverted
+screen — and what lets the lit corner be the paper's own hue raised along L
+rather than a wash of white laid over it.
+
 
 ### 4.4 Toolchain findings, measured
 
@@ -628,7 +643,7 @@ The profile is per window, not per application: dragging from a laptop panel to 
 
 | # | Question | Status |
 |---|---|---|
-| Q1 | Product and repository name | Closed — `RefRain`, chosen 2026-07-26. A reference and a refrain; the default theme is 雨. |
+| Q1 | Product and repository name | Closed — `RefRain`, chosen 2026-07-26. A reference and a refrain. (An earlier draft named 雨 as the default theme; no such theme exists — the default is 濤, see Q9.) |
 | Q2 | May a human and an agent edit the same file concurrently? (Leaning: the file is read-only to the human while an agent works on it) | Open |
 | Q3 | UI for cross-session multi-agent dialogue orchestration | Needs design |
 | Q4 | Does the Verdict Ledger's retrieval interface ship in v1? | Closed — yes, as `search` over stated reasoning. An earlier answer also promised a compiled taste profile; that was withdrawn. Reducing scattered verdicts to "what this writer wants" is inference, and an application that makes no network calls and holds no model cannot perform it. The ledger informs a persona the author writes; it does not write one. |
@@ -638,4 +653,16 @@ The profile is per window, not per application: dragging from a laptop panel to 
 | Q5 | Does the chapter header share the manuscript's left edge? | Closed — 2026-07-27. **There is no drift. There never was; the fixture never opened.** Reported first as a 289px layout defect, then reopened as a measurement fault when the selector turned out to be matching `Progress.svelte`'s `.bar`. Both readings were of a blank screen. Three things in the stub had gone stale and each alone emptied the fixture: the panel search typed 打开文件夹, the welcome screen's wording, while the command is 打开项目… (`cmd.open`); `loadWorkspace` returned a bare chapter array rather than a `WorkspaceView`; the chapter carried no `rootId` and no `role`, and the rail groups by `rootId`. With the fixture open, header and sheet both sit at 497px — **drift 0px**. The gate's click is no longer conditional, and its `continue-on-error` in CI is removed. |
 | Q9 | Are the eight themes settled, and how do day and night relate? | Closed — 2026-07-27. **Day: 濤 tou, 霞 kasumi, 枯 kare, 林 hayashi, 瓷 seiji. Night: 墨 sumi, 幽 yu, 時雨 shigure. Default 濤.** Night is not day inverted: each palette is drawn from its own reference, so N themes means N, not N×2, and the light/dark command crosses between the two groups remembering where the writer was on each side. `docs/theme-tokens.ts` is the single authority; `themes.css` is generated and must not be hand-edited. |
 | Q10 | Which Japanese faces ship, alongside which Chinese ones? | Closed — 2026-07-27. Three slots rather than two: Chinese, Japanese, and Latin are separate settings, because one CJK slot cannot serve both a Chinese and a Japanese reader — 直, 骨, and 令 are drawn differently and a single face gets one of them wrong. **Japanese sans: Zen Kaku Gothic New** (OFL 1.1, no reserved name, five weights, freely subsettable). **Japanese serif: KazukiReiwa 一樹令和** (OFL 1.1; "KazukiReiwa" *is* a reserved name, and the 20–27 MB weights make subsetting unavoidable, so the shipped subset is renamed `RefRain Mincho`). **Chinese sans: ChillDINGothic** (OFL 1.1, reserved names `ChillDIN`/`ChillDINGothic`/`Source`; rename on subset). Chinese serif stays Chiron Sung HK. Rejected: 致一黑體_傳承形 and Mizuki-Gothic are IPA Font License — legal to ship only byte-for-byte, unrenamed, unsubsetted, and as a standalone file rather than linked into the executable; MiSans and OPPO Sans forbid redistributing the font binary at all. Evidence: two rounds of licence due diligence reading each upstream LICENSE directly and inspecting the binaries with fontTools. |
+|| Q11 | Does a project collect Markdown from subdirectories, and as what? | Closed — 2026-07-27. **Material first, then chapters.** A subdirectory's Markdown is material by default — notes, chronologies, sources — and a chapter is the role a file is promoted into, not the role every `.md` starts with. Getting this backwards puts a chronology into the chapter sequence, where it corrupts numbering, the progress rule, and the send manifest. Presentation is a tree, expanded by directory; a graph view of the links between files may be added later as a second view, never as the only one. |
+642|
 | Q11 | Does a project collect Markdown from subdirectories, and as what? | Closed — 2026-07-27. **Material first, then chapters.** A subdirectory's Markdown is material by default — notes, chronologies, sources — and a chapter is the role a file is promoted into, not the role every `.md` starts with. Getting this backwards puts a chronology into the chapter sequence, where it corrupts numbering, the progress rule, and the send manifest. Presentation is a tree, expanded by directory; a graph view of the links between files may be added later as a second view, never as the only one. |
+| Q12 | Where does a 念頭寄存 note live, and what happens when the ledger is unavailable? | Closed — 2026-07-27. **`kara_note` is a Verdict Ledger row.** A stray thought caught mid-sentence is a judgment about the work, which is what the ledger holds; giving it a second store would split the authority the ledger exists to keep. The ledger is optional (C-1), so when it is unavailable the command is unavailable and says why, rather than accepting a note into a place that will not keep it. Losing a note silently is worse than refusing to take one. |
+| Q13 | Does Review staging survive the panel closing, and what are its parts? | Closed — 2026-07-27. **Persisted, and split three ways: `verdicts` / `batch` / `cursor`.** They have different lifetimes — a verdict outlives the panel, a batch is what the author is about to commit, a cursor is where they were reading. Holding them in one object is what let a closed panel and a failed commit each destroy all three. |
+| Q14 | Is a partial merge a legal Text Action? | Closed — 2026-07-27. **Yes, and unmerged Verdicts survive it.** An author who accepts eleven of twenty slices has made eleven judgments, and the batch commits those eleven. The other nine stay staged rather than being discarded as the price of committing. This follows §7.4: a Decision Batch is atomic over what it commits, not over what was staged. |
+| Q15 | What is a ReviewUnit, and does it change the ledger? | Closed — 2026-07-27. **Presentation only.** An adjacent `del` + `ins` pair reads as one substitution and is judged as one, but still writes two Verdicts. The ledger records what changed in the text; the interface records what the author looked at. Collapsing the ledger to match the display would lose the grain that makes a verdict replayable. |
+| Q16 | How do Stage, Reference and Safety differ? | Closed — 2026-07-27. **By lifetime, not by appearance.** Stage is the work in hand and persists across sessions. Reference is consulted and closed, holding nothing. Safety interrupts and is the only one permitted to be modal — a conflict the author must resolve before the manuscript can move. Review and Dispatch stay drawers, separate from settings: settings is a Reference and must not evict work in progress by sharing its slot. |
+| Q17 | Does 空 measure or report time? | Closed — 2026-07-27. **No clock, no leave prompt, no session statistics.** Nothing ends immersion except the author leaving it or a safety failure. A break reminder recreates the cost of re-entry it claims to be sparing, and for the reader this product is built for, re-entry is the expensive part. |
+| Q18 | How does 空 shade the surrounding text? | Closed — 2026-07-27. **Five steps: 100% for the current paragraph and its immediate neighbours, then 92% / 84% / 76% / 68%.** Three paragraphs at full ink rather than one, because a sentence being written usually continues one already on screen. A sharper falloff turns the context grey exactly when it is still needed. |
+| Q19 | Which keys enter and leave 空? | Closed — 2026-07-27. **`Ctrl+Enter` both ways; Escape never leaves.** Escape closes everywhere else in this product, and this is the single exception — deliberately. Immersion that a reflexive keypress can end is not immersion, and the reflex is common enough that the exception is worth the inconsistency. |
+| Q20 | Does the rail narrow itself? | Closed — 2026-07-27. **Off by default.** Layout that moves without being asked costs a re-orientation each time, and the author did not ask for it. It remains available to those who want it. |
+| Q21 | What does Ctrl+K show that cannot be run? | Closed — 2026-07-27. **Outside 空: unavailable commands appear, each stating the next step** — *merge — judge at least one slice first* — because a command that vanishes teaches nothing, while one that explains itself teaches the workflow. **Inside 空: only the six commands 空 answers to.** Showing the rest would be an invitation out. |
