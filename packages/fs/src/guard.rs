@@ -135,6 +135,20 @@ impl Guard {
     pub fn roots(&self) -> &[PathBuf] {
         &self.roots
     }
+
+    /// Admit a candidate, then hand back the path as it was written.
+    ///
+    /// `admit` resolves, which is right for every check — `../` and a symlink
+    /// out of the tree are refused by one rule rather than two. It is wrong for
+    /// one caller. Deleting a symlink means deleting the link; `trash` took the
+    /// resolved path and so deleted the chapter the link pointed at, turning
+    /// "remove this shortcut" into "remove the manuscript". The safety
+    /// questions are still answered against the resolved path, because that is
+    /// what makes them answerable.
+    pub fn admit_literal(&self, candidate: &Path) -> Result<PathBuf, Refusal> {
+        self.admit(candidate)?;
+        Ok(candidate.to_path_buf())
+    }
 }
 
 /// A name no platform in the support matrix accepts, plus the ones that produce
@@ -336,6 +350,47 @@ mod tests {
             guard.admit(&root.join("chapter.")).unwrap_err(),
             Refusal::IllegalName { .. }
         ));
+    }
+
+    /// `admit_literal` answers the safety questions but keeps the path written.
+    ///
+    /// This is what makes deleting a symlink delete the link. `trash` used the
+    /// resolved path, so removing a shortcut to chapter three removed chapter
+    /// three — and a sandbox without a trash directory cannot demonstrate that
+    /// end to end, because the delete refuses first. It is provable here.
+    #[test]
+    fn admit_literal_keeps_the_path_as_written() {
+        let root = scratch("literal");
+        let chapter = root.join("03.md");
+        fs::write(&chapter, "第三章").unwrap();
+        let link = root.join("near.md");
+        std::os::unix::fs::symlink(&chapter, &link).unwrap();
+
+        let guard = Guard::new([&root]);
+
+        assert_eq!(
+            guard.admit(&link).unwrap(),
+            chapter,
+            "admit resolves, which is what every safety check needs"
+        );
+        assert_eq!(
+            guard.admit_literal(&link).unwrap(),
+            link,
+            "admit_literal hands back the link, which is what a delete needs"
+        );
+    }
+
+    /// The safety checks still run. A literal path is not an unchecked one.
+    #[test]
+    fn admit_literal_still_refuses_what_admit_refuses() {
+        let root = scratch("literal-refuses");
+        let guard = Guard::new([&root]);
+
+        assert!(guard.admit_literal(&root.join("../escape.md")).is_err());
+        assert!(guard.admit_literal(Path::new("/etc/passwd")).is_err());
+        assert!(guard
+            .admit_literal(&root.join(SOURCE_BACKUP_DIR).join("01.md"))
+            .is_err());
     }
 
     /// A colon in an ancestor directory used to refuse every write.
