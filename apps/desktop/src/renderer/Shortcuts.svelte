@@ -25,8 +25,8 @@ import { chordOf, DEFAULT_BINDINGS } from "./keys.ts";
   };
 
   const groups: { label: Key; ids: string[] }[] = [
-    { label: "group.project", ids: ["open", "newChapter", "save", "saveAll"] },
-    { label: "group.write", ids: ["bold", "italic", "annotate", "undo", "redo", "find"] },
+    { label: "group.project", ids: ["open", "newChapter", "save"] },
+    { label: "group.write", ids: ["bold", "italic"] },
     { label: "group.collab", ids: ["dispatch", "review", "edits", "ledger"] },
     { label: "group.view", ids: ["palette", "zen", "settings", "zoomIn", "zoomOut", "zoomReset"] },
   ];

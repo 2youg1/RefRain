@@ -16,13 +16,10 @@ export const DEFAULT_BINDINGS: Record<string, string> = {
   open: "Ctrl+O",
   newChapter: "Ctrl+N",
   save: "Ctrl+S",
-  saveAll: "Ctrl+Shift+S",
   zen: "Ctrl+Enter",
   settings: "Ctrl+,",
-  find: "Ctrl+F",
   bold: "Ctrl+B",
   italic: "Ctrl+I",
-  annotate: "Ctrl+M",
   dispatch: "Ctrl+D",
   review: "Ctrl+R",
   edits: "Ctrl+H",
@@ -30,8 +27,6 @@ export const DEFAULT_BINDINGS: Record<string, string> = {
   zoomIn: "Ctrl+=",
   zoomOut: "Ctrl+-",
   zoomReset: "Ctrl+0",
-  undo: "Ctrl+Z",
-  redo: "Ctrl+Y",
 };
 
 /*
@@ -41,6 +36,24 @@ export const DEFAULT_BINDINGS: Record<string, string> = {
  * binding was shadowed for whatever the author had rebound it to, and then
  * nothing ran. They come back when Review has keyboard adjudication, together
  * with it, and not before.
+ *
+ * Five more went the same way, for the same reason — every one of them was
+ * listed in Settings as a rebindable chord that did nothing when pressed:
+ *
+ *   Ctrl+Shift+S  saveAll   Switching chapters saves first and refuses to move
+ *                           on failure, so no chapter but the active one can
+ *                           hold unsaved text. Saving "all" of them is a
+ *                           concept borrowed from editors that let a document
+ *                           go stale in a background tab; here it is Ctrl+S.
+ *   Ctrl+M        annotate  Comments arrive from a run and are read; there is
+ *                           no way for an author to write one yet.
+ *   Ctrl+F        find      No search over the manuscript exists.
+ *   Ctrl+Z/Ctrl+Y undo/redo The manuscript is a contenteditable surface with
+ *                           no history plugin. These claimed the chords the
+ *                           browser's own undo answers to, and gave nothing
+ *                           back in return.
+ *
+ * Each returns with the feature it names, not before it.
  */
 
 /** Normalise an event into the same shape as a stored binding. */
