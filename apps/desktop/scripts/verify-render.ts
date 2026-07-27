@@ -26,7 +26,7 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 await page.addInitScript(`window.refrain = {
   openProject: async () => "/p", loadProject: async () => [{ id: "01.md", title: "01", text: "黑暗中有人问。\\n\\n声音很熟，熟到她握剑的手松了半分。她想起十年前那个雨夜，那时他也是这样开口的。\\n\\n剑尖垂下去，抵住青石板。" }],
   createProject: async () => null, pathFor: () => "", resolveDrop: async () => null,
-  fullscreen: async () => true, saveChapter: async () => ({ ok: true, edits: [] }), listAgents: async () => [],
+  fullscreen: async () => true, onCloseRequest: () => () => {}, saveChapter: async () => ({ ok: true, edits: [] }), listAgents: async () => [],
   addAgent: async () => ({}), enqueue: async () => true, manifest: async () => [], send: async () => [],
   collect: async () => ({ proposals: [], comments: [] }), runs: async () => [],
   commit: async () => ({ ok: true, text: "" }), ledger: async () => [], reply: async () => "",

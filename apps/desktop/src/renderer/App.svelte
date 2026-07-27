@@ -1,5 +1,6 @@
 <script lang="ts">
 import { splitBlocks } from "@refrain/core";
+import { onMount } from "svelte";
 import Agents from "./Agents.svelte";
 import Ask from "./Ask.svelte";
 import type { ChapterView, EditView, ProposalView, RootView, RunView, VerdictView } from "./api.ts";
@@ -159,6 +160,37 @@ $effect(() => persist("layout", layout));
 $effect(() => persist("icon", icon));
 $effect(() => persist("roots", roots));
 $effect(() => persistBindings(bindings));
+
+/*
+ * The work comes back on its own.
+ *
+ * `roots` survives a quit in localStorage, but nothing read them at startup:
+ * every call to `reload()` was a user action. So a second launch had roots —
+ * enough to skip the welcome page — and no chapters, and the author's book
+ * appeared to be gone. Loading once on mount is the whole fix, and
+ * `verify-relaunch.ts` fails without it.
+ */
+onMount(() => {
+  if (roots.length > 0) void reload();
+});
+
+/*
+ * The last chance to write.
+ *
+ * Everything else in this application is careful about the manuscript — the
+ * atomic write, the conflict dialog, the trash that is never a delete — and
+ * closing the window walked past all of it. Text typed and not saved lived
+ * only in this surface, and the surface went with the window.
+ *
+ * Main holds the close until this returns, so the save is a real one rather
+ * than a best effort fired into a closing process.
+ */
+onMount(() =>
+  api().onCloseRequest(async () => {
+    if (composing) return;
+    if (!saved) await save();
+  }),
+);
 
 $effect(() => {
   persist("type", type);
@@ -420,17 +452,25 @@ const onEdit = (): void => {
   saved = false;
 };
 
+/**
+ * Opening a folder already open reloads it rather than declining.
+ *
+ * The duplicate check used to return without loading anything, which closed
+ * the one recovery an author would reach for when the rail looked empty: open
+ * the same folder again. Re-reading a root that is already listed costs one
+ * read and is the obvious meaning of the gesture.
+ */
 const addRoot = async (path?: string): Promise<void> => {
   const chosen = path ?? (await api().openProject());
-  if (!chosen || roots.includes(chosen)) return;
-  roots = [...roots, chosen];
+  if (!chosen) return;
+  if (!roots.includes(chosen)) roots = [...roots, chosen];
   await reload();
 };
 
 const openFile = async (): Promise<void> => {
   const chosen = await api().openFile();
-  if (!chosen || roots.includes(chosen)) return;
-  roots = [...roots, chosen];
+  if (!chosen) return;
+  if (!roots.includes(chosen)) roots = [...roots, chosen];
   await reload();
 };
 
@@ -462,7 +502,13 @@ const select = (path: string | null): void => {
   // manuscript is the one thing this application may never lose, so the switch
   // saves first rather than asking.
   if (!saved && active !== null && active !== path) {
-    void save().then(() => selectNow(path));
+    // And it only leaves once the text is on disk. `save()` resolves normally
+    // on failure — a conflict, a refusing filesystem, a deferred composition —
+    // so switching on `.then` alone walked away from the unsaved characters
+    // and `selectNow` then overwrote the one copy of them.
+    void save().then((written) => {
+      if (written) selectNow(path);
+    });
     return;
   }
   selectNow(path);
@@ -521,16 +567,29 @@ const newChapter = (kind: AskKind = "chapter"): void => {
   if (owner) asking = { kind, rootPath: owner };
 };
 
-const save = async (): Promise<void> => {
+/**
+ * Writes the active chapter, and says whether the text reached disk.
+ *
+ * The return value is load-bearing. `select()` used to switch chapters on
+ * `save().then(...)`, and because every failure here resolves normally — a
+ * conflict returns, an exception is caught and announced — the switch went
+ * ahead over text that had never been written, and the only copy of it was
+ * the state the switch overwrote. False means the characters are still only
+ * in this session: the caller must not move away from them.
+ *
+ * A save deferred to `compositionend` also returns false, for the same
+ * reason: nothing is on disk yet.
+ */
+const save = async (): Promise<boolean> => {
   const chapter = activeChapter;
-  if (!chapter) return;
+  if (!chapter) return true;
 
   // Ctrl+S during composition used to commit the candidate as if the author
   // had chosen it. The save is not refused, only deferred to the moment the
   // text becomes text.
   if (composing) {
     saveAfterComposition = true;
-    return;
+    return false;
   }
 
   // Snapshot before awaiting. Typing during the write used to leave `saved`
@@ -552,7 +611,7 @@ const save = async (): Promise<void> => {
         theirs: outcome.onDisk,
         path: outcome.path,
       };
-      return;
+      return false;
     }
 
     edits = [...edits, ...outcome.edits];
@@ -560,9 +619,11 @@ const save = async (): Promise<void> => {
       entry.path === chapter.path ? { ...entry, text: written } : entry,
     );
     if (text === written && active === chapter.path) saved = true;
+    return true;
   } catch (error) {
     saved = false;
     say(error instanceof Error ? error.message : String(error));
+    return false;
   }
 };
 

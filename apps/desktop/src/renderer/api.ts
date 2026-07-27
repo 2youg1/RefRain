@@ -119,6 +119,12 @@ interface RefRainApi {
   pathFor(file: File): string;
   resolveDrop(path: string): Promise<string | null>;
   fullscreen(on: boolean): Promise<boolean>;
+  /**
+   * Runs before the window closes, and holds it open until the promise settles.
+   *
+   * The one chance to write text that exists nowhere but this surface.
+   */
+  onCloseRequest(listener: () => Promise<void> | void): () => void;
   /** Opens one of this project's own pages in the system browser. */
   openProjectUrl(url: string): Promise<boolean>;
   loadProject(root: string): Promise<ChapterView[]>;

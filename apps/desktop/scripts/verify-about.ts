@@ -41,7 +41,7 @@ await page.addInitScript(`
     loadProject: async () => [{ id: "01.md", title: "01", text: "黑暗中有人问。" }],
     loadWorkspace: async () => [{ id: "01.md", title: "01", text: "黑暗中有人问。", root: "/p", path: "/p/01.md" }],
     createProject: async () => null, pathFor: () => "", resolveDrop: async () => null,
-    fullscreen: async () => true, saveChapter: async () => ({ ok: true, edits: [] }), listAgents: async () => [],
+    fullscreen: async () => true, onCloseRequest: () => () => {}, saveChapter: async () => ({ ok: true, edits: [] }), listAgents: async () => [],
     addAgent: async () => ({}), removeAgent: async () => true, probeAgent: async () => ({ ok: true }),
     enqueue: async () => true, manifest: async () => [], send: async () => [],
     collect: async () => ({ proposals: [], comments: [] }), runs: async () => [],

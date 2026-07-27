@@ -25,7 +25,7 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 await page.addInitScript(`
   window.refrain = {
     openProject: async () => "/p", openFile: async () => null, createProject: async () => null,
-    pathFor: () => "/p", resolveDrop: async (p) => p, fullscreen: async () => true,
+    pathFor: () => "/p", resolveDrop: async (p) => p, fullscreen: async () => true, onCloseRequest: () => () => {},
     loadProject: async () => [], loadWorkspace: async () => [],
     saveChapter: async () => ({ ok: true, edits: [] }), systemFonts: async () => [], listAgents: async () => [],
     probeAgent: async () => ({ ok: true }), removeAgent: async () => true, addAgent: async () => ({}),

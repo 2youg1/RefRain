@@ -40,6 +40,7 @@ await page.addInitScript(`
     pathFor: () => "/p",
     resolveDrop: async (p) => p,
     fullscreen: async () => true,
+    onCloseRequest: () => () => {},
     loadProject: async () => ${JSON.stringify(CHAPTERS)},
     loadWorkspace: async () => ${JSON.stringify(CHAPTERS)},
     saveChapter: async () => ({ ok: true, edits: [] }),

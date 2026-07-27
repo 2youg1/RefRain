@@ -103,6 +103,27 @@ const api = {
     ipcRenderer.on("display:changed", wrapped);
     return () => ipcRenderer.removeListener("display:changed", wrapped);
   },
+
+  /**
+   * The window asks before it closes, and waits for the answer.
+   *
+   * Closing used to take the manuscript with it: saving happened on Ctrl+S and
+   * on a chapter switch, and nowhere else, so a paragraph written and not saved
+   * was gone the moment the window went. Main holds the close until the
+   * renderer reports back, because only the renderer knows whether the surface
+   * holds characters the disk has never seen.
+   */
+  onCloseRequest: (listener: () => Promise<void> | void) => {
+    const wrapped = async (_event: unknown, token: number) => {
+      try {
+        await listener();
+      } finally {
+        ipcRenderer.send("window:close-ready", token);
+      }
+    };
+    ipcRenderer.on("window:closing", wrapped);
+    return () => ipcRenderer.removeListener("window:closing", wrapped);
+  },
 } as const;
 
 export type RefRainApi = typeof api;
