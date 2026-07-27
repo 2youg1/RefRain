@@ -2,6 +2,7 @@
 import type { VerdictView } from "./api.ts";
 import { api } from "./api.ts";
 import type { Key } from "./i18n.ts";
+import { localDateTime } from "./time.ts";
 
 interface Props {
   root: string | null;
@@ -40,27 +41,6 @@ const showReply = async (proposalId: string): Promise<void> => {
 };
 
 const kindKey = (kind: VerdictView["kind"]): Key => `kind.${kind}` as Key;
-
-/**
- * The moment the author decided, in the author's own clock.
- *
- * `decidedAt` is stored as an ISO instant, which is right for a record, and
- * slicing its first sixteen characters showed the author UTC — so a judgment
- * made at nine in the evening in Tokyo read as noon. The stored value is
- * untouched and travels in `datetime` for anything reading the markup.
- */
-const when = (iso: string): string => {
-  const at = new Date(iso);
-  return Number.isNaN(at.getTime())
-    ? iso
-    : at.toLocaleString(undefined, {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-};
 </script>
 
 <div class="ledger">
@@ -84,7 +64,7 @@ const when = (iso: string): string => {
           <button class="ref" onclick={() => showReply(verdict.proposalId)}>
             {verdict.sliceId ?? verdict.proposalId}
           </button>
-          <time datetime={verdict.decidedAt}>{when(verdict.decidedAt)}</time>
+          <time datetime={verdict.decidedAt}>{localDateTime(verdict.decidedAt)}</time>
         </header>
 
         {#if verdict.finalText}
