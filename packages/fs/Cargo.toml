@@ -12,7 +12,7 @@ name = "refrain_fs"
 
 [dependencies]
 napi = { version = "2", default-features = false, features = ["napi4", "serde-json"] }
-napi-derive = "2"
+napi-derive = "3"
 
 # Parallel directory traversal. `ignore` carries the .gitignore machinery ripgrep
 # uses; a manuscript folder full of build output should not drown the index.
