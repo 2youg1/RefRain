@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -120,6 +128,53 @@ test("renderer-supplied workspace paths cannot grant their own Root authority", 
   }
 });
 
+test("a replaced Root is refused before workspace loading can mutate it", async () => {
+  const handlers = collectHandlers();
+  const parent = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-replaced-parent-"));
+  const root = join(parent, "work");
+  mkdirSync(root);
+  try {
+    approve(handlers, root);
+    rmSync(root, { recursive: true });
+    mkdirSync(root);
+
+    const workspace = (await invoke(handlers, trustedEvent, "project:load-workspace", [root])) as {
+      roots: unknown[];
+      warnings?: string[];
+    };
+
+    expect(workspace.roots).toEqual([]);
+    expect(workspace.warnings?.join("\n")).toMatch(/身份已改变/);
+    expect(existsSync(join(root, ".refrain"))).toBe(false);
+    expect(existsSync(join(root, ".refrain-source"))).toBe(false);
+  } finally {
+    closeWorkbenches();
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("a permitted missing Root stays visible without a refusal warning", async () => {
+  const handlers = collectHandlers();
+  const parent = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-missing-parent-"));
+  const root = join(parent, "work");
+  mkdirSync(root);
+  try {
+    approve(handlers, root);
+    rmSync(root, { recursive: true });
+
+    const workspace = (await invoke(handlers, trustedEvent, "project:load-workspace", [root])) as {
+      roots: { path: string; missing?: boolean }[];
+      warnings?: string[];
+    };
+
+    expect(workspace.roots).toEqual([expect.objectContaining({ path: root, missing: true })]);
+    expect(workspace.warnings ?? []).toEqual([]);
+  } finally {
+    closeWorkbenches();
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
 test("load-workspace normalizes and deduplicates roots before admitting later calls", async () => {
   const handlers = collectHandlers();
   const root = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-opened-"));
@@ -237,6 +292,25 @@ test("a main-owned path choice grants a candidate, and workspace load makes it a
   } finally {
     closeWorkbenches();
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the file picker grants a single-file Root before workspace adoption", async () => {
+  const parent = mkdtempSync(join(tmpdir(), "refrain-ipc-auth-file-picker-"));
+  const root = join(parent, "essay.md");
+  writeFileSync(root, "原文。\n");
+  const handlers = collectHandlers({
+    showOpenDialog: async () => ({ canceled: false, filePaths: [root] }),
+  });
+  try {
+    expect(await invoke(handlers, trustedEvent, "project:open-file")).toBe(root);
+    const workspace = (await invoke(handlers, trustedEvent, "project:load-workspace", [root])) as {
+      roots: { path: string; kind: string }[];
+    };
+    expect(workspace.roots).toEqual([expect.objectContaining({ path: root, kind: "file" })]);
+  } finally {
+    closeWorkbenches();
+    rmSync(parent, { recursive: true, force: true });
   }
 });
 

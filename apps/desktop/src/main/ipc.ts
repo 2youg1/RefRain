@@ -336,7 +336,7 @@ export const registerHandlers = (
       filters: [{ name: "Markdown", extensions: ["md", "markdown", "mdown", "txt"] }],
       title: "Open a file",
     });
-    return result.canceled ? null : (result.filePaths[0] ?? null);
+    return result.canceled ? null : nominate(result.filePaths[0] ?? null);
   });
 
   /** Several roots at once: a folder kept empty for tidiness locks out nothing. */
