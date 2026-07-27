@@ -22,6 +22,22 @@ for await (const file of new Glob("workflows/*.yml").scan({ cwd: ".github" })) {
   ci += await Bun.file(`.github/${file}`).text();
 }
 
+/*
+ * Only lines that actually execute something count.
+ *
+ * Matching the whole file as one string meant a script's name appearing in a
+ * comment satisfied the check. Disabling a gate — `run: echo skipped` — while
+ * leaving "verify-themes.ts is temporarily disabled" above it passed here,
+ * which is this gate's own failure mode wearing its own uniform.
+ */
+const commands = ci
+  .split("\n")
+  .map((line) => line.replace(/#.*$/, "").trim())
+  .filter(
+    (line) => /^(run:|-\s*run:|\S+:\s*bun\s)/.test(line) || /^\s*(bun|npm|cargo)\s/.test(line),
+  )
+  .join("\n");
+
 if (ci === "") {
   console.error("FAIL  no workflow files found — the scan is looking in the wrong place");
   process.exit(1);
@@ -34,7 +50,11 @@ const checked: string[] = [];
  * Verification scripts. Anything named `verify-*` claims to assert something;
  * if CI does not invoke it, that claim is untested.
  */
-for (const pattern of ["scripts/verify-*.ts", "apps/desktop/scripts/verify-*.ts"]) {
+// `**/scripts/` rather than the two directories that happen to hold gates
+// today. Both spellings match the same thirty files right now; the difference
+// arrives with the first gate added under a package nobody thought to list,
+// which is the omission this script exists to notice.
+for (const pattern of ["**/scripts/verify-*.ts"]) {
   for await (const file of new Glob(pattern).scan(".")) {
     // Split on either separator. Glob returns `scripts\verify-gate.ts` on
     // Windows, so splitting on "/" alone left the whole path as the filename
@@ -45,8 +65,8 @@ for (const pattern of ["scripts/verify-*.ts", "apps/desktop/scripts/verify-*.ts"
     const name = file.split(/[/\\]/).pop() ?? file;
     checked.push(name);
     // Either invoked by path, or through a package.json script that CI calls.
-    const byPath = ci.includes(name);
-    const byScript = ci.includes(`verify:${name.replace(/^verify-|\.ts$/g, "")}`);
+    const byPath = commands.includes(name);
+    const byScript = commands.includes(`verify:${name.replace(/^verify-|\.ts$/g, "")}`);
     if (!byPath && !byScript) orphans.push(file);
   }
 }
@@ -58,7 +78,7 @@ const root = JSON.parse(await Bun.file("package.json").text()) as {
 for (const script of Object.keys(root.scripts ?? {})) {
   if (!script.startsWith("verify:")) continue;
   checked.push(script);
-  if (!ci.includes(script)) orphans.push(`package.json script "${script}"`);
+  if (!commands.includes(script)) orphans.push(`package.json script "${script}"`);
 }
 
 /*
