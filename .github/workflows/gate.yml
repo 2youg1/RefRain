@@ -339,6 +339,12 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-bindings.ts
 
+      # Unit tests can find an alert whose flex item has been shrunk to zero.
+      # Drive the built Settings page and require the refusal to occupy pixels.
+      - name: a refused shortcut is visible and names the collision
+        working-directory: apps/desktop
+        run: bun scripts/verify-shortcuts.ts
+
       # Held under continue-on-error as SPEC Q5, a 289px drift between the
       # chapter header and the manuscript. There was no drift: the fixture
       # never opened, and the gate measured a blank screen. It now opens, the
