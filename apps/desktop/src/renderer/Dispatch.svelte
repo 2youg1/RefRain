@@ -150,13 +150,13 @@ const send = async (): Promise<void> => {
             <span>{entry.runCount}</span>
           </div>
           <dl>
-            <dt>harness</dt><dd>{entry.harness}</dd>
-            <dt>model</dt><dd>{entry.model}</dd>
-            <dt>effort</dt><dd>{entry.reasoningEffort}</dd>
-            <dt>scope</dt><dd>{entry.scopes.join(" · ")}</dd>
+            <dt>{t("dispatch.harness")}</dt><dd>{entry.harness}</dd>
+            <dt>{t("dispatch.model")}</dt><dd>{entry.model}</dd>
+            <dt>{t("dispatch.effort")}</dt><dd>{entry.reasoningEffort}</dd>
+            <dt>{t("dispatch.scope")}</dt><dd>{entry.scopes.join(" · ")}</dd>
           </dl>
           {#if entry.drifted.length > 0}
-            <p class="drift">{entry.drifted.join("、")} — {t("dispatch.drifted")}</p>
+            <p class="drift">{entry.drifted.join(t("list.join"))} — {t("dispatch.drifted")}</p>
           {/if}
         </div>
       {/each}
