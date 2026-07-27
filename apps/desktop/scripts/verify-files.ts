@@ -23,6 +23,7 @@ declare global {
   interface Window {
     __fileScans: number;
     __fileChanged?: (root: string) => void;
+    __workspaceLoads: number;
   }
 }
 
@@ -48,13 +49,14 @@ const bridge = `
   window.__ENTRIES = ${JSON.stringify(ENTRIES)};
   window.__fileScans = 0;
   window.__fileChanged = null;
+  window.__workspaceLoads = 0;
   ${BRIDGE_STUB}
   Object.assign(window.refrain, {
     openProject: async () => null,
     openFile: async () => null,
     createProject: async () => null,
     loadProject: async () => [],
-    loadWorkspace: async () => ({ roots: [], chapters: [] }),
+    loadWorkspace: async () => { window.__workspaceLoads += 1; return { roots: [], chapters: [] }; },
     saveChapter: async () => ({ ok: true, edits: [] }),
     systemFonts: async () => [],
     pathFor: () => "",
@@ -175,11 +177,17 @@ const pane = page.locator("section.files");
 check("the file browser renders", (await pane.count()) > 0);
 
 const scansBeforeExternalChange = await page.evaluate(() => window.__fileScans);
+const loadsBeforeExternalChange = await page.evaluate(() => window.__workspaceLoads);
 await page.evaluate(() => window.__fileChanged?.("/home/author/novel"));
-await page.waitForFunction((before) => window.__fileScans > before, scansBeforeExternalChange);
+await page.waitForFunction(
+  ({ scans, loads }: { scans: number; loads: number }) =>
+    window.__fileScans > scans && window.__workspaceLoads > loads,
+  { scans: scansBeforeExternalChange, loads: loadsBeforeExternalChange },
+);
 check(
-  "an external Root change rescans the open file browser",
-  (await page.evaluate(() => window.__fileScans)) > scansBeforeExternalChange,
+  "an external Root change rescans the browser and reloads its chapter inventory",
+  (await page.evaluate(() => window.__fileScans)) > scansBeforeExternalChange &&
+    (await page.evaluate(() => window.__workspaceLoads)) > loadsBeforeExternalChange,
 );
 
 if ((await pane.count()) > 0) {

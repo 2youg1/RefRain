@@ -323,11 +323,13 @@ const refreshFileView = async (owner: string): Promise<void> => {
     }
     fileEntries = result.hits.map((hit) => hit.entry);
     fileTotal = result.hits.length;
+    await reload();
     return;
   }
 
   fileTotal = scanned.count;
   await needFilePage(0, visibleRows);
+  await reload();
 };
 
 const searchFiles = async (query: string) => {

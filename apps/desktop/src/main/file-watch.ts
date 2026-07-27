@@ -106,8 +106,14 @@ export const watchRootChanges = (
     });
     watchers.set(root, watcher);
   } catch {
-    if (lstatSync(root).isDirectory()) reconcileTree();
-    else attach(root);
+    try {
+      if (lstatSync(root).isDirectory()) reconcileTree();
+      else attach(root);
+    } catch {
+      // The Root disappeared between authority admission and watcher startup.
+      // The file operation reports that state; observation must not replace it
+      // with an unrelated watcher exception.
+    }
   }
 
   return {
