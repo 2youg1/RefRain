@@ -20,11 +20,19 @@ const server = Bun.serve({
   },
 });
 
+/* The rail groups chapters by `rootId`, not by path — ChapterView says so, and
+ * says an empty workspace is exactly what a mismatch looks like. This stub had
+ * neither `rootId` nor `role`, so the rail drew a root with no chapters under
+ * it and the fixture measured a header that was never rendered. */
+const ROOTS = [{ id: "r1", path: "/p", name: "p", kind: "folder" as const }];
+
 const CHAPTERS = [
   {
     id: "01.md",
     title: "01-夜行",
+    rootId: "r1",
     root: "/p",
+    role: "chapter" as const,
     path: "/p/01.md",
     text: "黑暗中有人问。\n\n声音很熟。",
   },
@@ -43,7 +51,7 @@ await page.addInitScript(`
     fullscreen: async () => true,
     onCloseRequest: () => () => {},
     loadProject: async () => ${JSON.stringify(CHAPTERS)},
-    loadWorkspace: async () => ${JSON.stringify(CHAPTERS)},
+    loadWorkspace: async () => ({ roots: ${JSON.stringify(ROOTS)}, chapters: ${JSON.stringify(CHAPTERS)} }),
     saveChapter: async () => ({ ok: true, edits: [] }),
     systemFonts: async () => [],
     listAgents: async () => [],
@@ -71,15 +79,23 @@ await page.waitForTimeout(900);
 /*
  * The workspace loads on an explicit action rather than on mount, so seeding
  * `refrain.roots` alone lands on the blank screen and the header never exists.
- * "打开文件夹" is the command a person uses; `openProject` in the stub returns
- * the fixture root, so this drives the same path the application really takes.
+ * The command is `cmd.open` — "打开项目…". The welcome screen says "打开文件夹"
+ * for the same gesture, and searching the panel for that wording matched
+ * nothing: the click landed on no button, the fixture opened empty, and the
+ * empty fixture was recorded as a 289px alignment defect (SPEC Q5).
  */
 await page.keyboard.press("Control+k");
 await page.waitForTimeout(300);
-await page.locator("nav.menu input").fill("文件夹");
+await page.locator("nav.menu input").fill("打开项目");
 await page.waitForTimeout(300);
 const opener = page.locator("nav.menu button.row").first();
-if ((await opener.count()) > 0) await opener.click();
+if ((await opener.count()) === 0) {
+  console.error("FAIL  the command panel offers no 打开项目 command");
+  await browser.close();
+  server.stop();
+  process.exit(1);
+}
+await opener.click();
 await page.waitForTimeout(900);
 
 /*
