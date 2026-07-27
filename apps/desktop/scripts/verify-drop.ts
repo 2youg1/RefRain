@@ -86,6 +86,45 @@ if (!observed.body.includes("落下来的第一章"))
 if (!observed.body.includes("正文。"))
   failures.push("the dropped chapter never reached the editor");
 
+/*
+ * The drop affordance used to flicker across the whole shell: `dragleave`
+ * fires on every crossing into a child element, and the handler cleared the
+ * state unconditionally. Moving the pointer from the editor toward the rail
+ * blinked it once per element on the way.
+ *
+ * Asserted through real events on real elements — the flicker is a fact about
+ * event targets, and a hand-built synthetic event would let the assertion
+ * agree with whatever the handler happens to do.
+ */
+const flicker = await page.evaluate(async () => {
+  const shell = document.querySelector(".shell");
+  const inner = document.querySelector(".manuscript") ?? shell;
+  if (!shell || !inner) return "no shell to drag over";
+
+  // Svelte 5 applies state to the DOM on a microtask, so each step has to let
+  // the effect run before reading the class back. Reading synchronously would
+  // observe the previous frame and agree with any handler at all.
+  const settle = () => new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+  const armed = () => document.querySelector(".shell.dragging") !== null;
+
+  shell.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true }));
+  await settle();
+  if (!armed()) return "dragging over the shell did not arm the drop affordance";
+
+  // Crossing into a child: still inside the window, so it must stay armed.
+  shell.dispatchEvent(new DragEvent("dragleave", { bubbles: true, relatedTarget: inner }));
+  await settle();
+  if (!armed()) return "crossing into a child element cleared the drop affordance";
+
+  // Leaving the window itself: relatedTarget is null, so it must clear.
+  shell.dispatchEvent(new DragEvent("dragleave", { bubbles: true, relatedTarget: null }));
+  await settle();
+  if (armed()) return "leaving the window did not clear the drop affordance";
+
+  return null;
+});
+if (flicker !== null) failures.push(flicker);
+
 await browser.close();
 server.stop(true);
 

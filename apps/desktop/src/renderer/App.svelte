@@ -1017,6 +1017,19 @@ const onWheel = (event: WheelEvent): void => {
   type = { ...type, zoom: Math.max(0.5, Math.min(3, Number(next.toFixed(2)))) };
 };
 
+/**
+ * A drag leaves the window, not merely the element under the pointer.
+ *
+ * `dragleave` fires every time the pointer crosses into a child, so clearing
+ * the state unconditionally made the drop affordance flicker all the way
+ * across the shell — the author saw it blink as they moved toward the rail.
+ * On a window listener, `relatedTarget` is null exactly when the pointer has
+ * left the window, which is the moment the affordance should go.
+ */
+const onDragLeave = (event: DragEvent): void => {
+  if (event.relatedTarget === null) dragging = false;
+};
+
 const onDrop = async (event: DragEvent): Promise<void> => {
   event.preventDefault();
   dragging = false;
@@ -1107,7 +1120,7 @@ const onScroll = (): void => {
 <svelte:window
   on:keydown={onKeydown}
   on:dragover|preventDefault={() => (dragging = true)}
-  on:dragleave={() => (dragging = false)}
+  on:dragleave={onDragLeave}
   on:drop|preventDefault={onDrop}
 />
 
