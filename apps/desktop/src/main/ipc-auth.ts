@@ -88,14 +88,17 @@ export const createIpcAuthority = (
   ): void => {
     handle(channel, async (event, roots) => {
       const unique = [...new Set(roots)];
-      const admitted = unique.filter((root) => rootAuthority.status(root) !== "denied");
-      const refused = unique.filter((root) => rootAuthority.status(root) === "denied");
+      // Held, not verified. SPEC Q25: opening a workspace asks only whether the
+      // author granted this path. Identity is rechecked by `handleRoot` on the
+      // first call that actually uses the Root, so a drive cleaned between
+      // sessions does not greet the author with one warning per absent project.
+      const admitted = unique.filter((root) => rootAuthority.holds(root));
+      const refused = unique.filter((root) => !rootAuthority.holds(root));
       const result = await body(event, admitted);
 
       openedRoots.clear();
       for (const root of result.roots) {
-        if (root.missing !== true && rootAuthority.status(root.path) === "present")
-          openedRoots.add(root.path);
+        if (root.missing !== true && rootAuthority.holds(root.path)) openedRoots.add(root.path);
       }
 
       if (refused.length === 0) return result;
