@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HostStateDiagnostic } from "../src/host-state.ts";
-import { readHostState } from "../src/host-state.ts";
+import { readHostState, writeHostState } from "../src/host-state.ts";
 import type { ReviewTask } from "../src/types.ts";
 
 let root = "";
@@ -62,30 +62,33 @@ describe("HostState recovery", () => {
     }
   });
 
-  test("record diagnostics expose a stable path and reason to the reader", () => {
-    writeFileSync(
-      join(root, "host.json"),
-      JSON.stringify({
-        version: 1,
-        sequence: 0,
-        queue: [task("good"), { ...task("bad"), prompt: 42 }],
-        runs: [],
-        drifted: [],
-      }),
-      "utf8",
-    );
+  test("record diagnostics preserve the original bytes before a healthy write", () => {
+    const serialized = JSON.stringify({
+      version: 1,
+      sequence: 0,
+      queue: [task("good"), { ...task("bad"), prompt: 42 }],
+      runs: [],
+      drifted: [],
+    });
+    writeFileSync(join(root, "host.json"), serialized, "utf8");
     const diagnostics: HostStateDiagnostic[] = [];
 
     const state = readHostState(root, (diagnostic) => diagnostics.push(diagnostic));
 
     expect(state.queue.map((entry) => entry.id)).toEqual(["good"]);
-    expect(diagnostics).toEqual([
-      {
-        source: join(root, "host.json"),
-        path: "$.queue[1]",
-        reason: "invalid-record",
-      },
-    ]);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({
+      source: join(root, "host.json"),
+      path: "$.queue[1]",
+      reason: "invalid-record",
+    });
+    const evidence = diagnostics[0]?.evidencePath;
+    expect(evidence).toBeString();
+    expect(readFileSync(evidence!, "utf8")).toBe(serialized);
+
+    writeHostState(root, state);
+    expect(readFileSync(evidence!, "utf8")).toBe(serialized);
+    expect(readFileSync(join(root, "host.json"), "utf8")).not.toBe(serialized);
   });
 
   test("a bad drift marker does not erase valid queued work", () => {
@@ -107,13 +110,12 @@ describe("HostState recovery", () => {
     expect(state.sequence).toBe(7);
     expect(state.queue.map((entry) => entry.id)).toEqual(["kept"]);
     expect(state.drifted).toEqual(["scope-good"]);
-    expect(diagnostics).toEqual([
-      {
-        source: join(root, "host.json"),
-        path: "$.drifted[1]",
-        reason: "invalid-record",
-      },
-    ]);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({
+      source: join(root, "host.json"),
+      path: "$.drifted[1]",
+      reason: "invalid-record",
+    });
   });
 
   test("an invalid sequence cannot reuse a surviving Run id", () => {
@@ -142,11 +144,13 @@ describe("HostState recovery", () => {
 
     expect(state.sequence).toBe(7);
     expect(state.runs.map((run) => run.id)).toEqual(["run7"]);
-    expect(diagnostics).toContainEqual({
-      source: join(root, "host.json"),
-      path: "$.sequence",
-      reason: "invalid-record",
-    });
+    expect(diagnostics).toContainEqual(
+      expect.objectContaining({
+        source: join(root, "host.json"),
+        path: "$.sequence",
+        reason: "invalid-record",
+      }),
+    );
   });
 
   test("duplicate identities and unsafe Run ids are isolated", () => {

@@ -1,5 +1,14 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  closeSync,
+  constants,
+  copyFileSync,
+  existsSync,
+  fsyncSync,
+  linkSync,
+  openSync,
+  readFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import { type AgentComment, type Proposal, replaceStateFileAtomically } from "@refrain/core";
 import type { ReviewTask, RunState } from "./types.ts";
 
@@ -24,6 +33,8 @@ export interface HostStateDiagnostic {
   readonly source: string;
   readonly path: string;
   readonly reason: "read-failed" | "invalid-json" | "invalid-envelope" | "invalid-record";
+  /** Exact invalid bytes retained before a later healthy write can replace them. */
+  readonly evidencePath?: string;
 }
 
 export const emptyHostState = (): HostState => ({
@@ -41,7 +52,12 @@ const warnDiagnostic = (diagnostic: HostStateDiagnostic): void => {
     "invalid-envelope": "invalid top-level shape",
     "invalid-record": "invalid record",
   }[diagnostic.reason];
-  console.warn(`ignored HostState ${detail} at ${diagnostic.path} in ${diagnostic.source}`);
+  console.warn(
+    `ignored HostState ${detail} at ${diagnostic.path} in ${diagnostic.source}` +
+      (diagnostic.evidencePath === undefined
+        ? ""
+        : `; original preserved at ${diagnostic.evidencePath}`),
+  );
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -232,6 +248,57 @@ const validStrings = (
 
 const pathFor = (root: string): string => join(root, "host.json");
 
+const preserveInvalidState = (source: string): string | undefined => {
+  const parent = dirname(source);
+  const timestamp = Date.now();
+  for (let sequence = 0; sequence < 1_000; sequence += 1) {
+    const suffix = new Date(timestamp + sequence).toISOString().replaceAll(":", "-");
+    const evidence = `${source}.invalid-${suffix}`;
+    let created = false;
+    try {
+      linkSync(source, evidence);
+      created = true;
+    } catch (error) {
+      if (typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST")
+        continue;
+    }
+    if (!created) {
+      try {
+        copyFileSync(source, evidence, constants.COPYFILE_EXCL);
+      } catch (error) {
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "EEXIST"
+        )
+          continue;
+        return undefined;
+      }
+    }
+    try {
+      const file = openSync(evidence, constants.O_RDONLY);
+      try {
+        fsyncSync(file);
+      } finally {
+        closeSync(file);
+      }
+      if (process.platform !== "win32") {
+        const directory = openSync(parent, constants.O_RDONLY);
+        try {
+          fsyncSync(directory);
+        } finally {
+          closeSync(directory);
+        }
+      }
+    } catch {
+      return undefined;
+    }
+    return evidence;
+  }
+  return undefined;
+};
+
 /** A corrupt collaboration snapshot never prevents the manuscript from opening. */
 export const readHostState = (
   root: string,
@@ -239,11 +306,20 @@ export const readHostState = (
 ): HostState => {
   const source = pathFor(root);
   if (!existsSync(source)) return emptyHostState();
+  let preservationAttempted = false;
+  let evidencePath: string | undefined;
+  const diagnose = (diagnostic: HostStateDiagnostic): void => {
+    if (!preservationAttempted) {
+      preservationAttempted = true;
+      evidencePath = preserveInvalidState(source);
+    }
+    report(evidencePath === undefined ? diagnostic : { ...diagnostic, evidencePath });
+  };
   let serialized: string;
   try {
     serialized = readFileSync(source, "utf8");
   } catch {
-    report({ source, path: "$", reason: "read-failed" });
+    diagnose({ source, path: "$", reason: "read-failed" });
     return emptyHostState();
   }
 
@@ -251,26 +327,26 @@ export const readHostState = (
   try {
     parsed = JSON.parse(serialized);
   } catch {
-    report({ source, path: "$", reason: "invalid-json" });
+    diagnose({ source, path: "$", reason: "invalid-json" });
     return emptyHostState();
   }
 
   if (!isHostStateEnvelope(parsed)) {
-    report({ source, path: "$", reason: "invalid-envelope" });
+    diagnose({ source, path: "$", reason: "invalid-envelope" });
     return emptyHostState();
   }
-  const queue = validRecords(parsed.queue, isTask, "queue", source, report, (task) => task.id);
-  const runs = validRecords(parsed.runs, isStoredRun, "runs", source, report, (run) => run.id);
+  const queue = validRecords(parsed.queue, isTask, "queue", source, diagnose, (task) => task.id);
+  const runs = validRecords(parsed.runs, isStoredRun, "runs", source, diagnose, (run) => run.id);
   const runSequence = runs.reduce(
     (highest, run) => Math.max(highest, sequenceFromRunId(run.id) ?? 0),
     0,
   );
   return {
     version: 1,
-    sequence: Math.max(validSequence(parsed.sequence, source, report), runSequence),
+    sequence: Math.max(validSequence(parsed.sequence, source, diagnose), runSequence),
     queue,
     runs,
-    drifted: validStrings(parsed.drifted, "drifted", source, report),
+    drifted: validStrings(parsed.drifted, "drifted", source, diagnose),
   };
 };
 
