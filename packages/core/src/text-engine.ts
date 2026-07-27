@@ -70,12 +70,16 @@ export const applyTextAction = (
    */
   const anchorOf = new Map<string, number>();
   const anchorFor = (change: TextChange & { kind: "insert" }): number => {
-    const seen: string[] = [];
+    // A Set, not an array: `includes` down a chain of n insertions is n² work
+    // on the path a run of new paragraphs actually takes.
+    const seen = new Set<string>();
+    const order: string[] = [];
     let at: TextChange & { kind: "insert" } = change;
     for (;;) {
       const cached = anchorOf.get(at.blockId);
       if (cached !== undefined) break;
-      seen.push(at.blockId);
+      seen.add(at.blockId);
+      order.push(at.blockId);
       if (at.beforeBlockId === undefined) {
         anchorOf.set(at.blockId, blocks.length);
         break;
@@ -88,12 +92,12 @@ export const applyTextAction = (
       const next = byId.get(at.beforeBlockId);
       if (next === undefined)
         throw new Error(`cannot insert before missing block ${at.beforeBlockId}`);
-      if (seen.includes(next.blockId))
+      if (seen.has(next.blockId))
         throw new Error(`cannot insert block ${next.blockId} before itself`);
       at = next;
     }
     const resolved = anchorOf.get(at.blockId) as number;
-    for (const id of seen) anchorOf.set(id, resolved);
+    for (const id of order) anchorOf.set(id, resolved);
     return resolved;
   };
 
