@@ -39,8 +39,11 @@ Object.assign(window.refrain, {
   createProject: async () => null,
   pathFor: () => "", resolveDrop: async () => null, fullscreen: async () => true,
   loadProject: async () => [],
-  saveChapter: async (root, id) => { if (!window.__created.includes(id)) window.__created.push(id);
-    return { ok: true, edits: [] }; },
+  saveChapter: async (root, id) => {
+    if (id === "失败.md") throw new Error("EACCES: cannot create chapter");
+    if (!window.__created.includes(id)) window.__created.push(id);
+    return { ok: true, edits: [] };
+  },
   loadWorkspace: async (roots) => {
     const p = roots[0]; const id = "r-work";
     const made = window.__created.map((cid) => ({
@@ -171,6 +174,24 @@ else {
   if (inSequence.includes("年表"))
     failures.push("new material was filed into the chapter sequence");
 }
+
+// A rejected creation must use the same visible error path as other writes.
+await page.evaluate(() => {
+  [...document.querySelectorAll<HTMLElement>(".rail-foot button")]
+    .find((button) => /新建章节|New chapter/.test(button.textContent ?? ""))
+    ?.click();
+});
+await page.fill('[role="dialog"] input', "失败");
+await page.keyboard.press("Enter");
+await page.waitForTimeout(250);
+const failedCreate = await page.evaluate(() => ({
+  body: document.body.textContent ?? "",
+  created: (window as unknown as { __created: string[] }).__created,
+}));
+if (!failedCreate.body.includes("EACCES: cannot create chapter"))
+  failures.push("a rejected chapter creation said nothing on screen");
+if (failedCreate.created.includes("失败.md"))
+  failures.push("a rejected chapter creation still entered the workspace");
 
 console.log(
   `  created ${JSON.stringify(await page.evaluate(() => (window as never as { __created: string[] }).__created))}`,
