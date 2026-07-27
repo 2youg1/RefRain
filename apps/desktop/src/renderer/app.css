@@ -308,13 +308,21 @@ button {
   margin: 0 0.12em;
 }
 
-.manuscript :is(strong, b) {
-  font-weight: 700;
-}
-
-.manuscript :is(em, i) {
-  font-style: italic;
-}
+/*
+ * The manuscript holds no `em`, `i`, `strong` or `b`.
+ *
+ * It is a plain-text surface: `render` sets `p.textContent`, and Ctrl+B and
+ * Ctrl+I insert the literal `**` and `*` an author would type. Nothing parses
+ * inline Markdown into elements, so rules targeting those tags matched nothing
+ * — and one of them said `font-style: italic`, which would have been wrong for
+ * the Chinese and Japanese this application is for: CJK has no italic, the
+ * browser slants the glyphs geometrically, and the strokes collapse. Rail.svelte
+ * reached that conclusion in a comment while this rule sat here contradicting
+ * it, and nobody could tell, because neither rule ever applied to anything.
+ *
+ * When inline rendering arrives, emphasis comes back scoped by `:lang` — 着重号
+ * for CJK, italic for Latin — not as one rule for every script.
+ */
 
 .label {
   font-family: var(--sans);
