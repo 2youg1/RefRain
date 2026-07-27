@@ -68,25 +68,35 @@ export const applyTextAction = (
    * old repeated-splice loop achieved implicitly, at the cost of a linear scan
    * for every change.
    */
-  const anchorOf = new Map<string, number>();
-  const anchorFor = (change: TextChange & { kind: "insert" }): number => {
+  interface Landing {
+    /** Index in the surviving blocks this insertion goes before. */
+    readonly slot: number;
+    /** Links between this insertion and the block that terminates its chain. */
+    readonly depth: number;
+  }
+
+  const landing = new Map<string, Landing>();
+  const landingFor = (change: TextChange & { kind: "insert" }): Landing => {
     // A Set, not an array: `includes` down a chain of n insertions is n² work
     // on the path a run of new paragraphs actually takes.
     const seen = new Set<string>();
-    const order: string[] = [];
+    const walked: string[] = [];
     let at: TextChange & { kind: "insert" } = change;
+    let known: Landing | undefined;
+
     for (;;) {
-      const cached = anchorOf.get(at.blockId);
-      if (cached !== undefined) break;
+      known = landing.get(at.blockId);
+      if (known !== undefined) break;
       seen.add(at.blockId);
-      order.push(at.blockId);
+      walked.push(at.blockId);
+
       if (at.beforeBlockId === undefined) {
-        anchorOf.set(at.blockId, blocks.length);
+        known = { slot: blocks.length, depth: 0 };
         break;
       }
       const existing = present.get(at.beforeBlockId);
       if (existing !== undefined) {
-        anchorOf.set(at.blockId, existing);
+        known = { slot: existing, depth: 0 };
         break;
       }
       const next = byId.get(at.beforeBlockId);
@@ -96,28 +106,39 @@ export const applyTextAction = (
         throw new Error(`cannot insert block ${next.blockId} before itself`);
       at = next;
     }
-    const resolved = anchorOf.get(at.blockId) as number;
-    for (const id of order) anchorOf.set(id, resolved);
-    return resolved;
+
+    // The last identifier walked sits one link above whatever terminated the
+    // chain, and each earlier one is a link further out.
+    for (const [back, id] of [...walked].reverse().entries())
+      landing.set(id, { slot: known.slot, depth: known.depth + back + 1 });
+
+    return landing.get(change.blockId) ?? known;
   };
 
-  const pendingAt = new Map<number, Block[]>();
+  const pendingAt = new Map<number, { block: Block; depth: number }[]>();
   for (const change of inserts) {
-    const index = anchorFor(change);
-    const slot = pendingAt.get(index);
-    const block = { id: change.blockId, text: change.text };
-    if (slot === undefined) pendingAt.set(index, [block]);
-    else slot.push(block);
+    const { slot, depth } = landingFor(change);
+    const entry = { block: { id: change.blockId, text: change.text }, depth };
+    const group = pendingAt.get(slot);
+    if (group === undefined) pendingAt.set(slot, [entry]);
+    else group.push(entry);
   }
+
+  // Deeper means further from the block that ends the chain, so it comes first.
+  // Declaration order decides nothing here; it only decides which of two
+  // insertions at the same depth — independent of each other — leads.
+  const ordered = (slot: number): Block[] =>
+    (pendingAt.get(slot) ?? [])
+      .map((entry, index) => ({ ...entry, index }))
+      .sort((left, right) => right.depth - left.depth || left.index - right.index)
+      .map((entry) => entry.block);
 
   const out: Block[] = [];
   for (const [index, block] of blocks.entries()) {
-    const ahead = pendingAt.get(index);
-    if (ahead !== undefined) out.push(...ahead);
+    out.push(...ordered(index));
     out.push(block);
   }
-  const tail = pendingAt.get(blocks.length);
-  if (tail !== undefined) out.push(...tail);
+  out.push(...ordered(blocks.length));
 
   return { id: nextHeadId(), blocks: out, cause };
 };
