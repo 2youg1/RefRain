@@ -46,6 +46,23 @@ await run([
 replaceGenerated("dist/main/main.js", "dist/main/main.cjs");
 replaceGenerated("dist/main/preload.js", "dist/main/preload.cjs");
 
+// Protocol changes must cross the shipping preload and authenticated IPC, not
+// merely pass a browser stub beside a direct handler test. The Windows gate
+// runs this bundle in a real Electron window after the platform binary exists.
+await run([
+  "build",
+  "scripts/verify-electron-ipc-roundtrip.ts",
+  "--target=node",
+  "--outdir=build/checks",
+  "--format=cjs",
+  "--external",
+  "electron",
+]);
+replaceGenerated(
+  "build/checks/verify-electron-ipc-roundtrip.js",
+  "build/checks/verify-electron-ipc-roundtrip.cjs",
+);
+
 // A Bun global in the Node-targeted main bundle is a release-time crash.
 await run(["scripts/verify-no-bun.ts"]);
 
