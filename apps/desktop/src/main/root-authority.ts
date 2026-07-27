@@ -92,6 +92,19 @@ export class RootAuthority {
     return true;
   }
 
+  /**
+   * Whether a permit exists for this path, without asking the filesystem.
+   *
+   * SPEC Q25 splits the two questions. Opening a workspace only needs to know
+   * the author once granted this path, and a drive cleaned between sessions
+   * must not produce one warning per Root the author did not ask to open.
+   * Identity is checked by `status` on the first call that uses the Root.
+   */
+  holds(path: string): boolean {
+    const literal = normalize(path);
+    return this.#permits.has(literal) && !isSourceBackupPath(literal);
+  }
+
   status(path: string): RootPermitStatus {
     const literal = normalize(path);
     const approved = this.#permits.get(literal);

@@ -52,3 +52,64 @@ test("Source Backup cannot mint a Root permit", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+/**
+ * SPEC Q25. Permission and filesystem identity are two questions asked at two
+ * moments: an author who cleaned a drive and reopened RefRain met one warning
+ * per vanished Root, for projects they never asked to open.
+ */
+test("holding a permit is answered without reading the disk", () => {
+  const home = mkdtempSync(join(tmpdir(), "refrain-root-authority-held-"));
+  const root = join(home, "work");
+  mkdirSync(root);
+  try {
+    const authority = new RootAuthority();
+    expect(authority.approve(root)).toBe(true);
+
+    rmSync(root, { recursive: true });
+    expect(authority.holds(root)).toBe(true);
+    expect(authority.status(root)).toBe("missing");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a path that never had a permit is not held", () => {
+  const home = mkdtempSync(join(tmpdir(), "refrain-root-authority-unheld-"));
+  try {
+    expect(new RootAuthority().holds(join(home, "elsewhere"))).toBe(false);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("Source Backup is refused even when a permit file claims it", () => {
+  const home = mkdtempSync(join(tmpdir(), "refrain-root-authority-forged-"));
+  const backup = join(home, "work", ".refrain-source");
+  const permits = join(home, "state", "roots.json");
+  mkdirSync(backup, { recursive: true });
+  mkdirSync(join(home, "state"));
+  writeFileSync(
+    permits,
+    JSON.stringify({
+      version: 1,
+      roots: [
+        {
+          path: backup,
+          canonical: backup,
+          kind: "folder",
+          device: "1",
+          inode: "2",
+          birth: "3",
+        },
+      ],
+    }),
+  );
+  try {
+    const authority = new RootAuthority(permits);
+    expect(authority.holds(backup)).toBe(false);
+    expect(authority.status(backup)).toBe("denied");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
