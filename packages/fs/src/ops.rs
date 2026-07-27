@@ -1062,6 +1062,59 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// A directory symlink cycle is one entry, not another directory to walk.
+    ///
+    /// Both copy and verification must inspect the link itself before asking
+    /// whether its referent is a directory. Following `loop -> .` would recurse
+    /// until the path limit and make the real cross-volume trash fail; preserving
+    /// the entry lets the tree reach recoverable trash without touching the loop.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cross_device_trash_preserves_a_directory_symlink_cycle_as_an_entry() {
+        use std::os::unix::fs::MetadataExt;
+
+        let root = PathBuf::from("/dev/shm").join(format!(
+            "refrain-fs-via-home-symlink-cycle-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let target = root.join("tree");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("chapter.md"), "循环之外的正文").unwrap();
+        std::os::unix::fs::symlink(".", target.join("loop")).unwrap();
+
+        let home = scratch("via-home-symlink-cycle-home");
+        assert_ne!(
+            fs::metadata(&root).unwrap().dev(),
+            fs::metadata(&home).unwrap().dev(),
+            "the test must exercise a real cross-device boundary"
+        );
+        let fake_trash = home.join("recoverable-tree");
+        let guard = Guard::new([&root]);
+
+        trash_via_home_at(&guard, &target, &home, |staged| {
+            fs::rename(staged, &fake_trash).map_err(|error| io(staged, error))?;
+            Ok(())
+        })
+        .unwrap();
+
+        assert!(!target.exists(), "the source leaves only after recovery");
+        assert_eq!(
+            fs::read_to_string(fake_trash.join("chapter.md")).unwrap(),
+            "循环之外的正文"
+        );
+        let copied_loop = fake_trash.join("loop");
+        assert!(
+            fs::symlink_metadata(&copied_loop)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the cycle must remain a symbolic-link entry"
+        );
+        assert_eq!(fs::read_link(copied_loop).unwrap(), PathBuf::from("."));
+        fs::remove_dir_all(root).unwrap();
+    }
+
     /// SPEC Q8's escape hatch. The file leaves the workspace and reaches a
     /// trash; what must never happen is that it simply disappears.
     #[test]
