@@ -27,31 +27,6 @@ question to SPEC §12 and proceed with what you can determine.
 Then read the module in full, and its tests, and the callers of any function
 whose signature you intend to change.
 
-## Four invariants
-
-Breaking one of these is a bug, not a matter of taste.
-
-1. **No network.** The application process makes no outbound request. No API
-   keys, no telemetry, no auto-update. Model calls happen inside the user's own
-   harness, never inside this application. `bun run verify:no-network` fails
-   the build on a `fetch`.
-
-2. **Only a human merges.** Agent output becomes an immutable Proposal. A
-   person clicks. There is no auto-accept, no background merge, no YOLO mode,
-   and the Automation Grant type has no field that could express one — a test
-   asserts that absence.
-
-3. **No billing math.** Token counts are reported exactly as the harness states
-   them, tagged `actual` / `estimated` / `unknown`. Never a price, never a sum
-   the harness did not itself state. When a count is unavailable the interface
-   says unknown rather than zero.
-
-4. **Delete goes to the system trash.** There is no permanent delete at any
-   layer — not in Rust, not across N-API, not as an IPC channel. When the trash
-   is unavailable the operation fails and the file stays.
-   `bun run verify:trash-only` fails the build if a route around the guard
-   appears.
-
 ## Writing an adapter
 
 An adapter lives in `packages/agent` and touches nothing else; protocol drift
