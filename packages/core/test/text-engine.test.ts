@@ -136,6 +136,41 @@ describe("Text Action", () => {
     expect(after.blocks.map((block) => block.id)).toEqual(["b0", "n0", "n1", "n2", "b1"]);
   });
 
+  /**
+   * Where a chain of insertions lands is decided by the chain, not by the order
+   * the changes happen to arrive in. Grouping them by slot and keeping each
+   * group in declaration order looks right whenever the caller declared the
+   * chain head first — which is what every other test here does, and why this
+   * defect survived three tests written to cover exactly this feature. Shuffled
+   * declaration produced a manuscript in the wrong order, silently, where the
+   * previous implementation had refused the action outright.
+   */
+  test("a chain lands in chain order however it was declared", () => {
+    const before: TextHead = { id: "h0", blocks: [{ id: "k", text: "末段。" }], cause: "seed" };
+    const link = (id: string, text: string, beforeBlockId: string): TextChange => ({
+      kind: "insert",
+      blockIds: [],
+      blockId: id,
+      text,
+      beforeBlockId,
+    });
+
+    // A before B, B before C, C before the existing block.
+    const a = link("A", "甲。", "B");
+    const b = link("B", "乙。", "C");
+    const c = link("C", "丙。", "k");
+
+    for (const declared of [
+      [a, b, c],
+      [c, b, a],
+      [b, a, c],
+      [a, c, b],
+    ]) {
+      const after = applyTextAction(before, declared, "a shuffled chain");
+      expect(after.blocks.map((block) => block.id)).toEqual(["A", "B", "C", "k"]);
+    }
+  });
+
   test("an insertion chain that closes on itself fails closed", () => {
     const before: TextHead = {
       id: "h0",
