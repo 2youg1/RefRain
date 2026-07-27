@@ -517,6 +517,13 @@ jobs:
       - name: file URLs become paths the way Windows needs
         run: bun run verify:paths
 
+      # The file layer's symlink tests are written against std::os::unix, and
+      # four of them sat without a cfg guard — which breaks the crate's Windows
+      # target, the only platform 0.1.x releases on. A Linux `cargo test` never
+      # asks the question, so this reads the source and asks it everywhere.
+      - name: Unix-only constructs stay off the Windows target
+        run: bun run verify:unix-guards
+
       # INV-8: the cost of saving follows the size of the change, not of the
       # book. A 40,000-block manuscript threw RangeError: Out of memory on a
       # single save whatever the author had changed, because the alignment
