@@ -29,7 +29,7 @@ pub const CONFIG_FILE_NAME: &str = "config.toml";
 
 /// The complete effective Config. This is the only shape Settings and
 /// Connections pages ever read.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub version: u32,
@@ -48,7 +48,7 @@ impl Default for Config {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(deny_unknown_fields)]
 pub struct KaraConfig {
     /// D18: consume the one automatic entry of a Project work session on the
@@ -66,7 +66,7 @@ impl Default for KaraConfig {
 
 /// A machine-level execution channel (SPEC 2.3). Capability probes and trust
 /// evidence are machine facts and live in `app.db` — never here.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(deny_unknown_fields)]
 pub struct HarnessConnection {
     pub id: Id,
@@ -83,7 +83,7 @@ pub struct HarnessConnection {
 
 /// The harness kinds with a defined adapter (SPEC 8.3a). `L0` is the file
 /// channel any producer — including a human pasting into a web chat — can serve.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum AdapterKind {
     L0,
@@ -123,7 +123,8 @@ pub enum ConfigFailure {
 
 /// The effective Config plus anything the author must be told about the load
 /// or write itself.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub struct ConfigSnapshot {
     pub config: Config,
     /// A divergent interrupted write preserved before this load or save
@@ -197,6 +198,13 @@ impl ConfigStore {
                 recovery_evidence: outcome.recovery_evidence,
             },
         ))
+    }
+
+    /// The current effective Config, re-read from disk. The file is the
+    /// authority; a snapshot that went stale between load and now is a bug
+    /// the caller should not have to think about.
+    pub fn snapshot(&self) -> Result<ConfigSnapshot, ConfigFailure> {
+        Self::current(&self.path)
     }
 
     /// Applies one typed change and atomically replaces the file, returning

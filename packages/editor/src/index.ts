@@ -52,6 +52,8 @@ export interface EditorHandle {
   replace(document: EditorDocument): void;
   /** Put the caret in a block, at an optional character offset. */
   focus(blockId?: string, offset?: number): void;
+  /** Where the caret is: block id and character offset, or null outside. */
+  caret(): { blockId: string; offset: number } | null;
   /** INV-7: while a composition is open its text is not text — the host
    * defers saves and never asks for a read in this state. */
   isComposing(): boolean;
@@ -293,6 +295,13 @@ export function mountEditor(
     },
     isComposing() {
       return composing !== null;
+    },
+    caret() {
+      for (const [id, paragraph] of byId) {
+        const offset = caretWithin(paragraph);
+        if (offset !== null) return { blockId: id, offset };
+      }
+      return null;
     },
     destroy() {
       destroyed = true;

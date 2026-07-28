@@ -18,6 +18,8 @@ import {
   type ProjectOpenedDto,
 } from "../generated/bindings.gen";
 import ConflictDialog from "./ConflictDialog.vue";
+import KaraSurface from "./KaraSurface.vue";
+import { useKara } from "./kara-state";
 import { pickDocumentFile, pickProjectFolder, pickProjectParent } from "./pick";
 import StatusLine from "./StatusLine.vue";
 
@@ -34,6 +36,18 @@ const saveState = ref<SaveState>({ kind: "clean" });
 const notice = ref<string | null>(null);
 const conflict = ref<{ mine: string; theirs: string; stamp: FileStamp_Serialize } | null>(null);
 const editor = ref<InstanceType<typeof EditorHost> | null>(null);
+const kara = useKara();
+
+/** The caret as a ReturnPoint: block id, offset, and the sentence tail the
+ * return card shows (SPEC 9.3 "你停在这里"). */
+const trackReturnPoint = (): void => {
+  if (!kara.engaged.value) return;
+  const caret = editor.value?.caret?.();
+  if (!caret || !active.value) return;
+  const block = active.value.blocks.find((candidate) => candidate.id === caret.blockId);
+  const tail = (block?.text ?? "").slice(0, caret.offset).slice(-18);
+  void kara.setReturnPoint({ blockId: caret.blockId, offset: caret.offset, sentenceTail: tail });
+};
 
 const documents = computed<DocumentRow[]>(() => project.value?.documents ?? []);
 
@@ -87,6 +101,7 @@ const select = async (path: string): Promise<void> => {
   }
   try {
     const opened = await unwrap(commands.openDocument(project.value.rootId, path));
+    kara.apply(opened.kara);
     active.value = opened;
     stamp.value = opened.stamp;
     saveState.value = { kind: "clean" };
@@ -107,6 +122,7 @@ const newDocument = async (role: "chapter" | "material"): Promise<void> => {
   if (!title) return;
   try {
     const created = await unwrap(commands.createDocument(project.value.rootId, title, role));
+    kara.apply(created.kara);
     project.value = {
       ...project.value,
       documents: [...project.value.documents, created.document],
@@ -165,12 +181,25 @@ const resolveConflict = async (choice: "mine" | "theirs"): Promise<void> => {
 
 const markDirty = (): void => {
   if (saveState.value.kind === "clean") saveState.value = { kind: "dirty" };
+  trackReturnPoint();
 };
 
 const onKeydown = (event: KeyboardEvent): void => {
   if ((event.ctrlKey || event.metaKey) && event.key === "s") {
     event.preventDefault();
     void save();
+    return;
+  }
+  // D10: Ctrl+Enter is the only KARA toggle. Escape never exits — it belongs
+  // to the IME, then to registers, then to nothing.
+  if (event.ctrlKey && event.key === "Enter") {
+    event.preventDefault();
+    if (editor.value?.isComposing()) {
+      window.setTimeout(() => void kara.toggle(), 250);
+    } else {
+      trackReturnPoint();
+      void kara.toggle();
+    }
   }
 };
 </script>
@@ -190,7 +219,7 @@ const onKeydown = (event: KeyboardEvent): void => {
     </template>
 
     <template v-else>
-      <nav class="rail" aria-label="文档">
+      <nav v-show="!kara.engaged.value" class="rail" aria-label="文档">
         <button type="button" @click="newDocument('chapter')">新章</button>
         <button type="button" @click="newDocument('material')">新资料</button>
         <ul>
@@ -220,7 +249,8 @@ const onKeydown = (event: KeyboardEvent): void => {
         <p v-else class="empty">从左侧选一个文档，或新建一章。</p>
       </main>
 
-      <StatusLine :state="saveState" :path="active?.document.path ?? null" />
+      <StatusLine v-show="!kara.engaged.value" :state="saveState" :path="active?.document.path ?? null" />
+      <KaraSurface v-if="kara.engaged.value" />
       <ConflictDialog
         v-if="conflict"
         :mine="conflict.mine"
