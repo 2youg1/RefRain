@@ -96,6 +96,7 @@ onBeforeUnmount(() => {
 
 defineExpose({
   isComposing: () => editor?.isComposing() ?? false,
+  caret: () => editor?.caret() ?? null,
 });
 </script>
 

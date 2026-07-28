@@ -40,9 +40,30 @@ export const commands = {
 	bytes: string,
 	digest: string,
 } | null) => typedError<SaveOutcomeDto_Serialize, RefrainError>(__TAURI_INVOKE("persist_revision", { rootId, path, expected })),
+	/**
+	 *  One KARA event in, one transition out (SPEC 9.3). The machine is the only
+	 *  state owner; the renderer projects the transition it gets back.
+	 */
+	karaEvent: (event: KaraEvent) => typedError<KaraTransition, RefrainError>(__TAURI_INVOKE("kara_event", { event })),
+	/**  The current machine, for surfaces that mount mid-session. */
+	karaState: () => typedError<KaraMachine, RefrainError>(__TAURI_INVOKE("kara_state")),
+	/**  The effective Config, or the refusal the Settings surface must show. */
+	readConfig: () => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("read_config")),
 };
 
 /* Types */
+/**
+ *  What the author is doing when KARA engages: where it must be able to
+ *  return to.
+ */
+export type Activity = "writing" | "reviewing";
+
+/**
+ *  The harness kinds with a defined adapter (SPEC 8.3a). `L0` is the file
+ *  channel any producer — including a human pasting into a web chat — can serve.
+ */
+export type AdapterKind = "l0" | "codex" | "claude-code" | "pi" | "kimi-code" | "hermes";
+
 /**
  *  What the Source Backup attempt produced, in the author's terms. `Failed`
  *  is a degradation the interface reports and offers to retry — the Root
@@ -57,6 +78,29 @@ export type BackupStatus = { kind: "taken"; value: {
 export type BlockDto = {
 	id: string,
 	text: string,
+};
+
+/**
+ *  The complete effective Config. This is the only shape Settings and
+ *  Connections pages ever read.
+ */
+export type Config = {
+	version: number,
+	kara: KaraConfig,
+	harness_connections?: HarnessConnection[],
+};
+
+/**
+ *  The effective Config plus anything the author must be told about the load
+ *  or write itself.
+ */
+export type ConfigSnapshot = {
+	config: Config,
+	/**
+	 *  A divergent interrupted write preserved before this load or save
+	 *  proceeded (SPEC 11: evidence, not silence).
+	 */
+	recoveryEvidence: string | null,
 };
 
 /**  What a Markdown file is to the work. */
@@ -123,6 +167,23 @@ export type FileStamp_Serialize = {
 	digest: string,
 };
 
+/**
+ *  A machine-level execution channel (SPEC 2.3). Capability probes and trust
+ *  evidence are machine facts and live in `app.db` — never here.
+ */
+export type HarnessConnection = {
+	id: Id,
+	adapter: AdapterKind,
+	/**  The exact executable; started with argv, never through a shell. */
+	executable: string,
+	argv?: string[],
+	/**
+	 *  Names of environment variables the child may inherit. Credentials live
+	 *  in the author's own environment; RefRain stores no API keys.
+	 */
+	env_allow?: string[],
+};
+
 /**  What the application can say about itself without touching anything. */
 export type HealthReport = {
 	/**  The workspace version, from Cargo at compile time. */
@@ -148,6 +209,120 @@ export type HealthReport = {
  */
 export type Id = string;
 
+export type InterruptEvent = "save-failed" | "disk-unwritable" | "root-identity-changed" | "external-conflict";
+
+/**
+ *  The one automatic entry a Project work session gets (D18). It belongs to
+ *  the session, never persists to the next one.
+ */
+export type KaraAutoEntry = "pending" | "consumed";
+
+export type KaraConfig = {
+	/**
+	 *  D18: consume the one automatic entry of a Project work session on the
+	 *  first manuscript document opened. `false` leaves KARA fully manual.
+	 */
+	auto_enter_on_first_manuscript: boolean,
+};
+
+/**
+ *  A named effect the composition layer must perform. The machine decides
+ *  *what*, never *how* (INV-15: the words are projected from these).
+ */
+export type KaraEffect = { kind: "engage"; value: {
+	activity: Activity,
+} } | { kind: "disengage"; value: {
+	to: ReturnPoint,
+} } | { kind: "consumeAutoEntry" } | { kind: "markAway"; value: {
+	point: ReturnPoint,
+} } | { kind: "showReturnCard"; value: {
+	point: ReturnPoint,
+} } | { kind: "queueForDebrief"; value: QuietEvent } | { kind: "interruptNow"; value: InterruptEvent } | { kind: "showDebrief"; value: {
+	queued: QuietEvent[],
+} };
+
+/**  Everything that can move the machine. */
+export type KaraEvent = 
+/**
+ *  A manuscript (`document | chapter`) opened. The event carries whether
+ *  this is the first manuscript of the current Project work session;
+ *  the composition layer owns work-session boundaries, the machine owns
+ *  what an entry costs.
+ */
+{ kind: "firstManuscriptOpened"; value: KaraAutoEntry } | 
+/**
+ *  A Project, a Material, the welcome screen, or a management page
+ *  opened: explicitly *not* a manuscript.
+ */
+{ kind: "nonManuscriptOpened" } | 
+/**
+ *  `Ctrl+Enter`: the only toggle (D10). During an IME composition the
+ *  composition layer registers the request and fires this at
+ *  `compositionend`; the machine does not model compositions.
+ */
+{ kind: "manualToggle" } | 
+/**  Entering finished its transition. */
+{ kind: "entered" } | 
+/**  The author stepped into Review while in KARA. */
+{ kind: "enterReview" } | 
+/**  Review ended, back to the text. */
+{ kind: "exitReview" } | 
+/**  Focus lost for 8s, sleep, or minimize. */
+{ kind: "goneAway" } | 
+/**  The author is back. */
+{ kind: "returned" } | 
+/**  Leaving's debrief finished (12s or any input). */
+{ kind: "leaveFinished" } | 
+/**
+ *  The composition layer reports where the author's caret is, so Away can
+ *  mark it and Returning can show it. Facts in; decisions out.
+ */
+{ kind: "setReturnPoint"; value: ReturnPoint } | 
+/**  A quiet event: queued for the leaving debrief, never an interruption. */
+{ kind: "quiet"; value: QuietEvent } | 
+/**  An interrupting event: surfaces immediately. */
+{ kind: "interrupt"; value: InterruptEvent };
+
+/**
+ *  The full machine state: the six-state union, the auto-entry token, and
+ *  the quiet queue. All three travel together; a forgotten queue is how a
+ *  debrief silently loses events.
+ */
+export type KaraMachine = {
+	state: KaraState,
+	autoEntry: KaraAutoEntry,
+	queued: QuietEvent[],
+};
+
+/**
+ *  An open KARA session. It holds the return point and nothing else — no
+ *  timestamps for statistics, because there are no statistics (Q17).
+ */
+export type KaraSession = {
+	activity: Activity,
+	returnPoint: ReturnPoint,
+};
+
+/**  The six states. */
+export type KaraState = { kind: "off" } | { kind: "entering"; value: {
+	activity: Activity,
+	return_point: ReturnPoint,
+} } | { kind: "writing"; value: {
+	session: KaraSession,
+} } | { kind: "reviewing"; value: {
+	session: KaraSession,
+} } | { kind: "away"; value: {
+	session: KaraSession,
+} } | { kind: "leaving"; value: {
+	session: KaraSession,
+} };
+
+/**  What one step produced. */
+export type KaraTransition = {
+	machine: KaraMachine,
+	effects: KaraEffect[],
+};
+
 /**
  *  A document ready for the editor: blocks with stable ids, the revision the
  *  editor's actions will be based on, and the stamp a later save needs.
@@ -167,6 +342,8 @@ export type OpenDocumentDto_Deserialize = {
 	replayed: number,
 	/**  Journaled actions that could not be validated on open: Safety content. */
 	staleJournal: string[],
+	/**  The KARA transition this open caused, if any (D18). */
+	kara: KaraTransition | null,
 };
 
 /**
@@ -182,6 +359,8 @@ export type OpenDocumentDto_Serialize = {
 	replayed: number,
 	/**  Journaled actions that could not be validated on open: Safety content. */
 	staleJournal: string[],
+	/**  The KARA transition this open caused, if any (D18). */
+	kara: KaraTransition | null,
 };
 
 /**  A Root as the interface names it. */
@@ -190,6 +369,8 @@ export type ProjectOpenedDto = {
 	backup: BackupStatus,
 	documents: DocumentRow[],
 };
+
+export type QuietEvent = "save-succeeded" | "agent-completed" | "proposal-arrived" | "index-refreshed";
 
 /**
  *  One thing the author can do about a failure. A step is a domain fact, not a
@@ -207,6 +388,16 @@ export type RefrainError = {
 	/**  Operator-facing specifics. Never shown as the primary message. */
 	detail: string | null,
 	recovery: RecoveryStep[],
+};
+
+/**
+ *  The spot KARA must give back when it ends: a block and a caret offset,
+ *  plus the end of the sentence before it (Q: "你停在这里").
+ */
+export type ReturnPoint = {
+	blockId: string,
+	offset: number,
+	sentenceTail: string,
 };
 
 /**

@@ -81,13 +81,15 @@ pub enum KaraAutoEntry {
 }
 
 /// What the Config says about the automatic entry (SPEC 10.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
 pub struct KaraPolicy {
     pub auto_enter_on_first_manuscript: bool,
 }
 
 /// Everything that can move the machine.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase", tag = "kind", content = "value")]
 pub enum KaraEvent {
     /// A manuscript (`document | chapter`) opened. The event carries whether
     /// this is the first manuscript of the current Project work session;
@@ -113,6 +115,9 @@ pub enum KaraEvent {
     Returned,
     /// Leaving's debrief finished (12s or any input).
     LeaveFinished,
+    /// The composition layer reports where the author's caret is, so Away can
+    /// mark it and Returning can show it. Facts in; decisions out.
+    SetReturnPoint(ReturnPoint),
     /// A quiet event: queued for the leaving debrief, never an interruption.
     Quiet(QuietEvent),
     /// An interrupting event: surfaces immediately.
@@ -139,7 +144,8 @@ pub enum InterruptEvent {
 
 /// A named effect the composition layer must perform. The machine decides
 /// *what*, never *how* (INV-15: the words are projected from these).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase", tag = "kind", content = "value")]
 pub enum KaraEffect {
     Engage { activity: Activity },
     Disengage { to: ReturnPoint },
@@ -154,7 +160,8 @@ pub enum KaraEffect {
 /// The full machine state: the six-state union, the auto-entry token, and
 /// the quiet queue. All three travel together; a forgotten queue is how a
 /// debrief silently loses events.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
 pub struct KaraMachine {
     pub state: KaraState,
     pub auto_entry: KaraAutoEntry,
@@ -162,7 +169,8 @@ pub struct KaraMachine {
 }
 
 /// What one step produced.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
 pub struct KaraTransition {
     pub machine: KaraMachine,
     pub effects: Vec<KaraEffect>,
@@ -192,6 +200,17 @@ impl KaraMachine {
             }
             KaraEvent::Interrupt(interrupt) => {
                 effects.push(KaraEffect::InterruptNow(interrupt));
+            }
+            KaraEvent::SetReturnPoint(point) => {
+                let update = |session: &mut KaraSession| session.return_point = point.clone();
+                match &mut machine.state {
+                    KaraState::Entering { return_point, .. } => *return_point = point,
+                    KaraState::Writing { session }
+                    | KaraState::Reviewing { session }
+                    | KaraState::Away { session }
+                    | KaraState::Leaving { session } => update(session),
+                    KaraState::Off => {}
+                }
             }
             KaraEvent::NonManuscriptOpened => {
                 // Explicitly nothing: Projects, Materials, welcome, and
@@ -496,6 +515,24 @@ mod tests {
         assert!(matches!(reviewing.state, KaraState::Reviewing { .. }));
         let back = reviewing.step(KaraEvent::ExitReview, AUTO);
         assert!(matches!(back.machine.state, KaraState::Writing { .. }));
+    }
+
+    #[test]
+    fn the_return_point_is_a_fact_the_machine_only_keeps() {
+        let machine = writing().step(
+            KaraEvent::SetReturnPoint(ReturnPoint {
+                block_id: "b7".to_string(),
+                offset: 11,
+                sentence_tail: "新位置".to_string(),
+            }),
+            AUTO,
+        );
+        let away = machine.machine.step(KaraEvent::GoneAway, AUTO);
+        let point = away.effects.iter().find_map(|effect| match effect {
+            KaraEffect::MarkAway { point } => Some(point.clone()),
+            _ => None,
+        });
+        assert_eq!(point.map(|p| p.block_id), Some("b7".to_string()));
     }
 
     #[test]

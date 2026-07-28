@@ -10,8 +10,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use refrain_core::{
-    DocumentRole, EditorAction, EditorChange, ErrorCode, Id, Insertion, Lineage, Manuscript,
-    RefrainError, Replacement, SourceSnapshot, TextCommand,
+    DocumentRole, EditorAction, EditorChange, ErrorCode, Id, Insertion, KaraAutoEntry, KaraEvent,
+    KaraMachine, KaraPolicy, KaraTransition, Lineage, Manuscript, RefrainError, Replacement,
+    SourceSnapshot, TextCommand,
 };
 use refrain_store::project::{
     BackupStatus, DocumentCommit, DocumentRow, FileStamp, ProjectFailure, ProjectStore, RootLocator,
@@ -41,6 +42,9 @@ struct ProjectEntry {
 pub struct AppState {
     app_db: Mutex<Connection>,
     projects: Mutex<HashMap<String, ProjectEntry>>,
+    kara: Mutex<KaraMachine>,
+    config: Option<refrain_store::config::ConfigStore>,
+    config_notice: Mutex<Option<String>>,
 }
 
 impl AppState {
@@ -69,16 +73,48 @@ impl AppState {
             )
             .with_detail(error.to_string())
         })?;
+        let (config, config_notice) = match refrain_store::config::ConfigStore::load(app_data_dir) {
+            Ok((store, _snapshot)) => (Some(store), None),
+            Err(failure) => {
+                // A damaged or newer Config must never be overwritten with
+                // defaults; the KARA policy falls back to the SPEC default
+                // and the Settings surface shows the refusal (SPEC 10.1).
+                (None, Some(failure.to_string()))
+            }
+        };
         Ok(Self {
             app_db: Mutex::new(app_db),
             projects: Mutex::new(HashMap::new()),
+            kara: Mutex::new(KaraMachine::new()),
+            config,
+            config_notice: Mutex::new(config_notice),
         })
+    }
+
+    fn kara_policy(&self) -> KaraPolicy {
+        KaraPolicy {
+            auto_enter_on_first_manuscript: self
+                .config
+                .as_ref()
+                .and_then(|store| store.snapshot().ok())
+                .map(|snapshot| snapshot.config.kara.auto_enter_on_first_manuscript)
+                .unwrap_or(true),
+        }
+    }
+
+    fn kara_step(&self, event: KaraEvent) -> Result<KaraTransition, RefrainError> {
+        let mut kara = self.kara.lock().map_err(|_| {
+            RefrainError::new(ErrorCode::StateUnavailable, "lock the KARA machine", "kara")
+        })?;
+        let transition = kara.step(event, self.kara_policy());
+        *kara = transition.machine.clone();
+        Ok(transition)
     }
 
     fn with_project<T>(
         &self,
         root_id: &str,
-        use_entry: impl FnOnce(&mut ProjectEntry) -> Result<T, RefrainError>,
+        use_entry: impl FnOnce(&AppState, &mut ProjectEntry) -> Result<T, RefrainError>,
     ) -> Result<T, RefrainError> {
         let mut projects = self.projects.lock().map_err(|_| {
             RefrainError::new(ErrorCode::StateUnavailable, "lock the project map", root_id)
@@ -90,7 +126,7 @@ impl AppState {
                 root_id,
             )
         })?;
-        use_entry(entry)
+        use_entry(self, entry)
     }
 
     fn adopt(
@@ -104,6 +140,18 @@ impl AppState {
         let (mut store, backup) = ProjectStore::adopt(&mut app_db, locator).map_err(into_domain)?;
         let root_id = store.permit().root_id.to_string();
         let documents = store.refresh_documents().map_err(into_domain)?;
+        // A project becoming active starts a work session (D18): the one
+        // automatic entry re-arms. It fires only when a manuscript opens.
+        {
+            let mut kara = self.kara.lock().map_err(|_| {
+                RefrainError::new(
+                    ErrorCode::StateUnavailable,
+                    "lock the KARA machine",
+                    "adopt",
+                )
+            })?;
+            kara.auto_entry = KaraAutoEntry::Pending;
+        }
         let entry = ProjectEntry {
             store,
             manuscripts: HashMap::new(),
@@ -140,6 +188,8 @@ pub struct OpenDocumentDto {
     pub replayed: u32,
     /// Journaled actions that could not be validated on open: Safety content.
     pub stale_journal: Vec<String>,
+    /// The KARA transition this open caused, if any (D18).
+    pub kara: Option<KaraTransition>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -334,9 +384,9 @@ fn open_document(
     root_id: String,
     path: String,
 ) -> Result<OpenDocumentDto, RefrainError> {
-    state.with_project(&root_id, |entry| {
+    state.with_project(&root_id, |state, entry| {
         let opened = entry.store.open_document(&path).map_err(into_domain)?;
-        open_in_entry(entry, &path, opened)
+        open_in_entry(state, entry, &path, opened)
     })
 }
 
@@ -349,7 +399,7 @@ fn create_document(
     title: String,
     role: DocumentRole,
 ) -> Result<OpenDocumentDto, RefrainError> {
-    state.with_project(&root_id, |entry| {
+    state.with_project(&root_id, |state, entry| {
         let created = entry
             .store
             .create(&refrain_store::project::CreateDocument {
@@ -358,17 +408,35 @@ fn create_document(
             })
             .map_err(into_domain)?;
         let path = created.row.path.clone();
-        open_in_entry(entry, &path, created)
+        open_in_entry(state, entry, &path, created)
     })
 }
 
 /// The shared tail of open/create: build or resume the manuscript and replay
 /// the journal.
 fn open_in_entry(
+    state: &AppState,
     entry: &mut ProjectEntry,
     path: &str,
     opened: refrain_store::project::OpenDocument,
 ) -> Result<OpenDocumentDto, RefrainError> {
+    // D18: opening a manuscript may consume the work session's one automatic
+    // entry. Materials and management surfaces never fire this.
+    let kara = if matches!(
+        opened.row.role,
+        DocumentRole::Document | DocumentRole::Chapter
+    ) {
+        let auto_entry = state
+            .kara
+            .lock()
+            .map_err(|_| {
+                RefrainError::new(ErrorCode::StateUnavailable, "lock the KARA machine", path)
+            })?
+            .auto_entry;
+        Some(state.kara_step(KaraEvent::FirstManuscriptOpened(auto_entry))?)
+    } else {
+        None
+    };
     let snapshot = SourceSnapshot::read(opened.bytes.clone());
     let block_count = snapshot.block_count();
 
@@ -458,6 +526,7 @@ fn open_in_entry(
         stamp: opened.stamp,
         replayed,
         stale_journal,
+        kara,
     })
 }
 
@@ -479,7 +548,7 @@ fn current_document(
     root_id: String,
     path: String,
 ) -> Result<SessionDocumentDto, RefrainError> {
-    state.with_project(&root_id, |entry| {
+    state.with_project(&root_id, |_state, entry| {
         let manuscript = entry.manuscripts.get(&path).ok_or_else(|| {
             RefrainError::new(
                 ErrorCode::StateUnavailable,
@@ -513,7 +582,7 @@ fn apply_editor_action(
     path: String,
     action: EditorActionDto,
 ) -> Result<TextTransitionDto, RefrainError> {
-    state.with_project(&root_id, |entry| {
+    state.with_project(&root_id, |_state, entry| {
         let action_json = serde_json::to_string(&action).map_err(|error| {
             RefrainError::new(ErrorCode::Io, "serialise an editor action", &path)
                 .with_detail(error.to_string())
@@ -571,7 +640,7 @@ fn persist_revision(
     path: String,
     expected: Option<FileStamp>,
 ) -> Result<SaveOutcomeDto, RefrainError> {
-    state.with_project(&root_id, |entry| {
+    state.with_project(&root_id, |_state, entry| {
         let (bytes, lineage, head) = {
             let manuscript = entry.manuscripts.get(&path).ok_or_else(|| {
                 RefrainError::new(
@@ -658,6 +727,57 @@ fn to_domain_action(dto: EditorActionDto) -> Result<EditorAction, RefrainError> 
     Ok(EditorAction::new(base, changes, "author edit"))
 }
 
+/// One KARA event in, one transition out (SPEC 9.3). The machine is the only
+/// state owner; the renderer projects the transition it gets back.
+#[tauri::command]
+#[specta::specta]
+fn kara_event(
+    state: tauri::State<'_, AppState>,
+    event: KaraEvent,
+) -> Result<KaraTransition, RefrainError> {
+    state.kara_step(event)
+}
+
+/// The current machine, for surfaces that mount mid-session.
+#[tauri::command]
+#[specta::specta]
+fn kara_state(state: tauri::State<'_, AppState>) -> Result<KaraMachine, RefrainError> {
+    let kara = state.kara.lock().map_err(|_| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "lock the KARA machine",
+            "kara_state",
+        )
+    })?;
+    Ok(kara.clone())
+}
+
+/// The effective Config, or the refusal the Settings surface must show.
+#[tauri::command]
+#[specta::specta]
+fn read_config(
+    state: tauri::State<'_, AppState>,
+) -> Result<refrain_store::config::ConfigSnapshot, RefrainError> {
+    let notice = state.config_notice.lock().ok().and_then(|n| n.clone());
+    if let Some(notice) = notice {
+        return Err(RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "read a damaged Config",
+            notice,
+        ));
+    }
+    let store = state.config.as_ref().ok_or_else(|| {
+        RefrainError::new(ErrorCode::StateUnavailable, "read the Config", "no store")
+    })?;
+    store.snapshot().map_err(|failure| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "read the Config",
+            failure.to_string(),
+        )
+    })
+}
+
 /// The single command registry. Generation and the runtime read the same list,
 /// so a command cannot exist in one and be missing from the other.
 pub fn builder() -> Builder<tauri::Wry> {
@@ -670,6 +790,9 @@ pub fn builder() -> Builder<tauri::Wry> {
         current_document,
         apply_editor_action,
         persist_revision,
+        kara_event,
+        kara_state,
+        read_config,
     ])
 }
 

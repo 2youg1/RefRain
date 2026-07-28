@@ -69,7 +69,7 @@ const launch = (): Promise<Page> =>
     const poll = async (): Promise<void> => {
       attempts += 1;
       if (attempts > 60) {
-        console.error("app stdout/stderr so far:\n" + appLog.join(""));
+        console.error(`app stdout/stderr so far:\n${appLog.join("")}`);
         return reject(new Error("the window never came up over CDP"));
       }
       try {
@@ -117,6 +117,20 @@ const run = async (): Promise<void> => {
     (await blocks.nth(0).textContent()) === "原来的第一句。" &&
       (await blocks.nth(1).textContent()) === "原来的第二句。",
   );
+
+  // D18: the first manuscript of the work session engages KARA once.
+  await page.locator(".kara-chrome").waitFor({ timeout: 10_000 });
+  check("the first manuscript auto-engages KARA (default policy)", true);
+  check("the rail leaves the stage in KARA", (await page.locator(".rail").isHidden()) === true);
+  await page.keyboard.press("Control+Enter");
+  await page.waitForFunction(() => !document.querySelector(".kara-chrome"), { timeout: 10_000 });
+  check("Ctrl+Enter is the only toggle out (D10)", true);
+  check("the rail returns on manual exit", (await page.locator(".rail").isVisible()) === true);
+  await page.keyboard.press("Control+Enter");
+  await page.locator(".kara-chrome").waitFor({ timeout: 10_000 });
+  check("Ctrl+Enter re-engages manually", true);
+  await page.keyboard.press("Control+Enter");
+  await page.waitForFunction(() => !document.querySelector(".kara-chrome"), { timeout: 10_000 });
 
   await blocks.nth(1).click();
   await page.keyboard.insertText("加一句结尾。");
