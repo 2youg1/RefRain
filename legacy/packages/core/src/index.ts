@@ -21,8 +21,6 @@ export {
   replaceFileAtomically,
   replaceStateFileAtomically,
 } from "./atomic-file.ts";
-export type { ChangeClass } from "./change-class.ts";
-export { classifyChange, classifyProposal } from "./change-class.ts";
 export type { BatchRefusal, DecisionBatchResult } from "./decision-batch.ts";
 export { commitDecisionBatch, rebuildReplacement } from "./decision-batch.ts";
 export type { DecisionRecovery } from "./decision-commit.ts";
@@ -90,8 +88,6 @@ export {
   sourceBlocks,
   splitBlocks,
 } from "./roundtrip.ts";
-export type { TextAction, UndoResult } from "./selective-undo.ts";
-export { selectiveUndo } from "./selective-undo.ts";
 export type { BackupOutcome } from "./source-backup.ts";
 export { SOURCE_BACKUP_DIR, takeSourceBackup } from "./source-backup.ts";
 export { applyTextAction, blockAt, currentText } from "./text-engine.ts";

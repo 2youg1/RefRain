@@ -232,7 +232,7 @@
       "owner": "desktop",
       "disposition": {
         "kind": "blocked",
-        "checkpoint": "C2"
+        "checkpoint": "C5"
       }
     },
     {
@@ -383,24 +383,24 @@
       "legacy": "legacy/packages/core/test/change-class.test.ts",
       "owner": "manuscript",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C2"
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/tests/review.rs"]
       }
     },
     {
       "legacy": "legacy/packages/core/test/decision-batch.properties.test.ts",
       "owner": "manuscript",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C2"
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/tests/manuscript_properties.rs"]
       }
     },
     {
       "legacy": "legacy/packages/core/test/decision-batch.test.ts",
       "owner": "manuscript",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C2"
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/tests/decision_batch.rs"]
       }
     },
     {
@@ -415,8 +415,8 @@
       "legacy": "legacy/packages/core/test/diff-scale.test.ts",
       "owner": "manuscript",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C2"
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/tests/review.rs"]
       }
     },
     {
@@ -424,7 +424,7 @@
       "owner": "manuscript",
       "disposition": {
         "kind": "blocked",
-        "checkpoint": "C2"
+        "checkpoint": "C9"
       }
     },
     {
@@ -432,7 +432,7 @@
       "owner": "manuscript",
       "disposition": {
         "kind": "blocked",
-        "checkpoint": "C2"
+        "checkpoint": "C9"
       }
     },
     {
@@ -455,8 +455,8 @@
       "legacy": "legacy/packages/core/test/manuscript.properties.test.ts",
       "owner": "manuscript",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C2"
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/tests/manuscript_properties.rs"]
       }
     },
     {
@@ -479,8 +479,8 @@
       "legacy": "legacy/packages/core/test/review-engine.test.ts",
       "owner": "manuscript",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C8"
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/tests/review.rs"]
       }
     },
     {
@@ -511,8 +511,8 @@
       "legacy": "legacy/packages/core/test/roundtrip.test.ts",
       "owner": "manuscript",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C2"
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/tests/manuscript_actions.rs"]
       }
     },
     {
@@ -527,16 +527,16 @@
       "legacy": "legacy/packages/core/test/selective-undo-insert.test.ts",
       "owner": "manuscript",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C2"
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/tests/selective_undo.rs"]
       }
     },
     {
       "legacy": "legacy/packages/core/test/selective-undo.test.ts",
       "owner": "manuscript",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C2"
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/tests/selective_undo.rs"]
       }
     },
     {
@@ -560,7 +560,7 @@
       "owner": "manuscript",
       "disposition": {
         "kind": "blocked",
-        "checkpoint": "C2"
+        "checkpoint": "C3"
       }
     },
     {
@@ -568,7 +568,7 @@
       "owner": "manuscript",
       "disposition": {
         "kind": "blocked",
-        "checkpoint": "C2"
+        "checkpoint": "C3"
       }
     },
     {

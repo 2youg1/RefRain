@@ -79,6 +79,13 @@ const INJECTIONS: readonly Injection[] = [
     expect: "ideographic-indent.md",
   },
   {
+    gate: "verify:manuscript-scale",
+    file: "crates/refrain-core/src/manuscript/align.rs",
+    anchor: "const ANCHOR: usize = 8;",
+    replacement: "const ANCHOR: usize = usize::MAX;",
+    expect: "review.rs",
+  },
+  {
     gate: "verify:editor-kernel",
     file: "packages/editor/src/injected-prosemirror.ts",
     content: 'import "prosemirror-state";\n',
