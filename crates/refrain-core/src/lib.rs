@@ -10,6 +10,7 @@
 pub mod error;
 pub mod health;
 pub mod id;
+pub mod kara;
 pub mod manuscript;
 pub mod role;
 pub mod source_layout;
@@ -17,6 +18,10 @@ pub mod source_layout;
 pub use error::{ErrorCode, RecoveryStep, RefrainError};
 pub use health::{HealthReport, health};
 pub use id::Id;
+pub use kara::{
+    Activity, InterruptEvent, KaraAutoEntry, KaraEffect, KaraEvent, KaraMachine, KaraPolicy,
+    KaraSession, KaraState, KaraTransition, QuietEvent, ReturnPoint,
+};
 pub use manuscript::{
     Block, BytePatch, ChangeClass, DecisionBatch, Edit, EditKind, EditScope, EditorAction,
     EditorChange, Insertion, Lineage, Manuscript, Proposal, Replacement, ReviewSlice,
