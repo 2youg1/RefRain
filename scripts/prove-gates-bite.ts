@@ -79,6 +79,12 @@ const INJECTIONS: readonly Injection[] = [
     expect: "ideographic-indent.md",
   },
   {
+    gate: "verify:editor-kernel",
+    file: "packages/editor/src/injected-prosemirror.ts",
+    content: 'import "prosemirror-state";\n',
+    expect: "injected-prosemirror.ts",
+  },
+  {
     gate: "verify:no-js",
     file: "scripts/injected-helper.js",
     content: "export const helper = () => 1;\n",

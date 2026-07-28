@@ -10,7 +10,9 @@
 pub mod error;
 pub mod health;
 pub mod id;
+pub mod source_layout;
 
 pub use error::{ErrorCode, RecoveryStep, RefrainError};
 pub use health::{HealthReport, health};
 pub use id::Id;
+pub use source_layout::{ByteSpan, SourceDrift, SourceLayout};
