@@ -18,7 +18,9 @@ const AUTHORISED = ["apply_editor_action", "commit_decision_batch"] as const;
 
 const files = await collect(["apps/desktop/src-tauri/src/**/*.rs"]);
 if (files.length === 0) {
-  console.error("FAIL  verify:write-path: scanned 0 files — the scan is looking in the wrong place");
+  console.error(
+    "FAIL  verify:write-path: scanned 0 files — the scan is looking in the wrong place",
+  );
   process.exit(1);
 }
 
@@ -43,14 +45,18 @@ if (commands.length === 0) {
  * the authorised pair carries a manuscript-writing name. It tightens in R1,
  * when the real writers land and store gains its named write primitives.
  */
-const WRITES_MANUSCRIPT = /^(write|save|commit|apply|replace|delete)_(chapter|document|manuscript|text|revision|block)/;
+const WRITES_MANUSCRIPT =
+  /^(write|save|commit|apply|replace|delete)_(chapter|document|manuscript|text|revision|block)/;
 
 const unauthorised = commands.filter(
-  (name) => WRITES_MANUSCRIPT.test(name) && !AUTHORISED.includes(name as (typeof AUTHORISED)[number]),
+  (name) =>
+    WRITES_MANUSCRIPT.test(name) && !AUTHORISED.includes(name as (typeof AUTHORISED)[number]),
 );
 
 if (unauthorised.length > 0) {
-  console.error("FAIL  verify:write-path: a command outside the authorised pair writes the manuscript");
+  console.error(
+    "FAIL  verify:write-path: a command outside the authorised pair writes the manuscript",
+  );
   for (const name of unauthorised) console.error(`      ${name}`);
   console.error(`      authorised: ${AUTHORISED.join(", ")}`);
   process.exit(1);

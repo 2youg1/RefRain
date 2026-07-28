@@ -27,3 +27,6 @@ legacy/e2e/ime/results/
 legacy/e2e/ime/page/editor.html
 legacy/e2e/ime/page/editor.bundle.js
 legacy/e2e/ime/shells/wv2/wv2pkg/
+
+# TypeScript incremental build state.
+*.tsbuildinfo

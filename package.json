@@ -3,16 +3,19 @@
   "private": true,
   "type": "module",
   "license": "GPL-3.0-only",
-  "workspaces": ["apps/desktop", "packages/editor"],
+  "workspaces": [
+    "apps/desktop",
+    "packages/editor"
+  ],
   "scripts": {
     "dev": "cd apps/desktop && bun run dev",
     "generate": "cd apps/desktop/src-tauri && cargo test --features generate-bindings generate_bindings -- --nocapture",
     "check": "bun run check:ts && bun run check:vue",
     "check:ts": "tsc --build --force",
-    "check:vue": "cd apps/desktop && bun x vue-tsc --noEmit -p tsconfig.app.json",
+    "check:vue": "bun scripts/check-vue.ts",
     "fmt": "biome check --write .",
     "fmt:check": "biome check .",
-    "test": "bun test",
+    "test": "bun test --path-ignore-patterns='**/legacy/**'",
     "gate": "bun scripts/gate.ts",
     "verify:no-spec-upload": "bun scripts/verify-no-spec-upload.ts",
     "verify:no-network": "bun scripts/verify-no-network.ts",
