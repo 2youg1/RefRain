@@ -1,130 +1,111 @@
 # AGENTS.md
 
-A local writing workbench. Every edit an agent proposes is a reviewable object; the manuscript stays under human control.
+一个本地写作工作台。Agent 提出的每次编辑是可审对象；手稿留在人的手里。
 
-`SPEC.md` is the authoritative design baseline. When code and SPEC disagree, change the code.
+设计权威是维护者本机的 `SPEC.md`（**不入库**）。在本机工作时：代码与 SPEC 冲突，改代码；SPEC 没有回答的决定，追加到 SPEC §14 后继续做能确定的部分，不发明。SPEC 不在场时（外部贡献者），以本文的不变量与 `docs/architecture.md` 为准，拿不准的开 issue 问，不猜。
 
-## Setup
+## 实现方式
+
+- 实现类工作一律加载 **implement skill** 并按其流程推动：读 spec/ticket → 定切片 → 先红后绿 → 真实路径证据 → 收尾核对。不徒手即兴。
+- 回答用户问题先答问题，再动手改代码。
+- 对用户的反馈或分析，先明说同意还是不同意，再说改了什么。
+- 回复短而直接；commit、issue、PR、代码里不用 emoji，不写客套填充。
+
+## 起步
 
 ```bash
 bun install
-bun run native     # cargo build + copy the platform binary into packages/fs
-bun run dev
-bun run check      # tsc --noEmit
-bun run fmt        # biome, writes
-bun test
+bun run generate      # specta → bindings.gen.ts / errors.gen.ts / fake.gen.ts
+bun run dev           # tauri dev
+bun run gate          # fmt:check → check → test → 本平台全部 verify:*
+cargo test --workspace --all-targets
 ```
 
-`bun run native` needs a Rust toolchain and a system C compiler. On a machine
-without `cc` and without root to install one, `REFRAIN_ZIG=/path/to/zig source
-scripts/native-env.sh` points cargo at Zig, which ships a linker, libc headers,
-and CRT objects in one relocatable tarball. CI needs none of this; GitHub's
-runners already carry MSVC, clang, and gcc.
+本机工具链（Rust、Bun、Tauri CLI、msedgedriver 等）已备妥。不要重装、不要「以防万一」跑安装命令；先 `command -v` 探测，缺了才报告。
 
-The file layer is a build artefact, so `packages/fs/test/boundary.test.ts`
-skips when the binary is absent and says so rather than reporting green.
+## 动手之前
 
-**Clippy on Linux does not see the Windows branches**, and Windows is the only
-platform 0.1.x releases on: a lint inside `#[cfg(windows)]` first goes red on
-the release runner, after a push. Lint the release target locally instead —
-`--target` type-checks without linking, so the toolchain is all that is needed:
+- 大范围修改、审计、或编辑没有完整读过的文件之前，整读文件；不依赖搜索片段做广泛改动。
+- 改函数签名前读全部 caller；改状态转移前读全部持久化读者与失败路径。
+- 删除看起来是有意为之的功能或代码之前，先问。
+- 不为过时依赖的类型报错降级代码；升级依赖。
+- 外部 API 的类型去 node_modules / crate 源码里查证，不猜。
+
+## 不变量
+
+违反任何一条是缺陷，不是风格分歧。全表在 SPEC §4（十六条），每条有具名门禁且被注入证明会咬过。日常最常撞到的七条：
+
+1. **零出网。** 应用进程不发任何出站请求；无 API key、遥测、自动更新。模型调用只发生在用户自己的 harness 里。
+2. **只有 Text Action 改手稿。** Agent 输出止于 Proposal；合并需要人的点击。手稿写入口只有 `apply_editor_action` 与 `commit_decision_batch` 两条 command。
+3. **无计费数学。** 不显示价格与成本估算；token 按 harness 原样转述，三态 `actual / estimated / unknown`，unknown 永不写成零。
+4. **Source Backup 永不写入；删除只进系统回收站。** 任何层无永久删除；回收站不可用时操作失败、文件留在原地。
+5. **IME 组合中的文本不是文本。** 不读回、不落盘、不替换 composing node；组合期零 Tauri command；组合中的保存延迟到 `compositionend`。
+6. **每个持久事实恰有一个 owner。** Vue 不复制状态机；视图关闭不改变数据寿命；桥上只走 JSON 平面 DTO 与不透明 ID，响应式代理不作 command 入参。
+7. **Host 独占编排状态。** adapter 返回事实（Receipt/Outcome），不改 Run；已落盘的外部效果不回滚；进程退出不是完成。
+
+## 边界
+
+- `refrain-core`：纯领域。不依赖 tauri、SQLite、文件路径、进程、DOM。类型名不属于领域词汇表的，不进这里。
+- `refrain-store`：全部可变磁盘路径与两个数据库的唯一 owner。其他 crate 不用 `std::fs` 写项目。
+- `refrain-host`：只写 Run workspace；经 trait 读冻结 Context。
+- `src-tauri`：组合层。每个 command 一行映射到具名 use case，不保存第二份业务状态。
+- `packages/editor`：ProseMirror adapter，framework-free TS。唯一触碰版心 DOM 的模块；不 import Vue、不 import 生成绑定。
+- Vue：只渲染 Rust 返回的判别联合；不推断权限、终态、token 口径；不从按钮存在与否反推状态。`App.vue` 只做挂载与 provide。
+- `src/generated/`：生成物，禁手改；重生成后 diff 必须为空。
+
+## 风格
+
+Rust：edition 2024，clippy `-D warnings`；判别联合表状态机，`match` 穷尽；错误是带 code/action/subject/recovery 的领域结果，不跨边界传裸字符串。trait 只出现在真实替换边界（HarnessAdapter、Clock/Id/Store 测试端口），不为「以后也许」给每个 struct 建 trait。
+
+TypeScript：strict；Rust 之外一律 TS，仓库不出现手写 `.js`。`any` 禁止（`unknown` 是正确的边界类型）。顶层 import，不用内联 `await import()`。只有一个调用点的单行 helper 就地内联。
+
+两种语言共同的：一行表达一个完整想法；删解释性临时变量、仪式化控制流、只改名的包装。抽象三选一才存在——执行一条不变量、隔离一处已知易变、命名一个组合中使用的概念；三者皆无，三行相似代码胜过一个早熟抽象。不设 `utils/helpers/common` 垃圾层。不为没人要求的向后兼容付费。
+
+领域词汇单一权威——`Text Head`、`Revision`、`Proposal`、`Review Slice`、`Verdict`、`Edit Scope`、`Run`、`Dispatch Authorization`。代码、注释、UI 文案、测试名用同一个词，不造同义词。
+
+标识符用英文；注释只写*为什么*。软上限：400 行每模块、一屏每函数——超过须能说出该模块为何仍只拥有一个概念。
+
+键位与文案：不硬编码按键检查；一律进默认绑定表，提示文字由生效绑定生成。发现一条独立维护的提示字符串，按缺陷处理。
+
+## 测试
+
+三道门全绿，PR 才落地：
 
 ```bash
-rustup target add x86_64-pc-windows-gnu
-mkdir -p /tmp/fakenode && touch /tmp/fakenode/libnode.dll
-cd packages/fs && LIBNODE_PATH=/tmp/fakenode \
-  cargo clippy --target x86_64-pc-windows-gnu --lib --tests
+bun run gate && cargo test --workspace --all-targets
 ```
 
-The empty `libnode.dll` satisfies napi's build script, which checks that the
-path exists before a link step clippy never reaches. `bun run verify:unix-guards`
-covers the other half — a Unix-only construct that would not compile there at all.
+- 不变量各有门禁（`verify:roundtrip / scale / no-network / trash-only / write-path / bridge / composition / copy-projection / docs-current / citations / gates-run`），每条都曾以注入缺陷证明会咬。**一个不会失败的门禁比没有门禁更糟。** 新门禁先注入它声称能拦的缺陷、看它变红才可接入 CI；注入前先证明注入本身落地（编辑操作拒绝 no-op）。
+- 门禁输出不进管道尾截：`… | head` 会吃掉退出码。
+- 创建或修改了测试文件，就运行它并迭代到通过。
+- 测试主力在 `refrain-core`（属性测试、语料、状态机穷举）。浏览器与组件测试只用 `fake.gen.ts` 派生的 typed fake；手写 `invoke(` 或 `__TAURI__` 出现即门禁红。adapter 用合同测试对真实会话运行。
+- 写断言前先说出「失败时世界长什么样」，并确认门禁能到达那个状态；teardown 放断言之后；宁断言「必须主动产生的东西」，不断言「某物不存在」。
+- **绿色断言不是正确。** 改 UI 要看真实渲染像素；改协议要走真实往返。`e2e:ime` 是每晚必跑项：WebView2 Evergreen 跟随系统更新，IME 回归要在 CI 上先被看到。
+- Linux 全绿对 Windows 不构成证据——Windows 是唯一发布平台，七类「Unix 宽容、Windows 强制」缺陷记录在案（只读句柄 fsync、构造失败泄漏文件锁、`Path` 大小写、junction 删除形态等）。Windows required job 不可替代，不可 `continue-on-error`。平台缺陷互相掩盖：修完一批才看得见下一批。
 
-**Green on Linux is not evidence for Windows**, and Windows is the only platform
-0.1.x ships to. Seven distinct defects reached the release job in one night, all
-of the same shape: a rule Unix does not enforce.
+## Git
 
-| What Windows enforces | What it cost |
-|---|---|
-| A flush needs a writable handle | Every durable state write failed — `fsyncSync` on an `O_RDONLY` descriptor |
-| An open handle locks its file | A ledger that threw mid-construction leaked the handle, and the workspace could not be removed |
-| Environment names arrive as `Path` | `environment.PATH` read `undefined`, so no harness could be launched at all |
-| `URL.pathname` yields `/D:/…` | A fixture read a path that does not exist |
-| A junction needs the directory form of remove | `rmSync(path)` answers EFAULT |
+同一 cwd 可能有多个 agent 会话并行，各改各的文件。凡触碰自己改动之外的 unstaged/staged/untracked 文件的 Git 操作都会毁掉别人的工作：
 
-Two of those are product defects, not test defects. Three gates now guard the
-statically visible half — `verify:paths` (which scans the test directories too,
-because that is where one hid), `verify:durable-writes`, `verify:unix-guards` —
-and the rest is why the Windows job exists. Do not read a local green as
-permission to skip it. Full account in `docs/windows-platform-defects.md`.
+- 只提交**本会话你改过的**文件；`git add <path1> <path2>` 逐路径 stage，**永不** `git add -A` / `git add .`。
+- 提交前 `git status` 核对只 stage 了自己的文件。
+- **永不运行**：`git reset --hard`、`git checkout .`、`git clean -fd`、`git stash`、`git commit --no-verify`、force push。
+- rebase 冲突只解决自己改过的文件；冲突落在没改过的文件上，abort 并问用户。
+- 用户没让提交就不提交。
+- Commit message：`{feat,fix,docs}(core|store|host|editor|desktop): <一句话>`；一个 commit 做一件事，一句话说不完就拆。生成物与手写代码分开提交。
 
-## Before you edit
+## 依赖
 
-Read `SPEC.md`, then the target module in full, then its tests. Read a function's callers before changing its signature.
+- 依赖与 lockfile 变更按被审代码对待；直接外部依赖钉精确版本。
+- 装依赖用 `bun install --frozen-lockfile`；不跑生命周期脚本，除非用户要求。
+- 新依赖在 PR 写明：删除了哪些自有代码、维护责任、是否触及零出网与供应链。只包装语法的依赖不进。
 
-If SPEC does not cover a decision, do not invent one. Append it to SPEC §12 and continue with what you can determine.
+## Pull request
 
-## Invariants
+四段缺一不可：**问题**（症状与复现）、**方案**（取舍与被拒项）、**实现**（致密 diff）、**证据**（三道门 + 该片要求的真实路径）。
 
-Violating any of these is a bug, not a style preference.
+给人审阅的工件（主题预览页、图标、方案对比）必须先提交进仓库再提请裁定——裁定结果写回权威文档，不留在对话里。
 
-1. **No network.** The app process makes no outbound requests. No API keys, no telemetry, no auto-update. Model calls happen only inside the user's own harness.
-2. **Only a Text Action mutates the manuscript.** Agent output becomes an immutable Proposal; a human click merges it. No auto-accept, no background merge, no YOLO mode.
-3. **No billing math.** Never display prices or cost estimates. Report token counts exactly as the harness reports them, tagged `actual` / `estimated` / `unknown`. When unavailable, show unknown.
-4. **Source Backup is never written to.** Every mutating call in `packages/fs` passes through `Guard::admit`, which refuses it along with any path outside a workspace root. `bun run verify:trash-only` fails the build if a route around the guard appears.
+## 用户覆盖
 
-4a. **Bytes the author did not edit come back unchanged.** Loading strips nothing; saving replaces only the ranges whose text actually changed and slices the rest out of the original. A lower bound, not lossless Markdown. One authority — `packages/core/src/roundtrip.ts` — decides where a block begins, because block identity is positional and two processes disagreeing about it detach every queued Proposal from the text it was written against. `bun run verify:roundtrip` fails the build over twenty corpora.
-
-4c. **Text under construction by an input method is not text.** Nothing reads a composition back as the manuscript, writes it to disk, or replaces the node the input method is composing into. A save asked for mid-composition is deferred to `compositionend`, not refused.
-
-4d. **No alignment allocates a table proportional to the whole manuscript.** Saving costs what the change costs. A region past the budget in `packages/core/src/align.ts` is reported as a wholesale replacement rather than aligned; refusing to allocate is the behaviour, and attempting it is what took the application down at 40,000 blocks.
-
-4b. **Delete goes to the system trash.** There is no permanent delete at any layer — not in Rust, not across N-API, not as an IPC channel. When the trash is unavailable the operation fails and the file stays; falling back to `remove_file` would turn an inconvenience into the one loss this application promises never to cause.
-5. **`packages/core` has no DOM and near-zero dependencies.** `packages/agent` is the only surface touching a harness; protocol drift stops there. `packages/fs` is the only surface holding a platform binary; native and OS-specific risk stops there. `apps/desktop` holds windowing and packaging only.
-6. **The editor core is framework-free.** The manuscript is a `contenteditable` holding paragraph elements, driven directly rather than through Svelte's reactivity — no framework code sits on the IME path. ProseMirror goes underneath in v0.2, under the same rule.
-
-## Style
-
-TypeScript 7 strict, ESM, functions over classes.
-
-One line expresses one complete idea. Delete explanatory temporaries, ceremonial control flow, and wrappers that only rename.
-
-An abstraction earns its place by doing one of three things: enforcing an invariant, isolating a likely change, or naming a concept used in composition. If it does none, three similar lines beat a premature abstraction.
-
-Domain vocabulary is single-authority — `Text Head`, `Revision`, `Proposal`, `Review Slice`, `Verdict`, `Edit Scope` (SPEC §2). Use the same word in code, comments, UI strings, and test names. Do not coin synonyms.
-
-Identifiers in English. Comments explain *why*, never *what*. Soft limits: 400 lines per module, one screen per function — exceed them only with a reason you can state.
-
-## Tests
-
-Three gates, all green or the PR does not land:
-
-```bash
-bun run fmt:check && bun run check && bun test
-```
-
-The invariants have gates of their own, and every one of them was proved to
-bite by injecting the defect it names before it was wired into CI. A gate that
-cannot fail is worse than no gate:
-
-```bash
-bun run verify:roundtrip     # bytes survive a load and a save
-bun run verify:scale         # a long manuscript saves in bounded memory
-bun run verify:no-network    # no outbound request reaches the app process
-bun run verify:trash-only    # no permanent delete exists at any layer
-bun run verify:gates-run     # every verification surface has a path that runs it
-```
-
-Most test effort belongs in `packages/core`. Adapters use contract tests against a real session and run (SPEC §6.5). The native file layer has its own suite — `cd packages/fs && cargo test` — which runs against the real filesystem of whichever platform it is on, because a Windows path rule and a macOS trash binding cannot be tested any other way.
-
-**Green assertions are not correctness.** Changing UI requires looking at rendered pixels. Changing a protocol requires a real round trip. Bumping Electron requires the `e2e/ime` gate.
-
-The `e2e/ime` gate (Windows + MS Pinyin, four shells, real `SendInput` typing) runs in CI as the `ime-gate` workflow. Locally: `e2e/ime/scripts/prepare.ps1` once, then `e2e/ime/driver/drive.ps1 -Shell e43`, then `node e2e/ime/driver/analyze.js` and `node e2e/ime/driver/assert.js`. It seizes the real mouse and keyboard while running.
-
-Current 0.1.x tags release on Windows x64 only. The runner builds and tests its own N-API binary before packaging, launches a real Electron window, and publishes one NSIS installer. A release is incomplete until that GitHub Actions run is green and the installer exists.
-
-## Pull requests
-
-Four parts, none optional: **problem** (symptom and repro), **approach** (trade-offs and what you rejected), **implementation** (a dense diff), **evidence** (all three gates).
-
-One commit does one thing. If it takes more than a sentence to describe, split it.
+用户指令与本文规则冲突时，先指出冲突并请求明确确认，确认后才按用户指令执行。

@@ -2,44 +2,32 @@
   "name": "refrain",
   "private": true,
   "type": "module",
-  "workspaces": [
-    "packages/*",
-    "apps/*"
-  ],
+  "license": "GPL-3.0-only",
+  "workspaces": ["apps/desktop", "packages/editor"],
   "scripts": {
     "dev": "cd apps/desktop && bun run dev",
-    "check": "tsc --noEmit && bun run check:desktop && bun run check:svelte",
-    "check:desktop": "bun run check:main && bun run check:renderer && bun run check:scripts",
-    "check:main": "cd apps/desktop && bun x tsc --noEmit -p tsconfig.main.json",
-    "check:renderer": "cd apps/desktop && bun x tsc --noEmit -p tsconfig.renderer.json",
-    "check:scripts": "cd apps/desktop && bun x tsc --noEmit -p tsconfig.scripts.json",
+    "generate": "cd apps/desktop/src-tauri && cargo test --features generate-bindings generate_bindings -- --nocapture",
+    "check": "bun run check:ts && bun run check:vue",
+    "check:ts": "tsc --build --force",
+    "check:vue": "cd apps/desktop && bun x vue-tsc --noEmit -p tsconfig.app.json",
     "fmt": "biome check --write .",
     "fmt:check": "biome check .",
     "test": "bun test",
-    "gate": "bun run fmt:check && bun run check && bun run build:desktop && bun test",
-    "build:desktop": "bun apps/desktop/scripts/build-desktop.ts",
-    "verify:gate": "bun scripts/verify-gate.ts",
+    "gate": "bun scripts/gate.ts",
+    "verify:no-spec-upload": "bun scripts/verify-no-spec-upload.ts",
     "verify:no-network": "bun scripts/verify-no-network.ts",
+    "verify:bridge": "bun scripts/verify-bridge.ts",
+    "verify:write-path": "bun scripts/verify-write-path.ts",
+    "verify:core-purity": "bun scripts/verify-core-purity.ts",
     "verify:trash-only": "bun scripts/verify-trash-only.ts",
-    "verify:gates-run": "bun scripts/verify-gates-run.ts",
-    "verify:actions-pinned": "bun scripts/verify-actions-pinned.ts",
     "verify:roundtrip": "bun scripts/verify-roundtrip.ts",
-    "verify:scale": "bun scripts/verify-scale.ts",
-    "verify:paths": "bun scripts/verify-paths.ts",
-    "verify:unix-guards": "bun scripts/verify-unix-guards.ts",
-    "verify:durable-writes": "bun scripts/verify-durable-writes.ts",
-    "verify:electron-ipc-roundtrip": "cd apps/desktop && bun x electron build/checks/verify-electron-ipc-roundtrip.cjs",
-    "native": "cd packages/fs && cargo build --release && bun run scripts/build.ts",
-    "check:svelte": "cd apps/desktop && bun scripts/check-svelte.ts"
+    "verify:no-js": "bun scripts/verify-no-js.ts",
+    "verify:gates-run": "bun scripts/verify-gates-run.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.5",
     "@types/bun": "1.3.14",
-    "@types/node": "26.1.1",
-    "fast-check": "4.9.0",
-    "playwright": "1.62.0",
     "typescript": "7.0.2",
-    "yaml": "2.9.0"
-  },
-  "license": "GPL-3.0-only"
+    "vue-tsc": "3.3.8"
+  }
 }
