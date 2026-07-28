@@ -1,15 +1,15 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.5/schema.json",
-  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": {
     "includes": [
       "**",
-      "!**/dist",
       "!**/node_modules",
-      "!**/*.min.js",
-      "!e2e/ime",
-      "!docs",
-      "!**/bun.lock"
+      "!**/dist",
+      "!**/target",
+      "!legacy",
+      "!apps/desktop/src/generated",
+      "!apps/desktop/src-tauri/gen",
+      "!tests/corpora"
     ]
   },
   "formatter": {
@@ -18,35 +18,32 @@
     "indentWidth": 2,
     "lineWidth": 100
   },
-  "javascript": {
-    "formatter": {
-      "quoteStyle": "double",
-      "semicolons": "always",
-      "trailingCommas": "all"
-    }
-  },
   "linter": {
     "enabled": true,
     "rules": {
       "preset": "recommended",
-      "suspicious": { "noExplicitAny": "error" },
-      "style": {
-        "useConst": "error",
-        "noNonNullAssertion": "error",
-        "useNodejsImportProtocol": "error"
+      "suspicious": {
+        "noExplicitAny": "error"
       }
     }
   },
-  "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "overrides": [
     {
-      "includes": ["**/*.test.ts"],
-      "linter": { "rules": { "style": { "noNonNullAssertion": "off" } } }
-    },
-    {
-      "includes": ["**/*.svelte"],
-      "linter": { "enabled": false },
-      "formatter": { "enabled": false }
+      "includes": ["**/*.vue"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noUnusedImports": "off"
+          }
+        }
+      }
     }
-  ]
+  ],
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  }
 }

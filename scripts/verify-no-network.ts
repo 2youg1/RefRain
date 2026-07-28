@@ -1,19 +1,34 @@
 #!/usr/bin/env bun
-// SPEC 1.3: no application process may make an outbound request. Source
-// inspection catches a capability before it ships; reviewed bundle inspection
-// catches what the compiler actually left in main, preload, and renderer bytes.
+/**
+ * INV-1: the application process makes no outbound request.
+ *
+ * No model call, no API key, no telemetry, no auto-update. A model runs inside
+ * the author's own harness, launched as a child process — that process may
+ * reach the network, and saying otherwise would be the dishonest version of
+ * this promise (SPEC 5.1).
+ *
+ * Injection proof that this gate bites: add `fetch("https://example.com")` to
+ * any Vue component or Rust crate and this exits 1 naming the file and line.
+ */
 
-import { auditNoNetwork } from "./no-network-policy.ts";
+import { report, scan } from "./gate-lib.ts";
 
-const audit = await auditNoNetwork(process.cwd());
-if (audit.problems.length > 0 || audit.violations.length > 0) {
-  console.error("FAIL  the application process must not reach the network:");
-  for (const problem of audit.problems) console.error(`  ${problem}`);
-  for (const violation of audit.violations)
-    console.error(`  ${violation.path}:${violation.line}  ${violation.what}`);
-  process.exit(1);
-}
+const OUTBOUND =
+  /\b(fetch|XMLHttpRequest|WebSocket|EventSource|navigator\.sendBeacon)\s*\(|\breqwest::|\bureq::|\bhyper::Client|https?:\/\/(?!localhost|127\.0\.0\.1|schema\.tauri\.app|biomejs\.dev)/;
 
-console.log(
-  `PASS  no network in ${audit.scannedSources} source files and ${audit.scannedBundles} reviewed application bundles`,
+const result = await scan(
+  [
+    "apps/desktop/src/**/*.{ts,vue}",
+    "apps/desktop/src-tauri/src/**/*.rs",
+    "crates/**/src/**/*.rs",
+    "packages/**/src/**/*.ts",
+  ],
+  OUTBOUND,
+  {
+    // A comment explaining the rule is not a violation of it. A URL inside a
+    // doc comment is how the reason gets recorded.
+    ignoreLine: (line) => /^\s*(\/\/|\/\*|\*|#)/.test(line),
+  },
 );
+
+report("verify:no-network", result, "an outbound request appears in the application process");

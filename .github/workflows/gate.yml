@@ -45,6 +45,18 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
+      # A Review Task protocol change must cross the shipping preload and
+      # authenticated main-process parser. The Windows runner supplies the real
+      # window this Linux analysis environment cannot truthfully emulate.
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        if: matrix.target == 'win32-x64'
+        with:
+          node-version: 22
+
+      - name: install desktop dependencies for the Electron IPC round trip
+        if: matrix.target == 'win32-x64'
+        run: bun install --frozen-lockfile
+
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-07-27
         with:
           toolchain: ${{ env.RUST_VERSION }}
@@ -82,6 +94,14 @@ jobs:
       - name: name the artefact for its platform
         working-directory: packages/fs
         run: bun run scripts/build.ts
+
+      - name: build the shipping desktop IPC boundary
+        if: matrix.target == 'win32-x64'
+        run: bun run build:desktop
+
+      - name: Review Task crosses the shipping Electron preload and authenticated IPC
+        if: matrix.target == 'win32-x64'
+        run: bun run verify:electron-ipc-roundtrip
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -193,6 +213,12 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-files.ts
 
+      # Search is asynchronous native work. Rapid input must coalesce, and an
+      # older query or an earlier Root must never replace the current page.
+      - name: file search keeps only the newest request
+        working-directory: apps/desktop
+        run: bun scripts/verify-file-search.ts
+
       # Every render gate hand-writes a stand-in for the preload bridge. A key
       # the stub forgets is undefined at call time, so the component takes its
       # empty branch and the gate passes on a screen no user will ever see —
@@ -303,6 +329,12 @@ jobs:
       - name: a command that came with the project waits for consent
         working-directory: apps/desktop
         run: bun scripts/verify-agent-trust.ts
+
+      # A roster refresh may remove the chosen Agent. Keep the choice only while
+      # it still exists, and never invent chapter context for a scope-less task.
+      - name: Dispatch keeps one valid Agent choice
+        working-directory: apps/desktop
+        run: bun scripts/verify-dispatch.ts
 
       # The Verdict Ledger existed behind IPC but the panel could only dump it.
       # A writer revising an Agent persona needs to recover prior stated reasons,
@@ -425,6 +457,13 @@ jobs:
         working-directory: apps/desktop
         run: bun scripts/verify-shortcuts.ts
 
+      # Stage and Reference Sheets are nonmodal. Their rendered semantics must
+      # agree: no modal claim or focus trap, useful initial focus, one Escape
+      # owner, and focus returned to the surviving direct trigger.
+      - name: nonmodal Sheets keep honest focus semantics
+        working-directory: apps/desktop
+        run: bun scripts/verify-sheet-accessibility.ts
+
       # Held under continue-on-error as SPEC Q5, a 289px drift between the
       # chapter header and the manuscript. There was no drift: the fixture
       # never opened, and the gate measured a blank screen. It now opens, the
@@ -433,6 +472,13 @@ jobs:
       - name: chapter header alignment
         working-directory: apps/desktop
         run: bun scripts/verify-anchor.ts
+
+      # Removing any fixture or DOM target must make the alignment gate red. The
+      # ordinary test phase precedes the desktop build, so this suite runs here
+      # with an explicit fail-closed requirement for reviewed renderer bytes.
+      - name: the chapter alignment gate rejects missing targets
+        working-directory: apps/desktop
+        run: REFRAIN_REQUIRE_BUILT=1 bun test test/verify-anchor.test.ts
 
       # Speed is the file layer's reason to exist, so it is measured on every
       # run and the numbers are kept. A threshold set from one run on a shared

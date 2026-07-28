@@ -1,0 +1,18 @@
+[package]
+name = "refrain-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Pure domain: text, Revision, Proposal, Verdict, Decision Batch, Artifact codec, KARA state machine."
+
+# Dependency discipline (SPEC 6.2): this crate must not reach tauri, rusqlite,
+# std::fs project writes, processes, or the DOM. `verify:core-purity` asserts it.
+[dependencies]
+serde = { workspace = true }
+specta = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -1,0 +1,19 @@
+[package]
+name = "refrain-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Orchestration state: Connection, Agent, Session, Task, Run, Authorization; process launcher; L0/L1/L2 adapters; Artifact collection."
+
+# The host writes only a Run workspace and reads frozen Context through a
+# trait (SPEC 6.2). It is the sole writer of orchestration state (INV-12).
+[dependencies]
+refrain-core = { workspace = true }
+serde = { workspace = true }
+specta = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
