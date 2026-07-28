@@ -14,6 +14,9 @@ fn generate_bindings() {
                   // `verify:bridge` fails the build when this file drifts from the Rust types.\n";
 
     refrain_desktop_lib::builder()
-        .export(Typescript::default().header(header), "../src/generated/bindings.gen.ts")
+        .export(
+            Typescript::default().header(header),
+            "../src/generated/bindings.gen.ts",
+        )
         .expect("failed to export TypeScript bindings");
 }

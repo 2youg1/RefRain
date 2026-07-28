@@ -83,8 +83,7 @@ pub trait Database {
 }
 
 fn read_version(connection: &Connection) -> Result<SchemaVersion, StoreError> {
-    let version: u32 =
-        connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    let version: u32 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     Ok(SchemaVersion(version))
 }
 
