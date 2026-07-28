@@ -4,3 +4,9 @@
 *.ps1 text eol=crlf
 *.cmd text eol=crlf
 *.bat text eol=crlf
+
+# The roundtrip corpora are evidence, not source. Their bytes are the assertion
+# — one of them exists precisely to carry CRLF, another a BOM, another a
+# missing final newline. Normalising line endings here would rewrite the
+# defect they were cut from and leave INV-5 asserting against a fiction.
+tests/corpora/** -text -diff

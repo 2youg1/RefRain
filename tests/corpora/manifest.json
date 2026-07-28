@@ -1,0 +1,124 @@
+{
+  "corpora": [
+    {
+      "name": "ideographic-indent",
+      "file": "ideographic-indent.md",
+      "bytes": 81,
+      "sha256": "af439bd174587fbd625f71a47d6877b7adff70c68dff6ce8d18d54232690ef9b"
+    },
+    {
+      "name": "half-width-indent",
+      "file": "half-width-indent.md",
+      "bytes": 39,
+      "sha256": "3f26ee04354a6b7fba9456bd0042199f45af45d53f5629aa7cedc0bb614c7a86"
+    },
+    {
+      "name": "consecutive-blank-lines",
+      "file": "consecutive-blank-lines.md",
+      "bytes": 17,
+      "sha256": "e440f1de5b816f4b8e45ccc6cf43cf1e5e59726e552077c75f37001105dda76a"
+    },
+    {
+      "name": "fence-holding-a-blank-line",
+      "file": "fence-holding-a-blank-line.md",
+      "bytes": 53,
+      "sha256": "4b4870127ad42ba64279209c7304e2971729c01f9e43cba1e852b8c1f7ed75bb"
+    },
+    {
+      "name": "tilde-fence",
+      "file": "tilde-fence.md",
+      "bytes": 20,
+      "sha256": "cb24744841d916bf0aba510a8244e8e8ea93d01afbabb6d5628b8db805427efe"
+    },
+    {
+      "name": "nested-fence-markers",
+      "file": "nested-fence-markers.md",
+      "bytes": 36,
+      "sha256": "a35752b76f239268c86bc5e3e8554d7f14dba0e9f1c578eeea8fbd87d9a414b8"
+    },
+    {
+      "name": "hard-line-break",
+      "file": "hard-line-break.md",
+      "bytes": 45,
+      "sha256": "abacdb376a8c4e7b8c9b7d93e90183da54d511ff9612d4965cf62cb4cfcc9aa6"
+    },
+    {
+      "name": "crlf",
+      "file": "crlf.md",
+      "bytes": 48,
+      "sha256": "81f899234b4681b3a6c217f5d3a45ba9f03987a2316b410d052f29c897ec72cb"
+    },
+    {
+      "name": "no-trailing-newline",
+      "file": "no-trailing-newline.md",
+      "bytes": 30,
+      "sha256": "6a4deffdfdbba5eae21a59e0a05cf7712c7f1de3dfd4139cfa7c104dd68ffb82"
+    },
+    {
+      "name": "byte-order-mark",
+      "file": "byte-order-mark.md",
+      "bytes": 30,
+      "sha256": "d59e755a2dfd2623f2b904524be4f99582be96dc8ce2c535a9198b59f4ceb5c4"
+    },
+    {
+      "name": "leading-blank-lines",
+      "file": "leading-blank-lines.md",
+      "bytes": 25,
+      "sha256": "8dc2bbe96040a1e92c2bd485575e7f186a51c6165eb579870cd09737a94e36bd"
+    },
+    {
+      "name": "trailing-blank-lines",
+      "file": "trailing-blank-lines.md",
+      "bytes": 25,
+      "sha256": "2eddfe48f4cd63177c0215cc276304c293af7677716976b6cbe0bce4fc0efcb8"
+    },
+    {
+      "name": "astral-characters",
+      "file": "astral-characters.md",
+      "bytes": 53,
+      "sha256": "8484ea4a3d7ed5bd87ddee6b9030c22e1418bf2d614f827913052dcf30070f2f"
+    },
+    {
+      "name": "mixed-scripts",
+      "file": "mixed-scripts.md",
+      "bytes": 78,
+      "sha256": "1def6b7fa271bce33ab48fe9bf9675c73017b62615f50a456050d61696631ba4"
+    },
+    {
+      "name": "blockquote-and-list",
+      "file": "blockquote-and-list.md",
+      "bytes": 52,
+      "sha256": "f30257f976b25363fdb6940eadd86723e6b6fabe33c00cb415dd6e3a22982612"
+    },
+    {
+      "name": "table",
+      "file": "table.md",
+      "bytes": 41,
+      "sha256": "5f777dbfb3cf1eba43fbd7fff3feb8ea3da5aa5367e8ef2c8bb0557ea6fbc678"
+    },
+    {
+      "name": "tabs",
+      "file": "tabs.md",
+      "bytes": 42,
+      "sha256": "435c4e5ee3091c6bb344368130d1f17395f48bef13bbcce867a89411f2416a75"
+    },
+    {
+      "name": "empty-file",
+      "file": "empty-file.md",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "only-whitespace",
+      "file": "only-whitespace.md",
+      "bytes": 7,
+      "sha256": "9e107f320c7a628e1448fc07f9e4ae219e4e01577d5b644481f3cbd5940806a4"
+    },
+    {
+      "name": "everything-at-once",
+      "file": "everything-at-once.md",
+      "bytes": 162,
+      "sha256": "8ac89501ca93d322427c5a8c39c3015630d0eaf2bf770386ac612dc024841cb7"
+    }
+  ]
+}

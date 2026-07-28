@@ -1,0 +1,30 @@
+[package]
+name = "refrain-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Composition layer: window, command registry, CSP, display measurement. No domain rules."
+
+[lib]
+# Tauri's mobile entry point expects a library target; the binary is a shim.
+name = "refrain_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.6.3", features = [] }
+
+[dependencies]
+refrain-core = { workspace = true }
+refrain-host = { workspace = true }
+refrain-store = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+specta = { workspace = true }
+specta-typescript = { workspace = true }
+tauri = { version = "=2.11.5", features = [] }
+tauri-specta = { workspace = true }
+
+[features]
+# Generation runs as a test so it needs no extra binary and no network.
+generate-bindings = []

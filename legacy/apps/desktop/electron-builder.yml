@@ -1,0 +1,102 @@
+appId: studio.luciole.refrain
+productName: RefRain
+copyright: RefRain contributors
+
+# The package is named `@refrain/desktop`, which electron-builder would derive
+# an executable name from; the scope marker is not legal in a Linux file path.
+executableName: refrain
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - build/desktop-manifest.json
+  - package.json
+
+# The native file layer travels with the app. Without this the packaged build
+# starts, opens a project, and silently has no file browser — the degradation
+# path working correctly for the wrong reason.
+extraResources:
+  - from: ../../packages/fs/refrain-fs.${platform}-${arch}.node
+    to: refrain-fs.${platform}-${arch}.node
+  # Licences remain standalone resources rather than being folded into the
+  # application's GPL-governed source bundle.
+  - from: ../../LICENSE
+    to: licenses/RefRain-GPL-3.0.txt
+  - from: src/renderer/fonts/OFL-1.1.txt
+    to: licenses/fonts/OFL-1.1.txt
+  - from: src/renderer/fonts/LICENSES.md
+    to: licenses/fonts/ATTRIBUTIONS.md
+
+# The app never fetches anything, so there is no updater and no telemetry
+# endpoint to configure. Absence here is the feature.
+publish: null
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: RefRain-${version}-windows-x64-Setup.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  # electron-builder creates a desktop shortcut by default. Putting an icon on
+  # someone's desktop is a change to their machine they did not ask for, and
+  # this installer already shows a page where they can ask for it — so the
+  # default here is no, and the checkbox is the consent.
+  createDesktopShortcut: false
+  # The manuscripts and the Verdict Ledger live in the project folder, not in
+  # app data, but an uninstall must not take a writer's preferences with it
+  # either. Removing state on uninstall is a decision for the person, not the
+  # installer.
+  deleteAppDataOnUninstall: false
+  artifactName: RefRain-${version}-windows-x64-Setup.${ext}
+
+linux:
+  # Ties running windows to the .desktop entry, so a Linux desktop groups them
+  # under the application rather than a generic name. The schema calls this
+  # `syncDesktopName`; `desktopName` belongs to the .desktop file itself.
+  syncDesktopName: true
+  maintainer: RefRain contributors
+  target:
+    # AppImage runs on any distribution without installation, which suits a
+    # tool a writer may want to carry. deb covers the Debian and Ubuntu
+    # machines most Linux writers are actually on.
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  category: Office
+  synopsis: A local writing workbench where every agent edit is reviewable
+  description: >-
+    RefRain turns every agent edit into a reviewable, attributable proposal and
+    leaves the manuscript in human hands. It makes no network requests.
+  desktop:
+    entry:
+      Name: RefRain
+      Categories: Office;WordProcessor;
+  mimeTypes:
+    - text/markdown
+  artifactName: RefRain-${version}-linux-x64.${ext}
+
+deb:
+  # The file layer needs a system trash implementation; on a Debian desktop
+  # that arrives with the desktop environment, and naming it here means an
+  # install on a bare server fails loudly rather than at first delete.
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxtst6
+    - xdg-utils
+
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  category: public.app-category.productivity
+  artifactName: RefRain-${version}-mac-${arch}.${ext}
