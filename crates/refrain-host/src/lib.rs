@@ -10,7 +10,9 @@
 ///
 /// Declared in R0 because the boundary it names is the one thing the host owes
 /// the rest of the workspace before its state machine exists.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, specta::Type)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, specta::Type,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Tier {
     /// A file channel: write a request, wait for a result. No launch, no cancel.

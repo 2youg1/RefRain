@@ -48,6 +48,11 @@ fi
 # generation chain and a real window run here. A sysroot unpacked without root
 # needs PKG_CONFIG_PATH set explicitly — `pkg-config` on PATH is not enough,
 # because a build script inherits the variable, not the shell's lookup.
+#
+# REFRAIN_SYSROOT is read from the environment rather than derived from $HOME:
+# a background shell can run under a different HOME than the interactive one,
+# and the failure then arrives as "dbus is not installed" pointing at a path
+# nobody chose. Set it explicitly when HOME is not where the sysroot lives.
 REFRAIN_SYSROOT="${REFRAIN_SYSROOT:-$HOME/.local/share/tauri-sysroot}"
 if [ -d "$REFRAIN_SYSROOT/usr/lib/x86_64-linux-gnu/pkgconfig" ]; then
   export PKG_CONFIG_PATH="$REFRAIN_SYSROOT/usr/lib/x86_64-linux-gnu/pkgconfig:$REFRAIN_SYSROOT/usr/share/pkgconfig:$REFRAIN_SYSROOT/usr/lib/pkgconfig"

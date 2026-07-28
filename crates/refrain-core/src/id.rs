@@ -16,7 +16,9 @@ use uuid::Uuid;
 /// The type parameter is absent on purpose: a phantom-typed id would multiply
 /// generated TypeScript types without preventing a single real confusion, since
 /// every id crosses the bridge as a string anyway.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Type)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Type,
+)]
 #[serde(transparent)]
 pub struct Id(Uuid);
 

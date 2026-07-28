@@ -11,6 +11,6 @@ pub mod error;
 pub mod health;
 pub mod id;
 
-pub use error::{ErrorCode, RefrainError, RecoveryStep};
+pub use error::{ErrorCode, RecoveryStep, RefrainError};
 pub use health::{HealthReport, health};
 pub use id::Id;
