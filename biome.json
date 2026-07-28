@@ -3,9 +3,9 @@
   "files": {
     "includes": [
       "**",
-      "!node_modules",
-      "!dist",
-      "!target",
+      "!**/node_modules",
+      "!**/dist",
+      "!**/target",
       "!legacy",
       "!apps/desktop/src/generated",
       "!apps/desktop/src-tauri/gen",
