@@ -1,12 +1,12 @@
 /**
- * The ProseMirror adapter.
+ * The direct DOM adapter boundary.
  *
  * This package is framework-free: it imports no Vue and no generated Tauri
  * binding (SPEC 6.2). It is the only module that touches manuscript DOM, and
- * the only path from an editor transaction to the domain is an EditorAction.
+ * the only path from settled editor input to the domain is an EditorAction.
  *
- * R0 establishes the boundary. The adapter itself lands in R1, after the
- * falsification clause in SPEC 7.5 is settled.
+ * C1 rejected a competing parser against the byte-authoritative block corpus. The DOM
+ * and IME implementation lands after the source and Text Action contracts.
  */
 
 /** A block as the domain hands it over: an opaque id and its text. */
