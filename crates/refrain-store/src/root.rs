@@ -36,7 +36,8 @@ const COMPANION_SIGNATURE: &str = r#"{
 
 /// What a Root is: a folder whose Markdown was adopted, or a single file
 /// opened on its own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
 pub enum RootKind {
     Folder,
     File,

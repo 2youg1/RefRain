@@ -25,6 +25,12 @@ const schema = await scan(["crates/refrain-store/src/*.rs"], /preferences/i, {
 const renderer = await scan(
   ["apps/desktop/src/**/*.ts", "apps/desktop/src/**/*.vue"],
   /localStorage/,
+  {
+    // The `refrain.e2e.` prefix names a test seam (the picker answer the
+    // WebDriver harness plants), never a setting. It is the only localStorage
+    // use the renderer may have, and it is read in exactly one file.
+    ignoreLine: (line) => line.includes("refrain.e2e."),
+  },
 );
 
 const findings = [...schema.findings, ...renderer.findings];

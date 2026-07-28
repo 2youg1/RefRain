@@ -10,7 +10,7 @@
 //! opaque ids and this module resolves them against the adopted Roots.
 
 mod guard;
-mod index;
+pub(crate) mod index;
 mod ops;
 mod search;
 mod sort;

@@ -57,7 +57,8 @@ pub struct RootPermit {
 /// What the Source Backup attempt produced, in the author's terms. `Failed`
 /// is a degradation the interface reports and offers to retry — the Root
 /// stays editable (Q23).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase", tag = "kind", content = "value")]
 pub enum BackupStatus {
     Taken { files: u32 },
     AlreadyPresent,
@@ -76,10 +77,31 @@ impl From<BackupOutcome> for BackupStatus {
     }
 }
 
+/// `u64` on the bridge, without the precision loss Specta forbids: the wire
+/// carries these as decimal strings, and both halves of the encoding live in
+/// one place so they cannot drift.
+pub(crate) mod u64_string {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(value: &u64, serializer: S) -> Result<S::Ok, S::Error> {
+        value.to_string().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        text.parse::<u64>().map_err(serde::de::Error::custom)
+    }
+}
+
 /// What a file looked like when this application last agreed with it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub struct FileStamp {
+    #[serde(with = "u64_string")]
+    #[specta(type = String)]
     pub modified_ms: u64,
+    #[serde(with = "u64_string")]
+    #[specta(type = String)]
     pub bytes: u64,
     pub digest: String,
 }
@@ -100,13 +122,18 @@ impl FileStamp {
 }
 
 /// A document row as the project database knows it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub struct DocumentRow {
     pub id: Id,
     /// Portable identity inside the Root: the relative path, `/`-joined.
     pub path: String,
     pub role: DocumentRole,
     pub digest: Option<String>,
+    /// The confirmed revision id and the lineage it pairs with (SPEC 7.2
+    /// crash recovery). Present after the first save or a continuity-safe open.
+    pub current_head: Option<String>,
+    pub head_block_ids: Option<String>,
 }
 
 /// An opened document: raw bytes plus the stamp a later commit needs.
@@ -250,6 +277,70 @@ impl ProjectStore {
         Ok((store, backup))
     }
 
+    /// Registers every manuscript in the Root. The rail reads rows, and rows
+    /// exist only after this walk — adopting must scan, or a folder full of
+    /// chapters opens as an empty project.
+    pub fn refresh_documents(&mut self) -> Result<Vec<DocumentRow>, ProjectFailure> {
+        if self.permit.kind == RootKind::File {
+            // A single-file Root is its one document; the walker skips the
+            // root entry itself, so it is registered directly.
+            let path = self
+                .permit
+                .canonical_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            if self.find_document(&path)?.is_none() {
+                self.upsert_document(&DocumentRow {
+                    id: Id::new(),
+                    path: path.clone(),
+                    role: DocumentRole::Document,
+                    digest: None,
+                    current_head: None,
+                    head_block_ids: None,
+                })?;
+            }
+            return self.documents().map_err(ProjectFailure::Domain);
+        }
+
+        let entries = crate::files::index::scan(
+            std::slice::from_ref(&self.permit.canonical_path),
+            &crate::files::ScanOptions {
+                manuscripts_only: true,
+                ..crate::files::ScanOptions::default_for_open()
+            },
+        );
+        for entry in entries.iter().filter(|entry| entry.manuscript) {
+            let path = entry
+                .path
+                .strip_prefix(&self.permit.canonical_path)
+                .map_err(|_| {
+                    ProjectFailure::Domain(RefrainError::new(
+                        ErrorCode::OutsideRoot,
+                        "name a document outside its Root",
+                        entry.path.display().to_string(),
+                    ))
+                })?
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/");
+            if self.find_document(&path)?.is_none() {
+                let row = DocumentRow {
+                    id: Id::new(),
+                    path: path.clone(),
+                    role: infer_role(self.permit.kind, &path),
+                    digest: None,
+                    current_head: None,
+                    head_block_ids: None,
+                };
+                self.upsert_document(&row)?;
+            }
+        }
+        self.documents().map_err(ProjectFailure::Domain)
+    }
+
     fn permit_for(
         app_db: &mut Connection,
         canonical: &Path,
@@ -329,10 +420,77 @@ impl ProjectStore {
         &self.permit
     }
 
+    /// The schema version this project's database is at, for migration tests.
+    pub fn schema_version(&self) -> Result<u32, crate::schema::StoreError> {
+        let version: u32 = self
+            .db
+            .query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        Ok(version)
+    }
+
     /// The Verdict Ledger over this project's database (SPEC 1.2).
     #[must_use]
     pub fn ledger(&self) -> crate::ledger::VerdictLedger<'_> {
         crate::ledger::VerdictLedger::new(&self.db)
+    }
+
+    /// Every registered document, in path order. The adopt response and the
+    /// rail read it; it is a page of rows, never file contents.
+    pub fn documents(&self) -> Result<Vec<DocumentRow>, RefrainError> {
+        let mut statement = self
+            .db
+            .prepare(
+                "SELECT id, path, role, digest, current_head, head_block_ids
+                 FROM documents ORDER BY path",
+            )
+            .map_err(|error| {
+                RefrainError::new(ErrorCode::StateUnavailable, "list documents", "refrain.db")
+                    .with_detail(error.to_string())
+            })?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                ))
+            })
+            .map_err(|error| {
+                RefrainError::new(ErrorCode::StateUnavailable, "list documents", "refrain.db")
+                    .with_detail(error.to_string())
+            })?;
+        rows.map(|row| {
+            let (id, path, role, digest, current_head, head_block_ids) = row.map_err(|error| {
+                RefrainError::new(
+                    ErrorCode::StateUnavailable,
+                    "read a document row",
+                    "refrain.db",
+                )
+                .with_detail(error.to_string())
+            })?;
+            let id = id
+                .parse::<uuid::Uuid>()
+                .map(Id::from_uuid)
+                .map_err(|error| {
+                    RefrainError::new(ErrorCode::StateUnavailable, "read a document id", &path)
+                        .with_detail(error.to_string())
+                })?;
+            let role = DocumentRole::from_wire(&role).ok_or_else(|| {
+                RefrainError::new(ErrorCode::StateUnavailable, "read a document role", &path)
+            })?;
+            Ok(DocumentRow {
+                id,
+                path,
+                role,
+                digest,
+                current_head,
+                head_block_ids,
+            })
+        })
+        .collect()
     }
 
     /// The absolute path of a document inside this Root, containment-checked.
@@ -395,6 +553,8 @@ impl ProjectStore {
             path: relative,
             role: command.role,
             digest: Some(stamp.digest.clone()),
+            current_head: None,
+            head_block_ids: None,
         };
         self.upsert_document(&row)?;
         Ok(OpenDocument {
@@ -494,6 +654,8 @@ impl ProjectStore {
             path: relative.to_string(),
             role,
             digest: Some(stamp.digest.clone()),
+            current_head: None,
+            head_block_ids: None,
         };
         self.upsert_document(&row)?;
         Ok(row)
@@ -502,7 +664,8 @@ impl ProjectStore {
     fn find_document(&self, relative: &str) -> Result<Option<DocumentRow>, ProjectFailure> {
         self.db
             .query_row(
-                "SELECT id, path, role, digest FROM documents WHERE path = ?1",
+                "SELECT id, path, role, digest, current_head, head_block_ids
+                 FROM documents WHERE path = ?1",
                 params![relative],
                 |row| {
                     Ok((
@@ -510,12 +673,14 @@ impl ProjectStore {
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
                         row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
                     ))
                 },
             )
             .optional()
             .map_err(crate::schema::StoreError::from)?
-            .map(|(id, path, role, digest)| {
+            .map(|(id, path, role, digest, current_head, head_block_ids)| {
                 let id = id
                     .parse::<uuid::Uuid>()
                     .map(Id::from_uuid)
@@ -538,9 +703,88 @@ impl ProjectStore {
                     path,
                     role,
                     digest,
+                    current_head,
+                    head_block_ids,
                 })
             })
             .transpose()
+    }
+
+    /// Persists the confirmed revision and its lineage with the digest, so a
+    /// later open resumes the revision chain instead of minting a fresh one
+    /// (SPEC 7.2 crash recovery).
+    pub fn save_continuity(
+        &mut self,
+        relative: &str,
+        current_head: &str,
+        head_block_ids: &str,
+    ) -> Result<(), ProjectFailure> {
+        self.db
+            .execute(
+                "UPDATE documents SET current_head = ?1, head_block_ids = ?2 WHERE path = ?3",
+                params![current_head, head_block_ids, relative],
+            )
+            .map_err(crate::schema::StoreError::from)?;
+        Ok(())
+    }
+
+    /// Journals a pending EditorAction before it executes. The row is cleared
+    /// on confirmation; a survivor replays on the next open through the same
+    /// validation, never by writing files directly (SPEC 7.2).
+    pub fn journal_append(
+        &mut self,
+        relative: &str,
+        action_json: &str,
+    ) -> Result<Id, ProjectFailure> {
+        let id = Id::new();
+        self.db
+            .execute(
+                "INSERT INTO pending_actions (id, path, action, created_at) VALUES (?1, ?2, ?3, ?4)",
+                params![id.to_string(), relative, action_json, now_millis() as i64],
+            )
+            .map_err(crate::schema::StoreError::from)?;
+        Ok(id)
+    }
+
+    /// Every journaled action for a document, in the order they were taken.
+    pub fn journal_take(&self, relative: &str) -> Result<Vec<(Id, String)>, ProjectFailure> {
+        let mut statement = self
+            .db
+            .prepare(
+                "SELECT id, action FROM pending_actions WHERE path = ?1 ORDER BY created_at, rowid",
+            )
+            .map_err(crate::schema::StoreError::from)?;
+        let rows = statement
+            .query_map(params![relative], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(crate::schema::StoreError::from)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(crate::schema::StoreError::from)?;
+        rows.into_iter()
+            .map(|(id, action)| {
+                id.parse::<uuid::Uuid>()
+                    .map(Id::from_uuid)
+                    .map(|id| (id, action))
+                    .map_err(|error| {
+                        ProjectFailure::Domain(RefrainError::new(
+                            ErrorCode::StateUnavailable,
+                            "read a pending action",
+                            error.to_string(),
+                        ))
+                    })
+            })
+            .collect()
+    }
+
+    pub fn journal_remove(&mut self, id: Id) -> Result<(), ProjectFailure> {
+        self.db
+            .execute(
+                "DELETE FROM pending_actions WHERE id = ?1",
+                params![id.to_string()],
+            )
+            .map_err(crate::schema::StoreError::from)?;
+        Ok(())
     }
 
     fn upsert_document(&mut self, row: &DocumentRow) -> Result<(), ProjectFailure> {
