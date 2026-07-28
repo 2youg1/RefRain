@@ -2,11 +2,11 @@ name: gate
 
 on:
   push:
-    branches: [main]
+    branches: [main, v0.2-rebuild]
   pull_request:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: gate-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -14,29 +14,23 @@ permissions:
 
 env:
   BUN_VERSION: 1.3.14
-  # Pinned so a toolchain release cannot change what the gate measured. Raising
-  # it is a commit with its own evidence, not a silent Monday morning failure.
   RUST_VERSION: "1.97.1"
 
 jobs:
-  # The native file layer is built and tested first, on every platform it ships
-  # to. A Rust change that only breaks Windows must fail here rather than in a
-  # release job that runs after review.
-  native:
-    name: native (${{ matrix.target }})
+  quality:
+    name: quality (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            target: linux-x64
-          - os: windows-latest
-            target: win32-x64
-          - os: macos-latest
-            target: darwin-arm64
-          - os: macos-15-intel
-            target: darwin-x64
+          - name: linux
+            os: ubuntu-latest
+          - name: windows
+            os: windows-latest
+          - name: macos
+            os: macos-latest
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -45,603 +39,47 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      # A Review Task protocol change must cross the shipping preload and
-      # authenticated main-process parser. The Windows runner supplies the real
-      # window this Linux analysis environment cannot truthfully emulate.
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        if: matrix.target == 'win32-x64'
-        with:
-          node-version: 22
-
-      - name: install desktop dependencies for the Electron IPC round trip
-        if: matrix.target == 'win32-x64'
-        run: bun install --frozen-lockfile
-
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-07-27
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
           components: rustfmt, clippy
 
-      # Cache keyed on the lockfile: a dependency change rebuilds, a source
-      # change does not.
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          workspaces: packages/fs
 
-      - name: format
-        working-directory: packages/fs
-        run: cargo fmt --check
-
-      # `-D warnings`: a warning that is allowed to accumulate is a warning
-      # nobody reads.
-      - name: lint
-        working-directory: packages/fs
-        run: cargo clippy --all-targets -- -D warnings
-
-      # The guard, the index, the matcher, the sort, and the trash refusals.
-      # These run on the real filesystem of each platform, which is the only
-      # way a Windows path rule or a macOS trash binding gets tested at all.
-      - name: test
-        working-directory: packages/fs
-        run: cargo test --all-targets
-
-      - name: build
-        working-directory: packages/fs
-        run: cargo build --release
-
-      # Use the same filename translation that release packaging uses. A second
-      # hand-written `cp` would let this gate pass while the real script broke.
-      - name: name the artefact for its platform
-        working-directory: packages/fs
-        run: bun run scripts/build.ts
-
-      - name: build the shipping desktop IPC boundary
-        if: matrix.target == 'win32-x64'
-        run: bun run build:desktop
-
-      - name: Review Task crosses the shipping Electron preload and authenticated IPC
-        if: matrix.target == 'win32-x64'
-        run: bun run verify:electron-ipc-roundtrip
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: refrain-fs-${{ matrix.target }}
-          path: packages/fs/refrain-fs.${{ matrix.target }}.node
-          retention-days: 7
-
-  # The three gates from AGENTS.md, plus the checks that only a built bundle can
-  # answer. Depends on `native` so the boundary tests run against a real binary
-  # rather than skipping and reporting green.
-  gate:
-    needs: native
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          name: refrain-fs-linux-x64
-          path: packages/fs
-
-      # `panic-boundary.test.ts` builds a release example and loads it, because
-      # `panic = "unwind"` is a release-profile fact a debug build cannot prove.
-      # It invoked `cargo` with no toolchain declared in this job — surviving on
-      # whatever the runner image happened to carry — and then timed out at 30s
-      # compiling the crate from cold inside a test. The toolchain is declared,
-      # and the build happens here, where it is allowed to take as long as it
-      # takes.
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-07-27
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - name: warm the release example the panic boundary loads
-        working-directory: packages/fs
-        run: cargo build --release --example panic-boundary-addon
-
-      # --frozen-lockfile: CI must fail on an out-of-date lockfile rather than
-      # silently resolving different versions than the author tested against.
-      - run: bun install --frozen-lockfile
-
-      # A workflow that names a tag grants whatever commit that tag names when
-      # the job starts, not the commit reviewed here. This scans every workflow,
-      # including this one, and refuses anything but a 40-character SHA.
-      - name: every third-party Action names the reviewed commit
-        run: bun run verify:actions-pinned
-
-      # Each gate runs unpiped. Piping to head/tee would mask the exit code:
-      # `tsc --noEmit | head` exits 0 even with type errors.
-      - name: format and lint
-        run: bun run fmt:check
-
-      - name: typecheck
-        run: bun run check
-
-      - name: test
-        run: bun test
-
-      # make.sh verifies the Node branch of the SQLite adapter, which bun test
-      # cannot reach. Declare the runtime rather than relying on the runner
-      # image shipping one — without it that check exits and takes the build
-      # with it, which is the honest failure but a confusing one to read.
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 22
-
-      # The desktop build is part of the gate: a renderer that no longer
-      # compiles must not reach a release branch.
-      - name: build the desktop app
-        working-directory: apps/desktop
-        run: ./make.sh
-
-      - name: generated desktop bytes match the reviewed manifest
-        run: git diff --exit-code -- apps/desktop/build/desktop-manifest.json
-
-      # Source scans alone can miss a dynamic import or a dependency rewritten
-      # by the bundler. This gate runs only after the reviewed main, preload, and
-      # renderer bytes exist, and refuses a missing bundle rather than scanning
-      # an empty directory successfully.
-      - name: no outbound request reaches the built application
-        run: bun run verify:no-network
-
-      # The main process is bundled for Node; a Bun global there is a crash no
-      # test can see, because bun test runs under Bun. This shipped once.
-      - name: the main process names no Bun global
-        working-directory: apps/desktop
-        run: bun scripts/verify-no-bun.ts
-
-      - name: build-shape checks
-        working-directory: apps/desktop
-        run: bun test test/smoke.test.ts
-
-      - name: install a browser for the rendering checks
-        run: bun x playwright install chromium --only-shell
-
-      # The ruled lines must land under the glyphs, not through them. Vision
-      # cannot tell those apart in a screenshot; the geometry can.
-      - name: ruled lines land under the glyphs
-        working-directory: apps/desktop
-        run: bun scripts/verify-grid.ts
-
-      # The file browser's claims: a windowed list, columns whose headers sit
-      # over their own values, a hairline that is one device pixel, and motion
-      # retargeted to the panel. Every one of these shipped broken at least once
-      # while passing its unit tests.
-      - name: the file browser renders what it claims
-        working-directory: apps/desktop
-        run: bun scripts/verify-files.ts
-
-      # Search is asynchronous native work. Rapid input must coalesce, and an
-      # older query or an earlier Root must never replace the current page.
-      - name: file search keeps only the newest request
-        working-directory: apps/desktop
-        run: bun scripts/verify-file-search.ts
-
-      # Every render gate hand-writes a stand-in for the preload bridge. A key
-      # the stub forgets is undefined at call time, so the component takes its
-      # empty branch and the gate passes on a screen no user will ever see —
-      # verify-anchor failed exactly this way. This keeps the stubs level with
-      # the real bridge, and keeps the gate list level with the workflow.
-      - name: every stubbed bridge answers what preload answers
-        working-directory: apps/desktop
-        run: bun scripts/verify-bridge-parity.ts
-
-      # The bundled faces must actually render. `document.fonts.check` returns
-      # true for any substitutable family, so this compares rendered pixels.
-      - name: the bundled typefaces render
-        working-directory: apps/desktop
-        run: bun scripts/verify-render.ts
-
-      # Every theme the panel offers must actually repaint the page. Eight were
-      # declared, seven had selectors, and the panel offered three retired names
-      # that matched none of them — so every click set `data-theme` to a value no
-      # stylesheet answered and the palette silently stayed put, with the whole
-      # suite green throughout. Nothing compared the list on screen against the
-      # list that renders; this does, by clicking each one and reading the paper
-      # colour back off `:root`.
-      - name: every theme the panel offers repaints the page
-        working-directory: apps/desktop
-        run: bun scripts/verify-themes.ts
-
-      # The lit corner has to belong to the theme it sits in. The page carried a
-      # fixed `oklch(1 0 0 / 0.5)` wash at the upper left, identical in all
-      # eight: day paper at L 0.95 came out within a hair of the pure white the
-      # palette rules forbid, and 墨's L 0.24 read as a bulb on the page. This
-      # samples rendered pixels, because that was a stylesheet which read
-      # reasonably and composited wrong.
-      - name: eight themes light their own paper
-        working-directory: apps/desktop
-        run: bun scripts/verify-lighting.ts
-
-      # Roots persist across a quit, and nothing loaded them at startup — so a
-      # second launch showed an empty rail over a full project, and re-opening
-      # the same folder hit a duplicate check that declined in silence.
-      - name: a remembered workspace comes back on its own
-        working-directory: apps/desktop
-        run: bun scripts/verify-relaunch.ts
-
-      # Verdicts lived inside the review panel, which unmounts on Escape: an
-      # author who judged a run, dismissed the panel to reread the paragraph,
-      # and came back found an empty list. The same component also cleared them
-      # on Merge before knowing the merge succeeded, so a refused commit
-      # destroyed the judgments it had just declined to apply.
-      # The same lifetime fault held the rewrite typed into a Review Slice and
-      # the dispatch instruction. The dispatch case was the worst of the three:
-      # writing an instruction means going back to the manuscript to quote it,
-      # and Escape is the way back.
-      - name: what an author types survives Escape and a refused merge
-        working-directory: apps/desktop
-        run: bun scripts/verify-staged-verdicts.ts
-
-      # Saving resolves normally on failure, so switching chapters on `.then`
-      # walked away from unsaved text and overwrote the only copy of it.
-      - name: a failed save keeps the author on the text
-        working-directory: apps/desktop
-        run: bun scripts/verify-save-blocks-switch.ts
-
-      # Closing used to release after three seconds even when the save failed.
-      # The renderer now refuses that release, and silence defaults to a native
-      # choice whose safe action keeps the manuscript open.
-      - name: closing waits for the manuscript to reach disk
-        working-directory: apps/desktop
-        run: bun scripts/verify-close-saves.ts
-
-      # The audit predicted Chromium would store Shift+Enter as `<br>` and lose
-      # it through textContent. The current engine uses a text-node newline; pin
-      # the actual save contract so either future DOM shape must preserve it.
-      - name: a soft line break reaches disk as one newline
-        working-directory: apps/desktop
-        run: bun scripts/verify-soft-break.ts
-
-      # `.manuscript :is(em, i) { font-style: italic }` sat in app.css from the
-      # beginning and never applied to anything — the surface is plain text —
-      # while being wrong for the languages this application is for. Deleting a
-      # rule proves nothing; these two assertions do.
-      - name: emphasis stays literal Markdown
-        working-directory: apps/desktop
-        run: bun scripts/verify-emphasis.ts
-
-      # Three inputs reach the manuscript's own style. An emptied number box
-      # reads back as 0 and collapsed the page under the author; a family name
-      # goes into a style attribute, where a quote closes the string.
-      - name: typography refuses what would break the page
-        working-directory: apps/desktop
-        run: bun scripts/verify-typography-input.ts
-
-      # The stack was written out twice, and the copies disagreed: the one used
-      # to measure the baseline grid had no Japanese slot, so a Japanese
-      # manuscript had its rule drawn through the middle of the characters.
-      - name: the manuscript font stack has one authority
-        working-directory: apps/desktop
-        run: bun scripts/verify-font-stack.ts
-
-      # Playwright cannot emulate Electron's webUtils path conversion, but the
-      # File-to-resolveDrop-to-Root chain after it must not be a silent no-op.
-      - name: a dropped path enters Root adoption
-        working-directory: apps/desktop
-        run: bun scripts/verify-drop.ts
-
-      # `agents.json` travels with the project, and opening the Agents screen
-      # probes every agent — which runs the binary. Reading someone else's
-      # writing project executed their choice of program.
-      - name: a command that came with the project waits for consent
-        working-directory: apps/desktop
-        run: bun scripts/verify-agent-trust.ts
-
-      # A roster refresh may remove the chosen Agent. Keep the choice only while
-      # it still exists, and never invent chapter context for a scope-less task.
-      - name: Dispatch keeps one valid Agent choice
-        working-directory: apps/desktop
-        run: bun scripts/verify-dispatch.ts
-
-      # The Verdict Ledger existed behind IPC but the panel could only dump it.
-      # A writer revising an Agent persona needs to recover prior stated reasons,
-      # and a failed SQLite query must not look like "nothing matched".
-      - name: stated reasons are searchable in the Verdict Ledger
-        working-directory: apps/desktop
-        run: bun scripts/verify-ledger-search.ts
-
-      # Removing a middle paragraph, saving, then reverting must put it back
-      # where it was. The block identities that make this possible are invisible
-      # to a unit test of the pure function: only the rendered interface exercises
-      # the IPC round trip that used to renumber them.
-      - name: a saved removal reverts to its own position
-        working-directory: apps/desktop
-        run: bun scripts/verify-revert.ts
-
-      # Typing Chinese goes through an input method, and the renderer did not
-      # know that: not one mention of `composition` anywhere in it. Ctrl+S
-      # mid-word wrote the half-formed pinyin to disk as prose, and any redraw
-      # arriving during composition tore out the node the input method was
-      # composing into. This also asserts the surface shows an ideographic
-      # indent as an indent — it collapsed whitespace, so an author could not
-      # see the shape of their own file. Not a substitute for the Windows IME
-      # gate, which is the only evidence about a real input method.
-      - name: composition defers the save, and the indent is visible
-        working-directory: apps/desktop
-        run: bun scripts/verify-composition.ts
-
-      # Changing a typeface must change the manuscript, not only the specimen.
-      # Every entry in the system-font list wrote `cjkFamily` whatever slot the
-      # author meant, and the manuscript stack had no Japanese slot at all, so
-      # Japanese fell through to whatever the machine happened to supply.
-      - name: a chosen typeface reaches the manuscript, in the right slot
-        working-directory: apps/desktop
-        run: bun scripts/verify-fonts.ts
-
-      # The mark on screen and the mark in the installer must be one drawing.
-      # They were two: the component drew a seal with a caret, the asset held a
-      # repeat sign, and `make-icon.ts` rendered the asset — so the desktop icon
-      # and the interface showed different figures, each correct on its own.
-      - name: the interface and the installer draw one mark
-        working-directory: apps/desktop
-        run: bun scripts/verify-mark.ts
-
-      # Four entrances to "new chapter" — the rail button, the palette, Ctrl+N,
-      # and the empty page — all called `window.prompt`, which Electron
-      # disables. All four therefore did nothing at all: no dialog, no chapter,
-      # no error. This creates one, and checks the refusals, because a name
-      # field that accepts a duplicate writes over a chapter that exists.
-      - name: a new chapter can be named and created
-        working-directory: apps/desktop
-        run: bun scripts/verify-new.ts
-
-      # Opening a single file used to show nothing: its chapter was filed under
-      # the file's parent folder while the root recorded was the file, and the
-      # rail grouped by comparing those two paths. Nothing matched, no test
-      # failed, and the writer could not open a manuscript at all. This opens
-      # one — and a folder whose subdirectory holds material (SPEC Q11).
-      - name: a lone file opens, and material stays out of the chapter sequence
-        working-directory: apps/desktop
-        run: bun scripts/verify-open.ts
-
-      # Chapter titles are only labels; two workspace roots may contain the same
-      # one. Selection, display, and save must stay bound to the absolute path.
-      - name: duplicate chapter titles stay isolated across roots
-        working-directory: apps/desktop
-        run: bun scripts/verify-multi-root.ts
-
-      # Disk failure must not turn a rejected save into invisible data loss or an
-      # unhandled renderer rejection. The author's current text stays dirty.
-      - name: a failed save remains visible and recoverable
-        working-directory: apps/desktop
-        run: bun scripts/verify-save-failure.ts
-
-      # A command may fail after the send IPC has already returned. The panel
-      # must refresh the terminal state and its reason without a second click.
-      - name: a slow run failure reaches the open panel
-        working-directory: apps/desktop
-        run: bun scripts/verify-run-refresh.ts
-
-      # Cancellation is an author action, not an adapter-only method. The open
-      # panel must expose it and refresh the terminal Run state immediately.
-      - name: a dispatched Run can be stopped
-        working-directory: apps/desktop
-        run: bun scripts/verify-run-cancel.ts
-
-      # An outside edit is the one moment two versions of the manuscript exist.
-      # This asserts the dialog shows both and that neither wins on its own.
-      - name: an outside edit offers a real choice
-        working-directory: apps/desktop
-        run: bun scripts/verify-conflict.ts
-
-      # The About page carried a hand-typed "0.1.2" for a whole release. This
-      # reads the rendered text and compares it with package.json.
-      - name: the About page states this version and links to this project
-        working-directory: apps/desktop
-        run: bun scripts/verify-about.ts
-
-      - name: the rail seam is drawn
-        working-directory: apps/desktop
-        run: bun scripts/verify-seam.ts
-
-      # The caret borrowed --seal, and on six of eight themes that left it
-      # fainter against the paper than the ink was. A one-pixel rule has no
-      # width to spend, so contrast is the only thing keeping it findable.
-      - name: the caret out-reads the text
-        working-directory: apps/desktop
-        run: bun scripts/verify-caret.ts
-
-      # Five chords were rebindable in Settings and reached no handler. A dead
-      # entry does not merely do nothing: `commandFor` matches by iteration
-      # order, so it shadows the command the author rebound onto those keys.
-      - name: every rebindable chord reaches a handler
-        working-directory: apps/desktop
-        run: bun scripts/verify-bindings.ts
-
-      # Unit tests can find an alert whose flex item has been shrunk to zero.
-      # Drive the built Settings page and require the refusal to occupy pixels.
-      - name: a refused shortcut is visible and names the collision
-        working-directory: apps/desktop
-        run: bun scripts/verify-shortcuts.ts
-
-      # Stage and Reference Sheets are nonmodal. Their rendered semantics must
-      # agree: no modal claim or focus trap, useful initial focus, one Escape
-      # owner, and focus returned to the surviving direct trigger.
-      - name: nonmodal Sheets keep honest focus semantics
-        working-directory: apps/desktop
-        run: bun scripts/verify-sheet-accessibility.ts
-
-      # Held under continue-on-error as SPEC Q5, a 289px drift between the
-      # chapter header and the manuscript. There was no drift: the fixture
-      # never opened, and the gate measured a blank screen. It now opens, the
-      # two edges agree to the pixel, and the exemption is gone — a gate whose
-      # failure is pre-forgiven reports nothing.
-      - name: chapter header alignment
-        working-directory: apps/desktop
-        run: bun scripts/verify-anchor.ts
-
-      # Removing any fixture or DOM target must make the alignment gate red. The
-      # ordinary test phase precedes the desktop build, so this suite runs here
-      # with an explicit fail-closed requirement for reviewed renderer bytes.
-      - name: the chapter alignment gate rejects missing targets
-        working-directory: apps/desktop
-        run: REFRAIN_REQUIRE_BUILT=1 bun test test/verify-anchor.test.ts
-
-      # Speed is the file layer's reason to exist, so it is measured on every
-      # run and the numbers are kept. A threshold set from one run on a shared
-      # CI machine would fail randomly; recording the series lets a regression
-      # be seen against its own history instead.
-      - name: measure the file layer
-        working-directory: packages/fs
-        run: BENCH_FILES=20000 bun bench/file-layer.bench.ts | tee bench-result.txt
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        if: always()
-        with:
-          name: rendered-screens
-          path: apps/desktop/shots/
-          retention-days: 7
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        if: always()
-        with:
-          name: bench
-          path: packages/fs/bench-result.txt
-          retention-days: 30
-
-  # The packaging configuration is only exercised on the day someone ships.
-  # Three defects in it — an executable name illegal in a path, a desktop entry
-  # under the wrong key, and a schema field that does not exist — each surfaced
-  # only by running the packager, and each would have blocked a release.
-  #
-  # `--dir` stops before compression: the schema is validated, the app is laid
-  # out, and the native binary's presence in resources is checked, in a fraction
-  # of the time a full AppImage takes.
-  package:
-    needs: native
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          name: refrain-fs-linux-x64
-          path: packages/fs
-
-      - run: bun install --frozen-lockfile
-
-      # make.sh verifies the Node branch of the SQLite adapter, which bun test
-      # cannot reach. Declare the runtime rather than relying on the runner
-      # image shipping one — without it that check exits and takes the build
-      # with it, which is the honest failure but a confusing one to read.
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 22
-
-      - name: build the desktop app
-        working-directory: apps/desktop
-        run: ./make.sh
-
-      - name: the packaging configuration is valid and the app lays out
-        working-directory: apps/desktop
-        run: bun x electron-builder --linux --publish never --dir
-
-      # A packaged app whose file layer is missing starts, opens a project, and
-      # silently has no browser — the degradation path working correctly for
-      # entirely the wrong reason.
-      - name: the native binary travels with the app
-        working-directory: apps/desktop
+      - name: Install Tauri libraries
+        if: runner.os == 'Linux'
         run: |
-          found=$(find release -name 'refrain-fs.*.node' | head -1)
-          if [ -z "$found" ]; then
-            echo "the platform binary is not in the packaged resources" >&2
-            find release -maxdepth 3 -type d >&2
-            exit 1
-          fi
-          echo "packaged: $found"
+          sudo apt-get update
+          sudo apt-get install --yes libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 
-      # electron-builder only warns when the icon is missing and ships
-      # Electron's default one, which reaches a user as a released application
-      # wearing another project's mark.
-      - name: the application carries its own icon
+      - run: bun install --frozen-lockfile
+      - run: bun run gate
+
+      - name: Prove every source gate can fail
+        if: runner.os == 'Linux'
+        run: bun scripts/prove-gates-bite.ts
+
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace --all-targets
+
+      - name: Generated bindings are current
+        if: runner.os == 'Linux'
+        run: |
+          bun run generate
+          git diff --exit-code -- apps/desktop/src/generated
+
+      - run: bun run build:web
+
+      - name: Build the Windows shell
+        if: runner.os == 'Windows'
         working-directory: apps/desktop
-        run: test -s build/icon.png
+        run: bun x tauri build --debug --no-bundle
 
-  # The gate must be provably capable of failing. A misconfigured tsconfig or a
-  # piped command turns `check` into a no-op that reports success forever.
-  gate-bites:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: runner.os == 'Windows'
         with:
-          bun-version: ${{ env.BUN_VERSION }}
-      - run: bun install --frozen-lockfile
-      # One probe set per type configuration. `bun run check` is a chain of four
-      # independent tsc runs guarding three runtimes; probing only the shared
-      # core proved the root config bites and said nothing about the main
-      # process reaching for `document` or the renderer reaching for `Bun`.
-      - name: every type configuration rejects ill-typed code
-        run: bun run verify:gate
-
-  invariants:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-      - run: bun install --frozen-lockfile
-
-      # INV-5. A manuscript opened and saved with no edit at all lost twelve
-      # bytes out of a hundred and eighty-six: the ideographic indent that opens
-      # a Chinese paragraph, deleted on load; a fenced code block cut in two by
-      # the blank line inside it; three blank lines flattened to one. Every test
-      # in the suite was green throughout, because the loss happened between the
-      # parser and the disk. This runs the real save path over twenty corpora
-      # and compares SHA-256, and asserts the block count where a wrong split
-      # would reassemble to the same bytes while renumbering block identity.
-      - name: bytes the author did not edit come back unchanged
-        run: bun run verify:roundtrip
-
-      # A file URL's `.pathname` is not a path on Windows: it yields `/D:/a/repo`,
-      # and joining that gives a leading backslash before the drive letter. The
-      # trash gate — guarding the one loss this application promises never to
-      # cause — crashed with ENOENT on the release runner because of it, having
-      # only ever run on Linux where `.pathname` happens to work. Caught by
-      # grep here so it fails on every platform rather than one.
-      - name: file URLs become paths the way Windows needs
-        run: bun run verify:paths
-
-      # The file layer's symlink tests are written against std::os::unix, and
-      # four of them sat without a cfg guard — which breaks the crate's Windows
-      # target, the only platform 0.1.x releases on. A Linux `cargo test` never
-      # asks the question, so this reads the source and asks it everywhere.
-      - name: Unix-only constructs stay off the Windows target
-        run: bun run verify:unix-guards
-
-      # Windows will not flush a handle opened without write access, so a
-      # read-only descriptor took down every durable state write there while
-      # passing on Unix. Three shipped that way before the release platform said so.
-      - name: durable writes hold a writable descriptor
-        run: bun run verify:durable-writes
-
-      # INV-8: the cost of saving follows the size of the change, not of the
-      # book. A 40,000-block manuscript threw RangeError: Out of memory on a
-      # single save whatever the author had changed, because the alignment
-      # table is allocated before anything is compared — correcting one
-      # character cost what rewriting the book cost. Six mutation shapes,
-      # because the existing scale test uses only replacements, and a pure
-      # insertion at the head is what breaks segmentation.
-      - name: saving a long manuscript costs what the change costs
-        run: bun run verify:scale
-
-      # A delete that cannot be undone is the one defect this application
-      # cannot apologise for. The channel list and the native surface are both
-      # asserted, so adding a permanent delete fails here before review.
-      - name: delete goes to the trash, everywhere
-        run: bun run verify:trash-only
-
-      # This release found three defects in the packaging configuration, an
-      # icon CI never generated, and a verification script that had been
-      # failing unnoticed — every one of them a check that existed with nothing
-      # running it. A check nobody runs reads as coverage while asserting
-      # nothing, and one of them invented a defect that reached SPEC.
-      - name: every gate has a path that runs it
-        run: bun run verify:gates-run
+          name: refrain-windows-debug
+          path: target/debug/refrain-desktop.exe
+          if-no-files-found: error
+          retention-days: 3

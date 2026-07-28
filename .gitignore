@@ -3,23 +3,14 @@ dist/
 .DS_Store
 *.log
 
-# The local design baseline. SPEC.md carries unpublished product judgement,
-# competitor comparison, and per-decision reasoning; it stays on the
-# maintainer's machine. `verify:no-spec-upload` asserts this rule.
+# Local design authority. `verify:no-spec-upload` enforces this boundary.
 /SPEC.md
 
-# Rust build output.
+# Rust and Tauri generated output.
 target/
-crates/**/target/
-
-# Tauri build output.
-apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/
-apps/desktop/dist/
 
-# Legacy Electron/Svelte stack — read-only oracle until R6 deletes it.
-legacy/node_modules/
-legacy/packages/fs/target/
+# Legacy Electron/Svelte output. Remove each rule with its legacy module.
 legacy/packages/fs/*.node
 legacy/apps/desktop/release/
 legacy/apps/desktop/build/checks/

@@ -10,15 +10,12 @@
  * be read without a WebDriver session.
  *
  * **A display server is required and this probe says so when there is none.**
- * On the container this was written in, `Xvfb` refuses to start (it execs a
- * hard-coded `/usr/bin/xkbcomp`, which is not writable and cannot be bind
- * mounted because unprivileged user namespaces are denied). The honest report
- * is a specific blocked exit, not a pass: a probe that goes green without a
- * window would state that the round trip works when nothing observed it.
+ * A missing display is a specific blocked exit, not a pass: a probe that goes
+ * green without a window would claim a round trip that nothing observed.
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 
 const BINARY = "target/debug/refrain-desktop";
 const EVIDENCE = "probe-results/window-health.json";
