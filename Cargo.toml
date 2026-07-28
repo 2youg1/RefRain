@@ -1,0 +1,40 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/refrain-core",
+  "crates/refrain-store",
+  "crates/refrain-host",
+  "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+license = "GPL-3.0-only"
+rust-version = "1.90"
+
+[workspace.dependencies]
+refrain-core = { path = "crates/refrain-core" }
+refrain-store = { path = "crates/refrain-store" }
+refrain-host = { path = "crates/refrain-host" }
+
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.147"
+sha2 = "=0.10.9"
+thiserror = "=2.0.18"
+uuid = { version = "=1.24.0", features = ["v7", "serde"] }
+
+# specta 2.x is the generation authority (SPEC D5). tauri-specta pins specta
+# exactly, so both move together or neither moves. The `uuid` feature is what
+# lets an Id cross the bridge as a string rather than as an opaque struct.
+specta = { version = "=2.0.0-rc.25", features = ["derive", "uuid"] }
+specta-typescript = "=0.0.12"
+tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
+
+# The store crate owns every database handle; rusqlite appears nowhere else.
+rusqlite = { version = "=0.40.1", features = ["bundled"] }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

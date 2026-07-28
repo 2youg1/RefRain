@@ -1,0 +1,20 @@
+[package]
+name = "refrain-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sole persistence authority: app.db, refrain.db, atomic writes, Root guard, Source Backup, index/search/sort, trash, icon sanitising, migrations."
+
+# This crate owns every mutable disk path and both databases. No other crate
+# writes a project with std::fs (SPEC 6.2); `verify:write-path` asserts it.
+[dependencies]
+refrain-core = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+specta = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

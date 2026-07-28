@@ -1,25 +1,9 @@
-import { readFileSync } from "node:fs";
-import { svelte } from "@sveltejs/vite-plugin-svelte";
+import vue from "@vitejs/plugin-vue";
 import { defineConfig } from "vite";
 
-// The About page reads this. A version typed into a component goes stale the
-// first time someone forgets it — which is how it came to say 0.1.2 while the
-// package said 0.1.3.
-const { version } = JSON.parse(readFileSync(new URL("package.json", import.meta.url), "utf8"));
-
 export default defineConfig({
-  define: { __APP_VERSION__: JSON.stringify(version) },
-  plugins: [svelte()],
-  // Relative base: the packaged app loads from file://, where absolute paths break.
-  base: "./",
-  build: {
-    outDir: "dist/renderer",
-    emptyOutDir: true,
-    target: "chrome150",
-    // Vite's modulepreload polyfill calls fetch(). RefRain emits one renderer
-    // chunk and loads from file://, so the polyfill adds network capability
-    // without serving any module this build needs.
-    modulePreload: { polyfill: false },
-  },
+  plugins: [vue()],
+  // Tauri serves the built files; a fixed port keeps devUrl honest.
   server: { port: 5173, strictPort: true },
+  build: { target: "chrome120", sourcemap: true, emptyOutDir: true },
 });
