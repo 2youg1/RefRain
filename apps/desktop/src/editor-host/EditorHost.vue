@@ -33,9 +33,13 @@ const host = ref<HTMLElement | null>(null);
 let editor: EditorHandle | null = null;
 // Confirmed-domain base for the next action: actions chain base → revision.
 let confirmedRevision = props.document.revision;
-// Structural changes are unconfirmed until the domain answers; settles during
-// that window are refused by id, so none are offered (SPEC 7.2-5).
-let structuralPending = false;
+// The bounded pending-action queue (SPEC 7.2-5): settles land here, one apply
+// crosses the bridge at a time, and a save waits for the queue to drain.
+// Without it two rapid settles race on the same base and all but the first
+// are refused as stale — which is how typed characters once vanished.
+let inFlight = false;
+const queue: EditorAction[] = [];
+const settled: { resolve: (() => void)[] } = { resolve: [] };
 
 const toDto = (action: EditorAction): EditorChangeDto[] =>
   action.changes.map((change) =>
@@ -47,36 +51,69 @@ const toDto = (action: EditorAction): EditorChangeDto[] =>
         },
   );
 
-const submit = (action: EditorAction): void => {
-  if (structuralPending) return;
+/** A typing burst on one block coalesces into one action. */
+const tryMerge = (action: EditorAction): boolean => {
+  const last = queue.at(-1);
+  const only = action.changes.length === 1 ? action.changes[0] : undefined;
+  const prev = last?.changes.length === 1 ? last.changes[0] : undefined;
+  if (
+    last === undefined ||
+    only?.kind !== "replace" ||
+    prev?.kind !== "replace" ||
+    only.text === null ||
+    prev.text === null ||
+    only.blocks.length !== 1 ||
+    prev.blocks.length !== 1 ||
+    only.blocks[0] !== prev.blocks[0]
+  ) {
+    return false;
+  }
+  queue[queue.length - 1] = {
+    baseRevision: last.baseRevision,
+    changes: [{ kind: "replace", blocks: prev.blocks, text: only.text }],
+  };
+  return true;
+};
+
+const drain = async (): Promise<void> => {
+  if (inFlight) return;
+  const action = queue.shift();
+  if (action === undefined) {
+    for (const resolve of settled.resolve.splice(0)) resolve();
+    return;
+  }
+  inFlight = true;
   const structural = action.changes.some(
     (change) =>
       (change.kind === "replace" && (change.text === null || change.blocks.length > 1)) ||
       change.kind === "insert",
   );
-  if (structural) structuralPending = true;
-  void (async () => {
-    try {
-      const transition = await unwrap(
-        commands.applyEditorAction(props.rootId, props.path, {
-          base: confirmedRevision,
-          changes: toDto(action),
-        }),
-      );
-      confirmedRevision = transition.revision;
-      editor?.setRevision(transition.revision);
-      if (structural) {
-        const confirmed = await unwrap(commands.currentDocument(props.rootId, props.path));
-        editor?.replace({ revision: confirmed.revision, blocks: confirmed.blocks });
-        editor?.focus();
-      }
-      emit("confirmed", transition.revision);
-    } catch (error) {
-      emit("rejected", describe(error));
-    } finally {
-      structuralPending = false;
+  try {
+    const transition = await unwrap(
+      commands.applyEditorAction(props.rootId, props.path, {
+        base: confirmedRevision,
+        changes: toDto(action),
+      }),
+    );
+    confirmedRevision = transition.revision;
+    editor?.setRevision(transition.revision);
+    if (structural) {
+      const confirmed = await unwrap(commands.currentDocument(props.rootId, props.path));
+      editor?.replace({ revision: confirmed.revision, blocks: confirmed.blocks });
+      editor?.focus();
     }
-  })();
+    emit("confirmed", transition.revision);
+  } catch (error) {
+    emit("rejected", describe(error));
+  } finally {
+    inFlight = false;
+    void drain();
+  }
+};
+
+const submit = (action: EditorAction): void => {
+  if (!tryMerge(action)) queue.push(action);
+  void drain();
 };
 
 onMounted(() => {
@@ -97,6 +134,13 @@ onBeforeUnmount(() => {
 defineExpose({
   isComposing: () => editor?.isComposing() ?? false,
   caret: () => editor?.caret() ?? null,
+  /** Resolves when the pending-action queue has fully drained (SPEC 7.2-5). */
+  settled: (): Promise<void> =>
+    queue.length === 0 && !inFlight
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => {
+          settled.resolve.push(resolve);
+        }),
 });
 </script>
 

@@ -76,6 +76,16 @@ jobs:
         working-directory: apps/desktop
         run: bun x tauri build --debug --no-bundle
 
+      - name: Install tauri-driver and a matching msedgedriver
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo install tauri-driver --locked
+          $pv = (Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}').pv
+          Invoke-WebRequest -Uri "https://msedgedriver.microsoft.com/$pv/edgedriver_win64.zip" -OutFile $env:TEMP\edgedriver.zip
+          Expand-Archive -Force $env:TEMP\edgedriver.zip $env:TEMP\edgedriver
+          "REFRAIN_MSEDGEDRIVER=$env:TEMP\edgedriver\msedgedriver.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Writing slice against the real window
         if: runner.os == 'Windows'
         run: bun run e2e:app
