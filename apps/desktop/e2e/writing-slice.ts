@@ -43,6 +43,7 @@ const check = (name: string, condition: boolean, detail?: unknown): void => {
 };
 
 let app: ChildProcess | null = null;
+const appLog: string[] = [];
 
 const launch = (): Promise<Page> =>
   new Promise((resolve, reject) => {
@@ -59,11 +60,18 @@ const launch = (): Promise<Page> =>
         if (error) reject(error);
       },
     );
+    // The app must tell us why it could not serve CDP; a silent process is
+    // how a runner-only failure stays invisible forever.
+    app.stdout?.on("data", (chunk: Buffer) => appLog.push(chunk.toString()));
+    app.stderr?.on("data", (chunk: Buffer) => appLog.push(chunk.toString()));
 
     let attempts = 0;
     const poll = async (): Promise<void> => {
       attempts += 1;
-      if (attempts > 60) return reject(new Error("the window never came up over CDP"));
+      if (attempts > 60) {
+        console.error("app stdout/stderr so far:\n" + appLog.join(""));
+        return reject(new Error("the window never came up over CDP"));
+      }
       try {
         const browser = await chromium.connectOverCDP(`http://127.0.0.1:${PORT}`);
         const page = browser.contexts()[0]?.pages()[0];
