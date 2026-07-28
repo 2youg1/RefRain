@@ -11,6 +11,7 @@ pub mod error;
 pub mod health;
 pub mod id;
 pub mod manuscript;
+pub mod role;
 pub mod source_layout;
 
 pub use error::{ErrorCode, RecoveryStep, RefrainError};
@@ -22,4 +23,5 @@ pub use manuscript::{
     ReviewSliceId, SliceKind, SourceSnapshot, TextAction, TextCommand, TextHead, TextRefusal,
     TextTransition, Verdict, VerdictKind, classify_change,
 };
+pub use role::DocumentRole;
 pub use source_layout::{ByteSpan, SourceDrift, SourceLayout};

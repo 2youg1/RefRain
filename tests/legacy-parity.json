@@ -224,7 +224,7 @@
       "owner": "desktop",
       "disposition": {
         "kind": "blocked",
-        "checkpoint": "C3"
+        "checkpoint": "C5"
       }
     },
     {
@@ -375,8 +375,8 @@
       "legacy": "legacy/packages/core/test/atomic-file.test.ts",
       "owner": "project-store",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C3"
+        "kind": "owned-by",
+        "tests": ["crates/refrain-store/tests/atomic.rs"]
       }
     },
     {
@@ -439,8 +439,8 @@
       "legacy": "legacy/packages/core/test/external-edit.test.ts",
       "owner": "project-store",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C3"
+        "kind": "owned-by",
+        "tests": ["crates/refrain-store/tests/atomic.rs", "crates/refrain-store/tests/project.rs"]
       }
     },
     {
@@ -543,16 +543,16 @@
       "legacy": "legacy/packages/core/test/source-backup.test.ts",
       "owner": "project-store",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C3"
+        "kind": "owned-by",
+        "tests": ["crates/refrain-store/tests/project.rs"]
       }
     },
     {
       "legacy": "legacy/packages/core/test/store.test.ts",
       "owner": "project-store",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C3"
+        "kind": "owned-by",
+        "tests": ["crates/refrain-store/tests/project.rs"]
       }
     },
     {
