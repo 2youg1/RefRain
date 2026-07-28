@@ -116,7 +116,7 @@ const rows = shells.map(analyze);
 writeFileSync(`${ROOT}/results/summary.json`, JSON.stringify(rows, null, 2));
 
 const line = (label: string, f: (r: Record<string, unknown>) => unknown, unit = "") =>
-  `| ${label} | ` + rows.map((r) => (r.error ? "N/A" : `${f(r)}${unit}`)).join(" | ") + " |";
+  `| ${label} | ${rows.map((r) => (r.error ? "N/A" : `${f(r)}${unit}`)).join(" | ")} |`;
 
 let md = `# IME 验收（direct DOM 适配器,10 万字,WebView2）\n\n`;
 md += `| 指标 | ${rows.map((r) => r.shell).join(" | ")} |\n`;
@@ -130,7 +130,7 @@ md += line("吃字词组数", (r) => r.p2DroppedWords);
 md += line("连打上屏字数", (r) => r.p2Chars);
 md += line("标点测试数", (r) => r.punctTotal);
 md += line("标点首击即上屏", (r) => `${r.punctFirstPressOK}/${r.punctTotal}`);
-md += line("标点分布", (r) =>
+md += line("标点分布", () =>
   Object.entries((rows[0]?.punctPerChar as Record<string, number>) ?? {})
     .map(([k, v]) => `${k}×${v}`)
     .join(" "),

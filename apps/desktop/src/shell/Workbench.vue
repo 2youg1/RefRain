@@ -1,11 +1,15 @@
 <script setup lang="ts">
+// biome-ignore-all lint/style/useVueMultiWordComponentNames: SPEC 9.10 names this surface Workbench.
+// biome-ignore-all lint/correctness/noUnusedVariables: bindings used only in
+// the template are real usage; biome does not parse Vue templates.
 // The writing slice (C5): Open/Create Project → Open/New Document → edit →
 // Rust confirms → save → close/reopen → conflict → recovery. State the Rust
 // side already owns is projected here; nothing is re-derived (INV-10).
 
 import { computed, ref } from "vue";
 import { describe, unwrap } from "../bridge";
-import type EditorHost from "../editor-host/EditorHost.vue";
+// biome-ignore lint/style/useImportType: the component renders — a type-only import unmounts it.
+import EditorHost from "../editor-host/EditorHost.vue";
 import {
   commands,
   type DocumentRow,
