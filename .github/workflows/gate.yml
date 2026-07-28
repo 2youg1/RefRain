@@ -48,7 +48,7 @@ jobs:
       # A Review Task protocol change must cross the shipping preload and
       # authenticated main-process parser. The Windows runner supplies the real
       # window this Linux analysis environment cannot truthfully emulate.
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         if: matrix.target == 'win32-x64'
         with:
           node-version: 22
@@ -166,7 +166,7 @@ jobs:
       # cannot reach. Declare the runtime rather than relying on the runner
       # image shipping one — without it that check exits and takes the build
       # with it, which is the honest failure but a confusing one to read.
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
 
@@ -530,7 +530,7 @@ jobs:
       # cannot reach. Declare the runtime rather than relying on the runner
       # image shipping one — without it that check exits and takes the build
       # with it, which is the honest failure but a confusing one to read.
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
 
