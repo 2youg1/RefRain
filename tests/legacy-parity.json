@@ -575,8 +575,8 @@
       "legacy": "legacy/packages/fs/test/boundary.test.ts",
       "owner": "root-files",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C4"
+        "kind": "owned-by",
+        "tests": ["crates/refrain-store/tests/files.rs"]
       }
     },
     {

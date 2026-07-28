@@ -39,6 +39,18 @@ tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
 # The store crate owns every database handle; rusqlite appears nowhere else.
 rusqlite = { version = "=0.40.1", features = ["bundled"] }
 
+# RootFiles (C4). Four crates, each carrying a real capability the file layer
+# was already built on in v0.1.x: `ignore` is the traversal ripgrep uses (a
+# manuscript folder full of build output should not drown the index); `rayon`
+# is the work-stealing pool the walk, the sort, and the search share; `memchr`
+# picks a SIMD substring kernel at run time; `trash` is the only cross-platform
+# route to a *recoverable* delete (IFileOperation on Windows) — writing it by
+# hand would mean platform implementations and no undo.
+ignore = "=0.4.31"
+rayon = "=1.12.0"
+memchr = "=2.8.3"
+trash = "=5.2.6"
+
 [profile.release]
 strip = true
 lto = true
