@@ -24,7 +24,8 @@ use std::path::{Component, Path, PathBuf};
 /// Markdown is what this application edits, so Markdown is what it preserves.
 const MARKDOWN_EXTENSIONS: [&str; 4] = ["md", "markdown", "mdown", "txt"];
 
-const SOURCE_BACKUP_DIR: &str = ".refrain-source";
+/// The one directory name every layer recognises as the immutable original.
+pub const SOURCE_BACKUP_DIR: &str = ".refrain-source";
 const STATE_DIR: &str = ".refrain";
 const COMPANION_LAYOUT_FILE: &str = "root.json";
 const COMPANION_SIGNATURE: &str = r#"{

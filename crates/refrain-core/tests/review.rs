@@ -84,7 +84,7 @@ fn one_change_in_a_hundred_thousand_sentences_is_a_small_problem() {
 
     let started = std::time::Instant::now();
     let proposal = proposal(before.concat(), after.concat());
-    assert!(started.elapsed() < std::time::Duration::from_secs(3));
+    assert_budget(started, std::time::Duration::from_secs(3));
     assert_eq!(
         proposal
             .slices()
@@ -110,7 +110,7 @@ fn scattered_edits_remain_small_at_ten_and_one_hundred_thousand_sentences() {
 
         let started = std::time::Instant::now();
         let proposal = proposal(before.concat(), after.concat());
-        assert!(started.elapsed() < budget);
+        assert_budget(started, budget);
         assert_eq!(
             proposal
                 .slices()
@@ -298,4 +298,15 @@ fn fully_divergent_texts_fall_back_instead_of_allocating_a_quadratic_table() {
             .count(),
         5_000
     );
+}
+
+/// Wall-clock budgets are asserted only where wall time means something:
+/// the release profile, which `verify:manuscript-scale` runs. A debug build
+/// on a loaded dev machine fails the same algorithm that passes in release,
+/// so debug asserts correctness (the change count) and leaves cost to the
+/// gate — which still bites, as the ANCHOR injection proof shows.
+fn assert_budget(started: std::time::Instant, budget: std::time::Duration) {
+    if !cfg!(debug_assertions) {
+        assert!(started.elapsed() < budget, "alignment exceeded {budget:?}");
+    }
 }

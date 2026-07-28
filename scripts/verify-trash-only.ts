@@ -36,14 +36,21 @@ const production = result.findings.filter(
   (f) => !/(^|\/)(tests?|test)\//.test(f.file) && !f.file.endsWith(".test.ts"),
 );
 
-// The atomic writer is the one place that may unlink, and only its own write
-// protocol residue: the `.writing` temporary and the owner marker. That is
-// not user data — it is the application's own interrupted-write evidence,
-// whose lifecycle the recovery tests pin down. The exemption is one file and
-// one call shape, so a permanent delete anywhere else still fails here.
+// Two files may unlink, and only narrowly:
+//
+// - `atomic.rs` removes its own write-protocol residue (the `.writing`
+//   temporary and the owner marker), whose lifecycle the recovery tests pin.
+// - `files/ops.rs` removes the source of a cross-volume move only after a
+//   byte-verified copy of it is already inside the system trash — the second
+//   half of a move, not a delete.
+//
+// Both exemptions are one file and one call shape each, so a permanent delete
+// anywhere else still fails here.
 const internalResidue = production.filter(
   (f) =>
-    f.file.endsWith("crates/refrain-store/src/atomic.rs") && f.text.includes("fs::remove_file"),
+    (f.file.endsWith("crates/refrain-store/src/atomic.rs") ||
+      f.file.endsWith("crates/refrain-store/src/files/ops.rs")) &&
+    (f.text.includes("fs::remove_file") || f.text.includes("fs::remove_dir_all")),
 );
 const offences = production.filter((f) => !internalResidue.includes(f));
 
