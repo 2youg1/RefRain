@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// biome-ignore-all lint/correctness/noUnusedVariables: `text` is rendered in the template.
 // The 28px status line (SPEC 9.9): save state left, path right. It renders a
 // compiled state; it infers nothing.
 import { computed } from "vue";

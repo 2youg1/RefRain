@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// biome-ignore-all lint/correctness/noUnusedVariables: `emit` is used in the template.
 // The Safety surface for a changed-underneath conflict (SPEC 9.1: the only
 // modal layer). Both versions are shown; the author chooses. Nothing is
 // decided for them — silently winning would destroy an edit made elsewhere.
