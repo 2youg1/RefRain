@@ -142,6 +142,9 @@ const save = async (): Promise<void> => {
   }
   saveState.value = { kind: "saving" };
   try {
+    // Unconfirmed actions in the queue hold up the save (SPEC 7.2-5): the
+    // file only ever stores confirmed revisions.
+    await editor.value?.settled?.();
     const outcome = await unwrap(
       commands.persistRevision(project.value.rootId, active.value.document.path, stamp.value),
     );
