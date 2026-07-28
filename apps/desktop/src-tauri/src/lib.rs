@@ -15,7 +15,19 @@ const COMMIT: Option<&str> = option_env!("REFRAIN_COMMIT");
 #[tauri::command]
 #[specta::specta]
 fn health(echo: String) -> HealthReport {
-    refrain_core::health(echo, env!("CARGO_PKG_VERSION"), COMMIT)
+    let report = refrain_core::health(echo, env!("CARGO_PKG_VERSION"), COMMIT);
+
+    // Evidence for the R0 window probe, which needs proof that the round trip
+    // ran inside the shipped shell rather than in a test harness. Writing here
+    // rather than from the frontend keeps the bridge surface unchanged: a probe
+    // command would be a command, and the write-path gate counts commands.
+    if let Ok(path) = std::env::var("REFRAIN_PROBE_EVIDENCE")
+        && let Ok(json) = serde_json::to_string_pretty(&report)
+    {
+        let _ = std::fs::write(path, json);
+    }
+
+    report
 }
 
 /// The single command registry. Generation and the runtime read the same list,
