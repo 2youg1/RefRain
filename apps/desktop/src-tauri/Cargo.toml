@@ -18,12 +18,15 @@ tauri-build = { version = "=2.6.3", features = [] }
 refrain-core = { workspace = true }
 refrain-host = { workspace = true }
 refrain-store = { workspace = true }
+rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 specta = { workspace = true }
 specta-typescript = { workspace = true }
 tauri = { version = "=2.11.5", features = [] }
+tauri-plugin-dialog = "=2.7.2"
 tauri-specta = { workspace = true }
+uuid = { workspace = true }
 
 [features]
 # Generation runs as a test so it needs no extra binary and no network.

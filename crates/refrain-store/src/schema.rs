@@ -121,37 +121,61 @@ pub struct ProjectDb;
 
 impl Database for ProjectDb {
     fn migrations() -> &'static [Migration] {
-        &[Migration {
-            version: SchemaVersion(1),
-            name: "project-frame",
-            apply: |tx| {
-                tx.execute_batch(
-                    "CREATE TABLE migration_log (
-                         id         TEXT PRIMARY KEY,
-                         applied_at TEXT NOT NULL,
-                         name       TEXT NOT NULL
-                     ) STRICT;
-                     CREATE TABLE documents (
-                         id        TEXT PRIMARY KEY,
-                         path      TEXT NOT NULL UNIQUE,
-                         role      TEXT NOT NULL CHECK (role IN ('document', 'chapter', 'material')),
-                         digest    TEXT,
-                         legacy_id TEXT
-                     ) STRICT;
-                     CREATE TABLE verdicts (
-                         id              TEXT PRIMARY KEY,
-                         proposal_id     TEXT NOT NULL,
-                         slice_id        TEXT NOT NULL,
-                         kind            TEXT NOT NULL CHECK (kind IN (
-                                             'accept', 'accept-modified', 'reject', 'comment-only')),
-                         final_text      TEXT,
-                         reason          TEXT,
-                         decided_at      INTEGER NOT NULL,
-                         legacy_baseline TEXT
-                     ) STRICT;",
-                )
+        &[
+            Migration {
+                version: SchemaVersion(1),
+                name: "project-frame",
+                apply: |tx| {
+                    tx.execute_batch(
+                        "CREATE TABLE migration_log (
+                             id         TEXT PRIMARY KEY,
+                             applied_at TEXT NOT NULL,
+                             name       TEXT NOT NULL
+                         ) STRICT;
+                         CREATE TABLE documents (
+                             id        TEXT PRIMARY KEY,
+                             path      TEXT NOT NULL UNIQUE,
+                             role      TEXT NOT NULL CHECK (role IN ('document', 'chapter', 'material')),
+                             digest    TEXT,
+                             legacy_id TEXT
+                         ) STRICT;
+                         CREATE TABLE verdicts (
+                             id              TEXT PRIMARY KEY,
+                             proposal_id     TEXT NOT NULL,
+                             slice_id        TEXT NOT NULL,
+                             kind            TEXT NOT NULL CHECK (kind IN (
+                                                 'accept', 'accept-modified', 'reject', 'comment-only')),
+                             final_text      TEXT,
+                             reason          TEXT,
+                             decided_at      INTEGER NOT NULL,
+                             legacy_baseline TEXT
+                         ) STRICT;",
+                    )
+                },
             },
-        }]
+            Migration {
+                version: SchemaVersion(2),
+                name: "revision-continuity",
+                apply: |tx| {
+                    // Crash recovery (SPEC 7.2): the confirmed revision id and
+                    // the lineage it pairs with, plus the pending-action
+                    // journal. The journal is written before an EditorAction
+                    // executes and cleared after, so a kill between the two
+                    // replays on the next open — through the same validation,
+                    // never by writing files directly.
+                    tx.execute_batch(
+                        "ALTER TABLE documents ADD COLUMN current_head TEXT;
+                         ALTER TABLE documents ADD COLUMN head_block_ids TEXT;
+                         CREATE TABLE pending_actions (
+                             id         TEXT PRIMARY KEY,
+                             path       TEXT NOT NULL,
+                             action     TEXT NOT NULL,
+                             created_at INTEGER NOT NULL
+                         ) STRICT;",
+                    )
+                },
+            },
+        ]
     }
 }
 

@@ -9,9 +9,120 @@ import { invoke as __TAURI_INVOKE } from "@tauri-apps/api/core";
 export const commands = {
 	/**  Proves the whole chain: a Rust type, a generated binding, a real window. */
 	health: (echo: string) => __TAURI_INVOKE<HealthReport>("health", { echo }),
+	/**  Adopt an existing folder or single file as a Root (SPEC 9.5). */
+	adoptRoot: (path: string, kind: RootKind) => typedError<ProjectOpenedDto, RefrainError>(__TAURI_INVOKE("adopt_root", { path, kind })),
+	/**
+	 *  Create a project: the author picks a parent directory and names the
+	 *  project; Rust creates the subdirectory and adopts it (SPEC 9.5).
+	 */
+	createProject: (parent: string, name: string) => typedError<ProjectOpenedDto, RefrainError>(__TAURI_INVOKE("create_project", { parent, name })),
+	/**
+	 *  Open a document: bytes from disk, blocks from the byte-authoritative
+	 *  layout, the persisted revision chain resumed, and any journaled actions
+	 *  replayed through the same validation (SPEC 7.2).
+	 */
+	openDocument: (rootId: string, path: string) => typedError<OpenDocumentDto_Serialize, RefrainError>(__TAURI_INVOKE("open_document", { rootId, path })),
+	/**  Create a document in the Root and open it (SPEC 9.5). */
+	createDocument: (rootId: string, title: string, role: DocumentRole) => typedError<OpenDocumentDto_Serialize, RefrainError>(__TAURI_INVOKE("create_document", { rootId, title, role })),
+	currentDocument: (rootId: string, path: string) => typedError<SessionDocumentDto, RefrainError>(__TAURI_INVOKE("current_document", { rootId, path })),
+	/**
+	 *  The one manuscript write path (INV-2): journaled first, executed through
+	 *  the domain, cleared on confirmation. A kill between journal and execute
+	 *  replays on the next open.
+	 */
+	applyEditorAction: (rootId: string, path: string, action: EditorActionDto) => typedError<TextTransitionDto, RefrainError>(__TAURI_INVOKE("apply_editor_action", { rootId, path, action })),
+	/**
+	 *  Save: materialise the confirmed manuscript and commit it compare-and-swap
+	 *  on the author's stamp. The DOM snapshot never writes the file (SPEC 7.2).
+	 */
+	persistRevision: (rootId: string, path: string, expected: {
+	modifiedMs: string,
+	bytes: string,
+	digest: string,
+} | null) => typedError<SaveOutcomeDto_Serialize, RefrainError>(__TAURI_INVOKE("persist_revision", { rootId, path, expected })),
 };
 
 /* Types */
+/**
+ *  What the Source Backup attempt produced, in the author's terms. `Failed`
+ *  is a degradation the interface reports and offers to retry — the Root
+ *  stays editable (Q23).
+ */
+export type BackupStatus = { kind: "taken"; value: {
+	files: number,
+} } | { kind: "alreadyPresent" } | { kind: "nothingToCopy" } | { kind: "failed"; value: {
+	reason: string,
+} };
+
+export type BlockDto = {
+	id: string,
+	text: string,
+};
+
+/**  What a Markdown file is to the work. */
+export type DocumentRole = 
+/**  A standalone work opened on its own (single-file Root). */
+"document" | 
+/**  Part of a Project's manuscript sequence. */
+"chapter" | 
+/**
+ *  Reference material: enters the Context picker, never the manuscript
+ *  order.
+ */
+"material";
+
+/**  A document row as the project database knows it. */
+export type DocumentRow = {
+	id: Id,
+	/**  Portable identity inside the Root: the relative path, `/`-joined. */
+	path: string,
+	role: DocumentRole,
+	digest: string | null,
+	/**
+	 *  The confirmed revision id and the lineage it pairs with (SPEC 7.2
+	 *  crash recovery). Present after the first save or a continuity-safe open.
+	 */
+	currentHead: string | null,
+	headBlockIds: string | null,
+};
+
+/**  The editor's settled input, as it crosses the bridge. */
+export type EditorActionDto = {
+	base: string,
+	changes: EditorChangeDto[],
+};
+
+export type EditorChangeDto = { kind: "replace"; value: {
+	blocks: string[],
+	text: string | null,
+} } | { kind: "insert"; value: {
+	before: string | null,
+	texts: string[],
+} };
+
+/**
+ *  The single authority for error kinds. `verify:docs-current` enumerates this
+ *  type and fails when a document explains fewer codes than it declares.
+ */
+export type ErrorCode = "permission-denied" | "illegal-name" | "occupied" | "outside-root" | "source-backup" | "not-a-directory" | "unsupported-format" | "state-unavailable" | "io";
+
+/**  What a file looked like when this application last agreed with it. */
+export type FileStamp = FileStamp_Serialize | FileStamp_Deserialize;
+
+/**  What a file looked like when this application last agreed with it. */
+export type FileStamp_Deserialize = {
+	modifiedMs: string,
+	bytes: string,
+	digest: string,
+};
+
+/**  What a file looked like when this application last agreed with it. */
+export type FileStamp_Serialize = {
+	modifiedMs: string,
+	bytes: string,
+	digest: string,
+};
+
 /**  What the application can say about itself without touching anything. */
 export type HealthReport = {
 	/**  The workspace version, from Cargo at compile time. */
@@ -27,4 +138,129 @@ export type HealthReport = {
 	 */
 	echo: string,
 };
+
+/**
+ *  An opaque, time-ordered identifier for a persistent entity.
+ * 
+ *  The type parameter is absent on purpose: a phantom-typed id would multiply
+ *  generated TypeScript types without preventing a single real confusion, since
+ *  every id crosses the bridge as a string anyway.
+ */
+export type Id = string;
+
+/**
+ *  A document ready for the editor: blocks with stable ids, the revision the
+ *  editor's actions will be based on, and the stamp a later save needs.
+ */
+export type OpenDocumentDto = OpenDocumentDto_Serialize | OpenDocumentDto_Deserialize;
+
+/**
+ *  A document ready for the editor: blocks with stable ids, the revision the
+ *  editor's actions will be based on, and the stamp a later save needs.
+ */
+export type OpenDocumentDto_Deserialize = {
+	document: DocumentRow,
+	revision: string,
+	blocks: BlockDto[],
+	stamp: FileStamp_Deserialize,
+	/**  Journaled actions replayed on open (crash survivors), for the status line. */
+	replayed: number,
+	/**  Journaled actions that could not be validated on open: Safety content. */
+	staleJournal: string[],
+};
+
+/**
+ *  A document ready for the editor: blocks with stable ids, the revision the
+ *  editor's actions will be based on, and the stamp a later save needs.
+ */
+export type OpenDocumentDto_Serialize = {
+	document: DocumentRow,
+	revision: string,
+	blocks: BlockDto[],
+	stamp: FileStamp_Serialize,
+	/**  Journaled actions replayed on open (crash survivors), for the status line. */
+	replayed: number,
+	/**  Journaled actions that could not be validated on open: Safety content. */
+	staleJournal: string[],
+};
+
+/**  A Root as the interface names it. */
+export type ProjectOpenedDto = {
+	rootId: string,
+	backup: BackupStatus,
+	documents: DocumentRow[],
+};
+
+/**
+ *  One thing the author can do about a failure. A step is a domain fact, not a
+ *  sentence: the interface renders it, so changing wording never touches here.
+ */
+export type RecoveryStep = "retry" | "choose-another-location" | "choose-another-name" | "grant-permission" | "open-settings" | "report-defect";
+
+/**  A failure crossing the bridge. */
+export type RefrainError = {
+	code: ErrorCode,
+	/**  The use case that failed, e.g. `create_project`. */
+	action: string,
+	/**  What it failed on: an opaque id, or a name the author supplied. */
+	subject: string,
+	/**  Operator-facing specifics. Never shown as the primary message. */
+	detail: string | null,
+	recovery: RecoveryStep[],
+};
+
+/**
+ *  What a Root is: a folder whose Markdown was adopted, or a single file
+ *  opened on its own.
+ */
+export type RootKind = "folder" | "file";
+
+/**  What a save became. `ChangedUnderneath` is a Safety surface, not an error. */
+export type SaveOutcomeDto = SaveOutcomeDto_Serialize | SaveOutcomeDto_Deserialize;
+
+/**  What a save became. `ChangedUnderneath` is a Safety surface, not an error. */
+export type SaveOutcomeDto_Deserialize = { kind: "saved"; value: {
+	stamp: FileStamp_Deserialize,
+	recoveryEvidence: string | null,
+} } | { kind: "changedUnderneath"; value: {
+	onDisk: string,
+	stamp: FileStamp_Deserialize,
+} };
+
+/**  What a save became. `ChangedUnderneath` is a Safety surface, not an error. */
+export type SaveOutcomeDto_Serialize = { kind: "saved"; value: {
+	stamp: FileStamp_Serialize,
+	recoveryEvidence: string | null,
+} } | { kind: "changedUnderneath"; value: {
+	onDisk: string,
+	stamp: FileStamp_Serialize,
+} };
+
+/**
+ *  The session's current view of an open document: the confirmed head, no
+ *  disk read, no journal replay. The editor re-syncs its projection from
+ *  here after a structural change, where the domain minted new block ids.
+ *  No stamp: the CAS a save needs comes only from disk truth (SPEC 7.2).
+ */
+export type SessionDocumentDto = {
+	revision: string,
+	blocks: BlockDto[],
+};
+
+/**  The confirmed outcome of one applied action. */
+export type TextTransitionDto = {
+	revision: string,
+	actionId: string,
+	touchedBlocks: string[],
+};
+
+/* Tauri Specta runtime */
+async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; data: T } | { status: "error"; error: E }> {
+    try {
+        return { status: "ok", data: await result };
+    } catch (e) {
+        if (e instanceof Error) throw e;
+        return { status: "error", error: e as any };
+    }
+}
 

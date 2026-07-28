@@ -32,7 +32,9 @@
     "verify:workflows": "bun scripts/verify-workflows.ts",
     "verify:legacy-parity": "bun scripts/verify-legacy-parity.ts",
     "verify:text-surface": "bun scripts/verify-text-surface.ts",
-    "verify:gates-run": "bun scripts/verify-gates-run.ts"
+    "verify:gates-run": "bun scripts/verify-gates-run.ts",
+    "e2e:app": "bun apps/desktop/e2e/writing-slice.ts target/debug/refrain-desktop.exe",
+    "e2e:ime": "powershell -NoProfile -ExecutionPolicy Bypass -File e2e/ime/scripts/prepare.ps1 && powershell -NoProfile -ExecutionPolicy Bypass -File e2e/ime/driver/drive.ps1 -Shell wv2 && bun e2e/ime/driver/analyze.ts && bun e2e/ime/driver/assert.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.5",

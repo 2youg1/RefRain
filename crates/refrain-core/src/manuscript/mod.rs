@@ -492,6 +492,18 @@ pub struct Manuscript {
 
 impl Manuscript {
     pub fn open(source: SourceSnapshot, lineage: Lineage) -> Result<Self, TextRefusal> {
+        Self::open_at(source, lineage, Id::new())
+    }
+
+    /// Open with an explicit head id. Continuity across restarts lives here:
+    /// the store persists the head id and block lineage with the on-disk
+    /// digest, so a reopened document resumes the revision chain it left —
+    /// and a journaled EditorAction's base still names a real head.
+    pub fn open_at(
+        source: SourceSnapshot,
+        lineage: Lineage,
+        head: Id,
+    ) -> Result<Self, TextRefusal> {
         let expected = source.layout.blocks().len();
         if lineage.0.len() != expected {
             return Err(TextRefusal::LineageLength {
@@ -523,7 +535,7 @@ impl Manuscript {
             source,
             original_ids: lineage.0,
             head: TextHead {
-                id: Id::new(),
+                id: head,
                 blocks: blocks.into_boxed_slice(),
                 cause: "open".to_owned(),
             },
@@ -536,6 +548,13 @@ impl Manuscript {
     #[must_use]
     pub fn head(&self) -> &TextHead {
         &self.head
+    }
+
+    /// The lineage the current head pairs with the materialised bytes: the
+    /// persisted form a later open resumes from (SPEC 7.2).
+    #[must_use]
+    pub fn lineage_ids(&self) -> Vec<Id> {
+        self.head.block_ids()
     }
 
     pub fn materialize(&self) -> Result<Vec<u8>, SourceDrift> {

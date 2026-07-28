@@ -609,3 +609,90 @@ fn a_duplicate_id_cannot_rewrite_the_original_audit_record() {
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn the_journal_replays_in_order_and_clears_on_confirmation() {
+    let root = scratch();
+    let mut app = app_db();
+    let (mut store, _) = adopt(&mut app, &root);
+    store
+        .create(&CreateDocument {
+            title: "第一章".to_string(),
+            role: DocumentRole::Chapter,
+        })
+        .unwrap();
+
+    let first = store
+        .journal_append("第一章.md", r#"{"base":"h1","changes":[]}"#)
+        .unwrap();
+    let second = store
+        .journal_append("第一章.md", r#"{"base":"h2","changes":[]}"#)
+        .unwrap();
+
+    let pending = store.journal_take("第一章.md").unwrap();
+    assert_eq!(pending.len(), 2);
+    assert_eq!(
+        pending[0].0, first,
+        "journal order is the order actions were taken"
+    );
+    assert_eq!(pending[1].0, second);
+
+    store.journal_remove(first).unwrap();
+    assert_eq!(store.journal_take("第一章.md").unwrap().len(), 1);
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn continuity_survives_reopening_and_migrates_from_v1() {
+    let root = scratch();
+    fs::write(root.join("01.md"), "原文。\n").unwrap();
+    let db_path = root.join(".refrain").join("refrain.db");
+
+    // A v1 database from before the continuity columns existed.
+    fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+    {
+        let db = Connection::open(&db_path).unwrap();
+        db.execute_batch(
+            "CREATE TABLE migration_log (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL, name TEXT NOT NULL) STRICT;
+             CREATE TABLE documents (id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, role TEXT NOT NULL, digest TEXT, legacy_id TEXT) STRICT;
+             CREATE TABLE verdicts (id TEXT PRIMARY KEY, proposal_id TEXT NOT NULL, slice_id TEXT NOT NULL, kind TEXT NOT NULL, final_text TEXT, reason TEXT, decided_at INTEGER NOT NULL, legacy_baseline TEXT) STRICT;
+             PRAGMA user_version = 1;
+             INSERT INTO documents (id, path, role, digest) VALUES ('018f2e4a-0000-7000-8000-000000000001', '01.md', 'chapter', 'x');",
+        )
+        .unwrap();
+    }
+
+    let mut app = app_db();
+    let (mut store, _) = adopt(&mut app, &root);
+    let version: u32 = store.schema_version().unwrap();
+    assert_eq!(version, 2, "the ladder advanced the old database to v2");
+
+    store
+        .save_continuity("01.md", "head-9", r#"["b1","b2"]"#)
+        .unwrap();
+    let opened = store.open_document("01.md").unwrap();
+    assert_eq!(opened.row.current_head.as_deref(), Some("head-9"));
+    assert_eq!(opened.row.head_block_ids.as_deref(), Some(r#"["b1","b2"]"#));
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn adopting_scans_existing_manuscripts_into_rows() {
+    let root = scratch();
+    fs::write(root.join("第一章.md"), "第一句。\n").unwrap();
+    fs::create_dir(root.join("material")).unwrap();
+    fs::write(root.join("material").join("年表.md"), "1931\n").unwrap();
+    fs::write(root.join("notes.bin"), "not a manuscript").unwrap();
+    let mut app = app_db();
+    let (mut store, _) = adopt(&mut app, &root);
+
+    let rows = store.refresh_documents().unwrap();
+    let paths: Vec<&str> = rows.iter().map(|row| row.path.as_str()).collect();
+    assert_eq!(paths, ["material/年表.md", "第一章.md"]);
+    assert_eq!(rows[0].role, DocumentRole::Material);
+    assert_eq!(rows[1].role, DocumentRole::Chapter);
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
