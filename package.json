@@ -2,6 +2,7 @@
   "name": "refrain",
   "private": true,
   "type": "module",
+  "packageManager": "bun@1.3.14",
   "license": "GPL-3.0-only",
   "workspaces": [
     "apps/desktop",
@@ -9,9 +10,10 @@
   ],
   "scripts": {
     "dev": "cd apps/desktop && bun run dev",
+    "build:web": "cd apps/desktop && bun run build:web",
     "generate": "cd apps/desktop/src-tauri && cargo test --features generate-bindings generate_bindings -- --nocapture",
     "check": "bun run check:ts && bun run check:vue",
-    "check:ts": "tsc --build --force",
+    "check:ts": "tsc --build --force && tsc --noEmit -p apps/desktop/tsconfig.app.json",
     "check:vue": "bun scripts/check-vue.ts",
     "fmt": "biome check --write .",
     "fmt:check": "biome check .",
@@ -25,6 +27,9 @@
     "verify:trash-only": "bun scripts/verify-trash-only.ts",
     "verify:roundtrip": "bun scripts/verify-roundtrip.ts",
     "verify:no-js": "bun scripts/verify-no-js.ts",
+    "verify:workflows": "bun scripts/verify-workflows.ts",
+    "verify:legacy-parity": "bun scripts/verify-legacy-parity.ts",
+    "verify:text-surface": "bun scripts/verify-text-surface.ts",
     "verify:gates-run": "bun scripts/verify-gates-run.ts"
   },
   "devDependencies": {

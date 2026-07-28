@@ -11,7 +11,7 @@ members = [
 version = "0.2.0"
 edition = "2024"
 license = "GPL-3.0-only"
-rust-version = "1.90"
+rust-version = "1.97.1"
 
 [workspace.dependencies]
 refrain-core = { path = "crates/refrain-core" }
@@ -24,7 +24,7 @@ sha2 = "=0.10.9"
 thiserror = "=2.0.18"
 uuid = { version = "=1.24.0", features = ["v7", "serde"] }
 
-# specta 2.x is the generation authority (SPEC D5). tauri-specta pins specta
+# specta 2.x is the binding-generation authority. tauri-specta pins specta
 # exactly, so both move together or neither moves. The `uuid` feature is what
 # lets an Id cross the bridge as a string rather than as an opaque struct.
 specta = { version = "=2.0.0-rc.25", features = ["derive", "uuid"] }

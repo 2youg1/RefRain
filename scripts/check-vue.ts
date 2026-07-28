@@ -37,5 +37,5 @@ if (!blocked) {
 }
 
 console.log("SKIP  check:vue: vue-tsc 3.3.8 cannot load TypeScript 7 (needs typescript/lib/tsc)");
-console.log("      Script blocks in .vue files are still checked by tsc through the app tsconfig.");
+console.log("      Plain .ts files are checked; Vue script blocks remain a known gap.");
 console.log("      This stage turns red when vue-tsc gains TypeScript 7 support.");
