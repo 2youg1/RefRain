@@ -22,6 +22,11 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.147"
 sha2 = "=0.10.9"
 thiserror = "=2.0.18"
+
+# Config is ruled TOML (SPEC 10.1, D-N8): a real format needs a real parser,
+# and a hand-rolled one would re-create exactly the escaping/typing edge cases
+# this crate exists to refuse. Pinned exactly like every direct dependency.
+toml = "=1.1.4"
 uuid = { version = "=1.24.0", features = ["v7", "serde"] }
 
 # specta 2.x is the binding-generation authority. tauri-specta pins specta

@@ -2,7 +2,8 @@
 //!
 //! Two transaction domains (SPEC D6): `app.db` for machine-level facts and a
 //! per-project `refrain.db`. Both carry a monotonic schema version and share
-//! one runner. R0 lands the frame; R1 fills the tables.
+//! one runner. The frame landed in R0; C3 filled the first real tables
+//! directly (v0.2 is unreleased, so no second "migrate the placeholder" debt).
 //!
 //! Three rules the runner enforces, each with a test that fails without it:
 //!
@@ -87,8 +88,10 @@ fn read_version(connection: &Connection) -> Result<SchemaVersion, StoreError> {
     Ok(SchemaVersion(version))
 }
 
-/// Machine-level state: preferences, Root permits, Harness Connections, icon
-/// assets, WorkContext (SPEC 10.1).
+/// Machine-level state: Root permits, Harness capability/trust evidence, icon
+/// assets, WorkContext (SPEC 10.1). User settings and Harness Connection
+/// parameters are NOT here — `config.toml` is their only authority (D18), and
+/// `verify:config-authority` fails the build if a settings table returns.
 pub struct AppDb;
 
 impl Database for AppDb {
@@ -98,9 +101,13 @@ impl Database for AppDb {
             name: "app-frame",
             apply: |tx| {
                 tx.execute_batch(
-                    "CREATE TABLE preferences (
-                         key   TEXT PRIMARY KEY,
-                         value TEXT NOT NULL
+                    "CREATE TABLE root_permits (
+                         root_id        TEXT PRIMARY KEY,
+                         canonical_path TEXT NOT NULL UNIQUE,
+                         kind           TEXT NOT NULL CHECK (kind IN ('folder', 'file')),
+                         identity       TEXT NOT NULL,
+                         nonce          TEXT NOT NULL,
+                         adopted_at     INTEGER NOT NULL
                      ) STRICT;",
                 )
             },
@@ -123,6 +130,24 @@ impl Database for ProjectDb {
                          id         TEXT PRIMARY KEY,
                          applied_at TEXT NOT NULL,
                          name       TEXT NOT NULL
+                     ) STRICT;
+                     CREATE TABLE documents (
+                         id        TEXT PRIMARY KEY,
+                         path      TEXT NOT NULL UNIQUE,
+                         role      TEXT NOT NULL CHECK (role IN ('document', 'chapter', 'material')),
+                         digest    TEXT,
+                         legacy_id TEXT
+                     ) STRICT;
+                     CREATE TABLE verdicts (
+                         id              TEXT PRIMARY KEY,
+                         proposal_id     TEXT NOT NULL,
+                         slice_id        TEXT NOT NULL,
+                         kind            TEXT NOT NULL CHECK (kind IN (
+                                             'accept', 'accept-modified', 'reject', 'comment-only')),
+                         final_text      TEXT,
+                         reason          TEXT,
+                         decided_at      INTEGER NOT NULL,
+                         legacy_baseline TEXT
                      ) STRICT;",
                 )
             },
