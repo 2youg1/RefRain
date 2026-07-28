@@ -36,14 +36,16 @@ const INJECTIONS: readonly Injection[] = [
     gate: "verify:no-network",
     file: "apps/desktop/src/shell/HealthProbe.vue",
     anchor: "const report = ref<HealthReport | null>(null);",
-    replacement: "const report = ref<HealthReport | null>(null);\nawait fetch(\"https://example.com/telemetry\");",
+    replacement:
+      'const report = ref<HealthReport | null>(null);\nawait fetch("https://example.com/telemetry");',
     expect: "HealthProbe.vue",
   },
   {
     gate: "verify:bridge",
     file: "apps/desktop/src/shell/HealthProbe.vue",
     anchor: "const report = ref<HealthReport | null>(null);",
-    replacement: "const report = ref<HealthReport | null>(null);\nconst raw = invoke(\"health\", {});",
+    replacement:
+      'const report = ref<HealthReport | null>(null);\nconst raw = invoke("health", {});',
     expect: "HealthProbe.vue",
   },
   {
@@ -57,7 +59,8 @@ const INJECTIONS: readonly Injection[] = [
     gate: "verify:trash-only",
     file: "crates/refrain-store/src/schema.rs",
     anchor: "pub fn open_in_memory() -> rusqlite::Result<Connection> {",
-    replacement: "pub fn scrub(path: &str) {\n    std::fs::remove_file(path).ok();\n}\n\npub fn open_in_memory() -> rusqlite::Result<Connection> {",
+    replacement:
+      "pub fn scrub(path: &str) {\n    std::fs::remove_file(path).ok();\n}\n\npub fn open_in_memory() -> rusqlite::Result<Connection> {",
     expect: "schema.rs",
   },
   {
@@ -143,9 +146,13 @@ for (const injection of INJECTIONS) {
   }
 }
 
-const restored = spawnSync("git", ["status", "--porcelain", "--", ...INJECTIONS.map((i) => i.file)], {
-  encoding: "utf8",
-});
+const restored = spawnSync(
+  "git",
+  ["status", "--porcelain", "--", ...INJECTIONS.map((i) => i.file)],
+  {
+    encoding: "utf8",
+  },
+);
 if (restored.stdout.trim() !== "") {
   problems.push(`the tree was left dirty:\n${restored.stdout.trim()}`);
 }

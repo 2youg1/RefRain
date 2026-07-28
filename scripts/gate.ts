@@ -17,7 +17,7 @@ import { spawnSync } from "node:child_process";
 const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["fmt:check", ["bun", "run", "fmt:check"]],
   ["check", ["bun", "run", "check"]],
-  ["test", ["bun", "test"]],
+  ["test", ["bun", "run", "test"]],
   ["verify:no-spec-upload", ["bun", "scripts/verify-no-spec-upload.ts"]],
   ["verify:no-network", ["bun", "scripts/verify-no-network.ts"]],
   ["verify:bridge", ["bun", "scripts/verify-bridge.ts"]],

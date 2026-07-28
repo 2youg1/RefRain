@@ -50,7 +50,9 @@ for (const entry of corpora) {
   const digest = createHash("sha256").update(bytes).digest("hex");
 
   if (digest !== entry.sha256) {
-    failures.push(`${entry.file}: expected ${entry.sha256.slice(0, 12)}…, got ${digest.slice(0, 12)}…`);
+    failures.push(
+      `${entry.file}: expected ${entry.sha256.slice(0, 12)}…, got ${digest.slice(0, 12)}…`,
+    );
   } else if (bytes.length !== entry.bytes) {
     failures.push(`${entry.file}: expected ${entry.bytes} bytes, got ${bytes.length}`);
   }

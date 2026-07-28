@@ -10,6 +10,7 @@
     "noFallthroughCasesInSwitch": true,
     "exactOptionalPropertyTypes": true,
     "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
     "isolatedModules": true,
     "skipLibCheck": true,
     "esModuleInterop": true,

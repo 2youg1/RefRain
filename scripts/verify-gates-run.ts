@@ -25,7 +25,9 @@ for await (const file of new Glob("verify-*.ts").scan({ cwd: "scripts" })) {
 }
 
 if (onDisk.length === 0) {
-  console.error("FAIL  verify:gates-run: found no gate scripts — the scan is looking in the wrong place");
+  console.error(
+    "FAIL  verify:gates-run: found no gate scripts — the scan is looking in the wrong place",
+  );
   process.exit(1);
 }
 
@@ -34,7 +36,11 @@ const runner = await Bun.file("scripts/gate.ts").text();
 const manifest = await Bun.file("package.json").text();
 const invocations = `${runner}\n${manifest}`;
 
-const orphans = onDisk.filter((name) => !invocations.includes(name) && !invocations.includes(`verify:${name.replace(/^verify-|\.ts$/g, "")}`));
+const orphans = onDisk.filter(
+  (name) =>
+    !invocations.includes(name) &&
+    !invocations.includes(`verify:${name.replace(/^verify-|\.ts$/g, "")}`),
+);
 
 // The other direction: a stage the runner names but no file backs.
 const staged = [...runner.matchAll(/scripts\/(verify-[\w-]+\.ts)/g)].map((m) => m[1]);
@@ -42,8 +48,10 @@ const missing = staged.filter((name) => name !== undefined && !onDisk.includes(n
 
 if (orphans.length > 0 || missing.length > 0) {
   console.error("FAIL  verify:gates-run");
-  for (const name of orphans) console.error(`      orphan: scripts/${name} exists but nothing runs it`);
-  for (const name of missing) console.error(`      missing: gate.ts runs scripts/${name}, which is absent`);
+  for (const name of orphans)
+    console.error(`      orphan: scripts/${name} exists but nothing runs it`);
+  for (const name of missing)
+    console.error(`      missing: gate.ts runs scripts/${name}, which is absent`);
   process.exit(1);
 }
 
