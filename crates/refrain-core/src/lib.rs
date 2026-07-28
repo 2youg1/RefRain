@@ -10,9 +10,16 @@
 pub mod error;
 pub mod health;
 pub mod id;
+pub mod manuscript;
 pub mod source_layout;
 
 pub use error::{ErrorCode, RecoveryStep, RefrainError};
 pub use health::{HealthReport, health};
 pub use id::Id;
+pub use manuscript::{
+    Block, BytePatch, ChangeClass, DecisionBatch, Edit, EditKind, EditScope, EditorAction,
+    EditorChange, Insertion, Lineage, Manuscript, Proposal, Replacement, ReviewSlice,
+    ReviewSliceId, SliceKind, SourceSnapshot, TextAction, TextCommand, TextHead, TextRefusal,
+    TextTransition, Verdict, VerdictKind, classify_change,
+};
 pub use source_layout::{ByteSpan, SourceDrift, SourceLayout};
