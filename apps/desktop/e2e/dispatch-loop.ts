@@ -182,7 +182,9 @@ const start = async (): Promise<void> => {
   await waitFor("tauri internals", async () =>
     Boolean(await execute(`return typeof __TAURI_INTERNALS__ !== "undefined"`)),
   );
-  await execute(`window["refrain.e2e.pick"] = ${JSON.stringify(fixture)}; "planted"`);
+  await execute(
+    `window["refrain.e2e.pick"] = ${JSON.stringify(fixture)}; window["refrain.e2e.pin"] = true; "planted"`,
+  );
 };
 
 const stop = async (): Promise<void> => {

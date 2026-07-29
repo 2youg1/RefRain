@@ -1,8 +1,8 @@
 /*
- * RefRain — 8 套主题。由 scripts/generate-themes.ts 生成，勿手改。
+ * RefRain — 7 套主题。由 scripts/generate-themes.ts 生成，勿手改。
  *
  * 昼夜不是同一套配色的正反两面。一套主题属于一个时段，为那个时段设计：
- * 日间5套（濤・霞・枯・林・瓷）与夜间3套（墨・幽・時雨）各自成立。
+ * 日间5套（濤・霞・砂・桦・侘）与夜间2套（墨・韶）各自成立。
  * 夜间不是把日间反相得来的——那样得到的是被翻过来的屏幕，不是灯下的纸。
  *
  * 颜色一律以 OKLCH 声明。同一亮度上换色相不会让灰色发浑，这是 HSL 做不到的，
@@ -83,25 +83,23 @@
   --role-source-wash: var(--source-wash);
 }
 
-/* ── 霞 kasumi · 日间 · 当代日本青春动漫 ──────── */
+/* ── 霞 kasumi · 日间 · 新海誠・波子汽水 ──────── */
 /*
- * 冷白底，纸面那层冰蓝要看得见而不只是暗示。八套里唯一以樱为印，也是唯
- * 一的现代题材，也是唯一侧栏留在明度上半区的一套——深侧栏此前是全屏对
- * 比最强的一块，占屏 12%，把整套从「清晨」拽回了「专业工具」。冰蓝
- * 彩度 .142 → .190：发灰的成因是彩度不足而非色相不对。樱色
- * 停在 L .700，再推白到 .740 就跌到 Lc 43.6、印章
- * 看不清，所以「偏白」交给渐变浅端。
- * 出典：冰蓝 → 樱色。参照当代日系动画的高调冷白与低饱和点缀
+ * 新海诚式的高透明感：纸是夏日正午被光照透的云，墨是积雨云底那层深蓝。
+ * 印仍是樱色——停在 L .700，再推白就跌破 Lc 45；副强调取
+ * 波子汽水的瓶身蓝。侧栏留在明度上半区：高调题材的深侧栏是全屏对比最强
+ * 的一块，会把「清晨」拽回「专业工具」。
+ * 出典：云のむこう・波子汽水。高调冷白 + 樱印 + 瓶身蓝
  *
  * APCA Lc（W3C Silver 草案；WCAG 2 在深色底上判断失准）
- *   正文墨/纸    89.1   门槛 |75|
- *   侧栏文/侧    76.3   门槛 |75|
- *   侧栏次/侧    58.2   门槛 |45|
- *   印色/纸　    45.4   门槛 |45|
- *   接受/纸　    72.2   门槛 |45|
- *   退回/纸　    74.7   门槛 |45|
- *   代理/纸　    48.4   门槛 |45|
- *   引用/纸　    73.1   门槛 |45|
+ *   正文墨/纸    91.6   门槛 |75|
+ *   侧栏文/侧    78.4   门槛 |75|
+ *   侧栏次/侧    61.7   门槛 |45|
+ *   印色/纸　    45.9   门槛 |45|
+ *   接受/纸　    72.7   门槛 |45|
+ *   退回/纸　    75.3   门槛 |45|
+ *   代理/纸　    52.8   门槛 |45|
+ *   引用/纸　    73.6   门槛 |45|
  *
  * 本段由 scripts/generate-themes.ts 生成，勿手改。
  * 改锚点后重跑 `bun scripts/generate-themes.ts`。
@@ -109,36 +107,36 @@
 :root[data-theme="kasumi"] {
   color-scheme: light;
 
-  --paper: oklch(0.952 0.022 204); /* #dff4f6 */
-  --paper-raised: oklch(0.966 0.0198 204); /* #e5f8fa */
-  --paper-sunk: oklch(0.926 0.0242 204); /* #d5ecee */
-  --lamp: oklch(0.98 0.0121 204); /* #f0fbfc */
-  --shade: oklch(0.852 0.0264 204); /* #bbd4d6 */
-  --sheet: oklch(0.966 0.018 204); /* #e7f8f9 */
-  --rule: oklch(0.876 0.0286 204); /* #c1dcdf */
-  --rule-strong: oklch(0.802 0.033 204); /* #a7c5c8 */
-  --rail: oklch(0.88 0.033 204); /* #bfdee1 */
-  --rail-ink: oklch(0.314 0.058 242); /* #12344c */
-  --rail-faint: oklch(0.49 0.0464 242); /* #496479 */
-  --rail-rule: oklch(0.818 0.0363 204); /* #a9cbce */
-  --ink: oklch(0.322 0.058 242); /* #14374e */
-  --ink-soft: oklch(0.472 0.0592 242); /* #3c607a */
-  --ink-faint: oklch(0.608 0.0551 242); /* #6587a1 */
-  --ink-ghost: oklch(0.732 0.0493 242); /* #8eadc5 */
+  --paper: oklch(0.955 0.023 208); /* #dff5f8 */
+  --paper-raised: oklch(0.966 0.0207 208); /* #e5f8fb */
+  --paper-sunk: oklch(0.929 0.0253 208); /* #d5edf0 */
+  --lamp: oklch(0.983 0.0127 208); /* #f0fcfe */
+  --shade: oklch(0.855 0.0276 208); /* #bcd5d9 */
+  --sheet: oklch(0.969 0.0189 208); /* #e7f9fb */
+  --rule: oklch(0.879 0.0299 208); /* #c2dde1 */
+  --rule-strong: oklch(0.805 0.0345 208); /* #a7c6cb */
+  --rail: oklch(0.883 0.0345 208); /* #bfdfe4 */
+  --rail-ink: oklch(0.29 0.06 242); /* #092e46 */
+  --rail-faint: oklch(0.466 0.048 242); /* #415d73 */
+  --rail-rule: oklch(0.821 0.038 208); /* #a9ccd1 */
+  --ink: oklch(0.298 0.06 242); /* #0b3049 */
+  --ink-soft: oklch(0.448 0.0612 242); /* #345974 */
+  --ink-faint: oklch(0.584 0.057 242); /* #5d809b */
+  --ink-ghost: oklch(0.708 0.051 242); /* #85a5be */
   --seal: oklch(0.7 0.152 8); /* #eb728c */
   --seal-bright: oklch(0.79 0.1444 12); /* #ff91a2 */
-  --seal-wash: oklch(0.942 0.0456 8); /* #ffe0e6 */
-  --caret: oklch(0.272 0.1748 8); /* #600016 */
-  --agent: oklch(0.61 0.19 193); /* #00a3a2 */
-  --agent-wash: oklch(0.94 0.03 193); /* #d5f2f1 */
+  --seal-wash: oklch(0.945 0.0456 8); /* #ffe1e7 */
+  --caret: oklch(0.275 0.1748 8); /* #620017 */
+  --agent: oklch(0.61 0.17 228); /* #0093d2 */
+  --agent-wash: oklch(0.943 0.03 228); /* #d8f1fc */
   --accepted: oklch(0.478 0.096 152); /* #2b6c41 */
-  --accepted-wash: oklch(0.94 0.026 152); /* #dff1e3 */
+  --accepted-wash: oklch(0.943 0.026 152); /* #e0f2e4 */
   --refused: oklch(0.478 0.128 24); /* #983938 */
-  --refused-wash: oklch(0.94 0.028 24); /* #fee4e2 */
+  --refused-wash: oklch(0.943 0.028 24); /* #ffe5e3 */
   --source: oklch(0.476 0.078 232); /* #266481 */
-  --source-wash: oklch(0.94 0.024 232); /* #dceef9 */
+  --source-wash: oklch(0.943 0.024 232); /* #ddeffa */
   --pending: oklch(0.7 0.152 8); /* #eb728c */
-  --pending-wash: oklch(0.94 0.0456 8); /* #ffdfe5 */
+  --pending-wash: oklch(0.943 0.0456 8); /* #ffe0e6 */
 
   --role-pending: var(--pending);
   --role-pending-wash: var(--pending-wash);
@@ -152,7 +150,7 @@
   --role-source-wash: var(--source-wash);
 }
 
-/* ── 枯 kare · 日间 · 枯山水 ────────────────────── */
+/* ── 砂 suna · 日间 · 枯山水 ────────────────────── */
 /*
  * 砂は白、苔は緑、石は影。纸取耙过的白砂，墨取苔绿——这是工件实测值，
  * 也正是枯山水的关系：白砂之上唯一的活物是苔。印取石影的青灰蓝。
@@ -171,7 +169,7 @@
  * 本段由 scripts/generate-themes.ts 生成，勿手改。
  * 改锚点后重跑 `bun scripts/generate-themes.ts`。
  */
-:root[data-theme="kare"] {
+:root[data-theme="suna"] {
   color-scheme: light;
 
   --paper: oklch(0.959 0.0057 84.6); /* #f3f1ed */
@@ -217,7 +215,7 @@
   --role-source-wash: var(--source-wash);
 }
 
-/* ── 林 hayashi · 日间 · 樹木 ────────────────── */
+/* ── 桦 hua · 日间 · 桦木・木漏れ日 ──────────────── */
 /*
  * 桦皮的暖白纸，杉肌的红褐墨，印取木漏れ日的橙黄。土色留在墨里，但整套
  * 不再是单温——那束漏下的光就是它的温差。
@@ -236,7 +234,7 @@
  * 本段由 scripts/generate-themes.ts 生成，勿手改。
  * 改锚点后重跑 `bun scripts/generate-themes.ts`。
  */
-:root[data-theme="hayashi"] {
+:root[data-theme="hua"] {
   color-scheme: light;
 
   --paper: oklch(0.948 0.0097 72.7); /* #f2ede7 */
@@ -282,7 +280,7 @@
   --role-source-wash: var(--source-wash);
 }
 
-/* ── 瓷 seiji · 日间 · 青瓷 ────────────────────── */
+/* ── 侘 wabi · 日间 · 青瓷・侘び ────────────────── */
 /*
  * 秘色的纸，釉里的青作墨。印取常磐——不是红，是瓷器窑变里那点更深的绿
  * 。貫入的细线是分隔线的形状依据。
@@ -301,7 +299,7 @@
  * 本段由 scripts/generate-themes.ts 生成，勿手改。
  * 改锚点后重跑 `bun scripts/generate-themes.ts`。
  */
-:root[data-theme="seiji"] {
+:root[data-theme="wabi"] {
   color-scheme: light;
 
   --paper: oklch(0.953 0.0105 155); /* #eaf2ec */
@@ -389,7 +387,7 @@
   --seal: oklch(0.7 0.158 36); /* #ef7555 */
   --seal-bright: oklch(0.79 0.1501 40); /* #ff966d */
   --seal-wash: oklch(0.248 0.0474 36); /* #341811 */
-  --caret: oklch(0.918 0.1817 36); /* #ffb48c */
+  --caret: oklch(0.94 0.1817 36); /* #ffbb93 */
   --agent: oklch(0.7 0.058 238); /* #7da4bf */
   --agent-wash: oklch(0.25 0.0162 238); /* #1a2329 */
   --accepted: oklch(0.712 0.096 152); /* #73b484 */
@@ -413,94 +411,27 @@
   --role-source-wash: var(--source-wash);
 }
 
-/* ── 幽 yu · 夜间 · 月下の森 ──────────────────────── */
-/*
- * 夜间。月光下的林，重做过一次：初版把印色定为淡金，而金读作烛光不是月
- * 光，又被同时用在四处四个值上，在绿黑上压出一块像渲染故障的浊橄榄。现
- * 在森只留在纸里，墨是月光落在纸上的冷白偏蓝，印是月自身的银——低彩度
- * ，因为月不刺眼；苔绿退为第二强调，与银月构成森与月两极。整套没有一点
- * 金。
- * 出典：夜间独立设计。印取月的银，不用金
- *
- * APCA Lc（W3C Silver 草案；WCAG 2 在深色底上判断失准）
- *   正文墨/纸   -84.6   门槛 |75|
- *   侧栏文/侧     -83   门槛 |75|
- *   侧栏次/侧   -58.5   门槛 |45|
- *   印色/纸　   -63.1   门槛 |45|
- *   接受/纸　   -52.5   门槛 |45|
- *   退回/纸　     -49   门槛 |45|
- *   代理/纸　   -48.8   门槛 |45|
- *   引用/纸　   -51.2   门槛 |45|
- *
- * 本段由 scripts/generate-themes.ts 生成，勿手改。
- * 改锚点后重跑 `bun scripts/generate-themes.ts`。
- */
-:root[data-theme="yu"] {
-  color-scheme: dark;
-
-  --paper: oklch(0.22 0.024 166); /* #0f1e18 */
-  --paper-raised: oklch(0.25 0.0216 166); /* #18251f */
-  --paper-sunk: oklch(0.194 0.0264 166); /* #081812 */
-  --lamp: oklch(0.35 0.0132 166); /* #343d39 */
-  --shade: oklch(0.17 0.0288 166); /* #03130c */
-  --sheet: oklch(0.236 0.0197 166); /* #15211c */
-  --rule: oklch(0.296 0.0312 166); /* #1d3229 */
-  --rule-strong: oklch(0.37 0.036 166); /* #2d463b */
-  --rail: oklch(0.152 0.048 166); /* #001107 */
-  --rail-ink: oklch(0.884 0.0192 232); /* #cddbe3 */
-  --rail-faint: oklch(0.752 0.0288 232); /* #9db2be */
-  --rail-rule: oklch(0.242 0.0528 166); /* #00271a */
-  --ink: oklch(0.898 0.016 232); /* #d3dfe6 */
-  --ink-soft: oklch(0.754 0.0163 232); /* #a5b1b8 */
-  --ink-faint: oklch(0.63 0.0152 232); /* #808b91 */
-  --ink-ghost: oklch(0.506 0.0136 232); /* #5e666b */
-  --seal: oklch(0.78 0.07 228); /* #87c1db */
-  --seal-bright: oklch(0.87 0.0665 232); /* #a8ddf9 */
-  --seal-wash: oklch(0.23 0.021 228); /* #121f25 */
-  --caret: oklch(0.9 0.0805 228); /* #a5e9ff */
-  --agent: oklch(0.69 0.112 142); /* #72ad6b */
-  --agent-wash: oklch(0.232 0.03 142); /* #152114 */
-  --accepted: oklch(0.712 0.096 152); /* #73b484 */
-  --accepted-wash: oklch(0.232 0.026 152); /* #142117 */
-  --refused: oklch(0.716 0.128 24); /* #e9817c */
-  --refused-wash: oklch(0.232 0.028 24); /* #291817 */
-  --source: oklch(0.712 0.078 232); /* #6eabcb */
-  --source-wash: oklch(0.232 0.024 232); /* #111f27 */
-  --pending: oklch(0.88 0.07 228); /* #a7e1fc */
-  --pending-wash: oklch(0.232 0.021 228); /* #131f25 */
-
-  --role-pending: var(--pending);
-  --role-pending-wash: var(--pending-wash);
-  --role-accepted: var(--accepted);
-  --role-accepted-wash: var(--accepted-wash);
-  --role-refused: var(--refused);
-  --role-refused-wash: var(--refused-wash);
-  --role-agent: var(--agent);
-  --role-agent-wash: var(--agent-wash);
-  --role-source: var(--source);
-  --role-source-wash: var(--source-wash);
-}
-
-/* ── 時雨 shigure · 夜间 · Blade Runner の雨夜 ── */
+/* ── 韶 shao · 夜间 · Blade Runner の雨夜・Edgerunners ── */
 /*
  * 夜间。赛博但克制：底色是雨夜的深蓝黑，不用纯黑。霓虹只在远处——青与
- * 洋红各占一个语义位，绝不同屏出现。正文墨仍是可长读的冷白，不是荧光。
- * 出典：夜间独立设计。霓虹作强调而非底色
+ * 绯红各占一个语义位，绝不同屏出现；无黄无紫（KL9 裁决，原洋红近紫
+ * 已裁）。正文墨仍是可长读的冷白，不是荧光。
+ * 出典：夜间独立设计。霓虹作强调而非底色；绯红取代洋红
  *
  * APCA Lc（W3C Silver 草案；WCAG 2 在深色底上判断失准）
- *   正文墨/纸   -82.6   门槛 |75|
+ *   正文墨/纸   -86.5   门槛 |75|
  *   侧栏文/侧   -83.4   门槛 |75|
  *   侧栏次/侧   -58.8   门槛 |45|
  *   印色/纸　   -62.4   门槛 |45|
  *   接受/纸　   -52.7   门槛 |45|
  *   退回/纸　   -49.2   门槛 |45|
- *   代理/纸　   -52.7   门槛 |45|
+ *   代理/纸　   -47.4   门槛 |45|
  *   引用/纸　   -51.4   门槛 |45|
  *
  * 本段由 scripts/generate-themes.ts 生成，勿手改。
  * 改锚点后重跑 `bun scripts/generate-themes.ts`。
  */
-:root[data-theme="shigure"] {
+:root[data-theme="shao"] {
   color-scheme: dark;
 
   --paper: oklch(0.216 0.028 262); /* #131a27 */
@@ -515,16 +446,16 @@
   --rail-ink: oklch(0.884 0.0224 232); /* #cbdce5 */
   --rail-faint: oklch(0.752 0.0336 232); /* #9ab3c1 */
   --rail-rule: oklch(0.242 0.0616 262); /* #0f1f3d */
-  --ink: oklch(0.885 0.018 232); /* #cedce3 */
-  --ink-soft: oklch(0.741 0.0184 232); /* #a0adb5 */
-  --ink-faint: oklch(0.617 0.0171 232); /* #7b878e */
-  --ink-ghost: oklch(0.493 0.0153 232); /* #596369 */
+  --ink: oklch(0.905 0.015 232); /* #d6e2e8 */
+  --ink-soft: oklch(0.761 0.0153 232); /* #a8b3ba */
+  --ink-faint: oklch(0.637 0.0142 232); /* #838d93 */
+  --ink-ghost: oklch(0.513 0.0127 232); /* #60686d */
   --seal: oklch(0.76 0.132 192); /* #00cbc7 */
   --seal-bright: oklch(0.85 0.1254 196); /* #4fe7e8 */
   --seal-wash: oklch(0.226 0.0396 192); /* #002221 */
-  --caret: oklch(0.896 0.1518 192); /* #18fcf6 */
-  --agent: oklch(0.742 0.148 352); /* #f181b5 */
-  --agent-wash: oklch(0.228 0.03 352); /* #27171e */
+  --caret: oklch(0.936 0.1518 192); /* #3affff */
+  --agent: oklch(0.72 0.19 25); /* #ff6a65 */
+  --agent-wash: oklch(0.228 0.03 25); /* #291715 */
   --accepted: oklch(0.712 0.096 152); /* #73b484 */
   --accepted-wash: oklch(0.228 0.026 152); /* #132016 */
   --refused: oklch(0.716 0.128 24); /* #e9817c */

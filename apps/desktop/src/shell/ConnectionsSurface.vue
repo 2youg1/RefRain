@@ -128,7 +128,8 @@ onMounted(refresh);
 
 <style scoped>
 .connections {
-  border-left: 1px solid color-mix(in oklab, currentColor 12%, transparent);
+  border-left: 1px solid var(--rule);
+  background: var(--paper-raised);
   padding: 12px 16px;
   font-size: 13px;
   max-width: 520px;
@@ -140,15 +141,15 @@ onMounted(refresh);
   display: flex;
   justify-content: space-between;
   padding: 6px 0;
-  opacity: 0.7;
+  color: var(--ink-faint);
 }
 
 .notice {
-  color: #8a4b00;
+  color: var(--pending);
 }
 
 .dim {
-  opacity: 0.5;
+  color: var(--ink-ghost);
 }
 
 .conn-row {
@@ -166,7 +167,7 @@ onMounted(refresh);
 }
 
 .version {
-  opacity: 0.6;
+  color: var(--ink-faint);
   font-variant-numeric: tabular-nums;
 }
 
@@ -180,8 +181,8 @@ onMounted(refresh);
   flex: 1;
   font: inherit;
   padding: 6px 8px;
-  border: 1px solid color-mix(in oklab, currentColor 16%, transparent);
-  border-radius: 4px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
   background: transparent;
   color: inherit;
 }

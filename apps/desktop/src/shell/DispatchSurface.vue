@@ -494,7 +494,7 @@ onUnmounted(() => {
         </button>
         <pre v-if="showRequest" class="request-md">{{ preview.requestMd }}</pre>
         <div class="actions">
-          <button class="dispatch-authorize" type="button" :disabled="busy" @click="authorize">
+          <button class="primary dispatch-authorize" type="button" :disabled="busy" @click="authorize">
             授权
           </button>
           <button type="button" :disabled="busy" @click="phase = { kind: 'editing' }">返回</button>
@@ -549,7 +549,8 @@ onUnmounted(() => {
 
 <style>
 .dispatch {
-  border-left: 1px solid color-mix(in oklab, currentColor 12%, transparent);
+  border-left: 1px solid var(--rule);
+  background: var(--paper-raised);
   padding: 12px 16px;
   font-size: 13px;
   max-width: 520px;
@@ -565,8 +566,8 @@ onUnmounted(() => {
 }
 
 .cell {
-  border: 1px solid color-mix(in oklab, currentColor 16%, transparent);
-  border-radius: 4px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
   padding: 6px 8px;
   display: flex;
   flex-direction: column;
@@ -574,7 +575,7 @@ onUnmounted(() => {
 }
 
 .cell .name {
-  opacity: 0.6;
+  color: var(--ink-faint);
   font-size: 11px;
 }
 
@@ -587,6 +588,7 @@ onUnmounted(() => {
   border: none;
 }
 
+/* 送出是人的行动：全票唯一允许醒目的控件。 */
 .dispatch-send {
   all: unset;
   cursor: pointer;
@@ -595,8 +597,14 @@ onUnmounted(() => {
   height: 100%;
   box-sizing: border-box;
   padding: 6px 8px;
-  border-radius: 4px;
-  background: color-mix(in oklab, currentColor 14%, transparent);
+  border-radius: 3px;
+  border: 1px solid color-mix(in oklab, var(--seal) 45%, transparent);
+  color: var(--seal);
+  background: var(--seal-wash);
+}
+
+.dispatch-send:hover:not(:disabled) {
+  border-color: var(--seal);
 }
 
 .dispatch-send:disabled {
@@ -604,26 +612,22 @@ onUnmounted(() => {
   cursor: default;
 }
 
-.blocker {
-  color: #8a4b00;
-}
-
 .notice {
-  color: #8a4b00;
+  color: var(--pending);
 }
 
 .blocks {
   margin: 8px 0;
   max-height: 40vh;
   overflow-y: auto;
-  border-top: 1px solid color-mix(in oklab, currentColor 10%, transparent);
+  border-top: 1px solid var(--rule);
 }
 
 .blocks-head {
   display: flex;
   justify-content: space-between;
   padding: 6px 0;
-  opacity: 0.7;
+  color: var(--ink-faint);
 }
 
 .block-row {
@@ -635,7 +639,7 @@ onUnmounted(() => {
 }
 
 .block-row .ordinal {
-  opacity: 0.5;
+  color: var(--ink-ghost);
   font-variant-numeric: tabular-nums;
 }
 
@@ -647,7 +651,7 @@ onUnmounted(() => {
 }
 
 .block-row .count {
-  opacity: 0.5;
+  color: var(--ink-ghost);
   font-variant-numeric: tabular-nums;
 }
 
@@ -682,7 +686,7 @@ onUnmounted(() => {
 
 .draft-peek {
   display: block;
-  opacity: 0.5;
+  color: var(--ink-ghost);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -693,8 +697,8 @@ onUnmounted(() => {
   box-sizing: border-box;
   font: inherit;
   padding: 8px;
-  border: 1px solid color-mix(in oklab, currentColor 16%, transparent);
-  border-radius: 4px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
   background: transparent;
   color: inherit;
   resize: vertical;
@@ -705,8 +709,8 @@ onUnmounted(() => {
   box-sizing: border-box;
   font: inherit;
   padding: 8px;
-  border: 1px solid color-mix(in oklab, currentColor 16%, transparent);
-  border-radius: 4px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
   background: transparent;
   color: inherit;
   resize: vertical;
@@ -721,7 +725,7 @@ onUnmounted(() => {
 
 .reading {
   margin-left: auto;
-  opacity: 0.6;
+  color: var(--ink-faint);
   font-variant-numeric: tabular-nums;
 }
 
@@ -729,8 +733,8 @@ onUnmounted(() => {
   font: inherit;
   background: transparent;
   color: inherit;
-  border: 1px solid color-mix(in oklab, currentColor 16%, transparent);
-  border-radius: 4px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
   padding: 4px 8px;
 }
 
@@ -738,8 +742,8 @@ onUnmounted(() => {
   font: inherit;
   background: transparent;
   color: inherit;
-  border: 1px solid color-mix(in oklab, currentColor 16%, transparent);
-  border-radius: 4px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
   padding: 4px 8px;
 }
 
@@ -749,7 +753,7 @@ onUnmounted(() => {
 
 .manifest-title {
   font-size: 12px;
-  opacity: 0.7;
+  color: var(--ink-faint);
 }
 
 .manifest-row {
@@ -768,7 +772,7 @@ onUnmounted(() => {
   overflow: auto;
   font-size: 12px;
   padding: 8px;
-  border: 1px solid color-mix(in oklab, currentColor 10%, transparent);
+  border: 1px solid var(--rule);
   white-space: pre-wrap;
 }
 
@@ -780,12 +784,12 @@ onUnmounted(() => {
 
 .runs {
   margin-top: 12px;
-  border-top: 1px solid color-mix(in oklab, currentColor 10%, transparent);
+  border-top: 1px solid var(--rule);
 }
 
 .runs-title {
   font-size: 12px;
-  opacity: 0.7;
+  color: var(--ink-faint);
 }
 
 .run-row {
@@ -801,7 +805,7 @@ onUnmounted(() => {
 
 .run-row .workspace {
   font-size: 11px;
-  opacity: 0.6;
+  color: var(--ink-faint);
 }
 
 .run-actions {
@@ -811,6 +815,6 @@ onUnmounted(() => {
 
 .dispatch-close {
   margin-top: 12px;
-  opacity: 0.6;
+  color: var(--ink-faint);
 }
 </style>

@@ -38,15 +38,16 @@ const emit = defineEmits<{
   inset: 10vh 10vw;
   max-width: none;
   max-height: none;
-  border: 1px solid color-mix(in oklab, currentColor 30%, transparent);
-  border-radius: 8px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
   padding: 24px;
-  background: var(--paper, #f7f5f0);
+  background: var(--paper-raised);
+  color: var(--ink);
   overflow: auto;
 }
 
 .safety::backdrop {
-  background: rgb(0 0 0 / 30%);
+  background: rgb(0 0 0 / 40%);
 }
 
 .sides {
@@ -59,7 +60,8 @@ const emit = defineEmits<{
   max-height: 50vh;
   overflow: auto;
   padding: 12px;
-  background: color-mix(in oklab, currentColor 5%, transparent);
+  background: var(--paper-sunk);
+  border: 1px solid var(--rule);
   white-space: pre-wrap;
   font-size: 13px;
 }

@@ -8,6 +8,7 @@ import { unwrap } from "./bridge";
 import { manuscriptStack } from "./fonts";
 import { commands } from "./generated/bindings.gen";
 import Workbench from "./shell/Workbench.vue";
+import "./app.css";
 import "./fonts.css";
 import "./themes.css";
 
@@ -27,6 +28,7 @@ const applyConfig = async (): Promise<void> => {
   try {
     const snapshot = await unwrap(commands.readConfig());
     theme.value = snapshot.config.appearance.theme;
+    document.documentElement.dataset.paper = snapshot.config.appearance.paper;
     document.documentElement.style.setProperty(
       "--manuscript-family",
       manuscriptStack(snapshot.config.appearance.fonts),
@@ -50,13 +52,6 @@ onMounted(async () => {
 </template>
 
 <style>
-body {
-  margin: 0;
-  background: var(--paper);
-  color: var(--ink);
-  font-family: system-ui, sans-serif;
-}
-
 .shell {
   min-height: 100vh;
   background: var(--paper);

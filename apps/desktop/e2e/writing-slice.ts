@@ -204,11 +204,15 @@ const run = async (): Promise<void> => {
   session = ((await call("POST", "/session", caps)) as { sessionId?: string }).sessionId ?? "";
   check("the real window opens under WebDriver", session !== "", session);
 
-  await execute(`window["refrain.e2e.pick"] = ${JSON.stringify(fixture)}; "planted"`);
+  await execute(
+    `window["refrain.e2e.pick"] = ${JSON.stringify(fixture)}; window["refrain.e2e.pin"] = true; "planted"`,
+  );
   await clickButton("打开文件夹");
 
   // The theme picker reads the generated list, writes the single Config, and
-  // the choice projects immediately (D12).
+  // the choice projects immediately (D12). Appearance lives in the Settings
+  // surface, off the rail (C12.6).
+  await clickButton("设置");
   const paperOf = async (): Promise<string> =>
     String(
       await execute(
@@ -216,11 +220,14 @@ const run = async (): Promise<void> => {
         [],
       ),
     );
-  await waitFor("theme buttons", async () => (await elements(".theme-picker button")).length === 8);
-  const themeButtons = await elements(".theme-picker button");
+  await waitFor(
+    "theme buttons",
+    async () => (await elements(".theme-picker [data-theme-slug]")).length === 7,
+  );
+  const themeButtons = await elements(".theme-picker [data-theme-slug]");
   check(
     "the generated theme list reaches the picker",
-    themeButtons.length === 8,
+    themeButtons.length === 7,
     themeButtons.length,
   );
   const paperBefore = await paperOf();
@@ -232,6 +239,22 @@ const run = async (): Promise<void> => {
     readFileSync(join(dataDir, "config.toml"), "utf8").includes('theme = "sumi"'),
   );
   check("the choice lands in the single Config (INV-10)", true);
+
+  // The manuscript sheet's three edges (SPEC 9.8): the pick writes the one
+  // Config and the projection attribute answers immediately.
+  await clickButton("无");
+  await waitFor("the edgeless sheet", async () =>
+    Boolean(await execute(`return document.documentElement.dataset.paper === "none"`, [])),
+  );
+  await waitFor("the paper mode on disk", async () =>
+    readFileSync(join(dataDir, "config.toml"), "utf8").includes('paper = "none"'),
+  );
+  check("the paper mode lands in the single Config", true);
+  await clickButton("细");
+  await waitFor("the hairline sheet", async () =>
+    Boolean(await execute(`return document.documentElement.dataset.paper === "hairline"`, [])),
+  );
+  check("the sheet returns to hairline", true);
 
   // Font priority (SPEC 9.8): the same sentinel 直骨令 rendered under both
   // orders must differ, and the real editor stack must render it like the
@@ -474,7 +497,9 @@ const run = async (): Promise<void> => {
 
   // --- Second session: reopen from disk. ---
   session = ((await call("POST", "/session", caps)) as { sessionId?: string }).sessionId ?? "";
-  await execute(`window["refrain.e2e.pick"] = ${JSON.stringify(fixture)}; "planted"`);
+  await execute(
+    `window["refrain.e2e.pick"] = ${JSON.stringify(fixture)}; window["refrain.e2e.pin"] = true; "planted"`,
+  );
   await clickButton("打开文件夹");
   await clickButton("第一章.md");
   await waitFor(

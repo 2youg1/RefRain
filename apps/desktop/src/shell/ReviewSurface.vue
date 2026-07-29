@@ -320,7 +320,7 @@ const actionLabel = (unit: Unit | null): string => {
       <button type="button" :disabled="!current" @click="toggleStage">
         {{ isStaged(current) ? "出批" : "入批" }} (Alt+S)
       </button>
-      <button type="button" :disabled="staged === 0" @click="commit">
+      <button type="button" class="primary" :disabled="staged === 0" @click="commit">
         合并 {{ staged }} 条 (Alt+Enter)
       </button>
     </div>
@@ -341,7 +341,7 @@ const actionLabel = (unit: Unit | null): string => {
   align-items: center;
   padding: 8px 16px;
   font-size: 13px;
-  border-bottom: 1px solid color-mix(in oklab, currentColor 12%, transparent);
+  border-bottom: 1px solid var(--rule);
 }
 
 .review-body {
@@ -355,29 +355,30 @@ const actionLabel = (unit: Unit | null): string => {
 .original h3,
 .unit h3 {
   font-size: 12px;
-  opacity: 0.6;
+  color: var(--ink-faint);
   margin: 0 0 8px;
 }
 
 .text {
   white-space: pre-wrap;
   line-height: 1.8;
+  font-family: var(--serif);
 }
 
 .proposed {
-  border-left: 2px solid var(--role-agent, #888);
+  border-left: 2px solid var(--role-agent);
   padding-left: 8px;
 }
 
 .hint {
   font-size: 12px;
-  opacity: 0.55;
+  color: var(--ink-ghost);
   margin-top: 12px;
 }
 
 .verdict-mark {
   font-size: 12px;
-  color: var(--role-agent, #888);
+  color: var(--role-agent);
 }
 
 .final-editor {
@@ -390,7 +391,7 @@ const actionLabel = (unit: Unit | null): string => {
   display: flex;
   gap: 8px;
   padding: 12px 16px;
-  border-top: 1px solid color-mix(in oklab, currentColor 12%, transparent);
+  border-top: 1px solid var(--rule);
 }
 
 .competing {
@@ -403,11 +404,11 @@ const actionLabel = (unit: Unit | null): string => {
 
 .empty {
   padding: 48px 16px;
-  opacity: 0.6;
+  color: var(--ink-faint);
 }
 
 .notice {
-  color: #8a4b00;
+  color: var(--pending);
   font-size: 13px;
   padding: 4px 16px;
 }
