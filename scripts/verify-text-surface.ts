@@ -27,6 +27,7 @@ const localSpecIsIgnored =
 const allowed = (file: string): boolean =>
   /^(README|AGENTS|ROADMAP)\.md$/.test(file) ||
   /^tests\/corpora\/[^/]+\.md$/.test(file) ||
+  /^probe-results\/[^/]+\.md$/.test(file) ||
   /(?:^|\/)(LICENSES|ATTRIBUTIONS)\.md$/.test(file) ||
   (file === "SPEC.md" && localSpecIsIgnored);
 const forbidden = [...files].filter((file) => !allowed(file)).sort();

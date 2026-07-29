@@ -14,7 +14,7 @@ const emit = defineEmits<{
 
 <template>
   <section class="settings" aria-label="设置">
-    <div class="blocks-head"><span>设置</span></div>
+    <h2 class="settings-title">设置</h2>
     <ThemePicker @picked="(slug: string) => emit('themePicked', slug)" />
     <div class="setting">
       <span class="setting-name">图标</span>
@@ -28,11 +28,20 @@ const emit = defineEmits<{
 .settings {
   border-left: 1px solid var(--rule);
   background: var(--paper-raised);
-  padding: 12px 16px;
+  padding: 20px 24px;
   font-size: 13px;
   max-width: 520px;
   min-width: 360px;
   overflow-y: auto;
+}
+
+.settings-title {
+  font-size: 18px;
+  font-weight: 400;
+  letter-spacing: 0.3em;
+  margin: 0 0 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--rule);
 }
 
 .blocks-head {

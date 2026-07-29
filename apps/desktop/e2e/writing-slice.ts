@@ -22,7 +22,7 @@ if (!exe) {
   process.exit(2);
 }
 
-const DRIVER_PORT = 4444;
+const DRIVER_PORT = Number(process.env.REFRAIN_E2E_PORT ?? 4444);
 const fixture = mkdtempSync(join(tmpdir(), "refrain-e2e-"));
 const dataDir = mkdtempSync(join(tmpdir(), "refrain-e2e-data-"));
 const chapterPath = join(fixture, "第一章.md");
@@ -159,12 +159,23 @@ let driver: ChildProcess | null = null;
 
 const run = async (): Promise<void> => {
   const nativeDriver = process.env.REFRAIN_MSEDGEDRIVER ?? "msedgedriver";
-  driver = spawn("tauri-driver", ["--native-driver", nativeDriver], {
-    stdio: ["ignore", "pipe", "pipe"],
-    // tauri:options has no env field: the app inherits the driver's
-    // environment, and the driver inherits this one.
-    env: { ...process.env, REFRAIN_DATA_DIR: dataDir },
-  });
+  driver = spawn(
+    "tauri-driver",
+    [
+      "--native-driver",
+      nativeDriver,
+      "--port",
+      String(DRIVER_PORT),
+      "--native-port",
+      String(DRIVER_PORT + 100),
+    ],
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+      // tauri:options has no env field: the app inherits the driver's
+      // environment, and the driver inherits this one.
+      env: { ...process.env, REFRAIN_DATA_DIR: dataDir },
+    },
+  );
   driver.stdout?.on("data", (chunk: Buffer) => process.stderr.write(`[tauri-driver] ${chunk}`));
   driver.stderr?.on("data", (chunk: Buffer) => process.stderr.write(`[tauri-driver] ${chunk}`));
 
@@ -501,6 +512,13 @@ const run = async (): Promise<void> => {
     `window["refrain.e2e.pick"] = ${JSON.stringify(fixture)}; window["refrain.e2e.pin"] = true; "planted"`,
   );
   await clickButton("打开文件夹");
+  // A re-adopt inside the still-running process can take seconds (C12.6
+  // observation: contention with the project the first session left open —
+  // recorded in the Memo for C14). Wait for the shelf before touching it.
+  await waitFor(
+    "the shelf after re-adopt",
+    async () => (await elements(".rail li button")).length >= 1,
+  );
   await clickButton("第一章.md");
   await waitFor(
     "blocks to render again",

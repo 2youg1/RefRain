@@ -975,6 +975,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         remove_harness_connection,
         probe_connection,
         import_material,
+        import_manuscript,
     ])
 }
 
@@ -2967,20 +2968,22 @@ fn list_material_drafts(
     })
 }
 
-/// The shared Human Material Action body (SPEC 8.7): create the material
-/// document, write its body through the same journaled text path the editor
-/// uses, persist. Used by draft resolution and by source import (C12.3).
+/// The shared Human Material Action body (SPEC 8.7): create the document,
+/// write its body through the same journaled text path the editor uses,
+/// persist. Used by draft resolution, by source import (C12.3), and by
+/// drag-drop manuscript import (C12.6).
 fn create_material_with_body(
     state: &AppState,
     entry: &mut ProjectEntry,
     title: &str,
     body: &str,
+    role: DocumentRole,
 ) -> Result<DocumentRow, RefrainError> {
     let created = entry
         .store
         .create(&refrain_store::project::CreateDocument {
             title: title.to_string(),
-            role: DocumentRole::Material,
+            role,
         })
         .map_err(into_domain)?;
     let opened = entry
@@ -3105,7 +3108,8 @@ fn commit_material_action(
         }
 
         let body = edited_body.unwrap_or_else(|| draft.body.clone());
-        let row = create_material_with_body(state, entry, &draft.title, &body)?;
+        let row =
+            create_material_with_body(state, entry, &draft.title, &body, DocumentRole::Material)?;
         entry
             .store
             .material_draft_take(&draft_id)
@@ -3155,6 +3159,46 @@ fn import_material(
             clone_display
         );
         let body = format!("{header}\n\n{}", ingested.text);
-        create_material_with_body(state, entry, &ingested.title, &body)
+        create_material_with_body(state, entry, &ingested.title, &body, DocumentRole::Material)
+    })
+}
+
+// ── C12.6: drag-drop import — text becomes a chapter, the rest a Material ──
+
+/// Import one dropped text file (.md / .markdown / .txt) as a manuscript
+/// chapter. The source is only read — it never moves (KL9: 源文件永远不动);
+/// the chapter's own bytes are what the project edits from now on.
+#[tauri::command]
+#[specta::specta]
+fn import_manuscript(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    source_path: String,
+) -> Result<DocumentRow, RefrainError> {
+    let path = std::path::Path::new(&source_path);
+    let bytes = std::fs::read(path).map_err(|error| {
+        RefrainError::new(ErrorCode::Io, "read the dropped file", source_path.clone())
+            .with_detail(error.to_string())
+    })?;
+    let text_bytes = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        &bytes[3..]
+    } else {
+        &bytes[..]
+    };
+    let text = String::from_utf8(text_bytes.to_vec()).map_err(|_| {
+        RefrainError::new(
+            ErrorCode::UnsupportedFormat,
+            "read the dropped file",
+            "not UTF-8 text",
+        )
+    })?;
+    let title = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or("拖入")
+        .to_string();
+    state.with_project(&root_id, |state, entry| {
+        create_material_with_body(state, entry, &title, &text, DocumentRole::Chapter)
     })
 }

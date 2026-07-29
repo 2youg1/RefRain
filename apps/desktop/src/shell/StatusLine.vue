@@ -25,7 +25,9 @@ const text = computed(() => {
 
 <template>
   <footer class="status-line">
-    <span :class="{ failed: state.kind === 'failed' }">{{ text }}</span>
+    <span class="state" :data-kind="state.kind">
+      <span class="dot" aria-hidden="true"></span>{{ text }}
+    </span>
     <span class="path">{{ path ?? "" }}</span>
   </footer>
 </template>
@@ -45,10 +47,46 @@ const text = computed(() => {
   color: var(--ink-faint);
   background: var(--paper);
   border-top: 1px solid var(--rule);
+  z-index: 8;
+  visibility: visible;
+  transition:
+    opacity 240ms var(--ease),
+    visibility 0s;
 }
 
-.status-line .failed {
+.status-line.dimmed {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transition:
+    opacity 240ms var(--ease),
+    visibility 0s 240ms;
+}
+
+.status-line .state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.status-line .dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ink-ghost);
+}
+
+.status-line .state[data-kind="dirty"] .dot,
+.status-line .state[data-kind="saving"] .dot {
+  background: var(--pending);
+}
+
+.status-line .state[data-kind="failed"] {
   color: var(--refused);
+}
+
+.status-line .state[data-kind="failed"] .dot {
+  background: var(--refused);
 }
 
 .status-line .path {
