@@ -865,6 +865,26 @@ const run = async (): Promise<void> => {
     cohort.length,
   );
 
+  // ── The reading ledger (C12): rebuilt from the authorization journal. ──
+  const readings = (await invoke("agent_reading_ledger", { rootId })) as {
+    agentId: string;
+    document: string;
+    rounds: number;
+    stale: boolean;
+  }[];
+  const l0Reading = readings.find((row) => row.agentId === l0Agent && row.document === "长章.md");
+  check(
+    "the reading ledger rebuilds the agent's rounds",
+    (l0Reading?.rounds ?? 0) >= 6,
+    l0Reading?.rounds,
+  );
+  check("the ledger sees the agent is current", l0Reading?.stale === false, l0Reading?.stale);
+  await clickButton("再发");
+  check(
+    "the ticket shows the agent's reading",
+    Boolean(await execute(`return document.querySelector(".reading") !== null`)),
+  );
+
   await stop();
   if (failures.length > 0) {
     console.error(`\n${failures.length} check(s) failed`);
