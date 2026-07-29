@@ -155,6 +155,7 @@ defineExpose({
   padding: 48px 24px;
   line-height: 1.75;
   font-size: 17px;
+  font-family: var(--manuscript-family, serif);
 }
 
 .editor-host p[data-block-id] {

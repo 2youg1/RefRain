@@ -77,6 +77,7 @@ export type AppearanceConfig = {
 	 *  load, because the theme list is generated, not a hand copy.
 	 */
 	theme: string,
+	fonts?: FontConfig,
 };
 
 /**
@@ -182,6 +183,24 @@ export type FileStamp_Serialize = {
 	bytes: string,
 	digest: string,
 };
+
+/**
+ *  The face per slot and the order the browser walks them. Order is the
+ *  whole mechanism: the first face carrying a glyph wins it, so priority
+ *  decides which tradition draws shared Han.
+ */
+export type FontConfig = {
+	latin: string,
+	chinese: string,
+	japanese: string,
+	priority: [FontSlot, FontSlot, FontSlot],
+};
+
+/**
+ *  The three face slots (SPEC 9.8). One CJK slot cannot serve both
+ *  traditions: 直, 骨 and 令 are drawn differently in each.
+ */
+export type FontSlot = "latin" | "chinese" | "japanese";
 
 /**
  *  A machine-level execution channel (SPEC 2.3). Capability probes and trust
@@ -383,7 +402,10 @@ export type OpenDocumentDto_Serialize = {
  *  The preferences the Settings surface may change (SPEC 6.5). Connection
  *  management is its own command pair; this is the author's choices.
  */
-export type PreferencesChangeDto = { kind: "karaAutoEnter"; value: boolean } | { kind: "setTheme"; value: string };
+export type PreferencesChangeDto = { kind: "karaAutoEnter"; value: boolean } | { kind: "setTheme"; value: string } | { kind: "setFontFamily"; value: {
+	slot: FontSlot,
+	family: string,
+} } | { kind: "setFontPriority"; value: [FontSlot, FontSlot, FontSlot] };
 
 /**  A Root as the interface names it. */
 export type ProjectOpenedDto = {

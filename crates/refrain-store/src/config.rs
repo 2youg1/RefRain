@@ -59,12 +59,52 @@ pub struct AppearanceConfig {
     /// One of the themes the generator emitted; validated on apply, not on
     /// load, because the theme list is generated, not a hand copy.
     pub theme: String,
+    #[serde(default)]
+    pub fonts: FontConfig,
 }
 
 impl Default for AppearanceConfig {
     fn default() -> Self {
         Self {
             theme: "tou".to_string(),
+            fonts: FontConfig::default(),
+        }
+    }
+}
+
+/// The three face slots (SPEC 9.8). One CJK slot cannot serve both
+/// traditions: 直, 骨 and 令 are drawn differently in each.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum FontSlot {
+    Latin,
+    Chinese,
+    Japanese,
+}
+
+impl FontSlot {
+    pub const ALL: [Self; 3] = [Self::Latin, Self::Chinese, Self::Japanese];
+}
+
+/// The face per slot and the order the browser walks them. Order is the
+/// whole mechanism: the first face carrying a glyph wins it, so priority
+/// decides which tradition draws shared Han.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(deny_unknown_fields)]
+pub struct FontConfig {
+    pub latin: String,
+    pub chinese: String,
+    pub japanese: String,
+    pub priority: [FontSlot; 3],
+}
+
+impl Default for FontConfig {
+    fn default() -> Self {
+        Self {
+            latin: "Antic Didone".to_string(),
+            chinese: "Chiron Sung HK".to_string(),
+            japanese: "Shippori Mincho".to_string(),
+            priority: FontSlot::ALL,
         }
     }
 }
@@ -121,6 +161,8 @@ pub enum AdapterKind {
 pub enum ConfigChange {
     KaraAutoEnter(bool),
     SetTheme(String),
+    SetFontFamily { slot: FontSlot, family: String },
+    SetFontPriority([FontSlot; 3]),
     UpsertHarnessConnection(HarnessConnection),
     RemoveHarnessConnection(Id),
 }
@@ -239,6 +281,17 @@ impl ConfigStore {
             }
             ConfigChange::SetTheme(theme) => {
                 snapshot.config.appearance.theme = theme;
+            }
+            ConfigChange::SetFontFamily { slot, family } => {
+                let fonts = &mut snapshot.config.appearance.fonts;
+                match slot {
+                    FontSlot::Latin => fonts.latin = family,
+                    FontSlot::Chinese => fonts.chinese = family,
+                    FontSlot::Japanese => fonts.japanese = family,
+                }
+            }
+            ConfigChange::SetFontPriority(priority) => {
+                snapshot.config.appearance.fonts.priority = priority;
             }
             ConfigChange::UpsertHarnessConnection(connection) => {
                 match snapshot

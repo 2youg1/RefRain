@@ -217,6 +217,130 @@ const run = async (): Promise<void> => {
   );
   check("the choice lands in the single Config (INV-10)", true);
 
+  // Font priority (SPEC 9.8): the same sentinel 直骨令 rendered under both
+  // orders must differ, and the real editor stack must render it like the
+  // family the author put first.
+  await execute(
+    `await Promise.all([
+      document.fonts.load('32px "Chiron Sung HK"', "直骨令"),
+      document.fonts.load('32px "Shippori Mincho"', "直骨令"),
+      document.fonts.load('32px "Antic Didone"', "Ag"),
+    ]);
+    return document.fonts.ready;`,
+    [],
+  );
+  const measurePixels = async (stack: string): Promise<string> =>
+    String(
+      await execute(
+        `const c = document.createElement("canvas");
+         c.width = 160; c.height = 60;
+         const x = c.getContext("2d");
+         x.fillStyle = "#fff"; x.fillRect(0, 0, 160, 60);
+         x.fillStyle = "#000";
+         x.font = "32px " + ${JSON.stringify(stack)};
+         x.textBaseline = "top";
+         x.fillText("直骨令", 4, 4);
+         const d = x.getImageData(0, 0, 160, 60).data;
+         let h = 0;
+         for (let i = 0; i < d.length; i += 1) h = (h * 31 + d[i]) >>> 0;
+         return h.toString(16);`,
+        [],
+      ),
+    );
+  const chineseFirst = await measurePixels('"Chiron Sung HK", "Shippori Mincho", serif');
+  const japaneseFirst = await measurePixels('"Shippori Mincho", "Chiron Sung HK", serif');
+  check(
+    "the sentinel 直骨令 is drawn differently by the two orders",
+    chineseFirst !== japaneseFirst,
+    `${chineseFirst} vs ${japaneseFirst}`,
+  );
+
+  // The default priority puts Chinese ahead of Japanese.
+  const editorStack = String(
+    await execute(
+      `return getComputedStyle(document.querySelector(".theme-picker")?.closest("body") ?? document.body).getPropertyValue("--manuscript-family").trim()`,
+      [],
+    ),
+  );
+  check(
+    "the editor stack opens with the configured first slot",
+    editorStack.includes("Antic Didone") &&
+      editorStack.indexOf("Chiron Sung HK") < editorStack.indexOf("Shippori Mincho"),
+    editorStack,
+  );
+
+  // Switch priority to Japanese-first through the real command. The backend
+  // broadcasts the change and the app re-projects — no harness recompute.
+  await execute(
+    `return __TAURI_INTERNALS__.invoke("update_preferences", {
+      change: { kind: "setFontPriority", value: ["japanese", "chinese", "latin"] },
+    }).then(() => "ok", (e) => { throw new Error(JSON.stringify(e)); })`,
+    [],
+  );
+  await waitFor("the app to re-project the stack", async () =>
+    String(
+      await execute(
+        `return getComputedStyle(document.documentElement).getPropertyValue("--manuscript-family").trim()`,
+        [],
+      ),
+    ).startsWith('"Shippori Mincho"'),
+  );
+  check("the app re-projects the stack from the broadcast config", true);
+  const configStack = String(
+    await execute(
+      `return __TAURI_INTERNALS__.invoke("read_config").then((snapshot) => {
+        const fonts = snapshot.config.appearance.fonts;
+        const names = { latin: fonts.latin, chinese: fonts.chinese, japanese: fonts.japanese };
+        return fonts.priority.map((slot) => '"' + names[slot] + '"').join(", ") + ", serif";
+      })`,
+      [],
+    ),
+  );
+  check(
+    "the Config records the new order",
+    configStack.startsWith('"Shippori Mincho"'),
+    configStack,
+  );
+  const japanesePriorityPixels = await measurePixels(configStack);
+  check(
+    "Japanese-first order draws the sentinel unlike the Chinese-first order",
+    japanesePriorityPixels !== chineseFirst,
+  );
+  const editorVarPixels = await measurePixels(
+    String(
+      await execute(
+        `return getComputedStyle(document.documentElement).getPropertyValue("--manuscript-family").trim()`,
+        [],
+      ),
+    ),
+  );
+  check(
+    "the Config-ordered stack draws like the editor's computed stack",
+    editorVarPixels === japanesePriorityPixels,
+    `${editorVarPixels} vs ${japanesePriorityPixels}`,
+  );
+
+  // Emitted assets are the source fonts: bytes hash out, not family names.
+  // The page's CSP (connect-src) forbids an in-page fetch, so the hash is
+  // read off the built bundle directly — that IS the emitted asset.
+  const { createHash } = await import("node:crypto");
+  const { readdirSync } = await import("node:fs");
+  const emitted = readdirSync("apps/desktop/dist/assets").find((name) =>
+    name.startsWith("ChironSungHK-"),
+  );
+  check("the bundle emits the Chiron asset", emitted !== undefined);
+  const assetHash = createHash("sha256")
+    .update(readFileSync(`apps/desktop/dist/assets/${emitted}`))
+    .digest("hex");
+  const sourceHash = createHash("sha256")
+    .update(readFileSync("apps/desktop/src/fonts/ChironSungHK.woff2"))
+    .digest("hex");
+  check(
+    "the emitted font asset is byte-identical to the source",
+    assetHash === sourceHash,
+    assetHash,
+  );
+
   await clickButton("第一章.md");
   await waitFor("blocks to render", async () => (await elements("p[data-block-id]")).length === 2);
   const blocks = await elements("p[data-block-id]");
