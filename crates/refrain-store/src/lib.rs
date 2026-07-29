@@ -13,6 +13,7 @@ pub mod icons;
 pub mod ingest;
 pub mod ledger;
 pub mod materials;
+pub mod migrate;
 pub mod orchestration;
 pub mod project;
 pub mod root;
