@@ -45,6 +45,7 @@ pub struct AppState {
     kara: Mutex<KaraMachine>,
     config: Option<refrain_store::config::ConfigStore>,
     config_notice: Mutex<Option<String>>,
+    data_dir: PathBuf,
 }
 
 impl AppState {
@@ -88,6 +89,7 @@ impl AppState {
             kara: Mutex::new(KaraMachine::new()),
             config,
             config_notice: Mutex::new(config_notice),
+            data_dir: app_data_dir.to_path_buf(),
         })
     }
 
@@ -782,6 +784,50 @@ fn list_themes() -> Vec<ThemeInfoDto> {
     serde_json::from_str::<Vec<ThemeInfoDto>>(THEMES_JSON).unwrap_or_default()
 }
 
+/// The assets directory for icons (SPEC 6.3).
+fn icon_assets_dir(state: &AppState) -> PathBuf {
+    state.data_dir.join("assets").join("universal-button")
+}
+
+/// Pick an icon for the Universal Button. The pipeline judges by content
+/// (SPEC 9.8); the digest is all the Config ever stores.
+#[tauri::command]
+#[specta::specta]
+fn set_universal_icon(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    bytes: Vec<u8>,
+) -> Result<String, RefrainError> {
+    let asset = refrain_store::icons::import_icon(&icon_assets_dir(&state), &bytes)?;
+    let store = state.config.as_ref().ok_or_else(|| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "write a damaged Config",
+            "icon",
+        )
+    })?;
+    store
+        .apply(refrain_store::config::ConfigChange::SetIconDigest(Some(
+            asset.digest.clone(),
+        )))
+        .map_err(|failure| {
+            RefrainError::new(ErrorCode::Io, "write the Config", failure.to_string())
+        })?;
+    use tauri::Emitter;
+    let _ = app.emit("config-changed", &asset.digest);
+    Ok(asset.digest)
+}
+
+/// The stored icon, for the data-URL projection. Absent is a value, not an
+/// empty string (INV-3's discipline).
+#[tauri::command]
+#[specta::specta]
+fn universal_icon(state: tauri::State<'_, AppState>) -> Option<Vec<u8>> {
+    let store = state.config.as_ref()?;
+    let digest = store.snapshot().ok()?.config.appearance.icon_digest?;
+    refrain_store::icons::read_icon(&icon_assets_dir(&state), &digest).ok()
+}
+
 /// The preferences the Settings surface may change (SPEC 6.5). Connection
 /// management is its own command pair; this is the author's choices.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -886,6 +932,8 @@ pub fn builder() -> Builder<tauri::Wry> {
         read_config,
         update_preferences,
         list_themes,
+        set_universal_icon,
+        universal_icon,
     ])
 }
 

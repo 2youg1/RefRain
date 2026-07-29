@@ -9,6 +9,7 @@
 pub mod atomic;
 pub mod config;
 pub mod files;
+pub mod icons;
 pub mod ledger;
 pub mod project;
 pub mod root;

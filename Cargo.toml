@@ -39,6 +39,14 @@ tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
 # The store crate owns every database handle; rusqlite appears nowhere else.
 rusqlite = { version = "=0.40.1", features = ["bundled"] }
 
+# The icon pipeline (C7): SVG needs a real parser (a hand-rolled one is the
+# DTD/entity surface the format exists to refuse) and a real rasteriser;
+# PNG needs a real decoder. All three are the exact versions usvg 0.47 pins.
+resvg = "=0.47.0"
+usvg = "=0.47.0"
+tiny-skia = "=0.12.0"
+image = "=0.25.10"
+
 # RootFiles (C4). Four crates, each carrying a real capability the file layer
 # was already built on in v0.1.x: `ignore` is the traversal ripgrep uses (a
 # manuscript folder full of build output should not drown the index); `rayon`

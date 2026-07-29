@@ -61,6 +61,11 @@ pub struct AppearanceConfig {
     pub theme: String,
     #[serde(default)]
     pub fonts: FontConfig,
+    /// The Universal Button icon, by content digest (SPEC 9.8). The asset
+    /// named by this digest lives in the application data assets directory;
+    /// the Config never stores the image itself.
+    #[serde(default)]
+    pub icon_digest: Option<String>,
 }
 
 impl Default for AppearanceConfig {
@@ -68,6 +73,7 @@ impl Default for AppearanceConfig {
         Self {
             theme: "tou".to_string(),
             fonts: FontConfig::default(),
+            icon_digest: None,
         }
     }
 }
@@ -163,6 +169,7 @@ pub enum ConfigChange {
     SetTheme(String),
     SetFontFamily { slot: FontSlot, family: String },
     SetFontPriority([FontSlot; 3]),
+    SetIconDigest(Option<String>),
     UpsertHarnessConnection(HarnessConnection),
     RemoveHarnessConnection(Id),
 }
@@ -292,6 +299,9 @@ impl ConfigStore {
             }
             ConfigChange::SetFontPriority(priority) => {
                 snapshot.config.appearance.fonts.priority = priority;
+            }
+            ConfigChange::SetIconDigest(digest) => {
+                snapshot.config.appearance.icon_digest = digest;
             }
             ConfigChange::UpsertHarnessConnection(connection) => {
                 match snapshot

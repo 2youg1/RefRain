@@ -341,6 +341,44 @@ const run = async (): Promise<void> => {
     assetHash,
   );
 
+  // The icon pipeline (SPEC 9.8): a plain SVG normalises to the button's
+  // pixels; an outward-reaching SVG is refused with a typed error.
+  const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="#ca4d23"/></svg>`;
+  const digest = String(
+    await execute(
+      `return __TAURI_INTERNALS__.invoke("set_universal_icon", {
+        bytes: [...new TextEncoder().encode(${JSON.stringify(iconSvg)})],
+      }).then(
+        (d) => d,
+        (e) => { throw new Error("set_universal_icon refused a plain SVG: " + JSON.stringify(e)); },
+      )`,
+      [],
+    ),
+  );
+  check("a plain SVG imports and is named by digest", digest.length === 64, digest);
+  await waitFor("the button to show the icon", async () =>
+    Boolean(
+      await execute(
+        `const img = document.querySelector(".icon-button img");
+         return img && img.complete && img.naturalWidth > 0;`,
+        [],
+      ),
+    ),
+  );
+  check("the Universal Button draws the imported pixels", true);
+  const malicious = String(
+    await execute(
+      `return __TAURI_INTERNALS__.invoke("set_universal_icon", {
+        bytes: [...new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><image href="https://evil.example/x.png"/></svg>')],
+      }).then(
+        () => "imported (DEFECT)",
+        (e) => "refused:" + (e.code ?? JSON.stringify(e)),
+      )`,
+      [],
+    ),
+  );
+  check("an outward-reaching SVG is refused", malicious.startsWith("refused:"), malicious);
+
   await clickButton("第一章.md");
   await waitFor("blocks to render", async () => (await elements("p[data-block-id]")).length === 2);
   const blocks = await elements("p[data-block-id]");
