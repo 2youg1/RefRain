@@ -187,6 +187,7 @@ const run = async (): Promise<void> => {
           // CI runners have no GPU-backed desktop; without these the WebView2
           // browser process dies before it opens its devtools port.
           args: [
+            `--user-data-dir=${join(dataDir, "webview-args")}`,
             "--enable-logging=stderr",
             "--v=0",
             "--disable-gpu",
