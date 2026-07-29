@@ -18,7 +18,8 @@ use crate::schema::StoreError;
 
 /// The persisted shape of one judgment. `AcceptModified` carries its final
 /// text in `final_text`; the kind column alone never tells that story.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
 pub enum VerdictKindName {
     Accept,
     AcceptModified,
@@ -52,7 +53,8 @@ impl VerdictKindName {
 /// One row of the ledger. Ids stay strings here: legacy rows arrive with
 /// legacy ids during migration (INV-9), and the ledger must hold both
 /// without rewriting either.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub struct VerdictRecord {
     pub id: String,
     pub proposal_id: String,
@@ -60,7 +62,10 @@ pub struct VerdictRecord {
     pub kind: VerdictKindName,
     pub final_text: Option<String>,
     pub reason: Option<String>,
-    /// Milliseconds since the Unix epoch.
+    /// Milliseconds since the Unix epoch (string on the bridge: Specta
+    /// forbids BigInt-style exports).
+    #[serde(with = "crate::project::u64_string")]
+    #[specta(type = String)]
     pub decided_at: u64,
     /// The baseline spelling a legacy row arrived with, kept byte-for-byte.
     pub legacy_baseline: Option<String>,
@@ -108,6 +113,20 @@ impl<'a> VerdictLedger<'a> {
             .query_map([], read_record)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    /// Rows by id, in decision order. The commit path rebuilds its batch
+    /// from these; a missing id is a defect, not a skip.
+    pub fn find_many(&self, ids: &[String]) -> Result<Vec<VerdictRecord>, StoreError> {
+        let all = self.all()?;
+        ids.iter()
+            .map(|id| {
+                all.iter()
+                    .find(|row| &row.id == id)
+                    .cloned()
+                    .ok_or(StoreError::Sqlite(rusqlite::Error::QueryReturnedNoRows))
+            })
+            .collect()
     }
 
     /// Full-text-free fragment search over the author's stated reasons. The

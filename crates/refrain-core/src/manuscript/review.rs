@@ -36,6 +36,18 @@ pub struct ReviewSliceId {
 }
 
 impl ReviewSliceId {
+    /// Construct directly: verdicts cross the bridge as "<proposal>:<ordinal>"
+    /// and the commit path rebuilds them exactly.
+    #[must_use]
+    pub fn new(proposal: Id, ordinal: u32) -> Self {
+        Self { proposal, ordinal }
+    }
+
+    #[must_use]
+    pub fn ordinal(self) -> u32 {
+        self.ordinal
+    }
+
     pub(crate) fn proposal(self) -> Id {
         self.proposal
     }
@@ -87,11 +99,16 @@ impl ReviewSlice {
         &self.text
     }
 
-    pub(crate) fn lead(&self) -> &str {
+    /// The whitespace before the sentence (SPEC 7.4: it is the author's,
+    /// not ours to normalise).
+    #[must_use]
+    pub fn lead(&self) -> &str {
         &self.lead
     }
 
-    pub(crate) fn trail(&self) -> &str {
+    /// The whitespace after it.
+    #[must_use]
+    pub fn trail(&self) -> &str {
         &self.trail
     }
 }
@@ -117,7 +134,21 @@ impl Proposal {
         before: String,
         after: Option<String>,
     ) -> Self {
-        let id = Id::new();
+        Self::with_id(Id::new(), run, baseline, scope, before, after)
+    }
+
+    /// A Proposal restored with its persisted id. Slices are deterministic,
+    /// so the id is all a verdict needs to find its slice again after a
+    /// restart (SPEC 9.7: the ledger row and the candidate re-meet exactly).
+    #[must_use]
+    pub fn with_id(
+        id: Id,
+        run: Id,
+        baseline: Id,
+        scope: EditScope,
+        before: String,
+        after: Option<String>,
+    ) -> Self {
         let slices = review_slices(id, &before, after.as_deref().unwrap_or_default()).into();
         Self {
             id,
@@ -155,7 +186,9 @@ impl Proposal {
         classify_slices(&self.slices)
     }
 
-    pub(crate) fn baseline(&self) -> Id {
+    /// The Text Head this candidate froze against (Q27).
+    #[must_use]
+    pub fn baseline(&self) -> Id {
         self.baseline
     }
 
@@ -163,7 +196,9 @@ impl Proposal {
         &self.scope
     }
 
-    pub(crate) fn before(&self) -> &str {
+    /// The manuscript text in scope, exactly as frozen.
+    #[must_use]
+    pub fn before(&self) -> &str {
         &self.before
     }
 }

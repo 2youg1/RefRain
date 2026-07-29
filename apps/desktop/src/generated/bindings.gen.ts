@@ -62,6 +62,31 @@ export const commands = {
 	 *  empty string (INV-3's discipline).
 	 */
 	universalIcon: () => __TAURI_INVOKE<number[] | null>("universal_icon"),
+	/**
+	 *  Inject fixture candidates (debug builds only). The candidates freeze
+	 *  against the document's current head, exactly like a real Run's output
+	 *  will in C10.
+	 */
+	injectFixtureProposal: (rootId: string, path: string, replacements: FixtureReplacementDto[]) => typedError<ProposalDto[], RefrainError>(__TAURI_INVOKE("inject_fixture_proposal", { rootId, path, replacements })),
+	/**  Every candidate for a document, newest last, for the review surface. */
+	listProposals: (rootId: string, path: string) => typedError<ProposalDto[], RefrainError>(__TAURI_INVOKE("list_proposals", { rootId, path })),
+	/**
+	 *  Record one judgment. It lands in the ledger the moment it is made (SPEC
+	 *  9.7: 判即写穿 staging).
+	 */
+	recordVerdict: (rootId: string, proposalId: string, sliceId: string, kind: string, reason: string | null, finalText: string | null) => typedError<VerdictRecord_Serialize, RefrainError>(__TAURI_INVOKE("record_verdict", { rootId, proposalId, sliceId, kind, reason, finalText })),
+	/**
+	 *  Stage the batch and the cursor (SPEC 9.7: cursor and batch persist with
+	 *  every change, not at commit time).
+	 */
+	setReviewBatch: (rootId: string, path: string, cursor: number, batch: string[]) => typedError<null, RefrainError>(__TAURI_INVOKE("set_review_batch", { rootId, path, cursor, batch })),
+	/**  The recovered review session: candidates, judgments so far, cursor, batch. */
+	reviewState: (rootId: string, path: string) => typedError<ReviewStateDto_Serialize, RefrainError>(__TAURI_INVOKE("review_state", { rootId, path })),
+	/**
+	 *  The one commit path: staged judgments become one Text Action (SPEC 7.4).
+	 *  The batch and cursor clear; candidates stay for the audit.
+	 */
+	commitDecisionBatch: (rootId: string, path: string) => typedError<TextTransitionDto, RefrainError>(__TAURI_INVOKE("commit_decision_batch", { rootId, path })),
 };
 
 /* Types */
@@ -198,6 +223,15 @@ export type FileStamp_Serialize = {
 	modifiedMs: string,
 	bytes: string,
 	digest: string,
+};
+
+/**
+ *  One fixture replacement (debug builds only; SPEC R3: the fixture command
+ *  is excluded from release).
+ */
+export type FixtureReplacementDto = {
+	blocks: string[],
+	after: string | null,
 };
 
 /**
@@ -430,6 +464,17 @@ export type ProjectOpenedDto = {
 	documents: DocumentRow[],
 };
 
+/**  A frozen candidate for the surface. */
+export type ProposalDto = {
+	id: string,
+	run: string,
+	baseline: string,
+	before: string,
+	after: string | null,
+	changeClass: string,
+	slices: ReviewSliceDto[],
+};
+
 export type QuietEvent = "save-succeeded" | "agent-completed" | "proposal-arrived" | "index-refreshed";
 
 /**
@@ -458,6 +503,44 @@ export type ReturnPoint = {
 	blockId: string,
 	offset: number,
 	sentenceTail: string,
+};
+
+/**  One sentence for the surface. */
+export type ReviewSliceDto = {
+	/**  "<proposal>:<ordinal>" — the exact key the commit path parses back. */
+	id: string,
+	kind: string,
+	text: string,
+	lead: string,
+	trail: string,
+};
+
+/**
+ *  The recovered review session (SPEC 9.7's five things: cursor, verdicts,
+ *  reasons, final texts, batch — all here).
+ */
+export type ReviewStateDto = ReviewStateDto_Serialize | ReviewStateDto_Deserialize;
+
+/**
+ *  The recovered review session (SPEC 9.7's five things: cursor, verdicts,
+ *  reasons, final texts, batch — all here).
+ */
+export type ReviewStateDto_Deserialize = {
+	proposals: ProposalDto[],
+	verdicts: VerdictRecord_Deserialize[],
+	cursor: number,
+	batch: string[],
+};
+
+/**
+ *  The recovered review session (SPEC 9.7's five things: cursor, verdicts,
+ *  reasons, final texts, batch — all here).
+ */
+export type ReviewStateDto_Serialize = {
+	proposals: ProposalDto[],
+	verdicts: VerdictRecord_Serialize[],
+	cursor: number,
+	batch: string[],
 };
 
 /**
@@ -510,6 +593,61 @@ export type ThemeInfoDto = {
 	slug: string,
 	cn: string,
 	mode: string,
+};
+
+/**
+ *  The persisted shape of one judgment. `AcceptModified` carries its final
+ *  text in `final_text`; the kind column alone never tells that story.
+ */
+export type VerdictKindName = "accept" | "accept-modified" | "reject" | "comment-only";
+
+/**
+ *  One row of the ledger. Ids stay strings here: legacy rows arrive with
+ *  legacy ids during migration (INV-9), and the ledger must hold both
+ *  without rewriting either.
+ */
+export type VerdictRecord = VerdictRecord_Serialize | VerdictRecord_Deserialize;
+
+/**
+ *  One row of the ledger. Ids stay strings here: legacy rows arrive with
+ *  legacy ids during migration (INV-9), and the ledger must hold both
+ *  without rewriting either.
+ */
+export type VerdictRecord_Deserialize = {
+	id: string,
+	proposalId: string,
+	sliceId: string,
+	kind: VerdictKindName,
+	finalText: string | null,
+	reason: string | null,
+	/**
+	 *  Milliseconds since the Unix epoch (string on the bridge: Specta
+	 *  forbids BigInt-style exports).
+	 */
+	decidedAt: string,
+	/**  The baseline spelling a legacy row arrived with, kept byte-for-byte. */
+	legacyBaseline: string | null,
+};
+
+/**
+ *  One row of the ledger. Ids stay strings here: legacy rows arrive with
+ *  legacy ids during migration (INV-9), and the ledger must hold both
+ *  without rewriting either.
+ */
+export type VerdictRecord_Serialize = {
+	id: string,
+	proposalId: string,
+	sliceId: string,
+	kind: VerdictKindName,
+	finalText: string | null,
+	reason: string | null,
+	/**
+	 *  Milliseconds since the Unix epoch (string on the bridge: Specta
+	 *  forbids BigInt-style exports).
+	 */
+	decidedAt: string,
+	/**  The baseline spelling a legacy row arrived with, kept byte-for-byte. */
+	legacyBaseline: string | null,
 };
 
 /* Tauri Specta runtime */

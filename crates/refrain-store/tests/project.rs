@@ -666,7 +666,11 @@ fn continuity_survives_reopening_and_migrates_from_v1() {
     let mut app = app_db();
     let (mut store, _) = adopt(&mut app, &root);
     let version: u32 = store.schema_version().unwrap();
-    assert_eq!(version, 2, "the ladder advanced the old database to v2");
+    assert_eq!(
+        version,
+        refrain_store::schema::ProjectDb::latest().0,
+        "the ladder advanced the old database to the latest version"
+    );
 
     store
         .save_continuity("01.md", "head-9", r#"["b1","b2"]"#)
