@@ -845,6 +845,8 @@ pub enum PreferencesChangeDto {
     KaraAutoEnter(bool),
     SetTheme(String),
     SetPaper(refrain_store::config::PaperMode),
+    SetTextSize(u16),
+    SetLineHeight(u16),
     SetFontFamily {
         slot: refrain_store::config::FontSlot,
         family: String,
@@ -874,6 +876,12 @@ fn update_preferences(
             refrain_store::config::ConfigChange::SetTheme(theme)
         }
         PreferencesChangeDto::SetPaper(mode) => refrain_store::config::ConfigChange::SetPaper(mode),
+        PreferencesChangeDto::SetTextSize(px) => {
+            refrain_store::config::ConfigChange::SetTextSize(px)
+        }
+        PreferencesChangeDto::SetLineHeight(pct) => {
+            refrain_store::config::ConfigChange::SetLineHeight(pct)
+        }
         PreferencesChangeDto::SetFontFamily { slot, family } => {
             refrain_store::config::ConfigChange::SetFontFamily { slot, family }
         }

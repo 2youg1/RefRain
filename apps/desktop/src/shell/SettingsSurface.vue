@@ -1,26 +1,52 @@
 <script setup lang="ts">
 // biome-ignore-all lint/correctness/noUnusedVariables: bindings used only in the template.
 // The Settings surface (SPEC 9.8): appearance choices are not writing tools,
-// so they live off the rail — theme, the sheet's three edges, and the
-// Universal Button icon, all writing the one Config.
+// so they live off the rail — 外观 (theme / paper / icon), 排版 (type), and
+// 快捷键 (the chords the shell answers), all writing the one Config.
+import { ref } from "vue";
 import IconPicker from "./IconPicker.vue";
+import ShortcutsPanel from "./ShortcutsPanel.vue";
 import ThemePicker from "./ThemePicker.vue";
+import TypographyPanel from "./TypographyPanel.vue";
 
 const emit = defineEmits<{
   closed: [];
   themePicked: [slug: string];
 }>();
+
+type Tab = "外观" | "排版" | "快捷键";
+const TABS: Tab[] = ["外观", "排版", "快捷键"];
+const tab = ref<Tab>("外观");
 </script>
 
 <template>
   <section class="settings" aria-label="设置">
     <h2 class="settings-title">设置</h2>
-    <ThemePicker @picked="(slug: string) => emit('themePicked', slug)" />
-    <div class="setting">
-      <span class="setting-name">图标</span>
-      <IconPicker />
+    <div class="settings-body">
+      <nav class="settings-tabs" aria-label="设置分类">
+        <button
+          v-for="entry in TABS"
+          :key="entry"
+          type="button"
+          :class="{ current: tab === entry }"
+          @click="tab = entry"
+        >
+          {{ entry }}
+        </button>
+      </nav>
+      <div class="settings-content">
+        <template v-if="tab === '外观'">
+          <ThemePicker @picked="(slug: string) => emit('themePicked', slug)" />
+          <div class="setting">
+            <span class="setting-name">图标</span>
+            <IconPicker />
+          </div>
+        </template>
+        <TypographyPanel v-else-if="tab === '排版'" />
+        <ShortcutsPanel v-else />
+        <button type="button" class="settings-close" @click="emit('closed')">收起</button>
+      </div>
     </div>
-    <button type="button" class="settings-close" @click="emit('closed')">收起</button>
   </section>
 </template>
 
@@ -30,8 +56,8 @@ const emit = defineEmits<{
   background: var(--paper-raised);
   padding: 20px 24px;
   font-size: 13px;
-  max-width: 520px;
-  min-width: 360px;
+  width: 480px;
+  max-width: 56vw;
   overflow-y: auto;
 }
 
@@ -44,11 +70,37 @@ const emit = defineEmits<{
   border-bottom: 1px solid var(--rule);
 }
 
-.blocks-head {
+.settings-body {
   display: flex;
-  justify-content: space-between;
-  padding: 6px 0;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.settings-tabs {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+}
+
+.settings-tabs button {
+  border: none;
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  text-align: left;
+  padding: 6px 12px 6px 10px;
   color: var(--ink-faint);
+}
+
+.settings-tabs button.current {
+  color: var(--ink);
+  border-left-color: var(--seal);
+}
+
+.settings-content {
+  flex: 1;
+  min-width: 0;
+  border-left: 1px solid var(--rule);
+  padding-left: 20px;
 }
 
 .setting {
@@ -65,7 +117,7 @@ const emit = defineEmits<{
 }
 
 .settings-close {
-  margin-top: 12px;
+  margin-top: 16px;
   color: var(--ink-faint);
 }
 </style>

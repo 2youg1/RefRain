@@ -1,25 +1,30 @@
 <script setup lang="ts">
-// biome-ignore-all lint/correctness/noUnusedVariables: bindings used only in
-// the template are real usage; biome does not parse Vue templates.
+// biome-ignore-all lint/correctness/noUnusedVariables: bindings used only in the template.
 // The Connections surface (SPEC 8.3a 引导式接入): every channel is declared
 // in the one Config, PATH detection only offers candidates, and a probe is a
-// version check — never a model call. Trust evidence lives in app.db (Q24),
-// not on this page.
-
+// version check — never a model call. Each row shows what the author needs
+// to judge the channel: state (已登记/候选), version after probe, and what
+// the agent has read (阅读账本).
 import { onMounted, ref } from "vue";
 import { describe, unwrap } from "../bridge";
 import {
+  type AgentReadingDto,
   type ConfigSnapshot,
   commands,
   type HarnessConnection,
   type HarnessDto,
 } from "../generated/bindings.gen";
 
+const props = defineProps<{
+  rootId?: string;
+}>();
+
 const emit = defineEmits<{ closed: [] }>();
 
 const connections = ref<HarnessConnection[]>([]);
 const detected = ref<HarnessDto[]>([]);
 const versions = ref<Record<string, string>>({});
+const ledger = ref<AgentReadingDto[]>([]);
 const executable = ref("");
 const notice = ref<string | null>(null);
 const busy = ref(false);
@@ -30,9 +35,12 @@ const fail = (error: unknown): void => {
 
 const refresh = async (): Promise<void> => {
   try {
-    const snapshot = await unwrap(commands.readConfig());
+    const snapshot: ConfigSnapshot = await unwrap(commands.readConfig());
     connections.value = snapshot.config.harness_connections ?? [];
     detected.value = await unwrap(commands.listHarnesses());
+    if (props.rootId) {
+      ledger.value = await unwrap(commands.agentReadingLedger(props.rootId));
+    }
   } catch (error) {
     fail(error);
   }
@@ -85,18 +93,28 @@ const remove = async (id: string): Promise<void> => {
   }
 };
 
+const readingOf = (agentId: string): AgentReadingDto | null =>
+  ledger.value.find((row) => row.agentId === agentId) ?? null;
+
+const isRegistered = (harness: HarnessDto): boolean =>
+  connections.value.some((connection) => connection.executable === harness.probe.program);
+
 onMounted(refresh);
 </script>
 
 <template>
   <section class="connections" aria-label="连接">
-    <div class="blocks-head"><span>连接</span></div>
+    <h2 class="conn-title">连接</h2>
+    <p class="conn-hint">登记即接入 harness；探测只查版本，不触模型。</p>
     <p v-if="notice" class="notice">{{ notice }}</p>
 
     <div v-for="connection in connections" :key="connection.id" class="conn-row">
+      <span class="state on">已登记</span>
       <span class="peek">{{ connection.executable }}</span>
-      <span v-if="versions[connection.executable]" class="version">
-        {{ versions[connection.executable] }}
+      <span class="version">{{ versions[connection.executable] ?? "未探测" }}</span>
+      <span v-if="readingOf(connection.id)" class="reading">
+        {{ readingOf(connection.id)?.rounds }} 轮 ·
+        {{ readingOf(connection.id)?.stale ? "落后" : "同步" }}
       </span>
       <button type="button" :disabled="busy" @click="probe(connection.executable)">探测</button>
       <button type="button" class="conn-remove" :disabled="busy" @click="remove(connection.id)">
@@ -104,13 +122,20 @@ onMounted(refresh);
       </button>
     </div>
 
-    <div v-if="connections.length === 0">
-      <div v-for="harness in detected" :key="harness.agentId" class="conn-row">
-        <span class="peek">检测到 {{ harness.label }} · {{ harness.version }}</span>
+    <div v-for="harness in detected" :key="harness.agentId" class="conn-row">
+      <template v-if="!isRegistered(harness)">
+        <span class="state">候选</span>
+        <span class="peek">{{ harness.label }} · {{ harness.version }}</span>
+        <span v-if="readingOf(harness.agentId)" class="reading">
+          {{ readingOf(harness.agentId)?.rounds }} 轮 ·
+          {{ readingOf(harness.agentId)?.stale ? "落后" : "同步" }}
+        </span>
         <button type="button" :disabled="busy" @click="register(harness.probe.program)">登记</button>
-      </div>
-      <p v-if="detected.length === 0" class="dim">PATH 上没有候选。</p>
+      </template>
     </div>
+    <p v-if="connections.length === 0 && detected.length === 0" class="dim">
+      PATH 上没有候选；把可执行文件的完整路径贴进来。
+    </p>
 
     <div class="conn-add">
       <input
@@ -130,18 +155,26 @@ onMounted(refresh);
 .connections {
   border-left: 1px solid var(--rule);
   background: var(--paper-raised);
-  padding: 12px 16px;
+  padding: 20px 24px;
   font-size: 13px;
-  max-width: 520px;
-  min-width: 360px;
+  width: 480px;
+  max-width: 56vw;
   overflow-y: auto;
 }
 
-.blocks-head {
-  display: flex;
-  justify-content: space-between;
-  padding: 6px 0;
-  color: var(--ink-faint);
+.conn-title {
+  font-size: 18px;
+  font-weight: 400;
+  letter-spacing: 0.3em;
+  margin: 0 0 6px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.conn-hint {
+  color: var(--ink-ghost);
+  font-size: 12px;
+  margin: 8px 0;
 }
 
 .notice {
@@ -156,7 +189,23 @@ onMounted(refresh);
   display: flex;
   gap: 8px;
   align-items: baseline;
-  padding: 3px 0;
+  padding: 5px 0;
+  border-bottom: 1px solid color-mix(in oklab, var(--ink) 6%, transparent);
+}
+
+.state {
+  flex: none;
+  font-size: 11px;
+  color: var(--ink-ghost);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+
+.state.on {
+  color: var(--accepted);
+  border-color: color-mix(in oklab, var(--accepted) 40%, transparent);
+  background: var(--accepted-wash);
 }
 
 .conn-row .peek {
@@ -171,10 +220,16 @@ onMounted(refresh);
   font-variant-numeric: tabular-nums;
 }
 
+.reading {
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
 .conn-add {
   display: flex;
   gap: 8px;
-  margin-top: 8px;
+  margin-top: 12px;
 }
 
 .conn-input {
@@ -188,6 +243,7 @@ onMounted(refresh);
 }
 
 .conn-close {
-  margin-top: 8px;
+  margin-top: 12px;
+  color: var(--ink-faint);
 }
 </style>

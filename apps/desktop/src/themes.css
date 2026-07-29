@@ -126,7 +126,7 @@
   --seal: oklch(0.7 0.152 8); /* #eb728c */
   --seal-bright: oklch(0.79 0.1444 12); /* #ff91a2 */
   --seal-wash: oklch(0.945 0.0456 8); /* #ffe1e7 */
-  --caret: oklch(0.275 0.1748 8); /* #620017 */
+  --caret: oklch(0.38 0.24 8); /* #990029 */
   --agent: oklch(0.61 0.17 228); /* #0093d2 */
   --agent-wash: oklch(0.943 0.03 228); /* #d8f1fc */
   --accepted: oklch(0.478 0.096 152); /* #2b6c41 */
@@ -345,22 +345,22 @@
   --role-source-wash: var(--source-wash);
 }
 
-/* ── 墨 sumi · 夜间 · 夜の墨・行灯 ──────────────── */
+/* ── 墨 sumi · 夜间 · AI 业黑白・人文の朱 ────── */
 /*
- * 夜间。不是把日间的墨反相，而是重画：纸是熄了灯的和室，墨是灯下的宣纸
- * 白。行灯只照亮一处，所以印色提到 L 0.70——夜里的朱必须比昼间
- * 更亮才能被看见。
- * 出典：夜间独立设计，非日间反相
+ * 夜间。当代 AI 前端的黑白骨架配人文的暖：纸是近黑的中性暖灰，墨是
+ * 带纸温的白；全套只有两处有颜色——印泥的朱（人的裁决）与象牙的暖灰（
+ * 机器痕迹），其余都是明度。
+ * 出典：AI 业黑白主流 + 印泥朱一点
  *
  * APCA Lc（W3C Silver 草案；WCAG 2 在深色底上判断失准）
- *   正文墨/纸   -84.8   门槛 |75|
- *   侧栏文/侧   -82.8   门槛 |75|
+ *   正文墨/纸   -90.4   门槛 |75|
+ *   侧栏文/侧   -83.2   门槛 |75|
  *   侧栏次/侧   -58.3   门槛 |45|
- *   印色/纸　   -45.7   门槛 |45|
- *   接受/纸　   -52.1   门槛 |45|
- *   退回/纸　   -48.5   门槛 |45|
- *   代理/纸　   -48.4   门槛 |45|
- *   引用/纸　   -50.8   门槛 |45|
+ *   印色/纸　   -49.8   门槛 |45|
+ *   接受/纸　   -52.7   门槛 |45|
+ *   退回/纸　   -49.2   门槛 |45|
+ *   代理/纸　   -51.9   门槛 |45|
+ *   引用/纸　   -51.4   门槛 |45|
  *
  * 本段由 scripts/generate-themes.ts 生成，勿手改。
  * 改锚点后重跑 `bun scripts/generate-themes.ts`。
@@ -368,36 +368,36 @@
 :root[data-theme="sumi"] {
   color-scheme: dark;
 
-  --paper: oklch(0.238 0.013 74); /* #231e18 */
-  --paper-raised: oklch(0.268 0.0117 74); /* #292520 */
-  --paper-sunk: oklch(0.212 0.0143 74); /* #1d1812 */
-  --lamp: oklch(0.368 0.0072 74); /* #413f3b */
-  --shade: oklch(0.188 0.0156 74); /* #18120c */
-  --sheet: oklch(0.254 0.0107 74); /* #26221d */
-  --rule: oklch(0.314 0.0169 74); /* #373028 */
-  --rule-strong: oklch(0.388 0.0195 74); /* #4b4339 */
-  --rail: oklch(0.166 0.026 74); /* #150d03 */
-  --rail-ink: oklch(0.884 0.0104 84); /* #dcd8d1 */
-  --rail-faint: oklch(0.752 0.0156 84); /* #b3aea4 */
-  --rail-rule: oklch(0.256 0.0286 74); /* #2b2113 */
-  --ink: oklch(0.9 0.01 84); /* #e1ded7 */
-  --ink-soft: oklch(0.756 0.0102 84); /* #b3afa9 */
-  --ink-faint: oklch(0.632 0.0095 84); /* #8c8983 */
-  --ink-ghost: oklch(0.508 0.0085 84); /* #686560 */
-  --seal: oklch(0.7 0.158 36); /* #ef7555 */
-  --seal-bright: oklch(0.79 0.1501 40); /* #ff966d */
-  --seal-wash: oklch(0.248 0.0474 36); /* #341811 */
-  --caret: oklch(0.94 0.1817 36); /* #ffbb93 */
-  --agent: oklch(0.7 0.058 238); /* #7da4bf */
-  --agent-wash: oklch(0.25 0.0162 238); /* #1a2329 */
+  --paper: oklch(0.215 0.008 75); /* #1c1915 */
+  --paper-raised: oklch(0.245 0.0072 75); /* #22201d */
+  --paper-sunk: oklch(0.189 0.0088 75); /* #16130f */
+  --lamp: oklch(0.345 0.0044 75); /* #3b3937 */
+  --shade: oklch(0.165 0.0096 75); /* #110e0a */
+  --sheet: oklch(0.231 0.0066 75); /* #1f1d1a */
+  --rule: oklch(0.291 0.0104 75); /* #2f2b26 */
+  --rule-strong: oklch(0.365 0.012 75); /* #423e38 */
+  --rail: oklch(0.152 0.016 75); /* #100b05 */
+  --rail-ink: oklch(0.884 0.0064 90); /* #dad9d4 */
+  --rail-faint: oklch(0.752 0.0096 90); /* #b1aea8 */
+  --rail-rule: oklch(0.242 0.0176 75); /* #251f16 */
+  --ink: oklch(0.925 0.008 90); /* #e8e6e0 */
+  --ink-soft: oklch(0.781 0.0082 90); /* #bab7b2 */
+  --ink-faint: oklch(0.657 0.0076 90); /* #93918c */
+  --ink-ghost: oklch(0.533 0.0068 90); /* #6e6c68 */
+  --seal: oklch(0.72 0.16 40); /* #f67d51 */
+  --seal-bright: oklch(0.81 0.152 44); /* #ff9e6b */
+  --seal-wash: oklch(0.225 0.048 40); /* #2e1309 */
+  --caret: oklch(0.935 0.184 40); /* #ffbb86 */
+  --agent: oklch(0.72 0.03 80); /* #afa390 */
+  --agent-wash: oklch(0.227 0.0084 80); /* #1e1c18 */
   --accepted: oklch(0.712 0.096 152); /* #73b484 */
-  --accepted-wash: oklch(0.25 0.026 152); /* #18251b */
+  --accepted-wash: oklch(0.227 0.026 152); /* #132016 */
   --refused: oklch(0.716 0.128 24); /* #e9817c */
-  --refused-wash: oklch(0.25 0.028 24); /* #2e1c1b */
+  --refused-wash: oklch(0.227 0.028 24); /* #281716 */
   --source: oklch(0.712 0.078 232); /* #6eabcb */
-  --source-wash: oklch(0.25 0.024 232); /* #16242b */
-  --pending: oklch(0.8 0.158 36); /* #ff9574 */
-  --pending-wash: oklch(0.25 0.0474 36); /* #351911 */
+  --source-wash: oklch(0.227 0.024 232); /* #101e26 */
+  --pending: oklch(0.82 0.16 40); /* #ff9d71 */
+  --pending-wash: oklch(0.227 0.048 40); /* #2f130a */
 
   --role-pending: var(--pending);
   --role-pending-wash: var(--pending-wash);

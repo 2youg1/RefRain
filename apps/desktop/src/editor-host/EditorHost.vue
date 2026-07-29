@@ -191,8 +191,8 @@ defineExpose({
   max-width: 720px;
   margin: 0 auto;
   padding: 56px 48px 120px;
-  line-height: 1.9;
-  font-size: 17px;
+  line-height: var(--manuscript-leading, 1.9);
+  font-size: var(--manuscript-size, 17px);
   font-family: var(--manuscript-family, var(--serif));
 }
 
