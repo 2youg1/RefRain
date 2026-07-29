@@ -752,6 +752,79 @@ fn kara_state(state: tauri::State<'_, AppState>) -> Result<KaraMachine, RefrainE
     Ok(kara.clone())
 }
 
+/// The themes the generator emitted, embedded once (INV-16): the picker and
+/// the validator read the same list; a hand copy would drift.
+const THEMES_JSON: &str = include_str!("../themes.gen.json");
+
+fn theme_slugs() -> Vec<String> {
+    serde_json::from_str::<Vec<serde_json::Value>>(THEMES_JSON)
+        .map(|list| {
+            list.iter()
+                .filter_map(|entry| entry["slug"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// One theme as the picker shows it.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ThemeInfoDto {
+    pub slug: String,
+    pub cn: String,
+    pub mode: String,
+}
+
+/// The generated theme list, for the Settings picker.
+#[tauri::command]
+#[specta::specta]
+fn list_themes() -> Vec<ThemeInfoDto> {
+    serde_json::from_str::<Vec<ThemeInfoDto>>(THEMES_JSON).unwrap_or_default()
+}
+
+/// The preferences the Settings surface may change (SPEC 6.5). Connection
+/// management is its own command pair; this is the author's choices.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase", tag = "kind", content = "value")]
+pub enum PreferencesChangeDto {
+    KaraAutoEnter(bool),
+    SetTheme(String),
+}
+
+#[tauri::command]
+#[specta::specta]
+fn update_preferences(
+    state: tauri::State<'_, AppState>,
+    change: PreferencesChangeDto,
+) -> Result<refrain_store::config::ConfigSnapshot, RefrainError> {
+    let change = match change {
+        PreferencesChangeDto::KaraAutoEnter(value) => {
+            refrain_store::config::ConfigChange::KaraAutoEnter(value)
+        }
+        PreferencesChangeDto::SetTheme(theme) => {
+            if !theme_slugs().contains(&theme) {
+                return Err(RefrainError::new(
+                    ErrorCode::IllegalName,
+                    "choose a theme",
+                    theme,
+                ));
+            }
+            refrain_store::config::ConfigChange::SetTheme(theme)
+        }
+    };
+    let store = state.config.as_ref().ok_or_else(|| {
+        let notice = state.config_notice.lock().ok().and_then(|n| n.clone());
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "write a damaged Config",
+            notice.unwrap_or_default(),
+        )
+    })?;
+    store.apply(change).map_err(|failure| {
+        RefrainError::new(ErrorCode::Io, "write the Config", failure.to_string())
+    })
+}
+
 /// The effective Config, or the refusal the Settings surface must show.
 #[tauri::command]
 #[specta::specta]
@@ -793,6 +866,8 @@ pub fn builder() -> Builder<tauri::Wry> {
         kara_event,
         kara_state,
         read_config,
+        update_preferences,
+        list_themes,
     ])
 }
 
@@ -805,10 +880,15 @@ pub fn run() {
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             builder.mount_events(app);
-            let app_data_dir = app
+            let mut app_data_dir = app
                 .path()
                 .app_data_dir()
                 .map_err(|error| format!("resolve the application data directory: {error}"))?;
+            // Test seam: e2e runs point the data dir at a fixture so they
+            // never touch the author's real Config or app.db.
+            if let Ok(fixture) = std::env::var("REFRAIN_DATA_DIR") {
+                app_data_dir = PathBuf::from(fixture);
+            }
             app.manage(AppState::open(&app_data_dir)?);
             Ok(())
         })

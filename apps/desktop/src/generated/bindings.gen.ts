@@ -49,6 +49,9 @@ export const commands = {
 	karaState: () => typedError<KaraMachine, RefrainError>(__TAURI_INVOKE("kara_state")),
 	/**  The effective Config, or the refusal the Settings surface must show. */
 	readConfig: () => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("read_config")),
+	updatePreferences: (change: PreferencesChangeDto) => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("update_preferences", { change })),
+	/**  The generated theme list, for the Settings picker. */
+	listThemes: () => __TAURI_INVOKE<ThemeInfoDto[]>("list_themes"),
 };
 
 /* Types */
@@ -63,6 +66,18 @@ export type Activity = "writing" | "reviewing";
  *  channel any producer — including a human pasting into a web chat — can serve.
  */
 export type AdapterKind = "l0" | "codex" | "claude-code" | "pi" | "kimi-code" | "hermes";
+
+/**
+ *  What the author sees (SPEC 9.8). Values extend the same schema; nothing
+ *  here may become a second authority for behaviour.
+ */
+export type AppearanceConfig = {
+	/**
+	 *  One of the themes the generator emitted; validated on apply, not on
+	 *  load, because the theme list is generated, not a hand copy.
+	 */
+	theme: string,
+};
 
 /**
  *  What the Source Backup attempt produced, in the author's terms. `Failed`
@@ -87,6 +102,7 @@ export type BlockDto = {
 export type Config = {
 	version: number,
 	kara: KaraConfig,
+	appearance?: AppearanceConfig,
 	harness_connections?: HarnessConnection[],
 };
 
@@ -363,6 +379,12 @@ export type OpenDocumentDto_Serialize = {
 	kara: KaraTransition | null,
 };
 
+/**
+ *  The preferences the Settings surface may change (SPEC 6.5). Connection
+ *  management is its own command pair; this is the author's choices.
+ */
+export type PreferencesChangeDto = { kind: "karaAutoEnter"; value: boolean } | { kind: "setTheme"; value: string };
+
 /**  A Root as the interface names it. */
 export type ProjectOpenedDto = {
 	rootId: string,
@@ -443,6 +465,13 @@ export type TextTransitionDto = {
 	revision: string,
 	actionId: string,
 	touchedBlocks: string[],
+};
+
+/**  One theme as the picker shows it. */
+export type ThemeInfoDto = {
+	slug: string,
+	cn: string,
+	mode: string,
 };
 
 /* Tauri Specta runtime */

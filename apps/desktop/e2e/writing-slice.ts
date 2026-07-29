@@ -11,7 +11,7 @@
  * Run: `bun apps/desktop/e2e/writing-slice.ts <path-to-refrain.exe>`.
  */
 
-import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +24,7 @@ if (!exe) {
 
 const DRIVER_PORT = 4444;
 const fixture = mkdtempSync(join(tmpdir(), "refrain-e2e-"));
+const dataDir = mkdtempSync(join(tmpdir(), "refrain-e2e-data-"));
 const chapterPath = join(fixture, "第一章.md");
 writeFileSync(chapterPath, "原来的第一句。\n\n原来的第二句。\n");
 
@@ -160,6 +161,9 @@ const run = async (): Promise<void> => {
   const nativeDriver = process.env.REFRAIN_MSEDGEDRIVER ?? "msedgedriver";
   driver = spawn("tauri-driver", ["--native-driver", nativeDriver], {
     stdio: ["ignore", "pipe", "pipe"],
+    // tauri:options has no env field: the app inherits the driver's
+    // environment, and the driver inherits this one.
+    env: { ...process.env, REFRAIN_DATA_DIR: dataDir },
   });
   driver.stdout?.on("data", (chunk: Buffer) => process.stderr.write(`[tauri-driver] ${chunk}`));
   driver.stderr?.on("data", (chunk: Buffer) => process.stderr.write(`[tauri-driver] ${chunk}`));
@@ -186,6 +190,33 @@ const run = async (): Promise<void> => {
 
   await execute(`window["refrain.e2e.pick"] = ${JSON.stringify(fixture)}; "planted"`);
   await clickButton("打开文件夹");
+
+  // The theme picker reads the generated list, writes the single Config, and
+  // the choice projects immediately (D12).
+  const paperOf = async (): Promise<string> =>
+    String(
+      await execute(
+        `return getComputedStyle(document.documentElement).getPropertyValue("--paper").trim()`,
+        [],
+      ),
+    );
+  await waitFor("theme buttons", async () => (await elements(".theme-picker button")).length === 8);
+  const themeButtons = await elements(".theme-picker button");
+  check(
+    "the generated theme list reaches the picker",
+    themeButtons.length === 8,
+    themeButtons.length,
+  );
+  const paperBefore = await paperOf();
+  await clickButton("墨");
+  await waitFor("the shell to repaint", async () => (await paperOf()) !== paperBefore);
+  const paperAfter = await paperOf();
+  check("picking 墨 repaints the shell", true, `${paperBefore} → ${paperAfter}`);
+  await waitFor("the choice on disk", async () =>
+    readFileSync(join(dataDir, "config.toml"), "utf8").includes('theme = "sumi"'),
+  );
+  check("the choice lands in the single Config (INV-10)", true);
+
   await clickButton("第一章.md");
   await waitFor("blocks to render", async () => (await elements("p[data-block-id]")).length === 2);
   const blocks = await elements("p[data-block-id]");

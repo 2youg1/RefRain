@@ -22,12 +22,15 @@ import KaraSurface from "./KaraSurface.vue";
 import { useKara } from "./kara-state";
 import { pickDocumentFile, pickProjectFolder, pickProjectParent } from "./pick";
 import StatusLine from "./StatusLine.vue";
+import ThemePicker from "./ThemePicker.vue";
 
 type SaveState =
   | { kind: "clean" }
   | { kind: "dirty" }
   | { kind: "saving" }
   | { kind: "failed"; reason: string };
+
+defineEmits<{ "theme-changed": [slug: string] }>();
 
 const project = ref<ProjectOpenedDto | null>(null);
 const active = ref<OpenDocumentDto_Serialize | null>(null);
@@ -236,6 +239,7 @@ const onKeydown = (event: KeyboardEvent): void => {
             </button>
           </li>
         </ul>
+        <ThemePicker @picked="(slug: string) => $emit('theme-changed', slug)" />
       </nav>
 
       <main class="stage">
