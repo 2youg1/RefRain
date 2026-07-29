@@ -1,22 +1,42 @@
 <script setup lang="ts">
 // App.vue mounts and provides. It holds no state machine and coordinates
 // nothing (SPEC 9.10); a gate fails the build past 120 lines.
+import { onMounted, ref, watch } from "vue";
+import { unwrap } from "./bridge";
+import { commands } from "./generated/bindings.gen";
 import Workbench from "./shell/Workbench.vue";
+import "./themes.css";
+
+const theme = ref("tou");
+
+// The generated selectors live on :root[data-theme]; the shell element is
+// not :root. One projection, one direction (INV-15).
+watch(
+  theme,
+  (next) => {
+    document.documentElement.dataset.theme = next;
+  },
+  { immediate: true },
+);
+
+onMounted(async () => {
+  try {
+    const snapshot = await unwrap(commands.readConfig());
+    theme.value = snapshot.config.appearance.theme;
+  } catch {
+    // A damaged Config is the Settings surface's story to tell, not a reason
+    // the author cannot write today (SPEC 10.1).
+  }
+});
 </script>
 
 <template>
   <main class="shell">
-    <Workbench />
+    <Workbench @theme-changed="(next: string) => (theme = next)" />
   </main>
 </template>
 
 <style>
-:root {
-  --paper: #f7f5f0;
-  --ink: #1a1a1c;
-  color-scheme: light;
-}
-
 body {
   margin: 0;
   background: var(--paper);
@@ -26,5 +46,7 @@ body {
 
 .shell {
   min-height: 100vh;
+  background: var(--paper);
+  color: var(--ink);
 }
 </style>

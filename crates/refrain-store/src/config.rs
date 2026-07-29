@@ -35,6 +35,8 @@ pub struct Config {
     pub version: u32,
     pub kara: KaraConfig,
     #[serde(default)]
+    pub appearance: AppearanceConfig,
+    #[serde(default)]
     pub harness_connections: Vec<HarnessConnection>,
 }
 
@@ -43,7 +45,26 @@ impl Default for Config {
         Self {
             version: CONFIG_VERSION,
             kara: KaraConfig::default(),
+            appearance: AppearanceConfig::default(),
             harness_connections: Vec::new(),
+        }
+    }
+}
+
+/// What the author sees (SPEC 9.8). Values extend the same schema; nothing
+/// here may become a second authority for behaviour.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(deny_unknown_fields)]
+pub struct AppearanceConfig {
+    /// One of the themes the generator emitted; validated on apply, not on
+    /// load, because the theme list is generated, not a hand copy.
+    pub theme: String,
+}
+
+impl Default for AppearanceConfig {
+    fn default() -> Self {
+        Self {
+            theme: "tou".to_string(),
         }
     }
 }
@@ -99,6 +120,7 @@ pub enum AdapterKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigChange {
     KaraAutoEnter(bool),
+    SetTheme(String),
     UpsertHarnessConnection(HarnessConnection),
     RemoveHarnessConnection(Id),
 }
@@ -214,6 +236,9 @@ impl ConfigStore {
         match change {
             ConfigChange::KaraAutoEnter(value) => {
                 snapshot.config.kara.auto_enter_on_first_manuscript = value;
+            }
+            ConfigChange::SetTheme(theme) => {
+                snapshot.config.appearance.theme = theme;
             }
             ConfigChange::UpsertHarnessConnection(connection) => {
                 match snapshot
