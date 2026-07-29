@@ -1,0 +1,105 @@
+/*
+ * RefRain · 明室 — 全局设计语言。颜色权威在 themes.css（生成物）；
+ * 本文件只拥有字体、控件形态与共享的安静表面。
+ *
+ * 编辑区零渐变、零动效噪音（KL9：核心是沉浸式写作，ADHD 用户的工作记忆
+ * 不容打扰）。层级由字体、发丝线与留白承担；高饱和只出现在「等人裁决」
+ * 的地方。控件安静但始终可见——藏起来的控件对 ADHD 等于不存在。
+ */
+
+:root {
+  --sans: "Jost", "Noto Sans SC", "Murecho", system-ui, sans-serif;
+  --serif: "Chiron Sung HK", "Shippori Mincho", serif;
+  --mono: "Courier Prime", ui-monospace, monospace;
+  --display: "Antic Didone", "Chiron Sung HK", serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+select,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* 器物：3px 半径、发丝边、hover 只移明度。 */
+button {
+  cursor: pointer;
+  border: 1px solid color-mix(in oklab, var(--ink) 24%, transparent);
+  border-radius: 3px;
+  background: transparent;
+  padding: 5px 12px;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+button:hover:not(:disabled) {
+  border-color: color-mix(in oklab, var(--ink) 44%, transparent);
+  background: color-mix(in oklab, var(--ink) 5%, transparent);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 唯一允许醒目的控件：只有人能做的行动（送出、授权、合并）。 */
+button.primary {
+  color: var(--seal);
+  border-color: color-mix(in oklab, var(--seal) 45%, transparent);
+  background: var(--seal-wash);
+}
+
+button.primary:hover:not(:disabled) {
+  border-color: var(--seal);
+  background: color-mix(in oklab, var(--seal) 14%, transparent);
+}
+
+select,
+input[type="text"],
+input:not([type]),
+textarea {
+  border: 1px solid color-mix(in oklab, var(--ink) 24%, transparent);
+  border-radius: 3px;
+  background: transparent;
+  padding: 5px 8px;
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--seal);
+  outline-offset: 1px;
+}
+
+code {
+  font-family: var(--mono);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  /* biome-ignore lint/complexity/noImportantStyles: reduced-motion must win over every component transition. */
+  *::before,
+  /* biome-ignore lint/complexity/noImportantStyles: reduced-motion must win over every component transition. */
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

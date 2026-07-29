@@ -232,6 +232,8 @@ export type AppearanceConfig = {
 	 */
 	theme: string,
 	fonts?: FontConfig,
+	/**  The manuscript sheet's edge: none / hairline / paper. */
+	paper?: PaperMode,
 	/**
 	 *  The Universal Button icon, by content digest (SPEC 9.8). The asset
 	 *  named by this digest lives in the application data assets directory;
@@ -686,10 +688,16 @@ export type OpenDocumentDto_Serialize = {
 };
 
 /**
+ *  The manuscript sheet's edge (SPEC 9.8): an edgeless Web-like column, a
+ *  hairline boundary, or a full sheet of paper for authors coming from Word.
+ */
+export type PaperMode = "none" | "hairline" | "paper";
+
+/**
  *  The preferences the Settings surface may change (SPEC 6.5). Connection
  *  management is its own command pair; this is the author's choices.
  */
-export type PreferencesChangeDto = { kind: "karaAutoEnter"; value: boolean } | { kind: "setTheme"; value: string } | { kind: "setFontFamily"; value: {
+export type PreferencesChangeDto = { kind: "karaAutoEnter"; value: boolean } | { kind: "setTheme"; value: string } | { kind: "setPaper"; value: PaperMode } | { kind: "setFontFamily"; value: {
 	slot: FontSlot,
 	family: string,
 } } | { kind: "setFontPriority"; value: [FontSlot, FontSlot, FontSlot] };

@@ -25,7 +25,7 @@ const text = computed(() => {
 
 <template>
   <footer class="status-line">
-    <span>{{ text }}</span>
+    <span :class="{ failed: state.kind === 'failed' }">{{ text }}</span>
     <span class="path">{{ path ?? "" }}</span>
   </footer>
 </template>
@@ -36,17 +36,23 @@ const text = computed(() => {
   bottom: 0;
   left: 0;
   right: 0;
-  height: 28px;
+  height: 26px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 0 12px;
   font-size: 12px;
-  background: var(--paper, #f7f5f0);
-  border-top: 1px solid color-mix(in oklab, currentColor 12%, transparent);
+  color: var(--ink-faint);
+  background: var(--paper);
+  border-top: 1px solid var(--rule);
+}
+
+.status-line .failed {
+  color: var(--refused);
 }
 
 .status-line .path {
-  opacity: 0.6;
+  font-family: var(--mono);
+  font-size: 11px;
 }
 </style>

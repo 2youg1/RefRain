@@ -10,18 +10,18 @@
     "mode": "day"
   },
   {
-    "slug": "kare",
-    "cn": "枯",
+    "slug": "suna",
+    "cn": "砂",
     "mode": "day"
   },
   {
-    "slug": "hayashi",
-    "cn": "林",
+    "slug": "hua",
+    "cn": "桦",
     "mode": "day"
   },
   {
-    "slug": "seiji",
-    "cn": "瓷",
+    "slug": "wabi",
+    "cn": "侘",
     "mode": "day"
   },
   {
@@ -30,13 +30,8 @@
     "mode": "night"
   },
   {
-    "slug": "yu",
-    "cn": "幽",
-    "mode": "night"
-  },
-  {
-    "slug": "shigure",
-    "cn": "時雨",
+    "slug": "shao",
+    "cn": "韶",
     "mode": "night"
   }
 ]

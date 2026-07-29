@@ -61,6 +61,9 @@ pub struct AppearanceConfig {
     pub theme: String,
     #[serde(default)]
     pub fonts: FontConfig,
+    /// The manuscript sheet's edge: none / hairline / paper.
+    #[serde(default)]
+    pub paper: PaperMode,
     /// The Universal Button icon, by content digest (SPEC 9.8). The asset
     /// named by this digest lives in the application data assets directory;
     /// the Config never stores the image itself.
@@ -73,9 +76,21 @@ impl Default for AppearanceConfig {
         Self {
             theme: "tou".to_string(),
             fonts: FontConfig::default(),
+            paper: PaperMode::default(),
             icon_digest: None,
         }
     }
+}
+
+/// The manuscript sheet's edge (SPEC 9.8): an edgeless Web-like column, a
+/// hairline boundary, or a full sheet of paper for authors coming from Word.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum PaperMode {
+    None,
+    #[default]
+    Hairline,
+    Paper,
 }
 
 /// The three face slots (SPEC 9.8). One CJK slot cannot serve both
@@ -167,6 +182,7 @@ pub enum AdapterKind {
 pub enum ConfigChange {
     KaraAutoEnter(bool),
     SetTheme(String),
+    SetPaper(PaperMode),
     SetFontFamily { slot: FontSlot, family: String },
     SetFontPriority([FontSlot; 3]),
     SetIconDigest(Option<String>),
@@ -288,6 +304,9 @@ impl ConfigStore {
             }
             ConfigChange::SetTheme(theme) => {
                 snapshot.config.appearance.theme = theme;
+            }
+            ConfigChange::SetPaper(mode) => {
+                snapshot.config.appearance.paper = mode;
             }
             ConfigChange::SetFontFamily { slot, family } => {
                 let fonts = &mut snapshot.config.appearance.fonts;

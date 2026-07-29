@@ -69,7 +69,10 @@ onMounted(async () => {
 
 <style>
 .icon-picker {
-  padding: 8px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .icon-button {
@@ -92,7 +95,7 @@ onMounted(async () => {
 
 .icon-picker .error {
   font-size: 12px;
-  color: #8a4b00;
+  color: var(--pending);
   max-width: 180px;
 }
 </style>

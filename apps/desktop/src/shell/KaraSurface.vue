@@ -40,8 +40,9 @@ const kara = useKara();
   top: 24vh;
   left: 50%;
   transform: translateX(-50%);
+  font-family: var(--serif);
   font-size: 14px;
-  opacity: 0.72;
+  color: var(--ink-soft);
 }
 
 .debrief {
@@ -52,7 +53,7 @@ const kara = useKara();
   display: flex;
   gap: 16px;
   font-size: 13px;
-  opacity: 0.66;
+  color: var(--ink-faint);
 }
 
 .interruption {
@@ -61,8 +62,8 @@ const kara = useKara();
   left: 50%;
   transform: translateX(-50%);
   padding: 6px 16px;
-  background: color-mix(in oklab, #b3261e 12%, transparent);
-  border-left: 3px solid #b3261e;
+  background: var(--refused-wash);
+  border-left: 3px solid var(--refused);
   font-size: 13px;
 }
 

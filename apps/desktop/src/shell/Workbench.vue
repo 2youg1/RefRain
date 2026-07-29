@@ -6,7 +6,7 @@
 // Rust confirms → save → close/reopen → conflict → recovery. State the Rust
 // side already owns is projected here; nothing is re-derived (INV-10).
 
-import { computed, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { describe, unwrap } from "../bridge";
 // biome-ignore lint/style/useImportType: the component renders — a type-only import unmounts it.
 import EditorHost from "../editor-host/EditorHost.vue";
@@ -20,13 +20,12 @@ import {
 import ConflictDialog from "./ConflictDialog.vue";
 import ConnectionsSurface from "./ConnectionsSurface.vue";
 import DispatchSurface from "./DispatchSurface.vue";
-import IconPicker from "./IconPicker.vue";
 import KaraSurface from "./KaraSurface.vue";
 import { useKara } from "./kara-state";
 import { pickDocumentFile, pickProjectFolder, pickProjectParent } from "./pick";
 import ReviewSurface from "./ReviewSurface.vue";
+import SettingsSurface from "./SettingsSurface.vue";
 import StatusLine from "./StatusLine.vue";
-import ThemePicker from "./ThemePicker.vue";
 
 type SaveState =
   | { kind: "clean" }
@@ -46,7 +45,36 @@ const editor = ref<InstanceType<typeof EditorHost> | null>(null);
 const reviewing = ref(false);
 const dispatching = ref(false);
 const connecting = ref(false);
+const settings = ref(false);
 const kara = useKara();
+
+// Chrome recede (C12.6): the rail is visible on entry — the author should
+// know what tools exist before KARA takes them away. It steps back only
+// after the pointer has been still, and returns the instant the pointer
+// reaches the left edge. The transform-only hide keeps the column's width,
+// so the manuscript never shifts sideways (SPEC 9.3: 正文零横移). The e2e
+// harness pins chrome through the same global seam family as pick.
+const chromePinned = (): boolean =>
+  (window as unknown as Record<string, unknown>)["refrain.e2e.pin"] === true;
+const railReceded = ref(false);
+let idleTimer: number | null = null;
+
+const wake = (event: PointerEvent): void => {
+  if (chromePinned() || kara.engaged.value) return;
+  if (event.clientX < 28) railReceded.value = false;
+  if (!railReceded.value) {
+    if (idleTimer !== null) window.clearTimeout(idleTimer);
+    idleTimer = window.setTimeout(() => {
+      railReceded.value = true;
+    }, 2000);
+  }
+};
+
+onMounted(() => window.addEventListener("pointermove", wake, { passive: true }));
+onUnmounted(() => {
+  window.removeEventListener("pointermove", wake);
+  if (idleTimer !== null) window.clearTimeout(idleTimer);
+});
 
 /** The caret as a ReturnPoint: block id, offset, and the sentence tail the
  * return card shows (SPEC 9.3 "你停在这里"). */
@@ -60,6 +88,12 @@ const trackReturnPoint = (): void => {
 };
 
 const documents = computed<DocumentRow[]>(() => project.value?.documents ?? []);
+const chapterDocs = computed<DocumentRow[]>(() =>
+  documents.value.filter((row) => row.role === "chapter"),
+);
+const materialRows = computed<DocumentRow[]>(() =>
+  documents.value.filter((row) => row.role === "material"),
+);
 const materialDocs = computed<{ path: string; label: string }[]>(() =>
   documents.value
     .filter((row) => row.role === "material")
@@ -264,8 +298,9 @@ const onKeydown = (event: KeyboardEvent): void => {
   <div class="workbench" @keydown="onKeydown">
     <template v-if="!project">
       <section class="welcome">
-        <p>一个本地写作工作台。你写的每一个字都在磁盘上。</p>
-        <button class="primary" type="button" @click="openProjectFolder">打开文件夹</button>
+        <h1 class="welcome-brand">RefRain</h1>
+        <p class="welcome-tag">一个本地写作工作台。你写的每一个字都在磁盘上。</p>
+        <button class="primary welcome-open" type="button" @click="openProjectFolder">打开文件夹</button>
         <div class="secondary">
           <button type="button" @click="newProject">新建项目</button>
           <button type="button" @click="openSingleDocument">打开文档</button>
@@ -275,21 +310,26 @@ const onKeydown = (event: KeyboardEvent): void => {
     </template>
 
     <template v-else>
-      <nav v-show="!kara.engaged.value" class="rail" aria-label="文档">
-        <button type="button" @click="newDocument('chapter')">新章</button>
-        <button type="button" @click="newDocument('material')">新资料</button>
-        <button type="button" @click="importMaterial">导入</button>
-        <button v-if="active" type="button" @click="reviewing = !reviewing">
-          {{ reviewing ? "返回编辑" : "Review" }}
-        </button>
-        <button v-if="active && !reviewing" type="button" @click="dispatching = !dispatching">
-          {{ dispatching ? "收起" : "派发" }}
-        </button>
-        <button type="button" @click="connecting = !connecting">
-          {{ connecting ? "收起" : "连接" }}
-        </button>
+      <div
+        v-show="railReceded && !kara.engaged.value"
+        class="rail-strip"
+        aria-hidden="true"
+      ></div>
+      <nav
+        v-show="!kara.engaged.value"
+        class="rail"
+        :class="{ receded: railReceded }"
+        aria-label="文档"
+      >
+        <div class="brand"><span class="brand-mark"></span><span class="brand-word">RefRain</span></div>
+        <div class="rail-actions">
+          <button type="button" @click="newDocument('chapter')">新章</button>
+          <button type="button" @click="newDocument('material')">新资料</button>
+          <button type="button" @click="importMaterial">导入</button>
+        </div>
+        <div class="rail-group">原稿</div>
         <ul>
-          <li v-for="row in documents" :key="row.id">
+          <li v-for="row in chapterDocs" :key="row.id">
             <button
               type="button"
               :class="{ current: active?.document.path === row.path }"
@@ -299,8 +339,34 @@ const onKeydown = (event: KeyboardEvent): void => {
             </button>
           </li>
         </ul>
-        <IconPicker />
-        <ThemePicker @picked="(slug: string) => $emit('theme-changed', slug)" />
+        <template v-if="materialRows.length > 0">
+          <div class="rail-group">资料</div>
+          <ul>
+            <li v-for="row in materialRows" :key="row.id">
+              <button
+                type="button"
+                :class="{ current: active?.document.path === row.path }"
+                @click="select(row.path)"
+              >
+                {{ row.path }}
+              </button>
+            </li>
+          </ul>
+        </template>
+        <div class="rail-foot">
+          <button v-if="active" type="button" @click="reviewing = !reviewing">
+            {{ reviewing ? "返回编辑" : "Review" }}
+          </button>
+          <button v-if="active && !reviewing" type="button" @click="dispatching = !dispatching">
+            {{ dispatching ? "收起" : "派发" }}
+          </button>
+          <button type="button" @click="connecting = !connecting">
+            {{ connecting ? "收起" : "连接" }}
+          </button>
+          <button type="button" @click="settings = !settings">
+            {{ settings ? "收起" : "设置" }}
+          </button>
+        </div>
       </nav>
 
       <main class="stage">
@@ -334,6 +400,19 @@ const onKeydown = (event: KeyboardEvent): void => {
             @closed="dispatching = false"
           />
           <ConnectionsSurface v-if="connecting" @closed="connecting = false" />
+          <SettingsSurface
+            v-if="settings"
+            @closed="settings = false"
+            @theme-picked="(slug: string) => $emit('theme-changed', slug)"
+          />
+        </div>
+        <div v-else-if="connecting || settings" class="stage-row">
+          <ConnectionsSurface v-if="connecting" @closed="connecting = false" />
+          <SettingsSurface
+            v-if="settings"
+            @closed="settings = false"
+            @theme-picked="(slug: string) => $emit('theme-changed', slug)"
+          />
         </div>
         <p v-else class="empty">从左侧选一个文档，或新建一章。</p>
       </main>
@@ -353,10 +432,11 @@ const onKeydown = (event: KeyboardEvent): void => {
 <style>
 .workbench {
   display: grid;
-  grid-template-columns: 220px 1fr;
+  grid-template-columns: auto 1fr;
   min-height: 100vh;
 }
 
+/* ── 欢迎屏 ── */
 .welcome {
   grid-column: 1 / -1;
   align-self: center;
@@ -364,48 +444,159 @@ const onKeydown = (event: KeyboardEvent): void => {
   text-align: center;
 }
 
-.welcome .primary {
-  font-size: 18px;
-  padding: 8px 28px;
+.welcome-brand {
+  font-family: var(--display);
+  font-size: 44px;
+  font-weight: 400;
+  letter-spacing: 0.18em;
+  margin: 0 0 10px;
+}
+
+.welcome-tag {
+  font-family: var(--serif);
+  color: var(--ink-soft);
+  margin: 0 0 30px;
+}
+
+.welcome-open {
+  font-size: 15px;
+  padding: 9px 34px;
 }
 
 .secondary {
-  margin-top: 12px;
+  margin-top: 14px;
   display: flex;
   gap: 12px;
   justify-content: center;
 }
 
+/* ── Rail：房间。深配重，工具先可见，静止后分层退场。 ── */
 .rail {
-  border-right: 1px solid color-mix(in oklab, currentColor 12%, transparent);
-  padding: 12px 8px;
+  width: 232px;
+  max-height: 100vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 10px 40px; /* the fixed status line owns the bottom 26px */
+  background: var(--rail);
+  color: var(--rail-ink);
+  border-right: 1px solid var(--rail-rule);
   font-size: 13px;
+  transition:
+    transform 200ms ease,
+    opacity 200ms ease;
+}
+
+.rail.receded {
+  transform: translateX(-104%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.rail-strip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  background: color-mix(in oklab, var(--rail) 55%, transparent);
+  z-index: 5;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px 14px;
+}
+
+.brand-mark {
+  width: 10px;
+  height: 10px;
+  border-radius: 2.5px;
+  background: var(--seal);
+  flex: none;
+}
+
+.brand-word {
+  font-family: var(--display);
+  font-size: 15px;
+  letter-spacing: 0.14em;
+}
+
+.rail-actions {
+  display: flex;
+  gap: 6px;
+  padding: 0 2px 10px;
+}
+
+.rail button {
+  color: var(--rail-ink);
+  border-color: color-mix(in oklab, var(--rail-ink) 26%, transparent);
+  padding: 4px 8px;
+  font-size: 12.5px;
+}
+
+.rail button:hover:not(:disabled) {
+  border-color: color-mix(in oklab, var(--rail-ink) 48%, transparent);
+  background: color-mix(in oklab, var(--rail-ink) 9%, transparent);
+}
+
+.rail-actions button {
+  flex: 1;
 }
 
 .rail ul {
   list-style: none;
   padding: 0;
-  margin: 12px 0 0;
+  margin: 0;
+}
+
+.rail-group {
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: var(--rail-faint);
+  padding: 4px 10px 4px;
 }
 
 .rail li button {
-  all: unset;
-  cursor: pointer;
   display: block;
   width: 100%;
-  padding: 4px 8px;
-  border-radius: 4px;
+  text-align: left;
+  border: none;
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  padding: 5px 8px 5px 10px;
+  color: var(--rail-faint);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.rail li button.current {
-  background: color-mix(in oklab, currentColor 10%, transparent);
+.rail li button:hover:not(:disabled) {
+  color: var(--rail-ink);
+  background: color-mix(in oklab, var(--rail-ink) 6%, transparent);
 }
 
+.rail li button.current {
+  color: var(--rail-ink);
+  background: color-mix(in oklab, var(--rail-ink) 9%, transparent);
+  border-left-color: var(--seal);
+}
+
+.rail-foot {
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--rail-rule);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* ── Stage：桌面。平纸，无光效；版心由 EditorHost 的纸面档绘制。 ── */
 .stage {
   min-width: 0;
+  background: var(--paper);
 }
 
 .stage-row {
@@ -419,13 +610,13 @@ const onKeydown = (event: KeyboardEvent): void => {
 }
 
 .notice {
-  color: #8a4b00;
+  color: var(--pending);
   font-size: 13px;
   padding: 0 24px;
 }
 
 .empty {
   padding: 48px 24px;
-  opacity: 0.6;
+  color: var(--ink-faint);
 }
 </style>
