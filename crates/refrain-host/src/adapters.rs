@@ -109,7 +109,7 @@ fn version_of(program: &std::path::Path) -> io::Result<String> {
         args: vec!["--version".to_string()],
         env: vec![],
         cwd: std::env::temp_dir(),
-            stdin_piped: false,
+        stdin_piped: false,
     })?
     .wait()?;
     Ok(outcome.stdout.trim().to_string())

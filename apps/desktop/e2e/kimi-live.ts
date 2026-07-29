@@ -177,7 +177,7 @@ const run = async (): Promise<void> => {
   );
   await invoke("persist_revision", { rootId, path: "长章.md", expected: null });
 
-  await clickButton("発送");
+  await clickButton("派发");
   await waitFor("the agent dropdown", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch-agent") !== null`)),
   );
@@ -200,7 +200,7 @@ const run = async (): Promise<void> => {
   await waitFor("the manifest", async () =>
     Boolean(await execute(`return document.querySelector(".manifest") !== null`)),
   );
-  await clickButton("确认授权");
+  await clickButton("授权");
   await waitFor("the real run to dispatch", async () => {
     const s = (await invoke("host_state", { rootId })) as {
       runs: { progress: string; agentId: string }[];
@@ -245,7 +245,7 @@ const run = async (): Promise<void> => {
     // The designed recovery for a typed failure: a new Run (§8.4b). Model
     // variance is real; one honest retry, not a hidden loop.
     console.log(`first attempt failed typed (${done.failure ?? "?"}); retrying as a new run`);
-    await clickButton("重试（新 Run）");
+    await clickButton("重试");
     await waitFor("the retry to dispatch", async () => {
       const s = (await invoke("host_state", { rootId })) as {
         runs: { id: string; progress: string; agentId: string }[];

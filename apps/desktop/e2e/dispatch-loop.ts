@@ -283,7 +283,7 @@ const run = async (): Promise<void> => {
   console.log(`revision at draft: ${revAtDraft.revision}`);
 
   // ── The ticket: two blocks, one prompt, one L0 agent. ──
-  await clickButton("発送");
+  await clickButton("派发");
   await waitFor("the dispatch surface", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch") !== null`)),
   );
@@ -311,7 +311,7 @@ const run = async (): Promise<void> => {
   );
 
   // ── Authorize: the frozen request lands on disk. ──
-  await clickButton("确认授权");
+  await clickButton("授权");
   await waitFor("the run to dispatch", async () => {
     const state = await hostState(rootId);
     return state.runs.length === 1 && state.runs[0]?.progress === "dispatched";
@@ -367,7 +367,7 @@ const run = async (): Promise<void> => {
     revAfterRestart.revision === revAtDraft.revision,
     `${revAfterRestart.revision} != ${revAtDraft.revision}`,
   );
-  await clickButton("発送");
+  await clickButton("派发");
   await waitFor("the collect button", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch-collect") !== null`)),
   );
@@ -471,7 +471,7 @@ const run = async (): Promise<void> => {
 
   // ── The failure vectors: malformed → typed failure → retry completes. ──
   // The commit returns the stage to the editor and the ticket remounts on
-  // its own (the rail toggle was never switched off): do NOT click 発送
+  // its own (the rail toggle was never switched off): do NOT click 派发
   // here, that would close it.
   await waitFor("the dispatch surface again", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch") !== null`)),
@@ -482,7 +482,7 @@ const run = async (): Promise<void> => {
   await waitFor("the second manifest", async () =>
     Boolean(await execute(`return document.querySelector(".manifest") !== null`)),
   );
-  await clickButton("确认授权");
+  await clickButton("授权");
   await waitFor("the second run to dispatch", async () => {
     const s = await hostState(rootId);
     return s.runs.filter((r) => r.progress === "dispatched").length === 1;
@@ -503,7 +503,7 @@ const run = async (): Promise<void> => {
     state.runs.find((r) => r.id === bad.id)?.failure,
   );
 
-  await clickButton("重试（新 Run）");
+  await clickButton("重试");
   await waitFor("the retry to dispatch", async () => {
     const s = await hostState(rootId);
     return s.runs.filter((r) => r.progress === "dispatched").length === 1;
@@ -550,7 +550,7 @@ const run = async (): Promise<void> => {
   const harnesses = (await invoke("list_harnesses", {})) as { agentId: string }[];
   check("the fake harness is detected", harnesses.length === 1, harnesses.length);
   const kimiAgent = harnesses[0]?.agentId ?? "";
-  await clickButton("新 Task");
+  await clickButton("再发");
   await waitFor("the agent dropdown", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch-agent") !== null`)),
   );
@@ -566,7 +566,7 @@ const run = async (): Promise<void> => {
   await waitFor("the harness manifest", async () =>
     Boolean(await execute(`return document.querySelector(".manifest") !== null`)),
   );
-  await clickButton("确认授权");
+  await clickButton("授权");
   await waitFor("the harness run to dispatch", async () => {
     const s = await hostState(rootId);
     return s.runs.some((r) => r.progress === "dispatched" && r.agentId === kimiAgent);

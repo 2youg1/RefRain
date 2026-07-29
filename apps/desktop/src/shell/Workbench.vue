@@ -58,6 +58,11 @@ const trackReturnPoint = (): void => {
 };
 
 const documents = computed<DocumentRow[]>(() => project.value?.documents ?? []);
+const materialDocs = computed<{ path: string; label: string }[]>(() =>
+  documents.value
+    .filter((row) => row.role === "material")
+    .map((row) => ({ path: row.path, label: row.path })),
+);
 
 const fail = (error: unknown): void => {
   notice.value = describe(error);
@@ -250,7 +255,7 @@ const onKeydown = (event: KeyboardEvent): void => {
           {{ reviewing ? "返回编辑" : "Review" }}
         </button>
         <button v-if="active && !reviewing" type="button" @click="dispatching = !dispatching">
-          {{ dispatching ? "收起発送" : "発送" }}
+          {{ dispatching ? "收起" : "派发" }}
         </button>
         <ul>
           <li v-for="row in documents" :key="row.id">
@@ -292,6 +297,7 @@ const onKeydown = (event: KeyboardEvent): void => {
             :root-id="project.rootId"
             :path="active.document.path"
             :blocks="active.blocks"
+            :materials="materialDocs"
             @collected="(count: number) => (notice = `${count} 条提案已冻结，点 Review 逐句裁决。`)"
             @closed="dispatching = false"
           />

@@ -31,10 +31,6 @@ export const commands = {
 	 *  replays on the next open.
 	 */
 	applyEditorAction: (rootId: string, path: string, action: EditorActionDto) => typedError<TextTransitionDto, RefrainError>(__TAURI_INVOKE("apply_editor_action", { rootId, path, action })),
-	/**
-	 *  Save: materialise the confirmed manuscript and commit it compare-and-swap
-	 *  on the author's stamp. The DOM snapshot never writes the file (SPEC 7.2).
-	 */
 	persistRevision: (rootId: string, path: string, expected: {
 	modifiedMs: string,
 	bytes: string,
@@ -90,7 +86,7 @@ export const commands = {
 	/**  Draft the collaboration: prompt, document, and the head it pins (Q27). */
 	draftReviewTask: (rootId: string, path: string, prompt: string) => typedError<TaskDto, RefrainError>(__TAURI_INVOKE("draft_review_task", { rootId, path, prompt })),
 	/**  The manifest the author reads before the click (SPEC 9.6: 逐块字节清单). */
-	previewDispatch: (rootId: string, path: string, blockIds: string[], prompt: string) => typedError<DispatchPreviewDto, RefrainError>(__TAURI_INVOKE("preview_dispatch", { rootId, path, blockIds, prompt })),
+	previewDispatch: (rootId: string, path: string, blockIds: string[], materialPaths: string[], prompt: string) => typedError<DispatchPreviewDto, RefrainError>(__TAURI_INVOKE("preview_dispatch", { rootId, path, blockIds, materialPaths, prompt })),
 	/**  The built-in agent the ticket always offers (SPEC 8.3a's first row). */
 	l0FileChannelAgent: () => __TAURI_INVOKE<string>("l0_file_channel_agent"),
 	/**
@@ -123,6 +119,27 @@ export const commands = {
 	 *  complete the run, and freeze the proposals the artifact carries.
 	 */
 	collectAttempt: (rootId: string, runId: string) => typedError<CollectOutcomeDto, RefrainError>(__TAURI_INVOKE("collect_attempt", { rootId, runId })),
+	/**  Every unresolved material draft, for the ticket's materials panel. */
+	listMaterialDrafts: (rootId: string) => typedError<MaterialDraftRow_Serialize[], RefrainError>(__TAURI_INVOKE("list_material_drafts", { rootId })),
+	/**
+	 *  The only way a draft becomes a Material (SPEC 8.7: a Human Material
+	 *  Action). Save writes the body through the same text path as the editor —
+	 *  create, insert, confirm — never a direct file write. Dismiss keeps the
+	 *  artifact on disk in the run workspace and removes only the draft row.
+	 */
+	commitMaterialAction: (rootId: string, draftId: string, editedBody: string | null, dismiss: boolean) => typedError<{
+	id: Id,
+	/**  Portable identity inside the Root: the relative path, `/`-joined. */
+	path: string,
+	role: DocumentRole,
+	digest: string | null,
+	/**
+	 *  The confirmed revision id and the lineage it pairs with (SPEC 7.2
+	 *  crash recovery). Present after the first save or a continuity-safe open.
+	 */
+	currentHead: string | null,
+	headBlockIds: string | null,
+} | null, RefrainError>(__TAURI_INVOKE("commit_material_action", { rootId, draftId, editedBody, dismiss })),
 };
 
 /* Types */
@@ -167,6 +184,7 @@ export type AuthorizeDispatchRequest = {
 	taskId: string,
 	path: string,
 	blockIds: string[],
+	materialPaths: string[],
 	prompt: string,
 	clickedDigest: string,
 	newAgents: string[],
@@ -194,6 +212,7 @@ export type CollectOutcomeDto =
 { kind: "waiting" } | { kind: "completed"; value: {
 	proposals: number,
 	memos: number,
+	drafts: number,
 } } | { kind: "failed"; value: {
 	code: string,
 	detail: string,
@@ -507,6 +526,34 @@ export type ManifestEntry = {
 	digest: string,
 	bytes: number,
 	tokens: Tokens,
+};
+
+export type MaterialDraftRow = MaterialDraftRow_Serialize | MaterialDraftRow_Deserialize;
+
+export type MaterialDraftRow_Deserialize = {
+	id: string,
+	runId: string,
+	/**  The dispatch's document: the draft's context of origin. */
+	document: string,
+	kind: string,
+	title: string,
+	/**  JSON array of `DOCUMENT@REVISION` references. */
+	basis: string,
+	body: string,
+	createdAt: string,
+};
+
+export type MaterialDraftRow_Serialize = {
+	id: string,
+	runId: string,
+	/**  The dispatch's document: the draft's context of origin. */
+	document: string,
+	kind: string,
+	title: string,
+	/**  JSON array of `DOCUMENT@REVISION` references. */
+	basis: string,
+	body: string,
+	createdAt: string,
 };
 
 /**

@@ -634,6 +634,62 @@ fn apply_editor_action(
 
 /// Save: materialise the confirmed manuscript and commit it compare-and-swap
 /// on the author's stamp. The DOM snapshot never writes the file (SPEC 7.2).
+/// The command is a thin wrapper; composition-layer use cases share the body.
+fn persist_in_entry(
+    entry: &mut ProjectEntry,
+    path: &str,
+    expected: Option<FileStamp>,
+) -> Result<SaveOutcomeDto, RefrainError> {
+    let (bytes, lineage, head) = {
+        let manuscript = entry.manuscripts.get(path).ok_or_else(|| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "save a document that is not open",
+                path.to_string(),
+            )
+        })?;
+        let bytes = manuscript.materialize().map_err(|error| {
+            RefrainError::new(ErrorCode::Io, "materialise a manuscript", path.to_string())
+                .with_detail(error.to_string())
+        })?;
+        (bytes, manuscript.lineage_ids(), manuscript.head().id())
+    };
+
+    let committed = match entry.store.commit(&DocumentCommit {
+        path: path.to_string(),
+        bytes,
+        expected,
+    }) {
+        Ok(outcome) => outcome,
+        Err(ProjectFailure::ChangedUnderneath(conflict)) => {
+            return Ok(SaveOutcomeDto::ChangedUnderneath {
+                on_disk: String::from_utf8_lossy(&conflict.on_disk).into_owned(),
+                stamp: conflict.stamp.clone(),
+            });
+        }
+        Err(other) => return Err(into_domain(other)),
+    };
+
+    entry
+        .store
+        .save_continuity(
+            path,
+            &head.to_string(),
+            &serde_json::to_string(&lineage).map_err(|error| {
+                RefrainError::new(ErrorCode::Io, "serialise a lineage", path.to_string())
+                    .with_detail(error.to_string())
+            })?,
+        )
+        .map_err(into_domain)?;
+
+    Ok(SaveOutcomeDto::Saved {
+        stamp: committed.stamp,
+        recovery_evidence: committed
+            .recovery_evidence
+            .map(|path| path.display().to_string()),
+    })
+}
+
 #[tauri::command]
 #[specta::specta]
 fn persist_revision(
@@ -643,54 +699,7 @@ fn persist_revision(
     expected: Option<FileStamp>,
 ) -> Result<SaveOutcomeDto, RefrainError> {
     state.with_project(&root_id, |_state, entry| {
-        let (bytes, lineage, head) = {
-            let manuscript = entry.manuscripts.get(&path).ok_or_else(|| {
-                RefrainError::new(
-                    ErrorCode::StateUnavailable,
-                    "save a document that is not open",
-                    path.clone(),
-                )
-            })?;
-            let bytes = manuscript.materialize().map_err(|error| {
-                RefrainError::new(ErrorCode::Io, "materialise a manuscript", path.clone())
-                    .with_detail(error.to_string())
-            })?;
-            (bytes, manuscript.lineage_ids(), manuscript.head().id())
-        };
-
-        let committed = match entry.store.commit(&DocumentCommit {
-            path: path.clone(),
-            bytes,
-            expected,
-        }) {
-            Ok(outcome) => outcome,
-            Err(ProjectFailure::ChangedUnderneath(conflict)) => {
-                return Ok(SaveOutcomeDto::ChangedUnderneath {
-                    on_disk: String::from_utf8_lossy(&conflict.on_disk).into_owned(),
-                    stamp: conflict.stamp.clone(),
-                });
-            }
-            Err(other) => return Err(into_domain(other)),
-        };
-
-        entry
-            .store
-            .save_continuity(
-                &path,
-                &head.to_string(),
-                &serde_json::to_string(&lineage).map_err(|error| {
-                    RefrainError::new(ErrorCode::Io, "serialise a lineage", path.clone())
-                        .with_detail(error.to_string())
-                })?,
-            )
-            .map_err(into_domain)?;
-
-        Ok(SaveOutcomeDto::Saved {
-            stamp: committed.stamp,
-            recovery_evidence: committed
-                .recovery_evidence
-                .map(|path| path.display().to_string()),
-        })
+        persist_in_entry(entry, &path, expected)
     })
 }
 
@@ -957,6 +966,8 @@ pub fn builder() -> Builder<tauri::Wry> {
         cancel_run,
         retry_run,
         collect_attempt,
+        list_material_drafts,
+        commit_material_action,
     ])
 }
 
@@ -1453,7 +1464,7 @@ fn commit_decision_batch(
 
 use refrain_core::agent_protocol::{self, ArtifactContract};
 use refrain_core::context_compiler::{
-    self, BeforeScope, DispatchInput, DispatchPackage, ManifestEntry,
+    self, BeforeScope, ChangeEntry, ChangeKind, DispatchInput, DispatchPackage, ManifestEntry,
 };
 use refrain_host::host::{
     AgentHost, DispatchAuthorization, HostCommand, HostJournal, HostRefusal, HostState, ReviewTask,
@@ -1653,10 +1664,16 @@ fn doc_slug(path: &str) -> String {
 /// preview AND again at authorize: any drift between the two compilations —
 /// an edited block, a changed prompt — changes the digest and kills the
 /// authorization (INV-14).
+/// The verdict window carried into `<changes>`: the document's most recent
+/// judgments, capped so the stream stays a summary, not a database dump.
+const CHANGES_WINDOW: usize = 20;
+
 fn compile_package(
+    store: &mut ProjectStore,
     manuscript: &Manuscript,
     path: &str,
     block_ids: &[Id],
+    material_paths: &[String],
     prompt: &str,
 ) -> Result<DispatchPackage, RefrainError> {
     let blocks = manuscript.head().blocks();
@@ -1694,11 +1711,57 @@ fn compile_package(
         .map(|(_, text)| *text)
         .collect::<Vec<_>>()
         .join("\n\n");
+    // The `<changes>` stream (SPEC 8.5): this document's recent verdicts,
+    // capped at the window. Diff is the default tier — and the first round,
+    // with no history to differ against, carries the whole text or the agent
+    // has nothing to stand on (KL9: never trade output quality for tokens).
+    let verdicts = store.ledger().for_document(path).map_err(|error| {
+        RefrainError::new(ErrorCode::StateUnavailable, "read the verdict ledger", path)
+            .with_detail(error.to_string())
+    })?;
+    let changes: Vec<ChangeEntry> = verdicts
+        .iter()
+        .rev()
+        .take(CHANGES_WINDOW)
+        .rev()
+        .map(|verdict| ChangeEntry {
+            reference: verdict.slice_id.clone(),
+            kind: match verdict.kind {
+                VerdictKindName::Accept => ChangeKind::Accept,
+                VerdictKindName::AcceptModified => ChangeKind::AcceptModified,
+                VerdictKindName::Reject => ChangeKind::Reject,
+                VerdictKindName::CommentOnly => ChangeKind::CommentOnly,
+            },
+            reason: verdict.reason.clone(),
+            final_text: verdict.final_text.clone(),
+        })
+        .collect();
+    let manuscript_text = if verdicts.is_empty() {
+        Some(
+            manuscript
+                .head()
+                .blocks()
+                .iter()
+                .map(|block| block.text())
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+        )
+    } else {
+        None
+    };
+    // Ticked materials ride as context sections, read from disk truth at
+    // compile time (SPEC 8.5: the manifest shows each one's bytes).
+    let mut materials: Vec<(String, String)> = Vec::with_capacity(material_paths.len());
+    for material_path in material_paths {
+        let opened = store.open_document(material_path).map_err(into_domain)?;
+        let name = doc_slug(material_path);
+        materials.push((name, String::from_utf8_lossy(&opened.bytes).into_owned()));
+    }
     let input = DispatchInput {
         persona: None,
-        manuscript: None,
-        changes: vec![],
-        materials: vec![],
+        manuscript: manuscript_text,
+        changes,
+        materials,
         request: prompt.to_string(),
         scopes: vec![BeforeScope { scope, text }],
         result_path: format!(
@@ -1804,6 +1867,7 @@ pub enum CollectOutcomeDto {
     Completed {
         proposals: u32,
         memos: u32,
+        drafts: u32,
     },
     Failed {
         code: String,
@@ -1885,6 +1949,7 @@ fn preview_dispatch(
     root_id: String,
     path: String,
     block_ids: Vec<String>,
+    material_paths: Vec<String>,
     prompt: String,
 ) -> Result<DispatchPreviewDto, RefrainError> {
     state.with_project(&root_id, |_state, entry| {
@@ -1896,9 +1961,11 @@ fn preview_dispatch(
             )
         })?;
         let package = compile_package(
+            &mut entry.store,
             manuscript,
             &path,
             &parse_ids(&block_ids, "scope block")?,
+            &material_paths,
             &prompt,
         )?;
         Ok(DispatchPreviewDto {
@@ -1919,6 +1986,7 @@ pub struct AuthorizeDispatchRequest {
     pub task_id: String,
     pub path: String,
     pub block_ids: Vec<String>,
+    pub material_paths: Vec<String>,
     pub prompt: String,
     pub clicked_digest: String,
     pub new_agents: Vec<String>,
@@ -1943,6 +2011,7 @@ fn authorize_dispatch(
         task_id,
         path,
         block_ids,
+        material_paths,
         prompt,
         clicked_digest,
         new_agents,
@@ -1957,9 +2026,11 @@ fn authorize_dispatch(
             )
         })?;
         let package = compile_package(
+            &mut entry.store,
             manuscript,
             &path,
             &parse_ids(&block_ids, "scope block")?,
+            &material_paths,
             &prompt,
         )?;
         let task_id = parse_id(&task_id, "task")?;
@@ -2267,9 +2338,27 @@ fn collect_attempt(
                 })
                 .map_err(into_domain)?;
         }
+        // Material drafts join the world as drafts and nothing more (SPEC
+        // 8.7): only a Human Material Action makes one a Material.
+        for draft in &artifact.material_drafts {
+            entry
+                .store
+                .material_draft_insert(&refrain_store::materials::MaterialDraftRow {
+                    id: Id::new().to_string(),
+                    run_id: run_id.to_string(),
+                    document: task.document.clone(),
+                    kind: draft.kind.clone(),
+                    title: draft.title.clone(),
+                    basis: json_of(&draft.basis, "material basis")?,
+                    body: draft.body.clone(),
+                    created_at: now_millis(),
+                })
+                .map_err(into_domain)?;
+        }
         Ok(CollectOutcomeDto::Completed {
             proposals: count,
             memos: artifact.memos.len() as u32,
+            drafts: artifact.material_drafts.len() as u32,
         })
     })
 }
@@ -2338,19 +2427,30 @@ fn harness_dispatch_inner(
     run_id: Id,
 ) -> Result<RunDto, RefrainError> {
     let kimi = KimiPrint::detect().ok_or_else(|| {
-        RefrainError::new(ErrorCode::StateUnavailable, "dispatch to Kimi Code", "kimi CLI not on PATH")
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "dispatch to Kimi Code",
+            "kimi CLI not on PATH",
+        )
     })?;
     let (workspace, workspace_abs, request_md) = state.with_project(root_id, |_state, entry| {
         let context = DirectoryContext::new(entry.store.layout().state_dir.clone());
         let mut host = open_host(&mut entry.store)?;
         let workspace = format!("runs/{run_id}");
-        host.execute(HostCommand::LaunchRun { run_id, workspace: workspace.clone() })
-            .map_err(into_domain_host)?;
+        host.execute(HostCommand::LaunchRun {
+            run_id,
+            workspace: workspace.clone(),
+        })
+        .map_err(into_domain_host)?;
         let request = context
             .read_workspace_request(&workspace)
             .map_err(|error| {
-                RefrainError::new(ErrorCode::Io, "read the promoted request", workspace.clone())
-                    .with_detail(error.to_string())
+                RefrainError::new(
+                    ErrorCode::Io,
+                    "read the promoted request",
+                    workspace.clone(),
+                )
+                .with_detail(error.to_string())
             })?
             .ok_or_else(|| {
                 RefrainError::new(
@@ -2359,7 +2459,11 @@ fn harness_dispatch_inner(
                     "the request did not land in the workspace",
                 )
             })?;
-        Ok((workspace.clone(), entry.store.layout().state_dir.join(&workspace), request))
+        Ok((
+            workspace.clone(),
+            entry.store.layout().state_dir.join(&workspace),
+            request,
+        ))
     })?;
 
     let receipt = match kimi.dispatch(&adapters::DispatchSpec {
@@ -2378,19 +2482,26 @@ fn harness_dispatch_inner(
                 })
                 .map_err(into_domain_host)
             })?;
-            return Err(RefrainError::new(ErrorCode::Io, "launch the harness", "kimi -p")
-                .with_detail(error.to_string()));
+            return Err(
+                RefrainError::new(ErrorCode::Io, "launch the harness", "kimi -p")
+                    .with_detail(error.to_string()),
+            );
         }
     };
     let receipt_text = receipt.receipt.clone();
 
     let dto = state.with_project(root_id, |_state, entry| {
         let mut host = open_host(&mut entry.store)?;
-        host.execute(HostCommand::CompleteDispatch { run_id, receipt: receipt_text })
-            .map_err(into_domain_host)?;
-        let index = host.runs().iter().position(|run| run.id == run_id).ok_or_else(|| {
-            into_domain_host(HostRefusal::UnknownRun(run_id))
-        })?;
+        host.execute(HostCommand::CompleteDispatch {
+            run_id,
+            receipt: receipt_text,
+        })
+        .map_err(into_domain_host)?;
+        let index = host
+            .runs()
+            .iter()
+            .position(|run| run.id == run_id)
+            .ok_or_else(|| into_domain_host(HostRefusal::UnknownRun(run_id)))?;
         Ok(run_dto(&host.runs()[index]))
     })?;
 
@@ -2410,8 +2521,12 @@ fn harness_dispatch_inner(
                     context
                         .land_result(&workspace, run_id, produced.reply_text.as_bytes())
                         .map_err(|error| {
-                            RefrainError::new(ErrorCode::Io, "land the producer's reply", workspace.clone())
-                                .with_detail(error.to_string())
+                            RefrainError::new(
+                                ErrorCode::Io,
+                                "land the producer's reply",
+                                workspace.clone(),
+                            )
+                            .with_detail(error.to_string())
                         })?;
                     Ok("landed".to_string())
                 }
@@ -2441,7 +2556,11 @@ fn harness_dispatch_inner(
         };
         let _ = app.emit(
             "run-settled",
-            RunSettledDto { root_id: root_for_thread, run_id: run_id.to_string(), outcome },
+            RunSettledDto {
+                root_id: root_for_thread,
+                run_id: run_id.to_string(),
+                outcome,
+            },
         );
     });
 
@@ -2459,4 +2578,155 @@ fn harness_dispatch(
     run_id: String,
 ) -> Result<RunDto, RefrainError> {
     harness_dispatch_inner(&app, &state, &root_id, parse_id(&run_id, "run")?)
+}
+
+// ── C12: materials — drafts review and the Human Material Action (SPEC 8.7) ──
+
+/// Every unresolved material draft, for the ticket's materials panel.
+#[tauri::command]
+#[specta::specta]
+fn list_material_drafts(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+) -> Result<Vec<refrain_store::materials::MaterialDraftRow>, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        entry.store.material_drafts().map_err(into_domain)
+    })
+}
+
+/// The only way a draft becomes a Material (SPEC 8.7: a Human Material
+/// Action). Save writes the body through the same text path as the editor —
+/// create, insert, confirm — never a direct file write. Dismiss keeps the
+/// artifact on disk in the run workspace and removes only the draft row.
+#[tauri::command]
+#[specta::specta]
+fn commit_material_action(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    draft_id: String,
+    edited_body: Option<String>,
+    dismiss: bool,
+) -> Result<Option<DocumentRow>, RefrainError> {
+    state.with_project(&root_id, |state, entry| {
+        let draft = entry
+            .store
+            .material_drafts()
+            .map_err(into_domain)?
+            .into_iter()
+            .find(|row| row.id == draft_id)
+            .ok_or_else(|| {
+                RefrainError::new(
+                    ErrorCode::StateUnavailable,
+                    "resolve a draft",
+                    "no such draft",
+                )
+            })?;
+        if dismiss {
+            entry
+                .store
+                .material_draft_take(&draft_id)
+                .map_err(into_domain)?;
+            return Ok(None);
+        }
+
+        let body = edited_body.unwrap_or_else(|| draft.body.clone());
+        let created = entry
+            .store
+            .create(&refrain_store::project::CreateDocument {
+                title: draft.title.clone(),
+                role: DocumentRole::Material,
+            })
+            .map_err(into_domain)?;
+        let opened = entry
+            .store
+            .open_document(&created.row.path)
+            .map_err(into_domain)?;
+        open_in_entry(state, entry, &created.row.path, opened)?;
+
+        let paragraphs: Vec<String> = body
+            .split("\n\n")
+            .map(str::trim)
+            .filter(|paragraph| !paragraph.is_empty())
+            .map(str::to_string)
+            .collect();
+        if !paragraphs.is_empty() {
+            let base = entry
+                .manuscripts
+                .get(&created.row.path)
+                .map(|manuscript| manuscript.head().id().to_string())
+                .ok_or_else(|| {
+                    RefrainError::new(
+                        ErrorCode::StateUnavailable,
+                        "write a material that is not open",
+                        created.row.path.clone(),
+                    )
+                })?;
+            let action_dto = EditorActionDto {
+                base,
+                changes: vec![EditorChangeDto::Insert {
+                    before: None,
+                    texts: paragraphs.clone(),
+                }],
+            };
+            let action_json = serde_json::to_string(&action_dto).map_err(|error| {
+                RefrainError::new(
+                    ErrorCode::Io,
+                    "serialise the material body",
+                    created.row.path.clone(),
+                )
+                .with_detail(error.to_string())
+            })?;
+            let journal_id = entry
+                .store
+                .journal_append(&created.row.path, &action_json)
+                .map_err(into_domain)?;
+            // The executed action is the journaled one, through the same
+            // conversion the replay path uses — one construction, no drift.
+            let domain_action = to_domain_action(action_dto)?;
+            let outcome = {
+                let manuscript = entry
+                    .manuscripts
+                    .get_mut(&created.row.path)
+                    .ok_or_else(|| {
+                        RefrainError::new(
+                            ErrorCode::StateUnavailable,
+                            "write a material that is not open",
+                            created.row.path.clone(),
+                        )
+                    })?;
+                manuscript.execute(TextCommand::Editor(domain_action))
+            };
+            match outcome {
+                Ok(_transition) => {
+                    entry
+                        .store
+                        .journal_remove(journal_id)
+                        .map_err(into_domain)?;
+                }
+                Err(refusal) => {
+                    return Err(RefrainError::new(
+                        ErrorCode::Io,
+                        "write the material body",
+                        created.row.path.clone(),
+                    )
+                    .with_detail(refusal.to_string()));
+                }
+            }
+        }
+        match persist_in_entry(entry, &created.row.path, None)? {
+            SaveOutcomeDto::Saved { .. } => {}
+            SaveOutcomeDto::ChangedUnderneath { .. } => {
+                return Err(RefrainError::new(
+                    ErrorCode::Io,
+                    "confirm a new material",
+                    "the file moved underneath",
+                ));
+            }
+        }
+        entry
+            .store
+            .material_draft_take(&draft_id)
+            .map_err(into_domain)?;
+        Ok(Some(created.row))
+    })
 }

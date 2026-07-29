@@ -136,7 +136,11 @@ pub fn launch(spec: &LaunchSpec) -> io::Result<ProcessHandle> {
     command
         .args(&spec.args)
         .current_dir(&spec.cwd)
-        .stdin(if spec.stdin_piped { Stdio::piped() } else { Stdio::null() })
+        .stdin(if spec.stdin_piped {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env_clear();

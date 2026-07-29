@@ -107,10 +107,28 @@ impl<'a> VerdictLedger<'a> {
     pub fn all(&self) -> Result<Vec<VerdictRecord>, StoreError> {
         let mut statement = self.db.prepare(
             "SELECT id, proposal_id, slice_id, kind, final_text, reason, decided_at, legacy_baseline
-             FROM verdicts ORDER BY decided_at, rowid",
+                 FROM verdicts ORDER BY decided_at, rowid",
         )?;
         let rows = statement
             .query_map([], read_record)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// One document's verdicts, oldest first: the `<changes>` stream's
+    /// source (SPEC 8.5). Verdicts carry no document column; the proposal
+    /// they judge does.
+    pub fn for_document(&self, path: &str) -> Result<Vec<VerdictRecord>, StoreError> {
+        let mut statement = self.db.prepare(
+            "SELECT v.id, v.proposal_id, v.slice_id, v.kind, v.final_text, v.reason,
+                    v.decided_at, v.legacy_baseline
+                 FROM verdicts v
+                 JOIN proposals p ON p.id = v.proposal_id
+                 WHERE p.document_path = ?1
+                 ORDER BY v.decided_at, v.rowid",
+        )?;
+        let rows = statement
+            .query_map(params![path], read_record)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
