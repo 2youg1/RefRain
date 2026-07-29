@@ -43,13 +43,18 @@ const production = result.findings.filter(
 // - `files/ops.rs` removes the source of a cross-volume move only after a
 //   byte-verified copy of it is already inside the system trash — the second
 //   half of a move, not a delete.
+// - `migrate.rs` removes only its own build artefacts: the temp-dir scratch
+//   copy of verdicts.db, a partial shadow left by a killed run, the shadow
+//   db's WAL sidecars, and the consumed shadow after install. User bytes
+//   never pass through these calls — the legacy tree is preserved whole.
 //
-// Both exemptions are one file and one call shape each, so a permanent delete
+// All exemptions are one file and one call shape each, so a permanent delete
 // anywhere else still fails here.
 const internalResidue = production.filter(
   (f) =>
     (f.file.endsWith("crates/refrain-store/src/atomic.rs") ||
-      f.file.endsWith("crates/refrain-store/src/files/ops.rs")) &&
+      f.file.endsWith("crates/refrain-store/src/files/ops.rs") ||
+      f.file.endsWith("crates/refrain-store/src/migrate.rs")) &&
     (f.text.includes("fs::remove_file") || f.text.includes("fs::remove_dir_all")),
 );
 const offences = production.filter((f) => !internalResidue.includes(f));

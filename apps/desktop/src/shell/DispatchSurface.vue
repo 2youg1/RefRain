@@ -371,15 +371,23 @@ onMounted(async () => {
     selected.value = new Set([...selected.value, ...props.seed]);
   }
   try {
+    // Named Agents first (KL9: an Agent is a name + channel + persona);
+    // the raw channels follow for an unprofiled dispatch.
+    for (const agent of await commands.listAgents()) {
+      agents.value.push({
+        id: agent.id,
+        label: `${agent.name} · ${agent.channel}`,
+      });
+    }
     const l0 = await commands.l0FileChannelAgent();
-    agents.value = [{ id: l0, label: "L0 文件通道" }];
+    agents.value.push({ id: l0, label: "L0 文件通道" });
     for (const harness of await commands.listHarnesses()) {
       agents.value.push({
         id: harness.agentId,
         label: `${harness.label} · ${harness.version}`,
       });
     }
-    agentId.value = l0;
+    agentId.value = agents.value[0]?.id ?? l0;
   } catch (error) {
     fail(error);
   }
