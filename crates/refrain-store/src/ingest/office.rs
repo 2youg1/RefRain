@@ -15,10 +15,49 @@ fn zip_failure(what: &str) -> RefrainError {
     )
 }
 
-fn members(bytes: &[u8]) -> Result<std::collections::HashMap<String, Vec<u8>>, RefrainError> {
+const MAX_ARCHIVE_MEMBERS: usize = 4_096;
+const MAX_MEMBER_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_ARCHIVE_TEXT_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_COMPRESSION_RATIO: u64 = 1_000;
+
+#[derive(Clone, Copy)]
+enum Family {
+    Docx,
+    Pptx,
+    Xlsx,
+    Epub,
+}
+
+impl Family {
+    fn needs(self, name: &str) -> bool {
+        match self {
+            Self::Docx => name == "word/document.xml",
+            Self::Pptx => name.starts_with("ppt/slides/slide") && name.ends_with(".xml"),
+            Self::Xlsx => {
+                name == "xl/sharedStrings.xml"
+                    || (name.starts_with("xl/worksheets/") && name.ends_with(".xml"))
+            }
+            Self::Epub => {
+                name == "META-INF/container.xml"
+                    || name.ends_with(".opf")
+                    || name.ends_with(".html")
+                    || name.ends_with(".xhtml")
+            }
+        }
+    }
+}
+
+fn members(
+    bytes: &[u8],
+    family: Family,
+) -> Result<std::collections::HashMap<String, Vec<u8>>, RefrainError> {
     let cursor = std::io::Cursor::new(bytes);
     let mut archive = zip::ZipArchive::new(cursor)
         .map_err(|error| zip_failure("not a zip container").with_detail(error.to_string()))?;
+    if archive.len() > MAX_ARCHIVE_MEMBERS {
+        return Err(zip_failure("too many archive members"));
+    }
+    let mut total = 0_u64;
     let mut out = std::collections::HashMap::new();
     for index in 0..archive.len() {
         let mut file = archive.by_index(index).map_err(|error| {
@@ -27,12 +66,44 @@ fn members(bytes: &[u8]) -> Result<std::collections::HashMap<String, Vec<u8>>, R
         if file.is_dir() {
             continue;
         }
-        let mut content = Vec::with_capacity(file.size() as usize);
-        file.read_to_end(&mut content).map_err(|error| {
-            zip_failure("a member cannot be read").with_detail(error.to_string())
-        })?;
-        // Windows-born archives (PowerShell Compress-Archive) store \.
-        out.insert(file.name().replace('\\', "/"), content);
+        let name = file.name().replace('\\', "/");
+        if !family.needs(&name) {
+            continue;
+        }
+        let size = file.size();
+        if size > MAX_MEMBER_BYTES {
+            return Err(zip_failure(&format!(
+                "{name}: member exceeds {MAX_MEMBER_BYTES} bytes"
+            )));
+        }
+        let compressed = file.compressed_size();
+        if size > 64 * 1024 && compressed.saturating_mul(MAX_COMPRESSION_RATIO) < size {
+            return Err(zip_failure(&format!(
+                "{name}: suspicious compression ratio"
+            )));
+        }
+        total = total
+            .checked_add(size)
+            .ok_or_else(|| zip_failure("archive size overflow"))?;
+        if total > MAX_ARCHIVE_TEXT_BYTES {
+            return Err(zip_failure("archive text budget exceeded"));
+        }
+        if out.contains_key(&name) {
+            return Err(zip_failure(&format!("{name}: duplicate member")));
+        }
+        let mut content = Vec::with_capacity(size as usize);
+        file.by_ref()
+            .take(MAX_MEMBER_BYTES + 1)
+            .read_to_end(&mut content)
+            .map_err(|error| {
+                zip_failure("a member cannot be read").with_detail(error.to_string())
+            })?;
+        if content.len() as u64 > MAX_MEMBER_BYTES {
+            return Err(zip_failure(&format!(
+                "{name}: member exceeded its read budget"
+            )));
+        }
+        out.insert(name, content);
     }
     Ok(out)
 }
@@ -107,12 +178,12 @@ fn paragraphs(xml: &str, paragraph_tag: &str, run_tag: &str) -> String {
 }
 
 pub fn extract_docx(bytes: &[u8]) -> Result<String, RefrainError> {
-    let all = members(bytes)?;
+    let all = members(bytes, Family::Docx)?;
     Ok(paragraphs(member(&all, "word/document.xml")?, "w:p", "w:t"))
 }
 
 pub fn extract_pptx(bytes: &[u8]) -> Result<String, RefrainError> {
-    let all = members(bytes)?;
+    let all = members(bytes, Family::Pptx)?;
     let mut slides: Vec<(u32, String)> = all
         .keys()
         .filter_map(|name| {
@@ -143,7 +214,7 @@ pub fn extract_pptx(bytes: &[u8]) -> Result<String, RefrainError> {
 }
 
 pub fn extract_xlsx(bytes: &[u8]) -> Result<String, RefrainError> {
-    let all = members(bytes)?;
+    let all = members(bytes, Family::Xlsx)?;
     let shared: Vec<String> = match all.keys().find(|name| name.ends_with("sharedStrings.xml")) {
         Some(name) => {
             let xml = member(&all, name)?.to_string();
@@ -213,7 +284,7 @@ pub fn extract_xlsx(bytes: &[u8]) -> Result<String, RefrainError> {
 }
 
 pub fn extract_epub(bytes: &[u8]) -> Result<String, RefrainError> {
-    let all = members(bytes)?;
+    let all = members(bytes, Family::Epub)?;
     let container = member(&all, "META-INF/container.xml")?;
     let opf_path = {
         let at = container
@@ -288,6 +359,42 @@ mod tests {
             writer.write_all(content.as_bytes()).unwrap();
         }
         writer.finish().unwrap().into_inner()
+    }
+
+    fn docx_with_blob(name: &str, size: usize) -> Vec<u8> {
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        if name != "word/document.xml" {
+            writer.start_file("word/document.xml", options).unwrap();
+            writer
+                .write_all(b"<w:document><w:p><w:t>safe</w:t></w:p></w:document>")
+                .unwrap();
+        }
+        writer.start_file(name, options).unwrap();
+        writer.write_all(&vec![b'x'; size]).unwrap();
+        writer.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn irrelevant_archive_members_are_never_expanded() {
+        let bytes = docx_with_blob("word/media/unused.bin", MAX_MEMBER_BYTES as usize + 1);
+        assert_eq!(extract_docx(&bytes).unwrap(), "safe");
+    }
+
+    #[test]
+    fn oversized_required_member_is_refused() {
+        let bytes = docx_with_blob("word/document.xml", MAX_MEMBER_BYTES as usize + 1);
+        assert!(extract_docx(&bytes).is_err());
+    }
+
+    #[test]
+    fn duplicate_required_member_is_refused() {
+        let bytes = zip_of(&[
+            ("word\\document.xml", "<w:t>one</w:t>"),
+            ("word/document.xml", "<w:t>two</w:t>"),
+        ]);
+        assert!(extract_docx(&bytes).is_err());
     }
 
     #[test]

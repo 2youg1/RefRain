@@ -628,6 +628,19 @@ impl ProjectStore {
         Ok(OpenDocument { row, bytes, stamp })
     }
 
+    /// Renderer-facing reads must name a row produced by Root indexing or by
+    /// document creation. Containment alone does not authorise an arbitrary
+    /// file inside the Root.
+    pub fn open_registered_document(
+        &mut self,
+        relative: &str,
+    ) -> Result<OpenDocument, ProjectFailure> {
+        if self.find_document(relative)?.is_none() {
+            return Err(ProjectFailure::NotADocument(self.resolve(relative)?));
+        }
+        self.open_document(relative)
+    }
+
     /// Creates a document on disk and in the database. `Occupied` is a
     /// refusal, not an overwrite.
     pub fn create(&mut self, command: &CreateDocument) -> Result<OpenDocument, ProjectFailure> {

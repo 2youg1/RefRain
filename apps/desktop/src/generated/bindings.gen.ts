@@ -10,13 +10,18 @@ export const commands = {
 	displayProfile: () => __TAURI_INVOKE<DisplayProfile>("display_profile"),
 	/**  Proves the whole chain: a Rust type, a generated binding, a real window. */
 	health: (echo: string) => __TAURI_INVOKE<HealthReport>("health", { echo }),
-	/**  Adopt an existing folder or single file as a Root (SPEC 9.5). */
-	adoptRoot: (path: string, kind: RootKind) => typedError<ProjectOpenedDto, RefrainError>(__TAURI_INVOKE("adopt_root", { path, kind })),
-	/**
-	 *  Create a project: the author picks a parent directory and names the
-	 *  project; Rust creates the subdirectory and adopts it (SPEC 9.5).
-	 */
-	createProject: (parent: string, name: string) => typedError<ProjectOpenedDto, RefrainError>(__TAURI_INVOKE("create_project", { parent, name })),
+	/**  Let the author choose the Root and consume that choice in this command. */
+	chooseAndAdoptRoot: (kind: RootKind) => typedError<{
+	rootId: string,
+	backup: BackupStatus,
+	documents: DocumentRow[],
+} | null, RefrainError>(__TAURI_INVOKE("choose_and_adopt_root", { kind })),
+	/**  Let the author choose the parent and consume it while creating the project. */
+	chooseAndCreateProject: (name: string) => typedError<{
+	rootId: string,
+	backup: BackupStatus,
+	documents: DocumentRow[],
+} | null, RefrainError>(__TAURI_INVOKE("choose_and_create_project", { name })),
 	/**
 	 *  Open a document: bytes from disk, blocks from the byte-authoritative
 	 *  layout, the persisted revision chain resumed, and any journaled actions
@@ -65,12 +70,6 @@ export const commands = {
 	 *  empty string (INV-3's discipline).
 	 */
 	universalIcon: () => __TAURI_INVOKE<number[] | null>("universal_icon"),
-	/**
-	 *  Inject fixture candidates (debug builds only). The candidates freeze
-	 *  against the document's current head, exactly like a real Run's output
-	 *  will in C10.
-	 */
-	injectFixtureProposal: (rootId: string, path: string, replacements: FixtureReplacementDto[]) => typedError<ProposalDto[], RefrainError>(__TAURI_INVOKE("inject_fixture_proposal", { rootId, path, replacements })),
 	/**  Every candidate for a document, newest last, for the review surface. */
 	listProposals: (rootId: string, path: string) => typedError<ProposalDto[], RefrainError>(__TAURI_INVOKE("list_proposals", { rootId, path })),
 	/**
@@ -97,11 +96,11 @@ export const commands = {
 	/**  The built-in agent the ticket always offers (SPEC 8.3a's first row). */
 	l0FileChannelAgent: () => __TAURI_INVOKE<string>("l0_file_channel_agent"),
 	/**
-	 *  Every harness the app can dispatch to right now: detection only, no model
-	 *  call (SPEC: 测试连接只跑版本/能力探针）. Config-declared kimi connections
-	 *  win over PATH detection — the author's declaration is the authority.
+	 *  List the two adapter implementations this build can really dispatch.
+	 *  Discovery runs fixed, version-only probes for known program names. The
+	 *  renderer cannot add another name or path to this search space.
 	 */
-	listHarnesses: () => __TAURI_INVOKE<HarnessDto[]>("list_harnesses"),
+	listHarnesses: () => typedError<HarnessDto[], RefrainError>(__TAURI_INVOKE("list_harnesses")),
 	authorizeDispatch: (request: AuthorizeDispatchRequest) => typedError<RunDto[], RefrainError>(__TAURI_INVOKE("authorize_dispatch", { request })),
 	/**
 	 *  Launch one authorized run. L0's dispatch is the file becoming visible;
@@ -115,7 +114,10 @@ export const commands = {
 	harnessDispatch: (rootId: string, runId: string) => typedError<RunDto, RefrainError>(__TAURI_INVOKE("harness_dispatch", { rootId, runId })),
 	/**  The orchestration world as the surface renders it. */
 	hostState: (rootId: string) => typedError<HostStateDto, RefrainError>(__TAURI_INVOKE("host_state", { rootId })),
-	/**  Cancel a run that has not reached a terminal state. */
+	/**
+	 *  Cancel a run that has not reached a terminal state. A live producer must
+	 *  exit first; only then may the journal say `Cancelled`.
+	 */
 	cancelRun: (rootId: string, runId: string) => typedError<RunDto, RefrainError>(__TAURI_INVOKE("cancel_run", { rootId, runId })),
 	/**
 	 *  Retry is a new Run, queued, pointing at the old one (§8.4b). Its
@@ -150,35 +152,64 @@ export const commands = {
 } | null, RefrainError>(__TAURI_INVOKE("commit_material_action", { rootId, draftId, editedBody, dismiss })),
 	agentReadingLedger: (rootId: string) => typedError<AgentReadingDto_Serialize[], RefrainError>(__TAURI_INVOKE("agent_reading_ledger", { rootId })),
 	/**
-	 *  Register a harness connection in the one Config (SPEC 6.5). The exact
-	 *  executable answers `--version` before it is stored — a connection that
-	 *  cannot be probed is not registered. The C12 surface registers kimi only;
-	 *  other adapter kinds land with their adapters.
+	 *  Register one fixed PATH candidate. The renderer supplies a stable ID, not
+	 *  a program or path; Rust discovers, verifies, and canonicalizes it again.
 	 */
-	upsertHarnessConnection: (executable: string) => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("upsert_harness_connection", { executable })),
+	upsertHarnessConnection: (candidateId: string) => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("upsert_harness_connection", { candidateId })),
 	/**
 	 *  Remove a connection by id (SPEC 6.5). Trust evidence in app.db is not the
 	 *  author's parameter and is not touched here (Q24).
 	 */
 	removeHarnessConnection: (id: string) => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("remove_harness_connection", { id })),
+	/**  Re-check an existing Config connection. No path crosses the bridge. */
+	probeConnection: (connectionId: string) => typedError<string, RefrainError>(__TAURI_INVOKE("probe_connection", { connectionId })),
 	/**
-	 *  The Connections page's probe: argv-exact `--version`, nothing else (SPEC:
-	 *  测试连接只跑版本/能力探针，不调模型）.
+	 *  The native chooser and the import are one authority boundary: release IPC
+	 *  never receives a source path from the renderer.
 	 */
-	probeConnection: (executable: string) => typedError<string, RefrainError>(__TAURI_INVOKE("probe_connection", { executable })),
+	chooseAndImportMaterial: (rootId: string) => typedError<{
+	id: Id,
+	/**  Portable identity inside the Root: the relative path, `/`-joined. */
+	path: string,
+	role: DocumentRole,
+	digest: string | null,
 	/**
-	 *  Import one source file (PDF / EPUB / HTML / DOCX / PPTX / XLSX) as a
-	 *  Material (Plan C12.3). Extraction is local — no cloud conversion; the
-	 *  material opens with a provenance header pinning the source bytes, then
-	 *  the projected text. The manuscript editor stays Markdown-only.
+	 *  The confirmed revision id and the lineage it pairs with (SPEC 7.2
+	 *  crash recovery). Present after the first save or a continuity-safe open.
 	 */
-	importMaterial: (rootId: string, sourcePath: string) => typedError<DocumentRow, RefrainError>(__TAURI_INVOKE("import_material", { rootId, sourcePath })),
+	currentHead: string | null,
+	headBlockIds: string | null,
+} | null, RefrainError>(__TAURI_INVOKE("choose_and_import_material", { rootId })),
+	chooseAndImportManuscript: (rootId: string) => typedError<{
+	id: Id,
+	/**  Portable identity inside the Root: the relative path, `/`-joined. */
+	path: string,
+	role: DocumentRole,
+	digest: string | null,
 	/**
-	 *  Import one dropped text file (.md / .markdown / .txt) as a manuscript
-	 *  chapter. The source is only read — it never moves (KL9: 源文件永远不动);
-	 *  the chapter's own bytes are what the project edits from now on.
+	 *  The confirmed revision id and the lineage it pairs with (SPEC 7.2
+	 *  crash recovery). Present after the first save or a continuity-safe open.
 	 */
-	importManuscript: (rootId: string, sourcePath: string) => typedError<DocumentRow, RefrainError>(__TAURI_INVOKE("import_manuscript", { rootId, sourcePath })),
+	currentHead: string | null,
+	headBlockIds: string | null,
+} | null, RefrainError>(__TAURI_INVOKE("choose_and_import_manuscript", { rootId })),
+	/**
+	 *  A dropped path remains renderer-supplied, so Rust binds it to one explicit
+	 *  native confirmation before reading a byte.
+	 */
+	confirmAndImportDropped: (rootId: string, sourcePath: string, kind: DroppedImportKind) => typedError<{
+	id: Id,
+	/**  Portable identity inside the Root: the relative path, `/`-joined. */
+	path: string,
+	role: DocumentRole,
+	digest: string | null,
+	/**
+	 *  The confirmed revision id and the lineage it pairs with (SPEC 7.2
+	 *  crash recovery). Present after the first save or a continuity-safe open.
+	 */
+	currentHead: string | null,
+	headBlockIds: string | null,
+} | null, RefrainError>(__TAURI_INVOKE("confirm_and_import_dropped", { rootId, sourcePath, kind })),
 	listAgents: () => __TAURI_INVOKE<AgentDto[]>("list_agents"),
 	/**
 	 *  Create or update one Agent (SPEC 6.5: typed changes only). A connection
@@ -432,6 +463,8 @@ export type DocumentRow = {
 	headBlockIds: string | null,
 };
 
+export type DroppedImportKind = "manuscript" | "material";
+
 /**  The editor's settled input, as it crosses the bridge. */
 export type EditorActionDto = {
 	base: string,
@@ -467,15 +500,6 @@ export type FileStamp_Serialize = {
 	modifiedMs: string,
 	bytes: string,
 	digest: string,
-};
-
-/**
- *  One fixture replacement (debug builds only; SPEC R3: the fixture command
- *  is excluded from release).
- */
-export type FixtureReplacementDto = {
-	blocks: string[],
-	after: string | null,
 };
 
 /**
@@ -519,22 +543,17 @@ export type HarnessConnection = {
 	env_allow?: string[],
 };
 
-/**  One dispatchable harness as the ticket offers it. */
+/**  One supported local Agent tool. Executable paths never cross the bridge. */
 export type HarnessDto = {
-	agentId: string,
+	candidateId: string,
+	connectionId: string | null,
 	label: string,
-	version: string,
+	version: string | null,
 	tier: string,
-	probe: HarnessProbe,
+	status: HarnessStatus,
 };
 
-/**  A detected harness binary: path and version, nothing more. */
-export type HarnessProbe = {
-	id: string,
-	program: string,
-	version: string,
-	tier: Tier,
-};
+export type HarnessStatus = "connected" | "available" | "missing" | "needs-attention";
 
 /**  What the application can say about itself without touching anything. */
 export type HealthReport = {
@@ -928,20 +947,6 @@ export type ThemeInfoDto = {
 	cn: string,
 	mode: string,
 };
-
-/**
- *  Adapter capability tier (SPEC 8.3).
- * 
- *  Declared in R0 because the boundary it names is the one thing the host owes
- *  the rest of the workspace before its state machine exists.
- */
-export type Tier = 
-/**  A file channel: write a request, wait for a result. No launch, no cancel. */
-"l0" | 
-/**  An argv launch with completion and cancellation. */
-"l1" | 
-/**  Honest usage, effective model, compaction events. */
-"l2";
 
 /**
  *  A token count, three-stated (SPEC 2.3). `Unknown` is a first-class value

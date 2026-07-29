@@ -5,7 +5,10 @@
 //! from. The extracted text is a projection for reading and context, never a
 //! claim of byte fidelity (INV-5 covers manuscripts, not materials).
 
-use std::path::{Path, PathBuf};
+use std::{
+    io::Read as _,
+    path::{Path, PathBuf},
+};
 
 use refrain_core::{ErrorCode, RefrainError};
 use sha2::Digest as _;
@@ -13,6 +16,9 @@ use sha2::Digest as _;
 mod html;
 mod office;
 mod pdf;
+
+pub const MAX_SOURCE_BYTES: u64 = 128 * 1024 * 1024;
+pub const MAX_EXTRACTED_TEXT_BYTES: usize = 32 * 1024 * 1024;
 
 /// The six reference formats (Plan C12.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +59,53 @@ fn failure(action: &str, subject: impl Into<String>) -> RefrainError {
     RefrainError::new(ErrorCode::UnsupportedFormat, action, subject.into())
 }
 
+pub fn read_source(path: &Path) -> Result<Vec<u8>, RefrainError> {
+    let metadata = std::fs::metadata(path).map_err(|error| {
+        RefrainError::new(
+            ErrorCode::Io,
+            "inspect a source file",
+            path.display().to_string(),
+        )
+        .with_detail(error.to_string())
+    })?;
+    if metadata.len() > MAX_SOURCE_BYTES {
+        return Err(failure(
+            "read a source file",
+            format!(
+                "{} bytes exceeds the {} byte source limit",
+                metadata.len(),
+                MAX_SOURCE_BYTES
+            ),
+        ));
+    }
+    let file = std::fs::File::open(path).map_err(|error| {
+        RefrainError::new(
+            ErrorCode::Io,
+            "read a source file",
+            path.display().to_string(),
+        )
+        .with_detail(error.to_string())
+    })?;
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_SOURCE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| {
+            RefrainError::new(
+                ErrorCode::Io,
+                "read a source file",
+                path.display().to_string(),
+            )
+            .with_detail(error.to_string())
+        })?;
+    if bytes.len() as u64 > MAX_SOURCE_BYTES {
+        return Err(failure(
+            "read a source file",
+            format!("source grew beyond the {MAX_SOURCE_BYTES} byte limit"),
+        ));
+    }
+    Ok(bytes)
+}
+
 /// Read and project one source file. The format is named by the extension
 /// and proven by the bytes: a zip container must carry the member its
 /// claimed family requires, and a PDF must start with its magic.
@@ -62,14 +115,7 @@ pub fn ingest(path: &Path) -> Result<IngestedMaterial, RefrainError> {
         .and_then(|ext| ext.to_str())
         .map(str::to_ascii_lowercase)
         .unwrap_or_default();
-    let bytes = std::fs::read(path).map_err(|error| {
-        RefrainError::new(
-            ErrorCode::Io,
-            "read a source file",
-            path.display().to_string(),
-        )
-        .with_detail(error.to_string())
-    })?;
+    let bytes = read_source(path)?;
     let digest = format!("{:x}", sha2::Sha256::digest(&bytes));
     let title = path
         .file_stem()
@@ -93,6 +139,15 @@ pub fn ingest(path: &Path) -> Result<IngestedMaterial, RefrainError> {
             ));
         }
     };
+    if text.len() > MAX_EXTRACTED_TEXT_BYTES {
+        return Err(failure(
+            "ingest a material source",
+            format!(
+                "projected text is {} bytes; limit is {MAX_EXTRACTED_TEXT_BYTES}",
+                text.len()
+            ),
+        ));
+    }
     Ok(IngestedMaterial {
         format,
         title,
@@ -155,11 +210,24 @@ pub(crate) fn normalize(text: &str) -> String {
         }
         lines.push(squeezed);
     }
-    while lines.first().is_some_and(String::is_empty) {
-        lines.remove(0);
-    }
+    let first = lines
+        .iter()
+        .position(|line| !line.is_empty())
+        .unwrap_or(lines.len());
+    lines.drain(..first);
     while lines.last().is_some_and(String::is_empty) {
         lines.pop();
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn leading_empty_lines_are_removed_in_one_pass() {
+        let source = format!("{}text", "\n".repeat(10_000));
+        assert_eq!(normalize(&source), "text");
+    }
 }

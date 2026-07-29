@@ -11,12 +11,29 @@
 use lopdf::{Document, Object, content::Content};
 use refrain_core::{ErrorCode, RefrainError};
 
+const MAX_PDF_PAGES: usize = 10_000;
+const MAX_PDF_PAGE_CONTENT_BYTES: usize = 16 * 1024 * 1024;
+const MAX_PDF_CONTENT_BYTES: usize = 64 * 1024 * 1024;
+const MAX_PDF_FRAGMENTS: usize = 2_000_000;
+
 /// One shown text run, with the baseline it sits on.
 struct Fragment {
     page: u32,
     x: f32,
     y: f32,
     text: String,
+}
+
+fn push_fragment(fragments: &mut Vec<Fragment>, fragment: Fragment) -> Result<(), RefrainError> {
+    if fragments.len() == MAX_PDF_FRAGMENTS {
+        return Err(RefrainError::new(
+            ErrorCode::UnsupportedFormat,
+            "ingest a PDF",
+            format!("more than {MAX_PDF_FRAGMENTS} text fragments"),
+        ));
+    }
+    fragments.push(fragment);
+    Ok(())
 }
 
 fn number(object: &Object) -> f32 {
@@ -45,8 +62,20 @@ fn decode_text(object: &Object) -> String {
 /// The PDF text-showing operators and the positioning that gives each run
 /// its baseline. Everything else in the stream is not text.
 fn fragments_of(document: &Document) -> Result<Vec<Fragment>, RefrainError> {
+    let pages = document.get_pages();
+    if pages.len() > MAX_PDF_PAGES {
+        return Err(RefrainError::new(
+            ErrorCode::UnsupportedFormat,
+            "ingest a PDF",
+            format!(
+                "{} pages exceeds the {MAX_PDF_PAGES} page limit",
+                pages.len()
+            ),
+        ));
+    }
+    let mut content_bytes = 0_usize;
     let mut fragments = Vec::new();
-    for (page, page_id) in document.get_pages() {
+    for (page, page_id) in pages {
         let content = document.get_page_content(page_id).map_err(|error| {
             RefrainError::new(
                 ErrorCode::UnsupportedFormat,
@@ -55,6 +84,27 @@ fn fragments_of(document: &Document) -> Result<Vec<Fragment>, RefrainError> {
             )
             .with_detail(error.to_string())
         })?;
+        if content.len() > MAX_PDF_PAGE_CONTENT_BYTES {
+            return Err(RefrainError::new(
+                ErrorCode::UnsupportedFormat,
+                "read a PDF page",
+                format!("{page}: decoded content exceeds {MAX_PDF_PAGE_CONTENT_BYTES} bytes"),
+            ));
+        }
+        content_bytes = content_bytes.checked_add(content.len()).ok_or_else(|| {
+            RefrainError::new(
+                ErrorCode::UnsupportedFormat,
+                "ingest a PDF",
+                "decoded content size overflow",
+            )
+        })?;
+        if content_bytes > MAX_PDF_CONTENT_BYTES {
+            return Err(RefrainError::new(
+                ErrorCode::UnsupportedFormat,
+                "ingest a PDF",
+                format!("decoded content exceeds {MAX_PDF_CONTENT_BYTES} bytes"),
+            ));
+        }
         let content = Content::decode(&content).map_err(|error| {
             RefrainError::new(
                 ErrorCode::UnsupportedFormat,
@@ -69,28 +119,42 @@ fn fragments_of(document: &Document) -> Result<Vec<Fragment>, RefrainError> {
         for operation in &content.operations {
             match operation.operator.as_str() {
                 "Td" | "TD" => {
-                    x += number(&operation.operands[0]);
-                    y += number(&operation.operands[1]);
+                    let [dx, dy, ..] = operation.operands.as_slice() else {
+                        continue;
+                    };
+                    x += number(dx);
+                    y += number(dy);
                     if operation.operator == "TD" {
-                        leading = -number(&operation.operands[1]);
+                        leading = -number(dy);
                     }
                 }
                 "Tm" => {
-                    x = number(&operation.operands[4]);
-                    y = number(&operation.operands[5]);
+                    let [_, _, _, _, next_x, next_y, ..] = operation.operands.as_slice() else {
+                        continue;
+                    };
+                    x = number(next_x);
+                    y = number(next_y);
                 }
-                "TL" => leading = number(&operation.operands[0]),
+                "TL" => {
+                    let Some(value) = operation.operands.first() else {
+                        continue;
+                    };
+                    leading = number(value);
+                }
                 "T*" => y -= leading,
                 "Tj" | "'" => {
                     let Some(object) = operation.operands.first() else {
                         continue;
                     };
-                    fragments.push(Fragment {
-                        page,
-                        x,
-                        y,
-                        text: decode_text(object),
-                    });
+                    push_fragment(
+                        &mut fragments,
+                        Fragment {
+                            page,
+                            x,
+                            y,
+                            text: decode_text(object),
+                        },
+                    )?;
                 }
                 "TJ" => {
                     let Some(Object::Array(items)) = operation.operands.first() else {
@@ -105,7 +169,7 @@ fn fragments_of(document: &Document) -> Result<Vec<Fragment>, RefrainError> {
                             _ => {}
                         }
                     }
-                    fragments.push(Fragment { page, x, y, text });
+                    push_fragment(&mut fragments, Fragment { page, x, y, text })?;
                 }
                 _ => {}
             }
@@ -167,10 +231,9 @@ pub fn extract(bytes: &[u8]) -> Result<String, RefrainError> {
 mod tests {
     use super::*;
 
-    /// A minimal but well-formed PDF: correct xref offsets, one page, three
-    /// text lines plus a TJ array with a word gap and a UTF-16BE string.
-    fn fixture() -> Vec<u8> {
-        let stream = "BT /F1 24 Tf 14 TL 72 700 Td (Hello RefRain) Tj T* [(sum) -300 (atra)] TJ T* <FEFF4F60597D> Tj ET";
+    /// A minimal but well-formed PDF: correct xref offsets, one page, and a
+    /// caller-supplied content stream.
+    fn fixture_with_stream(stream: &str) -> Vec<u8> {
         let objects = [
             "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
             "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
@@ -198,6 +261,18 @@ mod tests {
             .bytes(),
         );
         out
+    }
+
+    fn fixture() -> Vec<u8> {
+        fixture_with_stream(
+            "BT /F1 24 Tf 14 TL 72 700 Td (Hello RefRain) Tj T* [(sum) -300 (atra)] TJ T* <FEFF4F60597D> Tj ET",
+        )
+    }
+
+    #[test]
+    fn malformed_position_operators_do_not_panic() {
+        let text = extract(&fixture_with_stream("BT Td TD Tm TL (safe) Tj ET")).unwrap();
+        assert!(text.contains("safe"), "{text}");
     }
 
     #[test]

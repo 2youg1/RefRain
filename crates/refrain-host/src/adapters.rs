@@ -103,7 +103,59 @@ pub fn find_on_path(name: &str) -> Option<PathBuf> {
     None
 }
 
-fn version_of(program: &std::path::Path) -> io::Result<String> {
+fn is_version_number(value: &str) -> bool {
+    let core = value
+        .trim_start_matches('v')
+        .split_once(['-', '+'])
+        .map_or(value.trim_start_matches('v'), |(core, _)| core);
+    let parts: Vec<&str> = core.split('.').collect();
+    parts.len() >= 2
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+fn validate_version(
+    program: &std::path::Path,
+    identity: &str,
+    outcome: ProcessOutcome,
+) -> io::Result<String> {
+    if outcome.code != Some(0) {
+        return Err(io::Error::other(format!(
+            "{} --version exited {:?}: {}",
+            program.display(),
+            outcome.code,
+            outcome.stderr.trim()
+        )));
+    }
+    let version = if outcome.stdout.trim().is_empty() {
+        outcome.stderr.trim()
+    } else {
+        outcome.stdout.trim()
+    };
+    if version.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{} --version returned no identity", program.display()),
+        ));
+    }
+    let name_matches = program
+        .file_stem()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|name| name.eq_ignore_ascii_case(identity));
+    if !version.to_lowercase().contains(identity) && !(name_matches && is_version_number(version)) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "{} did not identify itself as {identity}: {version}",
+                program.display()
+            ),
+        ));
+    }
+    Ok(version.to_string())
+}
+
+fn version_of(program: &std::path::Path, identity: &str) -> io::Result<String> {
     let outcome = process::launch(&LaunchSpec {
         program: program.to_path_buf(),
         args: vec!["--version".to_string()],
@@ -112,7 +164,14 @@ fn version_of(program: &std::path::Path) -> io::Result<String> {
         stdin_piped: false,
     })?
     .wait()?;
-    Ok(outcome.stdout.trim().to_string())
+    validate_version(program, identity, outcome)
+}
+
+fn allowed_env(names: &[String]) -> Vec<(String, String)> {
+    names
+        .iter()
+        .filter_map(|name| std::env::var(name).ok().map(|value| (name.clone(), value)))
+        .collect()
 }
 
 /// Kimi Code print mode (L1): `kimi -p <prompt> --output-format stream-json`.
@@ -121,21 +180,30 @@ fn version_of(program: &std::path::Path) -> io::Result<String> {
 pub struct KimiPrint {
     program: PathBuf,
     version: String,
+    env: Vec<(String, String)>,
 }
 
 impl KimiPrint {
     /// Detect the CLI and read its version. Absent is None, never an error.
     pub fn detect() -> Option<Self> {
         let program = find_on_path("kimi")?;
-        let version = version_of(&program).ok()?;
-        Some(Self { program, version })
+        Self::at(program)
     }
 
     /// The connection the author declared in Config: probe that exact
     /// executable, never a PATH lookup.
     pub fn at(program: PathBuf) -> Option<Self> {
-        let version = version_of(&program).ok()?;
-        Some(Self { program, version })
+        Self::at_with_env(program, &[])
+    }
+
+    pub fn at_with_env(program: PathBuf, env_allow: &[String]) -> Option<Self> {
+        let version = version_of(&program, "kimi").ok()?;
+        let program = program.canonicalize().ok()?;
+        Some(Self {
+            program,
+            version,
+            env: allowed_env(env_allow),
+        })
     }
 
     #[must_use]
@@ -225,7 +293,7 @@ impl HarnessAdapter for KimiPrint {
                 "--output-format".to_string(),
                 "stream-json".to_string(),
             ],
-            env: vec![],
+            env: self.env.clone(),
             cwd: spec.workspace.clone(),
             stdin_piped: false,
         })?;
@@ -277,10 +345,22 @@ mod tests {
     /// Contract tests run live only when the CLI is on PATH; absence is a
     /// skip with a note, not a failure (CI has no harnesses installed).
     fn kimi() -> Option<KimiPrint> {
-        KimiPrint::detect().or_else(|| {
-            eprintln!("skipped: kimi CLI not on PATH");
-            None
-        })
+        let env_allow = std::env::var("REFRAIN_HARNESS_ENV_ALLOW")
+            .ok()
+            .map(|value| {
+                value
+                    .split(',')
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        find_on_path("kimi")
+            .and_then(|program| KimiPrint::at_with_env(program, &env_allow))
+            .or_else(|| {
+                eprintln!("skipped: kimi CLI not on PATH");
+                None
+            })
     }
 
     fn spec(text: &str) -> DispatchSpec {
@@ -288,6 +368,83 @@ mod tests {
             run_id: Id::new(),
             workspace: std::env::temp_dir(),
             request_md: text.to_string(),
+        }
+    }
+
+    #[test]
+    fn connection_environment_is_explicitly_selected() {
+        let names = vec![
+            "PATH".to_string(),
+            "REFRAIN_TEST_ENV_THAT_MUST_NOT_EXIST".to_string(),
+        ];
+        let selected = allowed_env(&names);
+        assert!(selected.iter().any(|(name, _)| name == "PATH"));
+        assert!(
+            selected
+                .iter()
+                .all(|(name, _)| name != "REFRAIN_TEST_ENV_THAT_MUST_NOT_EXIST")
+        );
+    }
+
+    #[test]
+    fn version_checks_exit_output_and_adapter_identity() {
+        let program = std::path::Path::new("/fixture/kimi");
+        assert_eq!(
+            validate_version(
+                program,
+                "kimi",
+                ProcessOutcome {
+                    code: Some(0),
+                    stdout: "kimi, version 1.2.3\n".to_string(),
+                    stderr: String::new(),
+                },
+            )
+            .unwrap(),
+            "kimi, version 1.2.3"
+        );
+        assert_eq!(
+            validate_version(
+                program,
+                "kimi",
+                ProcessOutcome {
+                    code: Some(0),
+                    stdout: "0.30.0\n".to_string(),
+                    stderr: String::new(),
+                },
+            )
+            .unwrap(),
+            "0.30.0"
+        );
+        assert!(
+            validate_version(
+                std::path::Path::new("/fixture/not-kimi"),
+                "kimi",
+                ProcessOutcome {
+                    code: Some(0),
+                    stdout: "0.30.0".to_string(),
+                    stderr: String::new(),
+                },
+            )
+            .is_err()
+        );
+        for outcome in [
+            ProcessOutcome {
+                code: Some(7),
+                stdout: "kimi 1.2.3".to_string(),
+                stderr: "refused".to_string(),
+            },
+            ProcessOutcome {
+                code: Some(0),
+                stdout: String::new(),
+                stderr: String::new(),
+            },
+            ProcessOutcome {
+                code: Some(0),
+                stdout: "not-the-requested-program 1.2.3".to_string(),
+                stderr: String::new(),
+            },
+        ] {
+            assert!(validate_version(program, "kimi", outcome).is_err());
         }
     }
 
@@ -424,13 +581,37 @@ mod tests {
 pub struct ClaudePrint {
     program: PathBuf,
     version: String,
+    env: Vec<(String, String)>,
 }
 
 impl ClaudePrint {
     pub fn detect() -> Option<Self> {
         let program = find_on_path("claude")?;
-        let version = version_of(&program).ok()?;
-        Some(Self { program, version })
+        Self::at(program)
+    }
+
+    pub fn at(program: PathBuf) -> Option<Self> {
+        Self::at_with_env(program, &[])
+    }
+
+    pub fn at_with_env(program: PathBuf, env_allow: &[String]) -> Option<Self> {
+        let version = version_of(&program, "claude").ok()?;
+        let program = program.canonicalize().ok()?;
+        Some(Self {
+            program,
+            version,
+            env: allowed_env(env_allow),
+        })
+    }
+
+    #[must_use]
+    pub fn program(&self) -> &PathBuf {
+        &self.program
+    }
+
+    #[must_use]
+    pub fn version(&self) -> &str {
+        &self.version
     }
 }
 
@@ -578,7 +759,7 @@ impl HarnessAdapter for ClaudePrint {
                 "stream-json".to_string(),
                 "--verbose".to_string(),
             ],
-            env: vec![],
+            env: self.env.clone(),
             cwd: spec.workspace.clone(),
             stdin_piped: false,
         })?;

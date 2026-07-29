@@ -163,19 +163,26 @@ const run = async (): Promise<void> => {
     `window["refrain.e2e.pick"] = ${JSON.stringify(fixture)}; window["refrain.e2e.pin"] = true; "planted"`,
   );
 
-  const adopted = (await invoke("adopt_root", { path: fixture, kind: "folder" })) as {
+  const adopted = (await invoke("debug_adopt_root", { path: fixture, kind: "folder" })) as {
     rootId: string;
   };
   const rootId = adopted.rootId;
 
-  // The real CLI must be detected.
+  // The real CLI must be detected by its fixed candidate id. Other installed
+  // tools may also appear, so this test never assumes a one-item catalog.
   const harnesses = (await invoke("list_harnesses", {})) as {
-    agentId: string;
-    version: string;
+    candidateId: string;
+    connectionId: string | null;
+    status: "connected" | "available" | "missing" | "needs-attention";
+    version: string | null;
   }[];
-  check("the real kimi is detected", harnesses.length === 1, harnesses.length);
-  const kimiAgent = harnesses[0]?.agentId ?? "";
-  console.log(`kimi version: ${harnesses[0]?.version ?? "?"}`);
+  const detectedKimi = harnesses.find((harness) => harness.candidateId === "kimi-code");
+  check(
+    "the real kimi is detected",
+    detectedKimi?.status === "available" || detectedKimi?.status === "connected",
+    detectedKimi?.status ?? "absent",
+  );
+  console.log(`kimi version: ${detectedKimi?.version ?? "?"}`);
 
   await clickButton("打开文件夹");
   await clickButton("长章.md");
@@ -191,6 +198,71 @@ const run = async (): Promise<void> => {
     [],
   );
   await invoke("persist_revision", { rootId, path: "长章.md", expected: null });
+
+  // Exercise the visible, nontechnical path. Detection alone is not a
+  // connection, and a machine connection is not an Agent: the author first
+  // connects Kimi, then gives one writing partner a name.
+  await clickButton("连接");
+  await waitFor("the Connections surface", async () =>
+    Boolean(await execute(`return document.querySelector(".connections") !== null`)),
+  );
+  const clickedConnect = await execute(`
+    const card = [...document.querySelectorAll(".tool-card")]
+      .find((node) => node.textContent?.includes("Kimi Code"));
+    const button = card?.querySelector("button.primary");
+    if (!(button instanceof HTMLButtonElement)) return false;
+    button.click();
+    return true;
+  `);
+  check("the Kimi connect action is visible", clickedConnect === true, clickedConnect);
+  await waitFor("Kimi to become connected", async () => {
+    const catalog = (await invoke("list_harnesses", {})) as {
+      candidateId: string;
+      connectionId: string | null;
+      status: string;
+    }[];
+    return catalog.some(
+      (harness) =>
+        harness.candidateId === "kimi-code" &&
+        harness.status === "connected" &&
+        harness.connectionId !== null,
+    );
+  });
+  await execute(`
+    const name = document.querySelector("input.conn-input");
+    const channel = document.querySelector("select.conn-input");
+    const brief = document.querySelector("textarea.partner-brief");
+    if (!(name instanceof HTMLInputElement) ||
+        !(channel instanceof HTMLSelectElement) ||
+        !(brief instanceof HTMLTextAreaElement)) return false;
+    name.value = "真实 Kimi";
+    name.dispatchEvent(new Event("input", { bubbles: true }));
+    const option = [...channel.options].find((entry) => entry.text.includes("Kimi Code"));
+    if (option === undefined) return false;
+    channel.value = option.value;
+    channel.dispatchEvent(new Event("change", { bubbles: true }));
+    brief.value = "只改写所选段落；返回协议要求的提案，不直接修改原稿。";
+    brief.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  `);
+  await waitFor("the writing-partner action", async () =>
+    Boolean(
+      await execute(`
+        const button = [...document.querySelectorAll("button")]
+          .find((node) => node.textContent?.includes("添加写作伙伴"));
+        return button instanceof HTMLButtonElement && !button.disabled;
+      `),
+    ),
+  );
+  await clickButton("添加写作伙伴");
+  await waitFor("the named Kimi partner", async () => {
+    const current = (await invoke("list_agents", {})) as { id: string; name: string }[];
+    return current.some((agent) => agent.name === "真实 Kimi");
+  });
+  const agents = (await invoke("list_agents", {})) as { id: string; name: string }[];
+  const kimiAgent = agents.find((agent) => agent.name === "真实 Kimi")?.id ?? "";
+  check("the named Kimi partner was created", kimiAgent.length > 0, agents.length);
+  await clickButton("返回手稿");
 
   await clickButton("派发");
   await waitFor("the agent dropdown", async () =>
