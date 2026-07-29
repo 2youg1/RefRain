@@ -16,7 +16,7 @@
       "owner": "desktop",
       "disposition": {
         "kind": "blocked",
-        "checkpoint": "C10"
+        "checkpoint": "C11"
       }
     },
     {
@@ -127,8 +127,13 @@
       "legacy": "legacy/apps/desktop/test/ipc-payload.test.ts",
       "owner": "desktop",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C10"
+        "kind": "owned-by",
+        "tests": [
+          "crates/refrain-host/src/host.rs",
+          "crates/refrain-host/src/staging.rs",
+          "crates/refrain-store/src/orchestration.rs",
+          "apps/desktop/e2e/dispatch-loop.ts"
+        ]
       }
     },
     {
@@ -200,7 +205,7 @@
       "owner": "desktop",
       "disposition": {
         "kind": "blocked",
-        "checkpoint": "C10"
+        "checkpoint": "C11"
       }
     },
     {
@@ -311,16 +316,26 @@
       "legacy": "legacy/packages/agent/test/host-state.test.ts",
       "owner": "agent-host",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C10"
+        "kind": "owned-by",
+        "tests": [
+          "crates/refrain-host/src/host.rs",
+          "crates/refrain-host/src/staging.rs",
+          "crates/refrain-store/src/orchestration.rs",
+          "apps/desktop/e2e/dispatch-loop.ts"
+        ]
       }
     },
     {
       "legacy": "legacy/packages/agent/test/host.test.ts",
       "owner": "agent-host",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C10"
+        "kind": "owned-by",
+        "tests": [
+          "crates/refrain-host/src/host.rs",
+          "crates/refrain-host/src/staging.rs",
+          "crates/refrain-store/src/orchestration.rs",
+          "apps/desktop/e2e/dispatch-loop.ts"
+        ]
       }
     },
     {

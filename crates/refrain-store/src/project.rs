@@ -253,7 +253,7 @@ fn file_system_identity(path: &Path) -> io::Result<String> {
 pub struct ProjectStore {
     permit: RootPermit,
     layout: RootLayout,
-    db: Connection,
+    pub(crate) db: Connection,
 }
 
 impl ProjectStore {
@@ -431,6 +431,12 @@ impl ProjectStore {
     #[must_use]
     pub fn permit(&self) -> &RootPermit {
         &self.permit
+    }
+
+    /// The on-disk layout: the host's staging and Run workspaces root at
+    /// `state_dir` (SPEC 6.3).
+    pub fn layout(&self) -> &RootLayout {
+        &self.layout
     }
 
     /// A frozen candidate (SPEC 9.7). `after_text` NULL is a deletion.

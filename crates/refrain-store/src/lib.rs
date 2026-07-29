@@ -11,6 +11,7 @@ pub mod config;
 pub mod files;
 pub mod icons;
 pub mod ledger;
+pub mod orchestration;
 pub mod project;
 pub mod root;
 pub mod schema;

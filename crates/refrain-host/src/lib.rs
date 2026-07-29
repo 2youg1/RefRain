@@ -6,6 +6,9 @@
 
 #![forbid(unsafe_code)]
 
+pub mod host;
+pub mod staging;
+
 /// Adapter capability tier (SPEC 8.3).
 ///
 /// Declared in R0 because the boundary it names is the one thing the host owes

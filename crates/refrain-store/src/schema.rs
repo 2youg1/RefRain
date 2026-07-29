@@ -203,6 +203,38 @@ impl Database for ProjectDb {
                     )
                 },
             },
+            Migration {
+                version: SchemaVersion(4),
+                name: "orchestration",
+                apply: |tx| {
+                    // Orchestration truth (SPEC 8.1, 6.3): Task, Run,
+                    // Authorization. The entity column carries the whole fact
+                    // as JSON; the named columns exist because the rail and
+                    // the recovery view query by them.
+                    tx.execute_batch(
+                        "CREATE TABLE tasks (
+                             id            TEXT PRIMARY KEY,
+                             baseline      TEXT NOT NULL,
+                             progress_kind TEXT NOT NULL,
+                             entity        TEXT NOT NULL
+                         ) STRICT;
+                         CREATE TABLE runs (
+                             id            TEXT PRIMARY KEY,
+                             task_id       TEXT NOT NULL REFERENCES tasks(id),
+                             agent_id      TEXT NOT NULL,
+                             progress_kind TEXT NOT NULL,
+                             retry_of      TEXT,
+                             entity        TEXT NOT NULL
+                         ) STRICT;
+                         CREATE TABLE authorizations (
+                             id              TEXT PRIMARY KEY,
+                             manifest_digest TEXT NOT NULL,
+                             authorized_at   INTEGER NOT NULL,
+                             entity          TEXT NOT NULL
+                         ) STRICT;",
+                    )
+                },
+            },
         ]
     }
 }
