@@ -703,7 +703,7 @@ export type PaperMode = "none" | "hairline" | "paper";
  *  The preferences the Settings surface may change (SPEC 6.5). Connection
  *  management is its own command pair; this is the author's choices.
  */
-export type PreferencesChangeDto = { kind: "karaAutoEnter"; value: boolean } | { kind: "setTheme"; value: string } | { kind: "setPaper"; value: PaperMode } | { kind: "setFontFamily"; value: {
+export type PreferencesChangeDto = { kind: "karaAutoEnter"; value: boolean } | { kind: "setTheme"; value: string } | { kind: "setPaper"; value: PaperMode } | { kind: "setTextSize"; value: number } | { kind: "setLineHeight"; value: number } | { kind: "setFontFamily"; value: {
 	slot: FontSlot,
 	family: string,
 } } | { kind: "setFontPriority"; value: [FontSlot, FontSlot, FontSlot] };
