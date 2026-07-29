@@ -15,8 +15,8 @@
       "legacy": "legacy/apps/desktop/test/agent-ipc.test.ts",
       "owner": "desktop",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C12"
+        "kind": "intentionally-retired",
+        "authority": "SPEC D5"
       }
     },
     {
@@ -204,8 +204,8 @@
       "legacy": "legacy/apps/desktop/test/roster.test.ts",
       "owner": "desktop",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C12"
+        "kind": "owned-by",
+        "tests": ["crates/refrain-store/src/config.rs", "apps/desktop/e2e/dispatch-loop.ts"]
       }
     },
     {

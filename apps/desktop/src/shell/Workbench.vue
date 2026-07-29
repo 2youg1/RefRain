@@ -18,6 +18,7 @@ import {
   type ProjectOpenedDto,
 } from "../generated/bindings.gen";
 import ConflictDialog from "./ConflictDialog.vue";
+import ConnectionsSurface from "./ConnectionsSurface.vue";
 import DispatchSurface from "./DispatchSurface.vue";
 import IconPicker from "./IconPicker.vue";
 import KaraSurface from "./KaraSurface.vue";
@@ -44,6 +45,7 @@ const conflict = ref<{ mine: string; theirs: string; stamp: FileStamp_Serialize 
 const editor = ref<InstanceType<typeof EditorHost> | null>(null);
 const reviewing = ref(false);
 const dispatching = ref(false);
+const connecting = ref(false);
 const kara = useKara();
 
 /** The caret as a ReturnPoint: block id, offset, and the sentence tail the
@@ -267,6 +269,9 @@ const onKeydown = (event: KeyboardEvent): void => {
         <button v-if="active && !reviewing" type="button" @click="dispatching = !dispatching">
           {{ dispatching ? "收起" : "派发" }}
         </button>
+        <button type="button" @click="connecting = !connecting">
+          {{ connecting ? "收起" : "连接" }}
+        </button>
         <ul>
           <li v-for="row in documents" :key="row.id">
             <button
@@ -312,6 +317,7 @@ const onKeydown = (event: KeyboardEvent): void => {
             @material-saved="onMaterialSaved"
             @closed="dispatching = false"
           />
+          <ConnectionsSurface v-if="connecting" @closed="connecting = false" />
         </div>
         <p v-else class="empty">从左侧选一个文档，或新建一章。</p>
       </main>
