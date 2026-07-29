@@ -1,10 +1,14 @@
 <script setup lang="ts">
 // App.vue mounts and provides. It holds no state machine and coordinates
 // nothing (SPEC 9.10); a gate fails the build past 120 lines.
+
+import { listen } from "@tauri-apps/api/event";
 import { onMounted, ref, watch } from "vue";
 import { unwrap } from "./bridge";
+import { manuscriptStack } from "./fonts";
 import { commands } from "./generated/bindings.gen";
 import Workbench from "./shell/Workbench.vue";
+import "./fonts.css";
 import "./themes.css";
 
 const theme = ref("tou");
@@ -19,14 +23,23 @@ watch(
   { immediate: true },
 );
 
-onMounted(async () => {
+const applyConfig = async (): Promise<void> => {
   try {
     const snapshot = await unwrap(commands.readConfig());
     theme.value = snapshot.config.appearance.theme;
+    document.documentElement.style.setProperty(
+      "--manuscript-family",
+      manuscriptStack(snapshot.config.appearance.fonts),
+    );
   } catch {
     // A damaged Config is the Settings surface's story to tell, not a reason
     // the author cannot write today (SPEC 10.1).
   }
+};
+
+onMounted(async () => {
+  await listen("config-changed", () => void applyConfig());
+  await applyConfig();
 });
 </script>
 

@@ -789,11 +789,17 @@ fn list_themes() -> Vec<ThemeInfoDto> {
 pub enum PreferencesChangeDto {
     KaraAutoEnter(bool),
     SetTheme(String),
+    SetFontFamily {
+        slot: refrain_store::config::FontSlot,
+        family: String,
+    },
+    SetFontPriority([refrain_store::config::FontSlot; 3]),
 }
 
 #[tauri::command]
 #[specta::specta]
 fn update_preferences(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     change: PreferencesChangeDto,
 ) -> Result<refrain_store::config::ConfigSnapshot, RefrainError> {
@@ -811,6 +817,12 @@ fn update_preferences(
             }
             refrain_store::config::ConfigChange::SetTheme(theme)
         }
+        PreferencesChangeDto::SetFontFamily { slot, family } => {
+            refrain_store::config::ConfigChange::SetFontFamily { slot, family }
+        }
+        PreferencesChangeDto::SetFontPriority(priority) => {
+            refrain_store::config::ConfigChange::SetFontPriority(priority)
+        }
     };
     let store = state.config.as_ref().ok_or_else(|| {
         let notice = state.config_notice.lock().ok().and_then(|n| n.clone());
@@ -820,9 +832,15 @@ fn update_preferences(
             notice.unwrap_or_default(),
         )
     })?;
-    store.apply(change).map_err(|failure| {
+    let snapshot = store.apply(change).map_err(|failure| {
         RefrainError::new(ErrorCode::Io, "write the Config", failure.to_string())
-    })
+    })?;
+    // One broadcast per accepted change: the Settings surface that wrote it
+    // is not the only listener (INV-10/15: the fact has one owner and every
+    // projection hears it from there, not from a sibling surface).
+    use tauri::Emitter;
+    let _ = app.emit("config-changed", &snapshot.config.appearance.theme);
+    Ok(snapshot)
 }
 
 /// The effective Config, or the refusal the Settings surface must show.
