@@ -146,6 +146,16 @@ const newDocument = async (role: "chapter" | "material"): Promise<void> => {
   }
 };
 
+// A saved material draft joins the bookshelf; the ticket's materials list
+// derives from it.
+const onMaterialSaved = (row: DocumentRow): void => {
+  if (!project.value) return;
+  project.value = {
+    ...project.value,
+    documents: [...project.value.documents, row],
+  };
+};
+
 const save = async (): Promise<void> => {
   if (!project.value || !active.value) return;
   // A save mid-composition is deferred, not refused (INV-7).
@@ -299,6 +309,7 @@ const onKeydown = (event: KeyboardEvent): void => {
             :blocks="active.blocks"
             :materials="materialDocs"
             @collected="(count: number) => (notice = `${count} 条提案已冻结，点 Review 逐句裁决。`)"
+            @material-saved="onMaterialSaved"
             @closed="dispatching = false"
           />
         </div>

@@ -10,11 +10,11 @@
  * Run: `bun apps/desktop/e2e/dispatch-loop.ts <path-to-refrain.exe>`.
  */
 
+import { Database } from "bun:sqlite";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -601,6 +601,178 @@ const run = async (): Promise<void> => {
     "utf8",
   );
   check("the landed result carries the agent-result", landed.includes("<agent-result"));
+
+  // ── The material-draft chain (SPEC 8.7): artifact → draft rows → the only
+  // Human Material Action → a Material document → ticked into the next
+  // frozen request. ──
+  await clickButton("再发");
+  // The harness section left the fake kimi selected; this chain hand-writes
+  // its result, so it goes through the L0 file channel.
+  const l0Agent = (await invoke("l0_file_channel_agent", {})) as string;
+  await execute(
+    `const s = document.querySelector(".dispatch-agent");
+     s.value = ${JSON.stringify(l0Agent)};
+     s.dispatchEvent(new Event("change", { bubbles: true }));`,
+    [],
+  );
+  await tickBlock(1);
+  await setPrompt("为这一章写一张人物卡。");
+  await clickButton("送出");
+  await waitFor("the material manifest", async () =>
+    Boolean(await execute(`return document.querySelector(".manifest") !== null`)),
+  );
+  await clickButton("授权");
+  await waitFor("the material run to dispatch", async () => {
+    const s = await hostState(rootId);
+    return s.runs.filter((r) => r.progress === "dispatched").length === 1;
+  });
+  state = await hostState(rootId);
+  const matRun = state.runs.find((r) => r.progress === "dispatched");
+  if (matRun === undefined) throw new Error("no dispatched material run");
+  // The basis ref must name the store's current head: persist first so the
+  // manuscript head and the stored current_head are the same revision.
+  await invoke("persist_revision", { rootId, path: "长章.md", expected: null });
+  const revForBasis = (await invoke("current_document", { rootId, path: "长章.md" })) as {
+    revision: string;
+  };
+  const basisRef = `长章.md@${revForBasis.revision}`;
+  writeResult(
+    matRun.workspace,
+    matRun.id,
+    `<agent-result version="2">
+  <material-draft kind="character-profile" title="林栖迟">
+    <basis ref="${basisRef}" />
+    <body><![CDATA[她说话很省。
+
+遇事先做，再说话。]]></body>
+  </material-draft>
+  <material-draft kind="concept-explanation" title="克制">
+    <basis ref="${basisRef}" />
+    <body><![CDATA[删掉形容词。]]></body>
+  </material-draft>
+</agent-result>
+`,
+  );
+  await clickButton("收取");
+  await waitFor("the material run to complete", async () => {
+    const s = await hostState(rootId);
+    return s.runs.find((r) => r.id === matRun.id)?.progress === "completed";
+  });
+  const drafts = (await invoke("list_material_drafts", { rootId })) as {
+    id: string;
+    title: string;
+  }[];
+  check(
+    "the artifact landed two material drafts",
+    drafts.length === 2 && drafts[0]?.title === "林栖迟",
+    drafts.map((draft) => draft.title),
+  );
+  const docsNow = (): { path: string; role: string }[] => {
+    // Disk truth, no side effects: adopt_root would REPLACE the live project
+    // entry (open manuscripts dropped, KARA re-armed) — never a read path.
+    const db = new Database(join(fixture, ".refrain", "refrain.db"), { readonly: true });
+    try {
+      return db.query("SELECT path, role FROM documents").all() as {
+        path: string;
+        role: string;
+      }[];
+    } finally {
+      db.close();
+    }
+  };
+  check(
+    "no Material document exists before the human action",
+    docsNow().filter((doc) => doc.role === "material").length === 0,
+  );
+
+  // Save the first draft through the panel: the only Human Material Action.
+  await waitFor("the drafts panel", async () =>
+    Boolean(await execute(`return document.querySelector(".draft-row") !== null`)),
+  );
+  await clickButton("保存");
+  await waitFor("the save to resolve its draft", async () => {
+    const left = (await invoke("list_material_drafts", { rootId })) as { title: string }[];
+    return left.length === 1 && left[0]?.title === "克制";
+  });
+  const materialDocs = docsNow().filter((doc) => doc.role === "material");
+  check(
+    "the save created exactly one Material document",
+    materialDocs.length === 1,
+    materialDocs.map((doc) => doc.path),
+  );
+  const materialPath = materialDocs[0]?.path ?? "";
+  const materialText = readFileSync(join(fixture, materialPath), "utf8");
+  check(
+    "the material file carries the draft body through the text path",
+    materialText.includes("她说话很省。") && materialText.includes("遇事先做，再说话。"),
+    materialPath,
+  );
+
+  // Dismiss the second: the row goes, nothing is written.
+  await clickButton("退回");
+  await waitFor("the drafts to drain", async () => {
+    const left = (await invoke("list_material_drafts", { rootId })) as unknown[];
+    return left.length === 0;
+  });
+  check("the dismiss resolves the other draft", true);
+  check(
+    "the dismiss wrote no new Material",
+    docsNow().filter((doc) => doc.role === "material").length === 1,
+  );
+
+  // Tick the saved material: it rides the next frozen request.
+  await clickButton("再发");
+  await waitFor("the materials checklist", async () =>
+    Boolean(await execute(`return document.querySelector(".material-row input") !== null`)),
+  );
+  const matCheckbox = await elementOrNull(
+    `(//label[contains(@class,'material-row')])[1]/input`,
+    true,
+  );
+  if (matCheckbox === null) throw new Error("no material checkbox");
+  await click(matCheckbox);
+  await tickBlock(1);
+  await setPrompt("对照人物卡改写第一段。");
+  await waitFor("the send cell to fill again", async () =>
+    Boolean(
+      await execute(
+        `const b = document.querySelector(".dispatch-send"); return b !== null && !b.disabled;`,
+      ),
+    ),
+  );
+  await clickButton("送出");
+  try {
+    await waitFor("the ticked-material manifest", async () =>
+      Boolean(await execute(`return document.querySelector(".manifest") !== null`)),
+    );
+  } catch (error) {
+    console.error("ticked-material preview never appeared:", {
+      notice: await execute(
+        `return document.querySelector(".dispatch .notice")?.textContent ?? null;`,
+      ),
+      phase: await execute(
+        `return { send: (document.querySelector(".dispatch-send") || {}).disabled, mat: document.querySelectorAll(".material-row").length, blocks: document.querySelectorAll(".block-row").length };`,
+      ),
+    });
+    throw error;
+  }
+  await clickButton("授权");
+  await waitFor("the ticked-material run to dispatch", async () => {
+    const s = await hostState(rootId);
+    return s.runs.filter((r) => r.progress === "dispatched").length === 1;
+  });
+  state = await hostState(rootId);
+  const tickedRun = state.runs.find((r) => r.progress === "dispatched");
+  if (tickedRun === undefined) throw new Error("no dispatched ticked-material run");
+  const tickedRequest = readFileSync(
+    join(fixture, ".refrain", tickedRun.workspace, "request.md"),
+    "utf8",
+  );
+  check(
+    "the ticked material rides the frozen request",
+    tickedRequest.includes("她说话很省。"),
+    tickedRequest.length,
+  );
 
   await stop();
   if (failures.length > 0) {

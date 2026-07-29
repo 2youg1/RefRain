@@ -158,24 +158,44 @@ pub fn launch(spec: &LaunchSpec) -> io::Result<ProcessHandle> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
-    /// The fixture child is the example binary cargo builds for `cargo test`
-    /// (`examples/process_fixture.rs`); it never ships with a release.
-    fn fixture_path() -> PathBuf {
-        let test_exe = std::env::current_exe().unwrap();
-        let target_dir = test_exe
-            .parent()
-            .and_then(|deps| deps.parent())
-            .unwrap()
-            .to_path_buf();
-        target_dir
-            .join("examples")
-            .join(format!("process_fixture{}", std::env::consts::EXE_SUFFIX))
+    /// The fixture child is the example binary (`examples/process_fixture.rs`);
+    /// it never ships with a release. Only `cargo build --example` produces a
+    /// plain binary — `cargo test --all-targets` wraps examples in libtest —
+    /// so a clean checkout builds it on first use, once per test process.
+    fn fixture_path() -> &'static Path {
+        static FIXTURE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        FIXTURE.get_or_init(|| {
+            let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            let workspace = manifest.parent().and_then(Path::parent).unwrap();
+            let built = workspace
+                .join("target/debug/examples")
+                .join(format!("process_fixture{}", std::env::consts::EXE_SUFFIX));
+            if !built.exists() {
+                let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+                let status = std::process::Command::new(cargo)
+                    .args([
+                        "build",
+                        "-p",
+                        "refrain-host",
+                        "--example",
+                        "process_fixture",
+                        "--offline",
+                    ])
+                    .current_dir(workspace)
+                    .status()
+                    .unwrap();
+                assert!(status.success(), "building the process fixture failed");
+            }
+            assert!(built.exists(), "{}", built.display());
+            built
+        })
     }
 
     fn launch_fixture(args: &[&str]) -> io::Result<ProcessHandle> {
         launch(&LaunchSpec {
-            program: fixture_path(),
+            program: fixture_path().to_path_buf(),
             args: args.iter().map(|s| (*s).to_string()).collect(),
             env: vec![("REFRAIN_MARKER".to_string(), "present".to_string())],
             cwd: std::env::temp_dir(),
