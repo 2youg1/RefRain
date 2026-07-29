@@ -773,6 +773,97 @@ const run = async (): Promise<void> => {
     tickedRequest.includes("她说话很省。"),
     tickedRequest.length,
   );
+  // Leave no in-flight run behind: later sections count dispatched runs.
+  await clickButton("取消");
+  await waitFor("the ticked-material run to cancel", async () => {
+    const s = await hostState(rootId);
+    return s.runs.find((r) => r.id === tickedRun.id)?.progress === "cancelled";
+  });
+
+  // ── Parallel copies (并行 ×N): one ticket mints N runs of one agent — same
+  // frozen input, distinct workspaces, no cross-visibility (SPEC 8.6). ──
+  await clickButton("再发");
+  await tickBlock(2);
+  await setPrompt("改写第二段，给两个候选。");
+  await execute(
+    `const s = document.querySelector(".dispatch-copies");
+     s.value = "2";
+     s.dispatchEvent(new Event("change", { bubbles: true }));`,
+    [],
+  );
+  await clickButton("送出");
+  await waitFor("the parallel manifest", async () =>
+    Boolean(await execute(`return document.querySelector(".manifest") !== null`)),
+  );
+  await clickButton("授权");
+  await waitFor("two parallel runs to dispatch", async () => {
+    const s = await hostState(rootId);
+    return s.runs.filter((r) => r.progress === "dispatched").length === 2;
+  });
+  state = await hostState(rootId);
+  const parallel = state.runs.filter((r) => r.progress === "dispatched");
+  const runA = parallel[0];
+  const runB = parallel[1];
+  if (runA === undefined || runB === undefined) throw new Error("no two dispatched parallel runs");
+  check("one ticket minted exactly two runs", parallel.length === 2, parallel.length);
+  check("the two runs share one task", runA.taskId === runB.taskId, runA.taskId);
+  check("the two runs own distinct workspaces", runA.workspace !== runB.workspace);
+  const reqA = readFileSync(join(fixture, ".refrain", runA.workspace, "request.md"), "utf8");
+  const reqB = readFileSync(join(fixture, ".refrain", runB.workspace, "request.md"), "utf8");
+  const parScope = reqA.match(/<!-- scope ([^ ]+) -->/)?.[1] ?? "";
+  check(
+    "both runs froze the same scope",
+    parScope !== "" && parScope === (reqB.match(/<!-- scope ([^ ]+) -->/)?.[1] ?? ""),
+    parScope,
+  );
+  check(
+    "each request names only its own run",
+    reqA.includes(runA.id) &&
+      !reqA.includes(runB.id) &&
+      reqB.includes(runB.id) &&
+      !reqB.includes(runA.id),
+  );
+  const stripRun = (text: string, id: string): string => text.replaceAll(id, "<run>");
+  check(
+    "the two frozen requests are the same input",
+    stripRun(reqA, runA.id) === stripRun(reqB, runB.id),
+  );
+
+  writeResult(
+    runA.workspace,
+    runA.id,
+    `<agent-result version="2"><replacement scope="${parScope}">候选甲的第二段。</replacement></agent-result>\n`,
+  );
+  writeResult(
+    runB.workspace,
+    runB.id,
+    `<agent-result version="2"><replacement scope="${parScope}">候选乙的第二段。</replacement></agent-result>\n`,
+  );
+  await clickButton("收取");
+  await waitFor("the first parallel run to complete", async () => {
+    const s = await hostState(rootId);
+    return (
+      s.runs.filter((r) => [runA.id, runB.id].includes(r.id) && r.progress === "completed")
+        .length === 1
+    );
+  });
+  await clickButton("收取");
+  await waitFor("both parallel runs to complete", async () => {
+    const s = await hostState(rootId);
+    return (
+      s.runs.filter((r) => [runA.id, runB.id].includes(r.id) && r.progress === "completed")
+        .length === 2
+    );
+  });
+  const cohort = (await invoke("list_proposals", { rootId, path: "长章.md" })) as {
+    after: string | null;
+  }[];
+  check(
+    "both candidates froze as proposals — no automatic winner",
+    cohort.some((p) => (p.after ?? "").includes("候选甲的第二段")) &&
+      cohort.some((p) => (p.after ?? "").includes("候选乙的第二段")),
+    cohort.length,
+  );
 
   await stop();
   if (failures.length > 0) {
