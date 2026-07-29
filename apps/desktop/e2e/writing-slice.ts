@@ -190,6 +190,7 @@ const run = async (): Promise<void> => {
             `--user-data-dir=${join(dataDir, "webview-args")}`,
             "--enable-logging=stderr",
             "--v=0",
+            "--no-sandbox",
             "--disable-gpu",
             "--no-first-run",
             "--disable-extensions",
