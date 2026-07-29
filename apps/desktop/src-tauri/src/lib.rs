@@ -949,8 +949,10 @@ pub fn builder() -> Builder<tauri::Wry> {
         draft_review_task,
         preview_dispatch,
         l0_file_channel_agent,
+        list_harnesses,
         authorize_dispatch,
         launch_run,
+        harness_dispatch,
         host_state,
         cancel_run,
         retry_run,
@@ -1990,12 +1992,28 @@ fn authorize_dispatch(
 #[tauri::command]
 #[specta::specta]
 fn launch_run(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     root_id: String,
     run_id: String,
 ) -> Result<RunDto, RefrainError> {
+    let run_id = parse_id(&run_id, "run")?;
+    // The run's agent picks the channel: the file channel promotes and is
+    // done; a harness agent launches its argv producer and observes in the
+    // background.
+    let agent = state.with_project(&root_id, |_state, entry| {
+        let host = open_host(&mut entry.store)?;
+        let run = host
+            .runs()
+            .iter()
+            .find(|run| run.id == run_id)
+            .ok_or_else(|| into_domain_host(HostRefusal::UnknownRun(run_id)))?;
+        Ok(run.agent_id.to_string())
+    })?;
+    if agent == KIMI_PRINT_AGENT {
+        return harness_dispatch_inner(&app, &state, &root_id, run_id);
+    }
     state.with_project(&root_id, |_state, entry| {
-        let run_id = parse_id(&run_id, "run")?;
         let mut host = open_host(&mut entry.store)?;
         let workspace = format!("runs/{run_id}");
         host.execute(HostCommand::LaunchRun {
@@ -2254,4 +2272,191 @@ fn collect_attempt(
             memos: artifact.memos.len() as u32,
         })
     })
+}
+
+// ── C11: real harness dispatch (argv adapters over the same frozen protocol) ──
+
+use refrain_host::adapters::{self, HarnessAdapter, HarnessProbe, KimiPrint};
+use tauri::Emitter as _;
+
+/// The agent id that names Kimi Code print mode until the Connections
+/// registry lands (C11 后段）.
+const KIMI_PRINT_AGENT: &str = "00000000-0000-0000-0000-0000000000e1";
+
+/// One dispatchable harness as the ticket offers it.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessDto {
+    pub agent_id: String,
+    pub label: String,
+    pub version: String,
+    pub tier: String,
+    pub probe: HarnessProbe,
+}
+
+/// What the app emits when a backgrounded producer settles.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RunSettledDto {
+    pub root_id: String,
+    pub run_id: String,
+    /// "landed" | "failed:<reason>" — the run's own journal has the truth.
+    pub outcome: String,
+}
+
+/// Every harness the app can dispatch to right now: detection only, no model
+/// call (SPEC: 测试连接只跑版本/能力探针）.
+#[tauri::command]
+#[specta::specta]
+fn list_harnesses() -> Vec<HarnessDto> {
+    let mut out = Vec::new();
+    if let Some(kimi) = KimiPrint::detect() {
+        out.push(HarnessDto {
+            agent_id: KIMI_PRINT_AGENT.to_string(),
+            label: "Kimi Code · print".to_string(),
+            version: kimi.version().to_string(),
+            tier: "l1".to_string(),
+            probe: kimi.probe().unwrap_or(HarnessProbe {
+                id: "kimi-print".to_string(),
+                program: kimi.program().clone(),
+                version: kimi.version().to_string(),
+                tier: refrain_host::Tier::L1,
+            }),
+        });
+    }
+    out
+}
+
+/// Launch one authorized run on a real harness: promote the frozen request,
+/// argv-dispatch, then observe in the background — the result lands as a
+/// file and the UI hears `run-settled`. Launch failures land as Failed with
+/// the reason; nothing rolls back (SPEC 8.2-3/4).
+fn harness_dispatch_inner(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    root_id: &str,
+    run_id: Id,
+) -> Result<RunDto, RefrainError> {
+    let kimi = KimiPrint::detect().ok_or_else(|| {
+        RefrainError::new(ErrorCode::StateUnavailable, "dispatch to Kimi Code", "kimi CLI not on PATH")
+    })?;
+    let (workspace, workspace_abs, request_md) = state.with_project(root_id, |_state, entry| {
+        let context = DirectoryContext::new(entry.store.layout().state_dir.clone());
+        let mut host = open_host(&mut entry.store)?;
+        let workspace = format!("runs/{run_id}");
+        host.execute(HostCommand::LaunchRun { run_id, workspace: workspace.clone() })
+            .map_err(into_domain_host)?;
+        let request = context
+            .read_workspace_request(&workspace)
+            .map_err(|error| {
+                RefrainError::new(ErrorCode::Io, "read the promoted request", workspace.clone())
+                    .with_detail(error.to_string())
+            })?
+            .ok_or_else(|| {
+                RefrainError::new(
+                    ErrorCode::StateUnavailable,
+                    "read the promoted request",
+                    "the request did not land in the workspace",
+                )
+            })?;
+        Ok((workspace.clone(), entry.store.layout().state_dir.join(&workspace), request))
+    })?;
+
+    let receipt = match kimi.dispatch(&adapters::DispatchSpec {
+        run_id,
+        workspace: workspace_abs,
+        request_md,
+    }) {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            state.with_project(root_id, |_state, entry| {
+                let mut host = open_host(&mut entry.store)?;
+                host.execute(HostCommand::FailRun {
+                    run_id,
+                    failure: format!("launch-failed: {error}"),
+                    at: now_millis(),
+                })
+                .map_err(into_domain_host)
+            })?;
+            return Err(RefrainError::new(ErrorCode::Io, "launch the harness", "kimi -p")
+                .with_detail(error.to_string()));
+        }
+    };
+    let receipt_text = receipt.receipt.clone();
+
+    let dto = state.with_project(root_id, |_state, entry| {
+        let mut host = open_host(&mut entry.store)?;
+        host.execute(HostCommand::CompleteDispatch { run_id, receipt: receipt_text })
+            .map_err(into_domain_host)?;
+        let index = host.runs().iter().position(|run| run.id == run_id).ok_or_else(|| {
+            into_domain_host(HostRefusal::UnknownRun(run_id))
+        })?;
+        Ok(run_dto(&host.runs()[index]))
+    })?;
+
+    // Observe in the background: the turn may run for minutes. On settle, the
+    // reply lands atomically as the attempt's result; an empty reply fails
+    // the run with the reason, not a guess.
+    let root_for_thread = root_id.to_string();
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let outcome = kimi.observe(receipt);
+        let state = app.state::<AppState>();
+        let settled = state.with_project(&root_for_thread, |_state, entry| {
+            let context = DirectoryContext::new(entry.store.layout().state_dir.clone());
+            let mut host = open_host(&mut entry.store)?;
+            match outcome {
+                Ok(produced) if !produced.reply_text.trim().is_empty() => {
+                    context
+                        .land_result(&workspace, run_id, produced.reply_text.as_bytes())
+                        .map_err(|error| {
+                            RefrainError::new(ErrorCode::Io, "land the producer's reply", workspace.clone())
+                                .with_detail(error.to_string())
+                        })?;
+                    Ok("landed".to_string())
+                }
+                Ok(produced) => {
+                    host.execute(HostCommand::FailRun {
+                        run_id,
+                        failure: format!("empty-reply: exit {:?}", produced.exit_code),
+                        at: now_millis(),
+                    })
+                    .map_err(into_domain_host)?;
+                    Ok(format!("failed:empty-reply:{:?}", produced.exit_code))
+                }
+                Err(error) => {
+                    host.execute(HostCommand::FailRun {
+                        run_id,
+                        failure: format!("producer-io: {error}"),
+                        at: now_millis(),
+                    })
+                    .map_err(into_domain_host)?;
+                    Ok(format!("failed:producer-io:{error}"))
+                }
+            }
+        });
+        let outcome = match settled {
+            Ok(text) => text,
+            Err(error) => format!("failed:{error}"),
+        };
+        let _ = app.emit(
+            "run-settled",
+            RunSettledDto { root_id: root_for_thread, run_id: run_id.to_string(), outcome },
+        );
+    });
+
+    Ok(dto)
+}
+
+/// The command form for the UI's harness dispatch (launch_run branches here
+/// for harness agents; this stays a command for the e2e seam).
+#[tauri::command]
+#[specta::specta]
+fn harness_dispatch(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    run_id: String,
+) -> Result<RunDto, RefrainError> {
+    harness_dispatch_inner(&app, &state, &root_id, parse_id(&run_id, "run")?)
 }

@@ -16,7 +16,7 @@
       "owner": "desktop",
       "disposition": {
         "kind": "blocked",
-        "checkpoint": "C11"
+        "checkpoint": "C12"
       }
     },
     {
@@ -205,7 +205,7 @@
       "owner": "desktop",
       "disposition": {
         "kind": "blocked",
-        "checkpoint": "C11"
+        "checkpoint": "C12"
       }
     },
     {
