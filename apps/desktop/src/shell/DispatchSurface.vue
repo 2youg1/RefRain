@@ -20,6 +20,7 @@ const props = defineProps<{
   rootId: string;
   path: string;
   blocks: BlockDto[];
+  materials: { path: string; label: string }[];
 }>();
 
 const emit = defineEmits<{ collected: [count: number]; closed: [] }>();
@@ -27,9 +28,11 @@ const emit = defineEmits<{ collected: [count: number]; closed: [] }>();
 type Phase = { kind: "editing" } | { kind: "previewing" } | { kind: "dispatched" };
 
 const selected = ref<Set<string>>(new Set());
+const materialsSelected = ref<Set<string>>(new Set());
 const prompt = ref("");
 const agentId = ref<string | null>(null);
 const agents = ref<{ id: string; label: string }[]>([]);
+const copies = ref(1);
 const taskId = ref<string | null>(null);
 const phase = ref<Phase>({ kind: "editing" });
 const preview = ref<DispatchPreviewDto | null>(null);
@@ -59,14 +62,6 @@ const cells = computed(() => {
     agent: agent ? agent.label : "—",
     range: scope > 0 ? `所选 ${scope} 块` : "—",
     ready: scope > 0 && requirement > 0 && agent,
-    blocker:
-      scope === 0
-        ? "先勾选要交出去的段落。"
-        : requirement === 0
-          ? "写下这次要 Agent 做什么。"
-          : agent
-            ? null
-            : "通道尚未就绪。",
   };
 });
 
@@ -93,6 +88,19 @@ const toggle = (id: string): void => {
   selected.value = next;
 };
 
+const toggleMaterial = (path: string): void => {
+  const next = new Set(materialsSelected.value);
+  if (next.has(path)) next.delete(path);
+  else next.add(path);
+  materialsSelected.value = next;
+};
+
+const materialPaths = computed<string[]>(() =>
+  props.materials
+    .filter((material) => materialsSelected.value.has(material.path))
+    .map((material) => material.path),
+);
+
 const wholeChapter = (): void => {
   selected.value = new Set(props.blocks.map((block) => block.id));
 };
@@ -107,7 +115,13 @@ const send = async (): Promise<void> => {
     );
     taskId.value = task.id;
     preview.value = await unwrap(
-      commands.previewDispatch(props.rootId, props.path, scopeIds.value, prompt.value.trim()),
+      commands.previewDispatch(
+        props.rootId,
+        props.path,
+        scopeIds.value,
+        materialPaths.value,
+        prompt.value.trim(),
+      ),
     );
     phase.value = { kind: "previewing" };
   } catch (error) {
@@ -128,9 +142,10 @@ const authorize = async (): Promise<void> => {
         taskId: taskId.value,
         path: props.path,
         blockIds: scopeIds.value,
+        materialPaths: materialPaths.value,
         prompt: prompt.value.trim(),
         clickedDigest: preview.value.digest,
-        newAgents: [agentId.value],
+        newAgents: Array.from({ length: copies.value }, () => agentId.value as string),
         retryRunIds: [],
       }),
     );
@@ -139,7 +154,10 @@ const authorize = async (): Promise<void> => {
     }
     preview.value = null;
     phase.value = { kind: "dispatched" };
-    notice.value = `请求已落到 ${runs[0]?.workspace ?? "runs/"}。把结果写进其中的 attempts 目录后回来收取。`;
+    notice.value =
+      runs.length > 1
+        ? `已发出 · 并行 ×${runs.length}`
+        : `已发出 → ${runs[0]?.workspace ?? "runs/"}`;
     await refresh();
   } catch (error) {
     fail(error);
@@ -164,12 +182,12 @@ const collect = async (run: RunDto): Promise<void> => {
   try {
     const outcome = await unwrap(commands.collectAttempt(props.rootId, run.id));
     if (outcome.kind === "waiting") {
-      notice.value = "还没有结果：等 Agent 把 <agent-result> 写进 result.md 再收。";
+      notice.value = "未回";
     } else if (outcome.kind === "completed") {
-      notice.value = `Run 完成：${outcome.value.proposals} 条提案已冻结，去 Review 裁决。`;
+      notice.value = `已收 · ${outcome.value.proposals} 提案`;
       emit("collected", outcome.value.proposals);
     } else {
-      notice.value = `Run 失败（${outcome.value.code}）：${outcome.value.detail}。可重试——新 Run、新授权。`;
+      notice.value = `失败 · ${outcome.value.code}`;
     }
     await refresh();
   } catch (error) {
@@ -186,7 +204,13 @@ const retry = async (run: RunDto): Promise<void> => {
   try {
     const queued = await unwrap(commands.retryRun(props.rootId, run.id));
     const again = await unwrap(
-      commands.previewDispatch(props.rootId, props.path, scopeIds.value, prompt.value.trim()),
+      commands.previewDispatch(
+        props.rootId,
+        props.path,
+        scopeIds.value,
+        materialPaths.value,
+        prompt.value.trim(),
+      ),
     );
     await unwrap(
       commands.authorizeDispatch({
@@ -194,6 +218,7 @@ const retry = async (run: RunDto): Promise<void> => {
         taskId: queued.taskId,
         path: props.path,
         blockIds: scopeIds.value,
+        materialPaths: materialPaths.value,
         prompt: prompt.value.trim(),
         clickedDigest: again.digest,
         newAgents: [],
@@ -201,7 +226,7 @@ const retry = async (run: RunDto): Promise<void> => {
       }),
     );
     await unwrap(commands.launchRun(props.rootId, queued.id));
-    notice.value = "已用新 Run 重发；旧 Run 留档不动。";
+    notice.value = "已重发";
     await refresh();
   } catch (error) {
     fail(error);
@@ -231,13 +256,13 @@ const tokenLabel = (tokens: { kind: string; value?: number }): string => {
 
 const runStatusLabel = (run: RunDto): string => {
   const labels: Record<string, string> = {
-    queued: "排队中",
-    authorized: "已授权未启动",
-    launching: "启动中",
-    dispatched: "已发出，等结果",
-    completed: "已完成",
+    queued: "排队",
+    authorized: "已授权",
+    launching: "启动",
+    dispatched: "在途",
+    completed: "完成",
     failed: `失败：${run.failure ?? ""}`,
-    cancelled: "已取消",
+    cancelled: "取消",
   };
   return labels[run.progress] ?? run.progress;
 };
@@ -275,7 +300,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="dispatch" aria-label="発送票">
+  <section class="dispatch" aria-label="派发">
     <header class="ticket">
       <div class="cell"><span class="name">段落</span><span class="value">{{ cells.scope }}</span></div>
       <div class="cell"><span class="name">要求</span><span class="value">{{ cells.requirement }}</span></div>
@@ -292,13 +317,12 @@ onUnmounted(() => {
         </button>
       </div>
     </header>
-    <p v-if="cells.blocker && phase.kind === 'editing'" class="blocker">{{ cells.blocker }}</p>
     <p v-if="notice" class="notice">{{ notice }}</p>
 
     <template v-if="phase.kind === 'editing'">
       <div class="blocks">
         <div class="blocks-head">
-          <span>选入 scope 的块</span>
+          <span>段落</span>
           <button type="button" class="dispatch-whole" @click="wholeChapter">整章</button>
         </div>
         <label v-for="(block, index) in blocks" :key="block.id" class="block-row">
@@ -312,35 +336,52 @@ onUnmounted(() => {
           <span class="count">{{ block.text.length }} 字</span>
         </label>
       </div>
-      <div class="agent-row" v-if="agents.length > 1">
-        <span>委托给</span>
-        <select v-model="agentId" class="dispatch-agent">
+      <div class="blocks" v-if="materials.length > 0">
+        <div class="blocks-head"><span>资料</span></div>
+        <label v-for="material in materials" :key="material.path" class="block-row">
+          <input
+            type="checkbox"
+            :checked="materialsSelected.has(material.path)"
+            @change="toggleMaterial(material.path)"
+          />
+          <span class="peek">{{ material.label }}</span>
+        </label>
+      </div>
+      <div class="agent-row" v-if="agents.length > 0">
+        <select v-if="agents.length > 1" v-model="agentId" class="dispatch-agent">
           <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.label }}</option>
         </select>
+        <span class="copies">
+          <select v-model.number="copies" class="dispatch-copies" aria-label="份数">
+            <option :value="1">×1</option>
+            <option :value="2">并行 ×2</option>
+            <option :value="3">并行 ×3</option>
+          </select>
+        </span>
       </div>
       <textarea
         v-model="prompt"
         class="dispatch-prompt"
         rows="4"
-        placeholder="这次要 Agent 做什么——逐字进入请求文件。"
+        placeholder="要求"
       ></textarea>
     </template>
 
     <template v-else-if="phase.kind === 'previewing' && preview">
       <div class="manifest">
-        <p class="manifest-title">发送清单 · digest {{ preview.digest.slice(0, 12) }}…</p>
+        <p class="manifest-title">清单 · {{ preview.digest.slice(0, 12) }}</p>
         <div v-for="entry in preview.manifest" :key="entry.section + entry.source" class="manifest-row">
           <span class="section">{{ entry.section }} · {{ entry.source }}</span>
           <span class="bytes">{{ entry.bytes }} B</span>
           <span class="tokens">{{ tokenLabel(entry.tokens) }}</span>
         </div>
         <button type="button" class="dispatch-expand" @click="showRequest = !showRequest">
-          {{ showRequest ? "收起请求原文" : "展开请求原文" }}
+          {{ showRequest ? "收" : "原文" }}
         </button>
         <pre v-if="showRequest" class="request-md">{{ preview.requestMd }}</pre>
         <div class="actions">
           <button class="dispatch-authorize" type="button" :disabled="busy" @click="authorize">
-            确认授权
+            授权
           </button>
           <button type="button" :disabled="busy" @click="phase = { kind: 'editing' }">返回</button>
         </div>
@@ -349,7 +390,7 @@ onUnmounted(() => {
 
     <template v-if="runs.length > 0">
       <div class="runs">
-        <p class="runs-title">Run 列表</p>
+
         <div v-for="run in runs" :key="run.id" class="run-row">
           <span class="status">{{ runStatusLabel(run) }}</span>
           <code v-if="run.workspace" class="workspace">{{ run.workspace }}</code>
@@ -370,7 +411,7 @@ onUnmounted(() => {
               :disabled="busy"
               @click="retry(run)"
             >
-              重试（新 Run）
+              重试
             </button>
             <button
               v-if="run.progress !== 'completed' && run.progress !== 'failed' && run.progress !== 'cancelled'"
@@ -385,9 +426,9 @@ onUnmounted(() => {
       </div>
     </template>
 
-    <button type="button" class="dispatch-close" @click="emit('closed')">收起発送票</button>
+    <button type="button" class="dispatch-close" @click="emit('closed')">收起</button>
     <button v-if="phase.kind === 'dispatched'" type="button" class="dispatch-new" @click="newTask">
-      新 Task
+      再发
     </button>
   </section>
 </template>

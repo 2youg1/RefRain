@@ -235,6 +235,28 @@ impl Database for ProjectDb {
                     )
                 },
             },
+            Migration {
+                version: SchemaVersion(5),
+                name: "material-drafts",
+                apply: |tx| {
+                    // Material drafts (SPEC 8.7): an artifact's material-draft
+                    // is only ever a draft until a Human Material Action saves
+                    // it. The draft row is all there is; the Material itself
+                    // is a plain Markdown document with role 'material'.
+                    tx.execute_batch(
+                        "CREATE TABLE material_drafts (
+                             id         TEXT PRIMARY KEY,
+                             run_id     TEXT NOT NULL,
+                             document   TEXT NOT NULL,
+                             kind       TEXT NOT NULL,
+                             title      TEXT NOT NULL,
+                             basis      TEXT NOT NULL,
+                             body       TEXT NOT NULL,
+                             created_at INTEGER NOT NULL
+                         ) STRICT;",
+                    )
+                },
+            },
         ]
     }
 }
