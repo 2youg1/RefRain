@@ -59,20 +59,28 @@ const chromePinned = (): boolean =>
   (window as unknown as Record<string, unknown>)["refrain.e2e.pin"] === true;
 const railReceded = ref(false);
 let idleTimer: number | null = null;
+let lastPointerX = 0;
 
 const wake = (event: PointerEvent): void => {
   if (chromePinned() || kara.engaged.value) return;
+  lastPointerX = event.clientX;
   if (event.clientX < 28) railReceded.value = false;
   if (!railReceded.value) {
     if (idleTimer !== null) window.clearTimeout(idleTimer);
     idleTimer = window.setTimeout(() => {
-      railReceded.value = true;
+      // The rail never vanishes under the pointer it belongs to.
+      if (lastPointerX >= 270) railReceded.value = true;
     }, 2000);
   }
 };
 
 onMounted(() => {
   window.addEventListener("pointermove", wake, { passive: true });
+  // Armed from the start: a reader who never touches the mouse still gets
+  // the quiet room.
+  idleTimer = window.setTimeout(() => {
+    if (!chromePinned() && !kara.engaged.value) railReceded.value = true;
+  }, 2400);
   void (async () => {
     const factor = await getCurrentWindow().scaleFactor();
     unlistenDrop = await getCurrentWindow().onDragDropEvent((event) => {
@@ -135,6 +143,45 @@ const onDropped = async (
       fail(error);
     }
   }
+};
+
+// ── 编辑器右键菜单（C12.6）：Markdown 格式 + 句段级派发 ──────────────────
+// 块是协议的最小 scope；菜单按所点段落精确派发，可多次攒进同一张票。
+const contextMenu = ref<{ x: number; y: number; blockId: string } | null>(null);
+const dispatchSeed = ref<string[]>([]);
+
+const onContextMenu = (event: MouseEvent): void => {
+  const paragraph = (event.target as HTMLElement).closest?.("p[data-block-id]");
+  const blockId = paragraph?.getAttribute("data-block-id");
+  if (!blockId) return;
+  event.preventDefault();
+  contextMenu.value = { x: event.clientX, y: event.clientY, blockId };
+};
+
+/** Wrap the current selection with a Markdown marker, then let the editor's
+ * own input path settle the change (no second write path). */
+const wrapSelection = (marker: string): void => {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return;
+  const range = selection.getRangeAt(0);
+  const paragraph = (range.commonAncestorContainer as Node).parentElement?.closest?.(
+    "p[data-block-id]",
+  );
+  if (!paragraph) return;
+  const text = selection.toString();
+  if (text === "") return;
+  range.deleteContents();
+  range.insertNode(document.createTextNode(`${marker}${text}${marker}`));
+  paragraph.dispatchEvent(new Event("input", { bubbles: true }));
+  contextMenu.value = null;
+};
+
+const dispatchBlock = (accumulate: boolean): void => {
+  const menu = contextMenu.value;
+  if (!menu) return;
+  dispatchSeed.value = accumulate ? [...dispatchSeed.value, menu.blockId] : [menu.blockId];
+  dispatching.value = true;
+  contextMenu.value = null;
 };
 
 /** The caret as a ReturnPoint: block id, offset, and the sentence tail the
@@ -386,7 +433,7 @@ const onKeydown = (event: KeyboardEvent): void => {
         :class="{ receded: railReceded || kara.engaged.value }"
         aria-label="文档"
       >
-        <div class="brand"><span class="brand-mark"></span><span class="brand-word">RefRain</span></div>
+        <div class="brand" role="button" tabindex="0" title="收起 / 展开" @click="railReceded = !railReceded" @keydown.enter="railReceded = !railReceded"><span class="brand-mark"></span><span class="brand-word">RefRain</span></div>
         <div class="rail-actions">
           <button type="button" @click="newDocument('chapter')">新章</button>
           <button type="button" @click="newDocument('material')">新资料</button>
@@ -451,7 +498,7 @@ const onKeydown = (event: KeyboardEvent): void => {
           @committed="afterCommit"
           @closed="reviewing = false"
         />
-        <div v-else-if="active" class="stage-row">
+        <div v-else-if="active" class="stage-row" @contextmenu="onContextMenu">
           <EditorHost
             v-if="!reviewing"
             ref="editor"
@@ -469,11 +516,12 @@ const onKeydown = (event: KeyboardEvent): void => {
             :path="active.document.path"
             :blocks="active.blocks"
             :materials="materialDocs"
+            :seed="dispatchSeed"
             @collected="(count: number) => (notice = `${count} 条提案已冻结，点 Review 逐句裁决。`)"
             @material-saved="onMaterialSaved"
             @closed="dispatching = false"
           />
-          <ConnectionsSurface v-if="connecting" @closed="connecting = false" />
+          <ConnectionsSurface v-if="connecting" :root-id="project.rootId" @closed="connecting = false" />
           <SettingsSurface
             v-if="settings"
             @closed="settings = false"
@@ -481,7 +529,7 @@ const onKeydown = (event: KeyboardEvent): void => {
           />
         </div>
         <div v-else-if="connecting || settings" class="stage-row">
-          <ConnectionsSurface v-if="connecting" @closed="connecting = false" />
+          <ConnectionsSurface v-if="connecting" :root-id="project.rootId" @closed="connecting = false" />
           <SettingsSurface
             v-if="settings"
             @closed="settings = false"
@@ -490,6 +538,19 @@ const onKeydown = (event: KeyboardEvent): void => {
         </div>
         <p v-else class="empty">从左侧选一个文档，或新建一章。</p>
       </main>
+
+      <div
+        v-if="contextMenu"
+        class="context-menu"
+        :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
+      >
+        <button type="button" @click="wrapSelection('**')">加粗</button>
+        <button type="button" @click="wrapSelection('*')">斜体</button>
+        <button type="button" @click="dispatchBlock(false)">派发此段</button>
+        <button type="button" @click="dispatchBlock(true)">加入派发</button>
+        <button type="button" @click="contextMenu = null">取消</button>
+      </div>
+      <div v-if="contextMenu" class="context-backdrop" @click="contextMenu = null"></div>
 
       <StatusLine
         :class="{ dimmed: kara.engaged.value }"
@@ -625,6 +686,8 @@ const onKeydown = (event: KeyboardEvent): void => {
   align-items: center;
   gap: 9px;
   padding: 2px 10px 18px;
+  cursor: pointer;
+  user-select: none;
 }
 
 .brand-mark {
@@ -786,5 +849,32 @@ const onKeydown = (event: KeyboardEvent): void => {
   font-family: var(--serif);
   font-size: 15px;
   color: var(--ink-faint);
+}
+
+/* 编辑器右键菜单：句段级工具，点到即走。 */
+.context-menu {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 120px;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: 4px;
+  box-shadow: 0 12px 32px color-mix(in oklab, var(--ink) 14%, transparent);
+  padding: 4px;
+}
+
+.context-menu button {
+  border: none;
+  text-align: left;
+  padding: 6px 12px;
+  border-radius: 2px;
+}
+
+.context-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
 }
 </style>

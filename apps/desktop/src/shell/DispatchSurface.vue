@@ -6,7 +6,7 @@
 // channel's collect. Nothing here derives state Rust owns; every fact comes
 // back over the bridge.
 
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { describe, unwrap } from "../bridge";
 import {
   type AgentReadingDto,
@@ -25,6 +25,8 @@ const props = defineProps<{
   path: string;
   blocks: BlockDto[];
   materials: { path: string; label: string }[];
+  /** Block ids planted by the editor's context menu (派发此段 / 加入派发). */
+  seed?: string[];
 }>();
 
 const emit = defineEmits<{
@@ -109,6 +111,26 @@ const toggle = (id: string): void => {
   if (next.has(id)) next.delete(id);
   else next.add(id);
   selected.value = next;
+};
+
+// Shift-click walks the range between the last touched row and this one —
+// the only way a 100+ block chapter stays selectable by hand.
+let lastTouched = -1;
+const touchRow = (index: number, event: MouseEvent): void => {
+  const block = props.blocks[index];
+  if (block === undefined) return;
+  if (event.shiftKey && lastTouched >= 0 && lastTouched !== index) {
+    const [from, to] = [Math.min(lastTouched, index), Math.max(lastTouched, index)];
+    const next = new Set(selected.value);
+    for (let i = from; i <= to; i += 1) {
+      const entry = props.blocks[i];
+      if (entry !== undefined) next.add(entry.id);
+    }
+    selected.value = next;
+  } else {
+    toggle(block.id);
+  }
+  lastTouched = index;
 };
 
 const toggleMaterial = (path: string): void => {
@@ -344,6 +366,10 @@ const runStatusLabel = (run: RunDto): string => {
 };
 
 onMounted(async () => {
+  // The context menu's 派发此段 / 加入派发 plants block ids here.
+  if (props.seed !== undefined && props.seed.length > 0) {
+    selected.value = new Set([...selected.value, ...props.seed]);
+  }
   try {
     const l0 = await commands.l0FileChannelAgent();
     agents.value = [{ id: l0, label: "L0 文件通道" }];
@@ -373,6 +399,16 @@ onMounted(async () => {
 onUnmounted(() => {
   if (poll !== null) window.clearInterval(poll);
 });
+
+// 加入派发 may arrive after the panel is already open.
+watch(
+  () => props.seed,
+  (seed) => {
+    if (seed !== undefined && seed.length > 0) {
+      selected.value = new Set([...selected.value, ...seed]);
+    }
+  },
+);
 </script>
 
 <template>
@@ -401,11 +437,11 @@ onUnmounted(() => {
           <span>段落</span>
           <button type="button" class="dispatch-whole" @click="wholeChapter">整章</button>
         </div>
-        <label v-for="(block, index) in blocks" :key="block.id" class="block-row">
+        <label v-for="(block, index) in blocks" :key="block.id" class="block-row" @click.prevent="touchRow(index, $event)">
           <input
             type="checkbox"
             :checked="selected.has(block.id)"
-            @change="toggle(block.id)"
+            @click.prevent
           />
           <span class="ordinal">b{{ index + 1 }}</span>
           <span class="peek">{{ block.text.slice(0, 20) }}</span>

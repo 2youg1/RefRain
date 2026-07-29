@@ -33,6 +33,14 @@ const applyConfig = async (): Promise<void> => {
       "--manuscript-family",
       manuscriptStack(snapshot.config.appearance.fonts),
     );
+    document.documentElement.style.setProperty(
+      "--manuscript-size",
+      `${snapshot.config.appearance.text_size}px`,
+    );
+    document.documentElement.style.setProperty(
+      "--manuscript-leading",
+      `${snapshot.config.appearance.line_height / 100}`,
+    );
   } catch {
     // A damaged Config is the Settings surface's story to tell, not a reason
     // the author cannot write today (SPEC 10.1).

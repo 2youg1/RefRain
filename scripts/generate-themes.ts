@@ -38,6 +38,12 @@ interface Theme {
   /** The theme's own second accent. Carries the agent mark. */
   readonly alt: Oklch;
   /**
+   * Optional caret override. The default derives the caret from the seal's
+   * hue pushed clear of the ink by lightness; a high-chroma override may sit
+   * closer in lightness because saturation carries the salience instead.
+   */
+  readonly caret?: Oklch;
+  /**
    * Where the rail sits on the lightness range.
    *
    * `"deep"` is the default and right for most themes: a dark counterweight
@@ -81,6 +87,7 @@ const THEMES: readonly Theme[] = [
     ink: [0.298, 0.06, 242],
     seal: [0.7, 0.152, 8],
     alt: [0.61, 0.17, 228],
+    caret: [0.38, 0.24, 8],
     rail: "light",
   },
   {
@@ -123,13 +130,13 @@ const THEMES: readonly Theme[] = [
     cn: "墨",
     slug: "sumi",
     mode: "night",
-    lineage: "夜の墨・行灯",
-    why: "夜间。不是把日间的墨反相，而是重画：纸是熄了灯的和室，墨是灯下的宣纸白。行灯只照亮一处，所以印色提到 L 0.70——夜里的朱必须比昼间更亮才能被看见。",
-    source: "夜间独立设计，非日间反相",
-    paper: [0.238, 0.013, 74],
-    ink: [0.9, 0.01, 84],
-    seal: [0.7, 0.158, 36],
-    alt: [0.7, 0.058, 238],
+    lineage: "AI 业黑白・人文の朱",
+    why: "夜间。当代 AI 前端的黑白骨架配人文的暖：纸是近黑的中性暖灰，墨是带纸温的白；全套只有两处有颜色——印泥的朱（人的裁决）与象牙的暖灰（机器痕迹），其余都是明度。",
+    source: "AI 业黑白主流 + 印泥朱一点",
+    paper: [0.215, 0.008, 75],
+    ink: [0.925, 0.008, 90],
+    seal: [0.72, 0.16, 40],
+    alt: [0.72, 0.03, 80],
   },
   {
     cn: "韶",
@@ -306,7 +313,11 @@ const derive = (t: Theme): Record<string, Oklch> => {
     // The hue is the seal's, so the caret still reads as this theme's accent.
     // The lightness is pushed away from the paper until it clears the ink,
     // which is what `verify-caret` asserts rather than trusting these numbers.
-    caret: [night ? Math.min(0.94, pL + 0.72) : Math.max(0.24, pL - 0.68), sC * 1.15, sH],
+    caret: t.caret ?? [
+      night ? Math.min(0.94, pL + 0.72) : Math.max(0.24, pL - 0.68),
+      sC * 1.15,
+      sH,
+    ],
     agent: [aL, aC, aH],
     "agent-wash": [pL + up * 0.012, Math.min(0.03, aC * 0.28), aH],
     accepted: [night ? 0.712 : 0.478, 0.096, 152],
@@ -438,9 +449,12 @@ const block = (t: Theme): string => {
   const caret = v.caret as Oklch;
   const caretDelta = Math.abs(caret[0] - paperL);
   const inkDelta = Math.abs((v.ink as Oklch)[0] - paperL);
-  if (caretDelta <= inkDelta)
+  // Salience comes from lightness distance or from chroma: a saturated caret
+  // (C ≥ 0.2) out-reads the text even when its lightness sits closer.
+  const caretReads = caretDelta > inkDelta || (caret[1] >= 0.2 && caretDelta > 0.5);
+  if (!caretReads)
     failures.push(
-      `${t.cn} 光标对纸面差 ${caretDelta.toFixed(3)}，不高于正文的 ${inkDelta.toFixed(3)}——光标该比正文更显眼`,
+      `${t.cn} 光标对纸面差 ${caretDelta.toFixed(3)} 彩度 ${caret[1].toFixed(2)}，不比正文 ${inkDelta.toFixed(3)} 显眼——光标该比正文更显眼`,
     );
   if (caret[2] !== (v.seal as Oklch)[2])
     failures.push(

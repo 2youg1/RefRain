@@ -64,11 +64,25 @@ pub struct AppearanceConfig {
     /// The manuscript sheet's edge: none / hairline / paper.
     #[serde(default)]
     pub paper: PaperMode,
+    /// Manuscript text size in px (SPEC 9.8: 排版可调,默认 17).
+    #[serde(default = "default_text_size")]
+    pub text_size: u16,
+    /// Manuscript line height in percent (默认 190 = 1.9).
+    #[serde(default = "default_line_height")]
+    pub line_height: u16,
     /// The Universal Button icon, by content digest (SPEC 9.8). The asset
     /// named by this digest lives in the application data assets directory;
     /// the Config never stores the image itself.
     #[serde(default)]
     pub icon_digest: Option<String>,
+}
+
+fn default_text_size() -> u16 {
+    17
+}
+
+fn default_line_height() -> u16 {
+    190
 }
 
 impl Default for AppearanceConfig {
@@ -77,6 +91,8 @@ impl Default for AppearanceConfig {
             theme: "tou".to_string(),
             fonts: FontConfig::default(),
             paper: PaperMode::default(),
+            text_size: default_text_size(),
+            line_height: default_line_height(),
             icon_digest: None,
         }
     }
@@ -183,6 +199,8 @@ pub enum ConfigChange {
     KaraAutoEnter(bool),
     SetTheme(String),
     SetPaper(PaperMode),
+    SetTextSize(u16),
+    SetLineHeight(u16),
     SetFontFamily { slot: FontSlot, family: String },
     SetFontPriority([FontSlot; 3]),
     SetIconDigest(Option<String>),
@@ -307,6 +325,12 @@ impl ConfigStore {
             }
             ConfigChange::SetPaper(mode) => {
                 snapshot.config.appearance.paper = mode;
+            }
+            ConfigChange::SetTextSize(px) => {
+                snapshot.config.appearance.text_size = px;
+            }
+            ConfigChange::SetLineHeight(pct) => {
+                snapshot.config.appearance.line_height = pct;
             }
             ConfigChange::SetFontFamily { slot, family } => {
                 let fonts = &mut snapshot.config.appearance.fonts;
