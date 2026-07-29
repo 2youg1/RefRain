@@ -11,6 +11,7 @@ import { describe, unwrap } from "../bridge";
 import {
   type AgentReadingDto,
   type BlockDto,
+  type CarryMode,
   commands,
   type DispatchPreviewDto,
   type DocumentRow,
@@ -40,6 +41,7 @@ const prompt = ref("");
 const agentId = ref<string | null>(null);
 const agents = ref<{ id: string; label: string }[]>([]);
 const copies = ref(1);
+const carry = ref<CarryMode>("diff");
 const taskId = ref<string | null>(null);
 const phase = ref<Phase>({ kind: "editing" });
 const preview = ref<DispatchPreviewDto | null>(null);
@@ -142,6 +144,8 @@ const send = async (): Promise<void> => {
         scopeIds.value,
         materialPaths.value,
         prompt.value.trim(),
+        agentId.value as string,
+        carry.value,
       ),
     );
     phase.value = { kind: "previewing" };
@@ -168,6 +172,8 @@ const authorize = async (): Promise<void> => {
         clickedDigest: preview.value.digest,
         newAgents: Array.from({ length: copies.value }, () => agentId.value as string),
         retryRunIds: [],
+        agentId: agentId.value,
+        carry: carry.value,
       }),
     );
     for (const run of runs) {
@@ -235,6 +241,8 @@ const retry = async (run: RunDto): Promise<void> => {
         scopeIds.value,
         materialPaths.value,
         prompt.value.trim(),
+        agentId.value as string,
+        carry.value,
       ),
     );
     await unwrap(
@@ -248,6 +256,8 @@ const retry = async (run: RunDto): Promise<void> => {
         clickedDigest: again.digest,
         newAgents: [],
         retryRunIds: [queued.id],
+        agentId: agentId.value,
+        carry: carry.value,
       }),
     );
     await unwrap(commands.launchRun(props.rootId, queued.id));
@@ -424,6 +434,11 @@ onUnmounted(() => {
             <option :value="3">并行 ×3</option>
           </select>
         </span>
+        <select v-model="carry" class="dispatch-carry" aria-label="档位">
+          <option value="diff">增量</option>
+          <option value="full">全文</option>
+          <option value="none">不带</option>
+        </select>
         <span v-if="reading" class="reading">
           {{ reading.rounds }} 轮 · {{ reading.stale ? "落后" : "同步" }}
         </span>
@@ -711,6 +726,15 @@ onUnmounted(() => {
 }
 
 .dispatch-agent {
+  font: inherit;
+  background: transparent;
+  color: inherit;
+  border: 1px solid color-mix(in oklab, currentColor 16%, transparent);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+
+.dispatch-carry {
   font: inherit;
   background: transparent;
   color: inherit;

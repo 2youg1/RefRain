@@ -86,7 +86,7 @@ export const commands = {
 	/**  Draft the collaboration: prompt, document, and the head it pins (Q27). */
 	draftReviewTask: (rootId: string, path: string, prompt: string) => typedError<TaskDto, RefrainError>(__TAURI_INVOKE("draft_review_task", { rootId, path, prompt })),
 	/**  The manifest the author reads before the click (SPEC 9.6: 逐块字节清单). */
-	previewDispatch: (rootId: string, path: string, blockIds: string[], materialPaths: string[], prompt: string) => typedError<DispatchPreviewDto, RefrainError>(__TAURI_INVOKE("preview_dispatch", { rootId, path, blockIds, materialPaths, prompt })),
+	previewDispatch: (rootId: string, path: string, blockIds: string[], materialPaths: string[], prompt: string, agentId: string, carry: CarryMode) => typedError<DispatchPreviewDto, RefrainError>(__TAURI_INVOKE("preview_dispatch", { rootId, path, blockIds, materialPaths, prompt, agentId, carry })),
 	/**  The built-in agent the ticket always offers (SPEC 8.3a's first row). */
 	l0FileChannelAgent: () => __TAURI_INVOKE<string>("l0_file_channel_agent"),
 	/**
@@ -230,6 +230,12 @@ export type AuthorizeDispatchRequest = {
 	clickedDigest: string,
 	newAgents: string[],
 	retryRunIds: string[],
+	/**
+	 *  The ticket's picked agent, for the contract tier. Retry mints no new
+	 *  agents, so this cannot be derived from `new_agents`.
+	 */
+	agentId: string,
+	carry: CarryMode,
 };
 
 /**
@@ -247,6 +253,23 @@ export type BlockDto = {
 	id: string,
 	text: string,
 };
+
+/**
+ *  The carry tier the author picks on the ticket (KL9's context tiers):
+ *  what rides besides the scope and the prompt. Materials always travel
+ *  separately and are never part of a tier.
+ */
+export type CarryMode = 
+/**
+ *  The verdict stream; a round with no history falls back to the whole
+ *  text, or the agent has nothing to stand on (KL9: never trade output
+ *  quality for tokens).
+ */
+"diff" | 
+/**  The verdict stream plus the whole manuscript, every round. */
+"full" | 
+/**  Neither verdicts nor manuscript — scope and prompt only. */
+"none";
 
 export type CollectOutcomeDto = 
 /**  No result yet; nothing moved. */

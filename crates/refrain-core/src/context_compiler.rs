@@ -68,6 +68,22 @@ pub struct DispatchInput {
     pub result_path: String,
     /// Byte cap for the artifact body (shown in the short contract).
     pub max_bytes: u64,
+    /// How much protocol the request itself carries (KL9's contract tiers).
+    pub contract_mode: ContractMode,
+}
+
+/// The contract tier a request carries (§8.4, KL9 2026-07-29): the parser is
+/// the only authority; these are presentation frequencies per channel, never
+/// a protocol fork.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContractMode {
+    /// L0's channel has no session: the short contract rides every request.
+    #[default]
+    Short,
+    /// A harness's first round: the full generated protocol document.
+    Full,
+    /// Later rounds on a harness that already holds the full text: one line.
+    Pointer,
 }
 
 /// One manifest row: a section, its source, its digest, its size.
@@ -239,7 +255,12 @@ pub fn compile(input: &DispatchInput) -> DispatchPackage {
     };
 
     let request = format!("# Request\n\n{}", input.request);
-    let contract = format!("# Reply format\n\n{}", short_contract(input));
+    let contract_body = match input.contract_mode {
+        ContractMode::Short => short_contract(input),
+        ContractMode::Full => crate::agent_protocol::skill_doc(),
+        ContractMode::Pointer => "按 RefRain 兼容格式输出。".to_string(),
+    };
+    let contract = format!("# Reply format\n\n{contract_body}");
     let reply =
         "# Agent reply\n\n<!-- Your <agent-result> element replaces this comment. -->".to_string();
 
@@ -396,6 +417,7 @@ mod tests {
             scopes: scopes(),
             result_path: ".refrain/runs/r1/attempts/a1/result.md".to_string(),
             max_bytes: 65_536,
+            contract_mode: ContractMode::Short,
         }
     }
 
@@ -446,6 +468,34 @@ mod tests {
         assert_eq!(contract.matches("<!-- scope ch01:b3 -->").count(), 1);
         assert_eq!(contract.matches("<!-- scope ch01:b4 -->").count(), 1);
         assert!(contract.contains(".refrain/runs/r1/attempts/a1/result.md"));
+    }
+
+    #[test]
+    fn contract_tiers_are_presentation_frequencies_not_a_fork() {
+        let short = compile(&input());
+        assert!(short.request_md.contains("One <replacement> per scope at most"));
+
+        let mut full_input = input();
+        full_input.contract_mode = ContractMode::Full;
+        let full = compile(&full_input);
+        // The full tier is the generated protocol document, error table and all.
+        assert!(full.request_md.contains("unsupported-version"));
+        assert!(full.request_md.contains("<material-draft>"));
+
+        let mut pointer_input = input();
+        pointer_input.contract_mode = ContractMode::Pointer;
+        let pointer = compile(&pointer_input);
+        let body = pointer
+            .request_md
+            .split("# Reply format\n\n")
+            .nth(1)
+            .expect("reply format");
+        assert_eq!(body.lines().next(), Some("按 RefRain 兼容格式输出。"));
+        assert!(!pointer.request_md.contains("One <replacement> per scope at most"));
+
+        // Same input, different tier: the digest must move (INV-14).
+        assert_ne!(short.digest, full.digest);
+        assert_ne!(short.digest, pointer.digest);
     }
 
     #[test]

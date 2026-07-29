@@ -885,6 +885,103 @@ const run = async (): Promise<void> => {
     Boolean(await execute(`return document.querySelector(".reading") !== null`)),
   );
 
+  // ── Carry tiers and contract tiers (C12): 增量/全文/不带, and the harness
+  // pointer after its first round. ──
+  const setCarry = async (tier: string): Promise<void> => {
+    await execute(
+      `const s = document.querySelector(".dispatch-carry");
+       s.value = ${JSON.stringify(tier)};
+       s.dispatchEvent(new Event("change", { bubbles: true }));`,
+      [],
+    );
+  };
+  const dispatchOnce = async (text: string): Promise<HostRun> => {
+    // newTask does not reset the copies control: force one run per ticket.
+    await execute(
+      `const s = document.querySelector(".dispatch-copies");
+       s.value = "1";
+       s.dispatchEvent(new Event("change", { bubbles: true }));`,
+      [],
+    );
+    await tickBlock(2);
+    await setPrompt(text);
+    await clickButton("送出");
+    await waitFor("a manifest", async () =>
+      Boolean(await execute(`return document.querySelector(".manifest") !== null`)),
+    );
+    await clickButton("授权");
+    try {
+      await waitFor("one run to dispatch", async () => {
+        const s = await hostState(rootId);
+        return s.runs.filter((r) => r.progress === "dispatched").length === 1;
+      });
+    } catch (error) {
+      console.error("dispatchOnce stalled:", {
+        notice: await execute(
+          `return document.querySelector(".dispatch .notice")?.textContent ?? null;`,
+        ),
+        phase: await execute(
+          `return { manifest: document.querySelector(".manifest") !== null, runs: (await 0, document.querySelectorAll(".run-row").length) };`,
+        ),
+      });
+      throw error;
+    }
+    const s = await hostState(rootId);
+    const run = s.runs.find((r) => r.progress === "dispatched");
+    if (run === undefined) throw new Error("no dispatched run");
+    return run;
+  };
+  const cancelRun = async (runId: string): Promise<void> => {
+    await clickButton("取消");
+    await waitFor("the run to cancel", async () => {
+      const s = await hostState(rootId);
+      return s.runs.find((r) => r.id === runId)?.progress === "cancelled";
+    });
+  };
+  const requestOf = (run: HostRun): string =>
+    readFileSync(join(fixture, ".refrain", run.workspace, "request.md"), "utf8");
+
+  await setCarry("full");
+  const fullRun = await dispatchOnce("用全文对照改写第二段。");
+  const fullRequest = requestOf(fullRun);
+  check(
+    "the full tier carries the whole manuscript and the verdict stream",
+    fullRequest.includes("第1段原来如此。") && fullRequest.includes("<changes>"),
+  );
+  await cancelRun(fullRun.id);
+
+  await clickButton("再发");
+  await setCarry("none");
+  const bareRun = await dispatchOnce("只改第二段。");
+  const bareRequest = requestOf(bareRun);
+  check(
+    "the none tier carries neither changes nor the manuscript",
+    !bareRequest.includes("<changes>") && !bareRequest.includes("第1段原来如此。"),
+  );
+  check(
+    "the none tier still carries the short contract",
+    bareRequest.includes("One <replacement> per scope"),
+  );
+  await cancelRun(bareRun.id);
+
+  // The fake kimi already ran once: its next request carries the pointer
+  // line, not the whole contract (KL9's contract injection).
+  await clickButton("再发");
+  await execute(
+    `const s = document.querySelector(".dispatch-agent");
+     s.value = ${JSON.stringify(kimiAgent)};
+     s.dispatchEvent(new Event("change", { bubbles: true }));`,
+    [],
+  );
+  await setCarry("diff");
+  const pointerRun = await dispatchOnce("再改一次第二段。");
+  const pointerRequest = requestOf(pointerRun);
+  check(
+    "a harness's later round carries only the contract pointer",
+    pointerRequest.includes("按 RefRain 兼容格式输出") &&
+      !pointerRequest.includes("One <replacement> per scope"),
+  );
+
   await stop();
   if (failures.length > 0) {
     console.error(`\n${failures.length} check(s) failed`);
