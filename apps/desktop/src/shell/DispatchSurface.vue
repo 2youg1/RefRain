@@ -12,7 +12,9 @@ import {
   type BlockDto,
   commands,
   type DispatchPreviewDto,
+  type DocumentRow,
   type HostStateDto,
+  type MaterialDraftRow_Serialize,
   type RunDto,
 } from "../generated/bindings.gen";
 
@@ -23,7 +25,11 @@ const props = defineProps<{
   materials: { path: string; label: string }[];
 }>();
 
-const emit = defineEmits<{ collected: [count: number]; closed: [] }>();
+const emit = defineEmits<{
+  collected: [count: number];
+  materialSaved: [row: DocumentRow];
+  closed: [];
+}>();
 
 type Phase = { kind: "editing" } | { kind: "previewing" } | { kind: "dispatched" };
 
@@ -37,6 +43,9 @@ const taskId = ref<string | null>(null);
 const phase = ref<Phase>({ kind: "editing" });
 const preview = ref<DispatchPreviewDto | null>(null);
 const host = ref<HostStateDto | null>(null);
+const drafts = ref<MaterialDraftRow_Serialize[]>([]);
+const editingDraft = ref<string | null>(null);
+const editedBody = ref("");
 const notice = ref<string | null>(null);
 const busy = ref(false);
 const showRequest = ref(false);
@@ -76,6 +85,7 @@ const runs = computed<RunDto[]>(() => {
 const refresh = async (): Promise<void> => {
   try {
     host.value = await unwrap(commands.hostState(props.rootId));
+    drafts.value = await unwrap(commands.listMaterialDrafts(props.rootId));
   } catch (error) {
     fail(error);
   }
@@ -184,8 +194,12 @@ const collect = async (run: RunDto): Promise<void> => {
     if (outcome.kind === "waiting") {
       notice.value = "未回";
     } else if (outcome.kind === "completed") {
-      notice.value = `已收 · ${outcome.value.proposals} 提案`;
-      emit("collected", outcome.value.proposals);
+      const got = outcome.value;
+      notice.value =
+        got.drafts > 0
+          ? `已收 · ${got.proposals} 提案 · ${got.drafts} 草稿`
+          : `已收 · ${got.proposals} 提案`;
+      emit("collected", got.proposals);
     } else {
       notice.value = `失败 · ${outcome.value.code}`;
     }
@@ -246,6 +260,47 @@ const cancel = async (run: RunDto): Promise<void> => {
   } finally {
     busy.value = false;
   }
+};
+
+// A draft becomes a Material only through these two clicks (SPEC 8.7): save
+// (as written or after the author's own edit) or dismiss. Nothing else may.
+const saveDraft = async (draft: MaterialDraftRow_Serialize): Promise<void> => {
+  if (busy.value) return;
+  busy.value = true;
+  notice.value = null;
+  try {
+    const body = editingDraft.value === draft.id ? editedBody.value : null;
+    const row = await unwrap(commands.commitMaterialAction(props.rootId, draft.id, body, false));
+    if (row !== null) emit("materialSaved", row);
+    editingDraft.value = null;
+    notice.value = "已存";
+    await refresh();
+  } catch (error) {
+    fail(error);
+  } finally {
+    busy.value = false;
+  }
+};
+
+const dismissDraft = async (draft: MaterialDraftRow_Serialize): Promise<void> => {
+  if (busy.value) return;
+  busy.value = true;
+  notice.value = null;
+  try {
+    await unwrap(commands.commitMaterialAction(props.rootId, draft.id, null, true));
+    if (editingDraft.value === draft.id) editingDraft.value = null;
+    notice.value = "已退";
+    await refresh();
+  } catch (error) {
+    fail(error);
+  } finally {
+    busy.value = false;
+  }
+};
+
+const startEdit = (draft: MaterialDraftRow_Serialize): void => {
+  editingDraft.value = draft.id;
+  editedBody.value = draft.body;
 };
 
 const tokenLabel = (tokens: { kind: string; value?: number }): string => {
@@ -338,7 +393,7 @@ onUnmounted(() => {
       </div>
       <div class="blocks" v-if="materials.length > 0">
         <div class="blocks-head"><span>资料</span></div>
-        <label v-for="material in materials" :key="material.path" class="block-row">
+        <label v-for="material in materials" :key="material.path" class="material-row">
           <input
             type="checkbox"
             :checked="materialsSelected.has(material.path)"
@@ -366,6 +421,36 @@ onUnmounted(() => {
         placeholder="要求"
       ></textarea>
     </template>
+
+    <div class="blocks" v-if="drafts.length > 0">
+      <div class="blocks-head"><span>草稿</span></div>
+      <div v-for="draft in drafts" :key="draft.id" class="draft-row">
+        <div class="draft-line">
+          <span class="peek">{{ draft.title }}</span>
+          <button type="button" class="draft-save" :disabled="busy" @click="saveDraft(draft)">
+            保存
+          </button>
+          <button
+            type="button"
+            class="draft-edit"
+            :disabled="busy"
+            @click="editingDraft === draft.id ? (editingDraft = null) : startEdit(draft)"
+          >
+            改
+          </button>
+          <button type="button" class="draft-dismiss" :disabled="busy" @click="dismissDraft(draft)">
+            退回
+          </button>
+        </div>
+        <textarea
+          v-if="editingDraft === draft.id"
+          v-model="editedBody"
+          class="draft-body"
+          rows="6"
+        ></textarea>
+        <span v-else class="peek draft-peek">{{ draft.body.slice(0, 40) }}</span>
+      </div>
+    </div>
 
     <template v-else-if="phase.kind === 'previewing' && preview">
       <div class="manifest">
@@ -535,6 +620,55 @@ onUnmounted(() => {
 .block-row .count {
   opacity: 0.5;
   font-variant-numeric: tabular-nums;
+}
+
+.material-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+  cursor: pointer;
+}
+
+.material-row .peek {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.draft-row {
+  padding: 3px 0;
+}
+
+.draft-line {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.draft-line .peek {
+  flex: 1;
+}
+
+.draft-peek {
+  display: block;
+  opacity: 0.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.draft-body {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 8px;
+  border: 1px solid color-mix(in oklab, currentColor 16%, transparent);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  resize: vertical;
 }
 
 .dispatch-prompt {
