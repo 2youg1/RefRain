@@ -142,6 +142,7 @@ const caps = () => ({
         // browser process dies before it opens its devtools port.
         args: [
           `--user-data-dir=${join(dataDir, "webview-args")}`,
+          "--no-sandbox",
           "--disable-gpu",
           "--no-first-run",
           "--disable-extensions",

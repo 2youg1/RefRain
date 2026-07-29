@@ -142,6 +142,7 @@ const run = async (): Promise<void> => {
             "ms:edgeOptions": {
               args: [
                 `--user-data-dir=${join(dataDir, "webview-args")}`,
+                "--no-sandbox",
                 "--disable-gpu",
                 "--no-first-run",
                 "--disable-extensions",
