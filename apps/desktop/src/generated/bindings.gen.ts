@@ -159,6 +159,13 @@ export const commands = {
 	 *  测试连接只跑版本/能力探针，不调模型）.
 	 */
 	probeConnection: (executable: string) => typedError<string, RefrainError>(__TAURI_INVOKE("probe_connection", { executable })),
+	/**
+	 *  Import one source file (PDF / EPUB / HTML / DOCX / PPTX / XLSX) as a
+	 *  Material (Plan C12.3). Extraction is local — no cloud conversion; the
+	 *  material opens with a provenance header pinning the source bytes, then
+	 *  the projected text. The manuscript editor stays Markdown-only.
+	 */
+	importMaterial: (rootId: string, sourcePath: string) => typedError<DocumentRow, RefrainError>(__TAURI_INVOKE("import_material", { rootId, sourcePath })),
 };
 
 /* Types */

@@ -10,6 +10,7 @@ pub mod atomic;
 pub mod config;
 pub mod files;
 pub mod icons;
+pub mod ingest;
 pub mod ledger;
 pub mod materials;
 pub mod orchestration;

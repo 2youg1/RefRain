@@ -15,7 +15,9 @@ import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -1056,6 +1058,151 @@ const run = async (): Promise<void> => {
     "the remove leaves the Config empty",
     cfgAfter.config.harness_connections.length === 0,
     cfgAfter.config.harness_connections.length,
+  );
+
+  // ── Source import (C12.3): a real HTML through the real button, a DOCX
+  // through the command, a real Word document when Word is present. The
+  // other formats are pinned by the store's extractor tests. ──
+  const sources = mkdtempSync(join(tmpdir(), "refrain-sources-"));
+  const htmlPath = join(sources, "参考资料.html");
+  writeFileSync(
+    htmlPath,
+    `<!doctype html><html><head><title>t</title></head><body><h1>调查结论</h1><p>数字不说谎。</p><script>var x=1;</script></body></html>`,
+  );
+  await execute(`window.prompt = () => ${JSON.stringify(htmlPath)}; "stubbed"`, []);
+  await clickButton("导入");
+  await waitFor("the imported material on the rail", async () =>
+    Boolean(
+      await execute(
+        `return Array.from(document.querySelectorAll(".rail li button")).some((b) => b.textContent.includes("参考资料"));`,
+      ),
+    ),
+  );
+
+  const docxStage = mkdtempSync(join(tmpdir(), "refrain-docx-"));
+  mkdirSync(join(docxStage, "word"), { recursive: true });
+  writeFileSync(
+    join(docxStage, "word", "document.xml"),
+    `<w:document><w:body><w:p><w:r><w:t>导入的第一段。</w:t></w:r></w:p></w:body></w:document>`,
+  );
+  const zipPath = join(sources, "调研.zip");
+  const docxPath = join(sources, "调研.docx");
+  const packed = spawnSync(
+    "powershell",
+    [
+      "-NoProfile",
+      "-Command",
+      `Compress-Archive -Path '${docxStage.replaceAll("/", "\\")}\\*' -DestinationPath '${zipPath.replaceAll("/", "\\")}' -Force`,
+    ],
+    { stdio: "pipe" },
+  );
+  if (packed.status !== 0 || !existsSync(zipPath)) {
+    throw new Error(`docx fixture packing failed: ${packed.stderr?.toString() ?? ""}`);
+  }
+  copyFileSync(zipPath, docxPath);
+  const docxRow = (await invoke("import_material", { rootId, sourcePath: docxPath })) as {
+    path: string;
+  };
+  const openedDocx = (await invoke("open_document", { rootId, path: docxRow.path })) as {
+    blocks: { text: string }[];
+  };
+  check(
+    "the docx material carries its paragraph",
+    openedDocx.blocks.some((block) => block.text.includes("导入的第一段。")),
+    docxRow.path,
+  );
+
+  // Real Word evidence (KL9): Word authors the .docx itself. Gated on the
+  // COM server being present — CI runners have no Office.
+  const wordDocxPath = join(sources, "真机.docx");
+  const word = spawnSync(
+    "powershell",
+    [
+      "-NoProfile",
+      "-Command",
+      `$word = New-Object -ComObject Word.Application; $word.Visible = $false;
+       $doc = $word.Documents.Add(); $word.Selection.TypeText("Word 真机第一段。");
+       $doc.SaveAs2('${wordDocxPath.replaceAll("/", "\\")}', 16); $doc.Close($false); $word.Quit()`,
+    ],
+    { stdio: "pipe" },
+  );
+  if (word.status === 0 && existsSync(wordDocxPath)) {
+    const wordRow = (await invoke("import_material", { rootId, sourcePath: wordDocxPath })) as {
+      path: string;
+    };
+    const openedWord = (await invoke("open_document", { rootId, path: wordRow.path })) as {
+      blocks: { text: string }[];
+    };
+    check(
+      "a real Word document imports",
+      openedWord.blocks.some((block) => block.text.includes("Word 真机第一段。")),
+      wordRow.path,
+    );
+  } else {
+    console.log("SKIP  Word COM unavailable on this machine");
+  }
+
+  let refused = "";
+  try {
+    await invoke("import_material", { rootId, sourcePath: chapterPath });
+    refused = "(accepted)";
+  } catch (error) {
+    refused = String(error);
+  }
+  check(
+    "a format outside the six is a typed refusal",
+    refused.includes("unsupported-format"),
+    refused.slice(0, 120),
+  );
+
+  // A cold Workbench opens the imported material straight from disk truth:
+  // no dirty-flag fight, the render is the editor's real path.
+  await stop();
+  await start();
+  await invoke("adopt_root", { path: fixture, kind: "folder" });
+  await clickButton("打开文件夹");
+  await waitFor("the rail after restart", async () =>
+    Boolean(
+      await execute(
+        `return Array.from(document.querySelectorAll(".rail li button")).some((b) => b.textContent.includes("参考资料"));`,
+      ),
+    ),
+  );
+  await clickButton("参考资料");
+  await waitFor("the imported material rendered", async () =>
+    Boolean(
+      await execute(
+        `return Array.from(document.querySelectorAll("p[data-block-id]")).some((p) => p.textContent.includes("调查结论"));`,
+      ),
+    ),
+  );
+  const rendered = String(
+    await execute(
+      `return Array.from(document.querySelectorAll("p[data-block-id]")).map((p) => p.textContent).join("\\n");`,
+      [],
+    ),
+  );
+  check(
+    "the imported html renders in the editor with provenance",
+    rendered.includes("调查结论") &&
+      rendered.includes("> 来源：") &&
+      rendered.includes("sha256") &&
+      rendered.includes("原件克隆"),
+    rendered.slice(0, 100),
+  );
+  check("scripts never render either", !rendered.includes("var x"), rendered.slice(0, 60));
+  // The original bytes sit in the project's read-only zone (KL9: the source
+  // never moves).
+  const clonesDir = join(fixture, ".refrain-source", "materials");
+  const clones = existsSync(clonesDir) ? readdirSync(clonesDir) : [];
+  check(
+    "the source clone landed in .refrain-source/materials",
+    clones.some((name) => name.endsWith(".html")) &&
+      readFileSync(
+        join(clonesDir, clones.find((name) => name.endsWith(".html")) ?? ""),
+        "utf8",
+      ).includes("调查结论"),
+    clones,
   );
 
   await stop();
