@@ -1,9 +1,0 @@
-{
-  "name": "shell-e43",
-  "private": true,
-  "version": "1.0.0",
-  "main": "main.js",
-  "dependencies": {
-    "electron": "43.2.0"
-  }
-}

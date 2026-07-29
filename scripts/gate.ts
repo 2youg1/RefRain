@@ -23,9 +23,16 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["verify:bridge", ["bun", "scripts/verify-bridge.ts"]],
   ["verify:write-path", ["bun", "scripts/verify-write-path.ts"]],
   ["verify:core-purity", ["bun", "scripts/verify-core-purity.ts"]],
+  ["verify:config-authority", ["bun", "scripts/verify-config-authority.ts"]],
   ["verify:trash-only", ["bun", "scripts/verify-trash-only.ts"]],
   ["verify:roundtrip", ["bun", "scripts/verify-roundtrip.ts"]],
+  ["verify:manuscript-scale", ["bun", "scripts/verify-manuscript-scale.ts"]],
+  ["verify:docs-current", ["bun", "scripts/verify-docs-current.ts"]],
+  ["verify:editor-kernel", ["bun", "scripts/verify-editor-kernel.ts"]],
   ["verify:no-js", ["bun", "scripts/verify-no-js.ts"]],
+  ["verify:workflows", ["bun", "scripts/verify-workflows.ts"]],
+  ["verify:legacy-parity", ["bun", "scripts/verify-legacy-parity.ts"]],
+  ["verify:text-surface", ["bun", "scripts/verify-text-surface.ts"]],
   ["verify:gates-run", ["bun", "scripts/verify-gates-run.ts"]],
 ];
 

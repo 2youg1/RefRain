@@ -6,35 +6,11 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
 
-  - package-ecosystem: npm
-    directory: /e2e/ime
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 2
-
-  - package-ecosystem: npm
-    directory: /e2e/ime/shells/e42
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 1
-
-  - package-ecosystem: npm
-    directory: /e2e/ime/shells/e43
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 1
-
-  - package-ecosystem: npm
-    directory: /e2e/ime/shells/e44
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 1
-
   - package-ecosystem: cargo
-    directory: /packages/fs
+    directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 5
 
   - package-ecosystem: github-actions
     directory: /

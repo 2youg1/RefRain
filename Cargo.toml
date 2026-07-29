@@ -11,7 +11,7 @@ members = [
 version = "0.2.0"
 edition = "2024"
 license = "GPL-3.0-only"
-rust-version = "1.90"
+rust-version = "1.97.1"
 
 [workspace.dependencies]
 refrain-core = { path = "crates/refrain-core" }
@@ -22,9 +22,14 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.147"
 sha2 = "=0.10.9"
 thiserror = "=2.0.18"
+
+# Config is ruled TOML (SPEC 10.1, D-N8): a real format needs a real parser,
+# and a hand-rolled one would re-create exactly the escaping/typing edge cases
+# this crate exists to refuse. Pinned exactly like every direct dependency.
+toml = "=1.1.4"
 uuid = { version = "=1.24.0", features = ["v7", "serde"] }
 
-# specta 2.x is the generation authority (SPEC D5). tauri-specta pins specta
+# specta 2.x is the binding-generation authority. tauri-specta pins specta
 # exactly, so both move together or neither moves. The `uuid` feature is what
 # lets an Id cross the bridge as a string rather than as an opaque struct.
 specta = { version = "=2.0.0-rc.25", features = ["derive", "uuid"] }
@@ -33,6 +38,26 @@ tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
 
 # The store crate owns every database handle; rusqlite appears nowhere else.
 rusqlite = { version = "=0.40.1", features = ["bundled"] }
+
+# The icon pipeline (C7): SVG needs a real parser (a hand-rolled one is the
+# DTD/entity surface the format exists to refuse) and a real rasteriser;
+# PNG needs a real decoder. All three are the exact versions usvg 0.47 pins.
+resvg = "=0.47.0"
+usvg = "=0.47.0"
+tiny-skia = "=0.12.0"
+image = "=0.25.10"
+
+# RootFiles (C4). Four crates, each carrying a real capability the file layer
+# was already built on in v0.1.x: `ignore` is the traversal ripgrep uses (a
+# manuscript folder full of build output should not drown the index); `rayon`
+# is the work-stealing pool the walk, the sort, and the search share; `memchr`
+# picks a SIMD substring kernel at run time; `trash` is the only cross-platform
+# route to a *recoverable* delete (IFileOperation on Windows) — writing it by
+# hand would mean platform implementations and no undo.
+ignore = "=0.4.31"
+rayon = "=1.12.0"
+memchr = "=2.8.3"
+trash = "=5.2.6"
 
 [profile.release]
 strip = true

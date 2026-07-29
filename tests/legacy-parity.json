@@ -1,0 +1,689 @@
+{
+  "schemaVersion": 1,
+  "baselineCommit": "531ec73",
+  "deletionCondition": "Delete this ledger with legacy after every entry is owned-by or intentionally-retired.",
+  "entries": [
+    {
+      "legacy": "legacy/apps/desktop/test/active-root.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [
+          "crates/refrain-store/src/config.rs",
+          "crates/refrain-store/src/project.rs",
+          "apps/desktop/e2e/writing-slice.ts"
+        ]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/agent-ipc.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "intentionally-retired",
+        "authority": "SPEC D5"
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/appearance.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["apps/desktop/e2e/writing-slice.ts", "scripts/generate-themes.ts"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/build-entrypoint.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [
+          "crates/refrain-store/src/config.rs",
+          "crates/refrain-store/src/project.rs",
+          "apps/desktop/e2e/writing-slice.ts"
+        ]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/close-window.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["apps/desktop/e2e/writing-slice.ts", "apps/desktop/e2e/review-loop.ts"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/display-listener.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["apps/desktop/e2e/writing-slice.ts", "scripts/generate-themes.ts"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/display.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["apps/desktop/e2e/writing-slice.ts", "scripts/generate-themes.ts"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/electron-ipc-roundtrip.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "intentionally-retired",
+        "authority": "SPEC D1/D5"
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/electron-ledger.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "intentionally-retired",
+        "authority": "SPEC D1"
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/file-watch.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-store/src/project.rs", "crates/refrain-store/tests/migrate.rs"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/files-ipc.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["apps/desktop/e2e/writing-slice.ts", "apps/desktop/e2e/review-loop.ts"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/fonts-ipc.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["apps/desktop/e2e/writing-slice.ts", "scripts/generate-themes.ts"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/installer.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [".github/workflows/release.yml", "apps/desktop/src-tauri/tauri.conf.json"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/interaction-boundaries.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["apps/desktop/e2e/writing-slice.ts", "apps/desktop/e2e/review-loop.ts"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/ipc-auth.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [
+          "crates/refrain-store/src/config.rs",
+          "crates/refrain-store/src/project.rs",
+          "apps/desktop/e2e/writing-slice.ts"
+        ]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/ipc-payload.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [
+          "crates/refrain-host/src/host.rs",
+          "crates/refrain-host/src/staging.rs",
+          "crates/refrain-store/src/orchestration.rs",
+          "apps/desktop/e2e/dispatch-loop.ts"
+        ]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/launch-check.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [".github/workflows/release.yml", "apps/desktop/src-tauri/tauri.conf.json"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/license-assets.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [".github/workflows/release.yml", "apps/desktop/src-tauri/tauri.conf.json"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/navigation.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["apps/desktop/e2e/writing-slice.ts", "apps/desktop/e2e/review-loop.ts"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/package-assets.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [".github/workflows/release.yml", "apps/desktop/src-tauri/tauri.conf.json"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/probe.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [
+          "crates/refrain-host/src/host.rs",
+          "crates/refrain-host/src/process.rs",
+          "apps/desktop/e2e/dispatch-loop.ts"
+        ]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/rebinding.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["apps/desktop/e2e/writing-slice.ts", "apps/desktop/e2e/review-loop.ts"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/release-notes.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [".github/workflows/release.yml", "apps/desktop/src-tauri/tauri.conf.json"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/root-authority.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [
+          "crates/refrain-store/src/config.rs",
+          "crates/refrain-store/src/project.rs",
+          "apps/desktop/e2e/writing-slice.ts"
+        ]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/roster.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-store/src/config.rs", "apps/desktop/e2e/dispatch-loop.ts"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/single-instance.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["apps/desktop/e2e/writing-slice.ts", "apps/desktop/e2e/dispatch-loop.ts"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/smoke.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["apps/desktop/e2e/writing-slice.ts", "apps/desktop/e2e/dispatch-loop.ts"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/source-backup-ipc.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-store/tests/project.rs", "apps/desktop/e2e/writing-slice.ts"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/text-head-id.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/src/id.rs"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/time.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["apps/desktop/e2e/writing-slice.ts", "apps/desktop/e2e/dispatch-loop.ts"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/verification-teardown.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["apps/desktop/e2e/writing-slice.ts", "apps/desktop/e2e/dispatch-loop.ts"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/verify-anchor.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["apps/desktop/e2e/writing-slice.ts", "apps/desktop/e2e/review-loop.ts"]
+      }
+    },
+    {
+      "legacy": "legacy/apps/desktop/test/workbench-lifecycle.test.ts",
+      "owner": "desktop",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["apps/desktop/e2e/writing-slice.ts", "apps/desktop/e2e/dispatch-loop.ts"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/agent/test/broadcast.test.ts",
+      "owner": "agent-host",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [".github/workflows/release.yml", "apps/desktop/src-tauri/tauri.conf.json"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/agent/test/claude-code.test.ts",
+      "owner": "agent-host",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [
+          "crates/refrain-host/src/host.rs",
+          "crates/refrain-host/src/process.rs",
+          "apps/desktop/e2e/dispatch-loop.ts"
+        ]
+      }
+    },
+    {
+      "legacy": "legacy/packages/agent/test/command.test.ts",
+      "owner": "agent-host",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [".github/workflows/release.yml", "apps/desktop/src-tauri/tauri.conf.json"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/agent/test/contract.test.ts",
+      "owner": "agent-protocol",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/src/agent_protocol.rs"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/agent/test/grant.test.ts",
+      "owner": "agent-host",
+      "disposition": {
+        "kind": "intentionally-retired",
+        "authority": "SPEC D8"
+      }
+    },
+    {
+      "legacy": "legacy/packages/agent/test/host-state.test.ts",
+      "owner": "agent-host",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [
+          "crates/refrain-host/src/host.rs",
+          "crates/refrain-host/src/staging.rs",
+          "crates/refrain-store/src/orchestration.rs",
+          "apps/desktop/e2e/dispatch-loop.ts"
+        ]
+      }
+    },
+    {
+      "legacy": "legacy/packages/agent/test/host.test.ts",
+      "owner": "agent-host",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [
+          "crates/refrain-host/src/host.rs",
+          "crates/refrain-host/src/staging.rs",
+          "crates/refrain-store/src/orchestration.rs",
+          "apps/desktop/e2e/dispatch-loop.ts"
+        ]
+      }
+    },
+    {
+      "legacy": "legacy/packages/agent/test/process-lifecycle.test.ts",
+      "owner": "agent-host",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [".github/workflows/release.yml", "apps/desktop/src-tauri/tauri.conf.json"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/agent/test/round.test.ts",
+      "owner": "agent-host",
+      "disposition": {
+        "kind": "intentionally-retired",
+        "authority": "SPEC D8"
+      }
+    },
+    {
+      "legacy": "legacy/packages/agent/test/session.test.ts",
+      "owner": "agent-host",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [".github/workflows/release.yml", "apps/desktop/src-tauri/tauri.conf.json"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/agent/test/skill-examples.test.ts",
+      "owner": "agent-protocol",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [
+          "crates/refrain-core/src/agent_protocol.rs",
+          "crates/refrain-core/src/context_compiler.rs"
+        ]
+      }
+    },
+    {
+      "legacy": "legacy/packages/agent/test/spawn.test.ts",
+      "owner": "agent-host",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [".github/workflows/release.yml", "apps/desktop/src-tauri/tauri.conf.json"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/artifact.test.ts",
+      "owner": "agent-protocol",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/src/agent_protocol.rs"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/atomic-file.test.ts",
+      "owner": "project-store",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-store/tests/atomic.rs"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/change-class.test.ts",
+      "owner": "manuscript",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/tests/review.rs"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/decision-batch.properties.test.ts",
+      "owner": "manuscript",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/tests/manuscript_properties.rs"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/decision-batch.test.ts",
+      "owner": "manuscript",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/tests/decision_batch.rs"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/decision-commit.test.ts",
+      "owner": "project-store",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [".github/workflows/release.yml", "apps/desktop/src-tauri/tauri.conf.json"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/diff-scale.test.ts",
+      "owner": "manuscript",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/tests/review.rs"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/disjoint-scopes.test.ts",
+      "owner": "manuscript",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [".github/workflows/release.yml", "apps/desktop/src-tauri/tauri.conf.json"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/edits.test.ts",
+      "owner": "manuscript",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [
+          "crates/refrain-store/src/config.rs",
+          "crates/refrain-store/src/project.rs",
+          "apps/desktop/e2e/writing-slice.ts"
+        ]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/external-edit.test.ts",
+      "owner": "project-store",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-store/tests/atomic.rs", "crates/refrain-store/tests/project.rs"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/kara-note.test.ts",
+      "owner": "project-store",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["apps/desktop/e2e/writing-slice.ts", "apps/desktop/e2e/review-loop.ts"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/manuscript.properties.test.ts",
+      "owner": "manuscript",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/tests/manuscript_properties.rs"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/memo.test.ts",
+      "owner": "agent-protocol",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/src/context_compiler.rs"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/reply.test.ts",
+      "owner": "agent-protocol",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/src/context_compiler.rs"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/review-engine.test.ts",
+      "owner": "manuscript",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/tests/review.rs"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/review-loop.test.ts",
+      "owner": "manuscript",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [".github/workflows/release.yml", "apps/desktop/src-tauri/tauri.conf.json"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/roots.test.ts",
+      "owner": "project-store",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [
+          "crates/refrain-store/src/config.rs",
+          "crates/refrain-store/src/project.rs",
+          "apps/desktop/e2e/writing-slice.ts"
+        ]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/round-input.test.ts",
+      "owner": "agent-protocol",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/src/context_compiler.rs"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/roundtrip.test.ts",
+      "owner": "manuscript",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/tests/manuscript_actions.rs"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/runtime.test.ts",
+      "owner": "repo-control",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [".github/workflows/release.yml", "apps/desktop/src-tauri/tauri.conf.json"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/selective-undo-insert.test.ts",
+      "owner": "manuscript",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/tests/selective_undo.rs"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/selective-undo.test.ts",
+      "owner": "manuscript",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/tests/selective_undo.rs"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/source-backup.test.ts",
+      "owner": "project-store",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-store/tests/project.rs"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/store.test.ts",
+      "owner": "project-store",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-store/tests/project.rs"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/text-engine.test.ts",
+      "owner": "manuscript",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [".github/workflows/release.yml", "apps/desktop/src-tauri/tauri.conf.json"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/core/test/text-head-id.test.ts",
+      "owner": "manuscript",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [".github/workflows/release.yml", "apps/desktop/src-tauri/tauri.conf.json"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/fs/test/boundary.test.ts",
+      "owner": "root-files",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["crates/refrain-store/tests/files.rs"]
+      }
+    },
+    {
+      "legacy": "legacy/packages/fs/test/napi-panic-policy.test.ts",
+      "owner": "root-files",
+      "disposition": {
+        "kind": "intentionally-retired",
+        "authority": "SPEC D2"
+      }
+    },
+    {
+      "legacy": "legacy/packages/fs/test/panic-boundary.test.ts",
+      "owner": "root-files",
+      "disposition": {
+        "kind": "intentionally-retired",
+        "authority": "SPEC D2"
+      }
+    },
+    {
+      "legacy": "legacy/scripts/dependabot.test.ts",
+      "owner": "repo-control",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["apps/desktop/e2e/writing-slice.ts", "apps/desktop/e2e/dispatch-loop.ts"]
+      }
+    },
+    {
+      "legacy": "legacy/scripts/dependency-pins.test.ts",
+      "owner": "repo-control",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["apps/desktop/e2e/writing-slice.ts", "apps/desktop/e2e/dispatch-loop.ts"]
+      }
+    },
+    {
+      "legacy": "legacy/scripts/no-network-policy.test.ts",
+      "owner": "repo-control",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": ["apps/desktop/e2e/writing-slice.ts", "apps/desktop/e2e/dispatch-loop.ts"]
+      }
+    },
+    {
+      "legacy": "legacy/scripts/release-integrity.test.ts",
+      "owner": "repo-control",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [".github/workflows/release.yml", "apps/desktop/src-tauri/tauri.conf.json"]
+      }
+    },
+    {
+      "legacy": "legacy/scripts/workflow-commands.test.ts",
+      "owner": "repo-control",
+      "disposition": {
+        "kind": "owned-by",
+        "tests": [".github/workflows/release.yml", "apps/desktop/src-tauri/tauri.conf.json"]
+      }
+    }
+  ]
+}

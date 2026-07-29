@@ -2,11 +2,9 @@
 /**
  * The local design baseline never reaches the repository.
  *
- * SPEC.md carries unpublished product judgement, competitor comparison, and
- * per-decision reasoning. It stays on the maintainer's machine (SPEC preamble,
- * section 12 R0). A `.gitignore` entry is the mechanism; this is the assertion
- * that the mechanism still works — the two fail apart, because a later edit to
- * `.gitignore` looks harmless and an accidental `git add -f` looks deliberate.
+ * SPEC.md is the local design authority, not part of the public repository.
+ * A `.gitignore` entry is the mechanism; this script asserts that the mechanism
+ * still works because an ignore edit and an index edit can fail separately.
  *
  * Injection proof that this gate bites: `git add -f SPEC.md` and this exits 1.
  */
@@ -33,12 +31,14 @@ if (ignored.status !== 0) {
   process.exit(1);
 }
 
-// Assert the file is actually here. Passing because SPEC.md is absent would be
-// the empty-scan failure: the gate would go green on a machine that lost it.
 const present = await Bun.file("SPEC.md").exists();
-if (!present) {
-  console.error("FAIL  verify:no-spec-upload: SPEC.md is not on disk — nothing was checked");
+if (!present && process.env.GITHUB_ACTIONS !== "true") {
+  console.error("FAIL  verify:no-spec-upload: local SPEC.md is missing");
   process.exit(1);
 }
 
-console.log("PASS  verify:no-spec-upload  (SPEC.md present, ignored, untracked)");
+console.log(
+  present
+    ? "PASS  verify:no-spec-upload  (local SPEC.md present, ignored, untracked)"
+    : "PASS  verify:no-spec-upload  (CI checkout omits SPEC.md; ignore rule and index are clean)",
+);

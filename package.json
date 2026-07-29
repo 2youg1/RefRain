@@ -2,6 +2,7 @@
   "name": "refrain",
   "private": true,
   "type": "module",
+  "packageManager": "bun@1.3.14",
   "license": "GPL-3.0-only",
   "workspaces": [
     "apps/desktop",
@@ -9,9 +10,10 @@
   ],
   "scripts": {
     "dev": "cd apps/desktop && bun run dev",
+    "build:web": "cd apps/desktop && bun run build:web",
     "generate": "cd apps/desktop/src-tauri && cargo test --features generate-bindings generate_bindings -- --nocapture",
     "check": "bun run check:ts && bun run check:vue",
-    "check:ts": "tsc --build --force",
+    "check:ts": "tsc --build --force && tsc --noEmit -p apps/desktop/tsconfig.app.json",
     "check:vue": "bun scripts/check-vue.ts",
     "fmt": "biome check --write .",
     "fmt:check": "biome check .",
@@ -24,8 +26,17 @@
     "verify:core-purity": "bun scripts/verify-core-purity.ts",
     "verify:trash-only": "bun scripts/verify-trash-only.ts",
     "verify:roundtrip": "bun scripts/verify-roundtrip.ts",
+    "verify:manuscript-scale": "bun scripts/verify-manuscript-scale.ts",
+    "verify:editor-kernel": "bun scripts/verify-editor-kernel.ts",
     "verify:no-js": "bun scripts/verify-no-js.ts",
-    "verify:gates-run": "bun scripts/verify-gates-run.ts"
+    "verify:workflows": "bun scripts/verify-workflows.ts",
+    "verify:legacy-parity": "bun scripts/verify-legacy-parity.ts",
+    "verify:text-surface": "bun scripts/verify-text-surface.ts",
+    "verify:gates-run": "bun scripts/verify-gates-run.ts",
+    "e2e:app": "bun apps/desktop/e2e/writing-slice.ts target/debug/refrain-desktop.exe",
+    "e2e:review": "bun apps/desktop/e2e/review-loop.ts target/debug/refrain-desktop.exe",
+    "e2e:dispatch": "bun apps/desktop/e2e/dispatch-loop.ts target/debug/refrain-desktop.exe",
+    "e2e:ime": "powershell -NoProfile -ExecutionPolicy Bypass -File e2e/ime/scripts/prepare.ps1 && powershell -NoProfile -ExecutionPolicy Bypass -File e2e/ime/driver/drive.ps1 -Shell wv2 && bun e2e/ime/driver/analyze.ts && bun e2e/ime/driver/assert.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.5",
