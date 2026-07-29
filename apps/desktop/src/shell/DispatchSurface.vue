@@ -6,7 +6,7 @@
 // channel's collect. Nothing here derives state Rust owns; every fact comes
 // back over the bridge.
 
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { describe, unwrap } from "../bridge";
 import {
   type BlockDto,
@@ -29,6 +29,7 @@ type Phase = { kind: "editing" } | { kind: "previewing" } | { kind: "dispatched"
 const selected = ref<Set<string>>(new Set());
 const prompt = ref("");
 const agentId = ref<string | null>(null);
+const agents = ref<{ id: string; label: string }[]>([]);
 const taskId = ref<string | null>(null);
 const phase = ref<Phase>({ kind: "editing" });
 const preview = ref<DispatchPreviewDto | null>(null);
@@ -36,6 +37,7 @@ const host = ref<HostStateDto | null>(null);
 const notice = ref<string | null>(null);
 const busy = ref(false);
 const showRequest = ref(false);
+let poll: number | null = null;
 
 const fail = (error: unknown): void => {
   notice.value = describe(error);
@@ -50,11 +52,11 @@ const scopeIds = computed<string[]>(() =>
 const cells = computed(() => {
   const scope = selected.value.size;
   const requirement = prompt.value.trim().length;
-  const agent = agentId.value !== null;
+  const agent = agents.value.find((candidate) => candidate.id === agentId.value) ?? null;
   return {
     scope: scope > 0 ? `${scope} 块` : "—",
     requirement: requirement > 0 ? `${requirement} 字` : "—",
-    agent: agent ? "L0 文件通道" : "—",
+    agent: agent ? agent.label : "—",
     range: scope > 0 ? `所选 ${scope} 块` : "—",
     ready: scope > 0 && requirement > 0 && agent,
     blocker:
@@ -146,6 +148,15 @@ const authorize = async (): Promise<void> => {
   }
 };
 
+const newTask = (): void => {
+  phase.value = { kind: "editing" };
+  taskId.value = null;
+  preview.value = null;
+  selected.value = new Set();
+  prompt.value = "";
+  notice.value = null;
+};
+
 const collect = async (run: RunDto): Promise<void> => {
   if (busy.value) return;
   busy.value = true;
@@ -233,11 +244,33 @@ const runStatusLabel = (run: RunDto): string => {
 
 onMounted(async () => {
   try {
-    agentId.value = await commands.l0FileChannelAgent();
+    const l0 = await commands.l0FileChannelAgent();
+    agents.value = [{ id: l0, label: "L0 文件通道" }];
+    for (const harness of await commands.listHarnesses()) {
+      agents.value.push({
+        id: harness.agentId,
+        label: `${harness.label} · ${harness.version}`,
+      });
+    }
+    agentId.value = l0;
   } catch (error) {
     fail(error);
   }
   await refresh();
+  // In-flight runs settle off-thread; while any exist, poll the journal.
+  poll = window.setInterval(() => {
+    if (
+      host.value?.runs.some((run) =>
+        ["authorized", "launching", "dispatched"].includes(run.progress),
+      )
+    ) {
+      void refresh();
+    }
+  }, 2_500);
+});
+
+onUnmounted(() => {
+  if (poll !== null) window.clearInterval(poll);
 });
 </script>
 
@@ -278,6 +311,12 @@ onMounted(async () => {
           <span class="peek">{{ block.text.slice(0, 20) }}</span>
           <span class="count">{{ block.text.length }} 字</span>
         </label>
+      </div>
+      <div class="agent-row" v-if="agents.length > 1">
+        <span>委托给</span>
+        <select v-model="agentId" class="dispatch-agent">
+          <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.label }}</option>
+        </select>
       </div>
       <textarea
         v-model="prompt"
@@ -347,6 +386,9 @@ onMounted(async () => {
     </template>
 
     <button type="button" class="dispatch-close" @click="emit('closed')">收起発送票</button>
+    <button v-if="phase.kind === 'dispatched'" type="button" class="dispatch-new" @click="newTask">
+      新 Task
+    </button>
   </section>
 </template>
 
@@ -464,6 +506,22 @@ onMounted(async () => {
   background: transparent;
   color: inherit;
   resize: vertical;
+}
+
+.agent-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 8px 0;
+}
+
+.dispatch-agent {
+  font: inherit;
+  background: transparent;
+  color: inherit;
+  border: 1px solid color-mix(in oklab, currentColor 16%, transparent);
+  border-radius: 4px;
+  padding: 4px 8px;
 }
 
 .manifest {

@@ -96,6 +96,23 @@ impl DirectoryContext {
             Err(error) => Err(error),
         }
     }
+
+    /// Land an argv producer's reply as the attempt's result (L1/L2): the
+    /// bytes arrive whole or not at all — a collect that races the landing
+    /// sees "waiting", never a half file.
+    pub fn land_result(&self, workspace: &str, run_id: Id, bytes: &[u8]) -> io::Result<()> {
+        let dir = self
+            .state_dir
+            .join(workspace)
+            .join("attempts")
+            .join(run_id.to_string());
+        fs::create_dir_all(&dir)?;
+        let temporary = dir.join("result.md.landing");
+        fs::write(&temporary, bytes)?;
+        sync_file(&temporary)?;
+        fs::rename(&temporary, dir.join("result.md"))?;
+        sync_directory(&dir)
+    }
 }
 
 impl FrozenContext for DirectoryContext {

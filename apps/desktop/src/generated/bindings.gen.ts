@@ -93,12 +93,22 @@ export const commands = {
 	previewDispatch: (rootId: string, path: string, blockIds: string[], prompt: string) => typedError<DispatchPreviewDto, RefrainError>(__TAURI_INVOKE("preview_dispatch", { rootId, path, blockIds, prompt })),
 	/**  The built-in agent the ticket always offers (SPEC 8.3a's first row). */
 	l0FileChannelAgent: () => __TAURI_INVOKE<string>("l0_file_channel_agent"),
+	/**
+	 *  Every harness the app can dispatch to right now: detection only, no model
+	 *  call (SPEC: 测试连接只跑版本/能力探针）.
+	 */
+	listHarnesses: () => __TAURI_INVOKE<HarnessDto[]>("list_harnesses"),
 	authorizeDispatch: (request: AuthorizeDispatchRequest) => typedError<RunDto[], RefrainError>(__TAURI_INVOKE("authorize_dispatch", { request })),
 	/**
 	 *  Launch one authorized run. L0's dispatch is the file becoming visible;
 	 *  the receipt says so. Real adapters take this seam over in C11.
 	 */
 	launchRun: (rootId: string, runId: string) => typedError<RunDto, RefrainError>(__TAURI_INVOKE("launch_run", { rootId, runId })),
+	/**
+	 *  The command form for the UI's harness dispatch (launch_run branches here
+	 *  for harness agents; this stays a command for the e2e seam).
+	 */
+	harnessDispatch: (rootId: string, runId: string) => typedError<RunDto, RefrainError>(__TAURI_INVOKE("harness_dispatch", { rootId, runId })),
 	/**  The orchestration world as the surface renders it. */
 	hostState: (rootId: string) => typedError<HostStateDto, RefrainError>(__TAURI_INVOKE("host_state", { rootId })),
 	/**  Cancel a run that has not reached a terminal state. */
@@ -325,6 +335,23 @@ export type HarnessConnection = {
 	 *  in the author's own environment; RefRain stores no API keys.
 	 */
 	env_allow?: string[],
+};
+
+/**  One dispatchable harness as the ticket offers it. */
+export type HarnessDto = {
+	agentId: string,
+	label: string,
+	version: string,
+	tier: string,
+	probe: HarnessProbe,
+};
+
+/**  A detected harness binary: path and version, nothing more. */
+export type HarnessProbe = {
+	id: string,
+	program: string,
+	version: string,
+	tier: Tier,
 };
 
 /**  What the application can say about itself without touching anything. */
@@ -686,6 +713,20 @@ export type ThemeInfoDto = {
 	cn: string,
 	mode: string,
 };
+
+/**
+ *  Adapter capability tier (SPEC 8.3).
+ * 
+ *  Declared in R0 because the boundary it names is the one thing the host owes
+ *  the rest of the workspace before its state machine exists.
+ */
+export type Tier = 
+/**  A file channel: write a request, wait for a result. No launch, no cancel. */
+"l0" | 
+/**  An argv launch with completion and cancellation. */
+"l1" | 
+/**  Honest usage, effective model, compaction events. */
+"l2";
 
 /**
  *  A token count, three-stated (SPEC 2.3). `Unknown` is a first-class value
