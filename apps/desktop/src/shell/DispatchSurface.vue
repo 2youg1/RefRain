@@ -2,8 +2,8 @@
 // biome-ignore-all lint/correctness/noUnusedVariables: bindings used only in
 // the template are real usage; biome does not parse Vue templates.
 // The dispatch ticket (SPEC 9.6): scope → prompt → agent → range → send, the
-// manifest the author reads, the click that authorizes, and the L0 file
-// channel's collect. Nothing here derives state Rust owns; every fact comes
+// manifest the author reads, the click that authorizes, and manual return.
+// Nothing here derives state Rust owns; every fact comes
 // back over the bridge.
 
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
@@ -371,8 +371,8 @@ onMounted(async () => {
     selected.value = new Set([...selected.value, ...props.seed]);
   }
   try {
-    // Named Agents first (KL9: an Agent is a name + channel + persona);
-    // the raw channels follow for an unprofiled dispatch.
+    // Only named writing partners enter the ticket. A machine connection is
+    // not an Agent; manual return remains the explicit fallback.
     for (const agent of await commands.listAgents()) {
       agents.value.push({
         id: agent.id,
@@ -380,13 +380,7 @@ onMounted(async () => {
       });
     }
     const l0 = await commands.l0FileChannelAgent();
-    agents.value.push({ id: l0, label: "L0 文件通道" });
-    for (const harness of await commands.listHarnesses()) {
-      agents.value.push({
-        id: harness.agentId,
-        label: `${harness.label} · ${harness.version}`,
-      });
-    }
+    agents.value.push({ id: l0, label: "手动往返" });
     agentId.value = agents.value[0]?.id ?? l0;
   } catch (error) {
     fail(error);

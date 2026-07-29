@@ -283,7 +283,7 @@ const writeResult = (workspace: string, runId: string, body: string): void => {
 
 const run = async (): Promise<void> => {
   await start();
-  const adopted = (await invoke("adopt_root", { path: fixture, kind: "folder" })) as {
+  const adopted = (await invoke("debug_adopt_root", { path: fixture, kind: "folder" })) as {
     rootId: string;
   };
   const rootId = adopted.rootId;
@@ -349,7 +349,7 @@ const run = async (): Promise<void> => {
   // ── The kill: a dispatched run is recovery-required after a restart. ──
   await stop();
   await start();
-  await invoke("adopt_root", { path: fixture, kind: "folder" });
+  await invoke("debug_adopt_root", { path: fixture, kind: "folder" });
   state = await hostState(rootId);
   check(
     "the mid-flight run is recovery-required after the kill",
@@ -1115,7 +1115,7 @@ const run = async (): Promise<void> => {
     throw new Error(`docx fixture packing failed: ${packed.stderr?.toString() ?? ""}`);
   }
   copyFileSync(zipPath, docxPath);
-  const docxRow = (await invoke("import_material", { rootId, sourcePath: docxPath })) as {
+  const docxRow = (await invoke("debug_import_material", { rootId, sourcePath: docxPath })) as {
     path: string;
   };
   const openedDocx = (await invoke("open_document", { rootId, path: docxRow.path })) as {
@@ -1142,7 +1142,10 @@ const run = async (): Promise<void> => {
     { stdio: "pipe" },
   );
   if (word.status === 0 && existsSync(wordDocxPath)) {
-    const wordRow = (await invoke("import_material", { rootId, sourcePath: wordDocxPath })) as {
+    const wordRow = (await invoke("debug_import_material", {
+      rootId,
+      sourcePath: wordDocxPath,
+    })) as {
       path: string;
     };
     const openedWord = (await invoke("open_document", { rootId, path: wordRow.path })) as {
@@ -1159,7 +1162,7 @@ const run = async (): Promise<void> => {
 
   let refused = "";
   try {
-    await invoke("import_material", { rootId, sourcePath: chapterPath });
+    await invoke("debug_import_material", { rootId, sourcePath: chapterPath });
     refused = "(accepted)";
   } catch (error) {
     refused = String(error);
@@ -1174,7 +1177,7 @@ const run = async (): Promise<void> => {
   // no dirty-flag fight, the render is the editor's real path.
   await stop();
   await start();
-  await invoke("adopt_root", { path: fixture, kind: "folder" });
+  await invoke("debug_adopt_root", { path: fixture, kind: "folder" });
   await clickButton("打开文件夹");
   await waitFor("the rail after restart", async () =>
     Boolean(

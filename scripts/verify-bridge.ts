@@ -22,11 +22,16 @@ const result = await scan(
   },
 );
 
-// `src/generated/` is where the generated bindings legitimately call invoke.
-const outside = result.findings.filter((f) => !f.file.includes("src/generated/"));
+// Only the Specta output and the one explicit E2E bridge may call raw invoke.
+// The E2E bridge names debug-only Rust commands; verify:release-surface pins
+// that finite set and proves those commands are absent from release IPC.
+const allowedBridge = (file: string): boolean =>
+  file.endsWith("apps/desktop/src/generated/bindings.gen.ts") ||
+  file.endsWith("apps/desktop/src/e2e/debug-bridge.ts");
+const outside = result.findings.filter((finding) => !allowedBridge(finding.file));
 
 report(
   "verify:bridge",
   { scanned: result.scanned, findings: outside },
-  "a hand-written bridge call appears outside src/generated/",
+  "a hand-written bridge call appears outside bindings.gen.ts or the explicit E2E bridge",
 );

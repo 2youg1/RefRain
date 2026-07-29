@@ -97,10 +97,7 @@ impl ProjectStore {
         source: &std::path::Path,
         expected_digest: &str,
     ) -> Result<std::path::PathBuf, ProjectFailure> {
-        let bytes = std::fs::read(source).map_err(|source_error| ProjectFailure::Io {
-            path: source.to_path_buf(),
-            source: source_error,
-        })?;
+        let bytes = crate::ingest::read_source(source).map_err(ProjectFailure::Domain)?;
         let digest = format!("{:x}", sha2::Sha256::digest(&bytes));
         if digest != expected_digest {
             return Err(ProjectFailure::Domain(refrain_core::RefrainError::new(

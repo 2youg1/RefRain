@@ -409,7 +409,7 @@ const aiEngineer = async (): Promise<void> => {
   // Nothing is open yet: adopting the same path again returns the same rootId
   // (the permit persists), so later invokes name the project the UI drives.
   const rootId = String(
-    ((await invoke("adopt_root", { path: projectDir, kind: "folder" })) as { rootId: string })
+    ((await invoke("debug_adopt_root", { path: projectDir, kind: "folder" })) as { rootId: string })
       .rootId,
   );
 
@@ -435,7 +435,7 @@ const aiEngineer = async (): Promise<void> => {
   await start(true);
   await execute(`window["refrain.e2e.pick"] = ${JSON.stringify(projectDir)}; "planted"`, []);
   const rootIdAgain = String(
-    ((await invoke("adopt_root", { path: projectDir, kind: "folder" })) as { rootId: string })
+    ((await invoke("debug_adopt_root", { path: projectDir, kind: "folder" })) as { rootId: string })
       .rootId,
   );
   check("the same project re-adopts with the same rootId", rootIdAgain === rootId, rootIdAgain);
@@ -539,7 +539,8 @@ const soloOwner = async (): Promise<void> => {
   writeFileSync(join(fixture, "长章.md"), `${chapter}\n`);
   await start(false);
   const rootId = String(
-    ((await invoke("adopt_root", { path: fixture, kind: "folder" })) as { rootId: string }).rootId,
+    ((await invoke("debug_adopt_root", { path: fixture, kind: "folder" })) as { rootId: string })
+      .rootId,
   );
   await openManuscript("长章.md");
   await invoke("persist_revision", { rootId, path: "长章.md", expected: null });
@@ -651,7 +652,8 @@ const editor = async (): Promise<void> => {
   );
   await start(false);
   const rootId = String(
-    ((await invoke("adopt_root", { path: fixture, kind: "folder" })) as { rootId: string }).rootId,
+    ((await invoke("debug_adopt_root", { path: fixture, kind: "folder" })) as { rootId: string })
+      .rootId,
   );
   await openManuscript("书稿.md");
   await invoke("persist_revision", { rootId, path: "书稿.md", expected: null });
@@ -818,7 +820,8 @@ const professor = async (): Promise<void> => {
   );
   await start(false);
   const rootId = String(
-    ((await invoke("adopt_root", { path: fixture, kind: "folder" })) as { rootId: string }).rootId,
+    ((await invoke("debug_adopt_root", { path: fixture, kind: "folder" })) as { rootId: string })
+      .rootId,
   );
   await openManuscript("论文.md");
   await invoke("persist_revision", { rootId, path: "论文.md", expected: null });
@@ -970,7 +973,8 @@ const student = async (): Promise<void> => {
   writeFileSync(join(fixture, "课文.md"), `${chapter}\n`);
   await start(false);
   const rootId = String(
-    ((await invoke("adopt_root", { path: fixture, kind: "folder" })) as { rootId: string }).rootId,
+    ((await invoke("debug_adopt_root", { path: fixture, kind: "folder" })) as { rootId: string })
+      .rootId,
   );
   await openManuscript("课文.md");
   await invoke("persist_revision", { rootId, path: "课文.md", expected: null });

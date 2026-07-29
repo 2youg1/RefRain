@@ -226,7 +226,7 @@ const blockId = async (): Promise<string> =>
 const run = async (): Promise<void> => {
   await start();
   const adopted = await execute(
-    `return __TAURI_INTERNALS__.invoke("adopt_root", {
+    `return __TAURI_INTERNALS__.invoke("debug_adopt_root", {
       path: ${JSON.stringify(fixture)},
       kind: "folder",
     }).then((r) => r.rootId, (e) => { throw new Error(JSON.stringify(e)); })`,
@@ -325,7 +325,7 @@ const run = async (): Promise<void> => {
   await stop();
   await start();
   await execute(
-    `return __TAURI_INTERNALS__.invoke("adopt_root", {
+    `return __TAURI_INTERNALS__.invoke("debug_adopt_root", {
       path: ${JSON.stringify(fixture)},
       kind: "folder",
     }).then((r) => r, (e) => { throw new Error(JSON.stringify(e)); })`,

@@ -6,6 +6,7 @@
 //! `verify:bridge` fails when regenerating changes a byte — that is what makes
 //! a hand edit to `src/generated/` detectable (SPEC 6.4).
 
+#[cfg(feature = "generate-bindings")]
 #[test]
 fn generate_bindings() {
     use specta_typescript::Typescript;

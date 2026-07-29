@@ -9,6 +9,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { describe, unwrap } from "../bridge";
+import { debugCommands } from "../e2e/debug-bridge";
 // biome-ignore lint/style/useImportType: the component renders — a type-only import unmounts it.
 import EditorHost from "../editor-host/EditorHost.vue";
 import {
@@ -24,7 +25,7 @@ import DispatchSurface from "./DispatchSurface.vue";
 import KaraSurface from "./KaraSurface.vue";
 import { useKara } from "./kara-state";
 import LogoMark from "./LogoMark.vue";
-import { pickDocumentFile, pickProjectFolder, pickProjectParent } from "./pick";
+import { e2ePickedPath } from "./pick";
 import ReviewSurface from "./ReviewSurface.vue";
 import SettingsSurface from "./SettingsSurface.vue";
 import StatusLine from "./StatusLine.vue";
@@ -176,9 +177,19 @@ const onDropped = async (
     const asManuscript =
       zone === "manuscript" || (zone !== "material" && MANUSCRIPT_EXT.test(source));
     try {
-      const row = asManuscript
-        ? await unwrap(commands.importManuscript(project.value.rootId, source))
-        : await unwrap(commands.importMaterial(project.value.rootId, source));
+      const row =
+        e2ePickedPath() !== null
+          ? asManuscript
+            ? await debugCommands.importManuscript(project.value.rootId, source)
+            : await debugCommands.importMaterial(project.value.rootId, source)
+          : await unwrap(
+              commands.confirmAndImportDropped(
+                project.value.rootId,
+                source,
+                asManuscript ? "manuscript" : "material",
+              ),
+            );
+      if (row === null) continue;
       onMaterialSaved(row);
       notice.value = asManuscript ? "已收入原稿" : "已收入资料";
     } catch (error) {
@@ -255,10 +266,14 @@ const fail = (error: unknown): void => {
 };
 
 const openProjectFolder = async (): Promise<void> => {
-  const path = await pickProjectFolder("请选择项目文件夹");
-  if (typeof path !== "string") return;
   try {
-    project.value = await unwrap(commands.adoptRoot(path, "folder"));
+    const debugPath = e2ePickedPath();
+    const opened =
+      debugPath === null
+        ? await unwrap(commands.chooseAndAdoptRoot("folder"))
+        : await debugCommands.adoptRoot(debugPath, "folder");
+    if (opened === null) return;
+    project.value = opened;
     notice.value = null;
   } catch (error) {
     fail(error);
@@ -266,10 +281,14 @@ const openProjectFolder = async (): Promise<void> => {
 };
 
 const openSingleDocument = async (): Promise<void> => {
-  const path = await pickDocumentFile();
-  if (typeof path !== "string") return;
   try {
-    project.value = await unwrap(commands.adoptRoot(path, "file"));
+    const debugPath = e2ePickedPath();
+    const opened =
+      debugPath === null
+        ? await unwrap(commands.chooseAndAdoptRoot("file"))
+        : await debugCommands.adoptRoot(debugPath, "file");
+    if (opened === null) return;
+    project.value = opened;
     notice.value = null;
     const first = project.value.documents[0];
     if (first) await select(first.path);
@@ -279,12 +298,16 @@ const openSingleDocument = async (): Promise<void> => {
 };
 
 const newProject = async (): Promise<void> => {
-  const parent = await pickProjectParent();
-  if (typeof parent !== "string") return;
   const name = window.prompt("项目名");
   if (!name) return;
   try {
-    project.value = await unwrap(commands.createProject(parent, name));
+    const debugPath = e2ePickedPath();
+    const opened =
+      debugPath === null
+        ? await unwrap(commands.chooseAndCreateProject(name))
+        : await debugCommands.createProject(debugPath, name);
+    if (opened === null) return;
+    project.value = opened;
     notice.value = null;
   } catch (error) {
     fail(error);
@@ -343,14 +366,17 @@ const onMaterialSaved = (row: DocumentRow): void => {
   };
 };
 
-// Import a source file (C12.3): extraction is local, the Material opens with
-// its provenance header. The button is a thin prompt over the command.
+// Import a source file (C12.3): Rust owns the chooser and extraction; the
+// Material opens with a provenance header.
 const importMaterial = async (): Promise<void> => {
   if (!project.value) return;
-  const source = window.prompt("资料文件路径（PDF / EPUB / HTML / DOCX / PPTX / XLSX）");
-  if (!source) return;
   try {
-    const row = await unwrap(commands.importMaterial(project.value.rootId, source));
+    const debugPath = e2ePickedPath();
+    const row =
+      debugPath === null
+        ? await unwrap(commands.chooseAndImportMaterial(project.value.rootId))
+        : await debugCommands.importMaterial(project.value.rootId, debugPath);
+    if (row === null) return;
     onMaterialSaved(row);
     notice.value = "已导入";
   } catch (error) {

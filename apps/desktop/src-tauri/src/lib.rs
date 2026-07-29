@@ -7,6 +7,7 @@
 
 mod display;
 mod fonts;
+mod harnesses;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -43,6 +44,16 @@ struct ProjectEntry {
     manuscripts: HashMap<String, Manuscript>,
 }
 
+/// One live producer and the journal fact a concurrent observer must respect.
+/// The per-Run lock is held across process termination and the Cancelled write,
+/// so the observer cannot race that write with a terminal failure.
+struct ActiveRun {
+    cancel: refrain_host::process::ProcessCancel,
+    cancelled: bool,
+}
+
+type ActiveRunHandle = Arc<Mutex<ActiveRun>>;
+
 /// Session state. `app.db` is the machine-level authority; projects are
 /// opened through it.
 pub struct AppState {
@@ -52,6 +63,7 @@ pub struct AppState {
     config: Option<refrain_store::config::ConfigStore>,
     config_notice: Mutex<Option<String>>,
     fonts: Arc<FontCatalog>,
+    active_runs: Mutex<HashMap<(String, Id), ActiveRunHandle>>,
     data_dir: PathBuf,
 }
 
@@ -97,6 +109,7 @@ impl AppState {
             config,
             config_notice: Mutex::new(config_notice),
             fonts: Arc::new(FontCatalog::default()),
+            active_runs: Mutex::new(HashMap::new()),
             data_dir: app_data_dir.to_path_buf(),
         })
     }
@@ -322,18 +335,14 @@ fn health(echo: String) -> refrain_core::HealthReport {
     report
 }
 
-/// Adopt an existing folder or single file as a Root (SPEC 9.5).
-#[tauri::command]
-#[specta::specta]
-fn adopt_root(
+/// Adopt a path that already passed a Rust-owned chooser or the debug-only
+/// e2e seam. No release command accepts this path from the renderer.
+fn adopt_root_at(
     state: tauri::State<'_, AppState>,
-    path: String,
+    path: PathBuf,
     kind: RootKind,
 ) -> Result<ProjectOpenedDto, RefrainError> {
-    let locator = RootLocator {
-        path: PathBuf::from(&path),
-        kind,
-    };
+    let locator = RootLocator { path, kind };
     let (root_id, backup, documents) = state.adopt(&locator)?;
     Ok(ProjectOpenedDto {
         root_id,
@@ -342,13 +351,39 @@ fn adopt_root(
     })
 }
 
-/// Create a project: the author picks a parent directory and names the
-/// project; Rust creates the subdirectory and adopts it (SPEC 9.5).
+/// Let the author choose the Root and consume that choice in this command.
 #[tauri::command]
 #[specta::specta]
-fn create_project(
+async fn choose_and_adopt_root(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
-    parent: String,
+    kind: RootKind,
+) -> Result<Option<ProjectOpenedDto>, RefrainError> {
+    use tauri_plugin_dialog::DialogExt as _;
+    let dialog = app.dialog().file().set_title(match kind {
+        RootKind::Folder => "选择项目文件夹",
+        RootKind::File => "选择一份手稿",
+    });
+    let selected = match kind {
+        RootKind::Folder => dialog.blocking_pick_folder(),
+        RootKind::File => dialog
+            .add_filter("Manuscript", &["md", "markdown", "mdown", "txt"])
+            .blocking_pick_file(),
+    };
+    selected
+        .map(|selected| {
+            let path = selected.into_path().map_err(|error| {
+                RefrainError::new(ErrorCode::Io, "use a chosen Root", error.to_string())
+            })?;
+            adopt_root_at(state, path, kind)
+        })
+        .transpose()
+}
+
+/// Create a project beneath a parent that already passed a Rust-owned chooser.
+fn create_project_at(
+    state: tauri::State<'_, AppState>,
+    parent: PathBuf,
     name: String,
 ) -> Result<ProjectOpenedDto, RefrainError> {
     if !refrain_store::root::is_legal_segment(&name) {
@@ -381,7 +416,33 @@ fn create_project(
         )
         .with_detail(error.to_string())
     })?;
-    adopt_root(state, path.to_string_lossy().into_owned(), RootKind::Folder)
+    adopt_root_at(state, path, RootKind::Folder)
+}
+
+/// Let the author choose the parent and consume it while creating the project.
+#[tauri::command]
+#[specta::specta]
+async fn choose_and_create_project(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    name: String,
+) -> Result<Option<ProjectOpenedDto>, RefrainError> {
+    use tauri_plugin_dialog::DialogExt as _;
+    app.dialog()
+        .file()
+        .set_title("选择项目的父目录")
+        .blocking_pick_folder()
+        .map(|selected| {
+            let parent = selected.into_path().map_err(|error| {
+                RefrainError::new(
+                    ErrorCode::Io,
+                    "use a chosen project parent",
+                    error.to_string(),
+                )
+            })?;
+            create_project_at(state, parent, name)
+        })
+        .transpose()
 }
 
 /// Open a document: bytes from disk, blocks from the byte-authoritative
@@ -395,7 +456,10 @@ fn open_document(
     path: String,
 ) -> Result<OpenDocumentDto, RefrainError> {
     state.with_project(&root_id, |state, entry| {
-        let opened = entry.store.open_document(&path).map_err(into_domain)?;
+        let opened = entry
+            .store
+            .open_registered_document(&path)
+            .map_err(into_domain)?;
         open_in_entry(state, entry, &path, opened)
     })
 }
@@ -976,14 +1040,15 @@ fn now_millis() -> u64 {
         .map_or(0, |duration| duration.as_millis() as u64)
 }
 
-/// The single command registry. Generation and the runtime read the same list,
-/// so a command cannot exist in one and be missing from the other.
-pub fn builder() -> Builder<tauri::Wry> {
-    Builder::<tauri::Wry>::new().commands(collect_commands![
+/// The production registry has one source. Debug builds may splice in the
+/// fixture command; release and generated bindings never receive it.
+macro_rules! refrain_commands {
+    ($($debug_command:ident),* $(,)?) => {
+        collect_commands![
         display_profile,
         health,
-        adopt_root,
-        create_project,
+        choose_and_adopt_root,
+        choose_and_create_project,
         open_document,
         create_document,
         current_document,
@@ -998,7 +1063,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         list_builtin_typography_presets,
         set_universal_icon,
         universal_icon,
-        inject_fixture_proposal,
+        $($debug_command,)*
         list_proposals,
         record_verdict,
         set_review_batch,
@@ -1021,12 +1086,30 @@ pub fn builder() -> Builder<tauri::Wry> {
         upsert_harness_connection,
         remove_harness_connection,
         probe_connection,
-        import_material,
-        import_manuscript,
+        choose_and_import_material,
+        choose_and_import_manuscript,
+        confirm_and_import_dropped,
         list_agents,
         upsert_agent,
         remove_agent,
+        ]
+    };
+}
+
+#[cfg(all(debug_assertions, not(feature = "generate-bindings")))]
+pub fn builder() -> Builder<tauri::Wry> {
+    Builder::<tauri::Wry>::new().commands(refrain_commands![
+        inject_fixture_proposal,
+        debug_adopt_root,
+        debug_create_project,
+        debug_import_material,
+        debug_import_manuscript,
     ])
+}
+
+#[cfg(any(not(debug_assertions), feature = "generate-bindings"))]
+pub fn builder() -> Builder<tauri::Wry> {
+    Builder::<tauri::Wry>::new().commands(refrain_commands![])
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1086,6 +1169,7 @@ pub struct ProposalDto {
 
 /// One fixture replacement (debug builds only; SPEC R3: the fixture command
 /// is excluded from release).
+#[cfg(all(debug_assertions, not(feature = "generate-bindings")))]
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct FixtureReplacementDto {
@@ -1168,6 +1252,7 @@ fn rebuild_proposal(row: &refrain_store::project::ProposalRow) -> Result<Proposa
 /// Inject fixture candidates (debug builds only). The candidates freeze
 /// against the document's current head, exactly like a real Run's output
 /// will in C10.
+#[cfg(all(debug_assertions, not(feature = "generate-bindings")))]
 #[tauri::command]
 #[specta::specta]
 fn inject_fixture_proposal(
@@ -2203,10 +2288,7 @@ fn launch_run(
             .ok_or_else(|| into_domain_host(HostRefusal::UnknownRun(run_id)))?;
         Ok(run.agent_id.to_string())
     })?;
-    if agent == KIMI_PRINT_AGENT
-        || kimi_connection_named(&state, &agent)
-        || kimi_connection_named(&state, &resolve_channel(&state, &agent))
-    {
+    if connection_for_agent(&state, &agent)?.is_some() {
         return harness_dispatch_inner(&app, &state, &root_id, &agent, run_id);
     }
     state.with_project(&root_id, |_state, entry| {
@@ -2333,7 +2415,8 @@ fn agent_reading_ledger(
     })
 }
 
-/// Cancel a run that has not reached a terminal state.
+/// Cancel a run that has not reached a terminal state. A live producer must
+/// exit first; only then may the journal say `Cancelled`.
 #[tauri::command]
 #[specta::specta]
 fn cancel_run(
@@ -2341,8 +2424,89 @@ fn cancel_run(
     root_id: String,
     run_id: String,
 ) -> Result<RunDto, RefrainError> {
+    let run_id = parse_id(&run_id, "run")?;
+    let key = (root_id.clone(), run_id);
+    let active = state
+        .active_runs
+        .lock()
+        .map_err(|_| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "lock the active Run table",
+                run_id.to_string(),
+            )
+        })?
+        .get(&key)
+        .cloned();
+    if let Some(active) = active {
+        // Hold this Run's lock from the tree signal through the journal write.
+        // The observer owns the same Arc and therefore cannot classify the
+        // resulting non-zero exit as a failure before Cancelled is durable.
+        let mut active = active.lock().map_err(|_| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "lock the live Run",
+                run_id.to_string(),
+            )
+        })?;
+        active.cancel.cancel_tree().map_err(|error| {
+            RefrainError::new(ErrorCode::Io, "cancel the producer", run_id.to_string())
+                .with_detail(error.to_string())
+        })?;
+        let dto = state.with_project(&root_id, |_state, entry| {
+            let mut host = open_host(&mut entry.store)?;
+            host.execute(HostCommand::CancelRun {
+                run_id,
+                at: now_millis(),
+            })
+            .map_err(into_domain_host)?;
+            let index = host
+                .runs()
+                .iter()
+                .position(|run| run.id == run_id)
+                .ok_or_else(|| {
+                    RefrainError::new(
+                        ErrorCode::StateUnavailable,
+                        "find a cancelled run",
+                        run_id.to_string(),
+                    )
+                })?;
+            Ok(run_dto(&host.runs()[index]))
+        })?;
+        active.cancelled = true;
+        drop(active);
+        if let Ok(mut runs) = state.active_runs.lock() {
+            runs.remove(&key);
+        }
+        return Ok(dto);
+    }
+
     state.with_project(&root_id, |_state, entry| {
-        let run_id = parse_id(&run_id, "run")?;
+        let host = open_host(&mut entry.store)?;
+        let run = host
+            .runs()
+            .iter()
+            .find(|run| run.id == run_id)
+            .ok_or_else(|| into_domain_host(HostRefusal::UnknownRun(run_id)))?;
+        match run.progress {
+            RunProgress::Launching { .. } => Err(RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "cancel a Run while its producer is starting",
+                "try again after the launch settles",
+            )),
+            RunProgress::Dispatched { .. } => Err(RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "cancel a Run without a live process handle",
+                "the app may have restarted; recovery is required",
+            )),
+            RunProgress::Queued
+            | RunProgress::Authorized { .. }
+            | RunProgress::Completed { .. }
+            | RunProgress::Failed { .. }
+            | RunProgress::Cancelled => Ok(()),
+        }
+    })?;
+    state.with_project(&root_id, |_state, entry| {
         let mut host = open_host(&mut entry.store)?;
         host.execute(HostCommand::CancelRun {
             run_id,
@@ -2569,24 +2733,33 @@ fn collect_attempt(
     })
 }
 
-// ── C11: real harness dispatch (argv adapters over the same frozen protocol) ──
+// ── C11: local Harness connections over the frozen protocol ────────────────
 
-use refrain_host::adapters::{self, HarnessAdapter, HarnessProbe, KimiPrint};
+use harnesses::{
+    LocalHarness, SUPPORTED_CANDIDATES, candidate_for_adapter, connection_from_detected,
+};
+use refrain_host::adapters::{self, HarnessAdapter};
 use tauri::Emitter as _;
 
-/// The agent id that names Kimi Code print mode until the Connections
-/// registry lands (C11 后段）.
-const KIMI_PRINT_AGENT: &str = "00000000-0000-0000-0000-0000000000e1";
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum HarnessStatus {
+    Connected,
+    Available,
+    Missing,
+    NeedsAttention,
+}
 
-/// One dispatchable harness as the ticket offers it.
+/// One supported local Agent tool. Executable paths never cross the bridge.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct HarnessDto {
-    pub agent_id: String,
+    pub candidate_id: String,
+    pub connection_id: Option<String>,
     pub label: String,
-    pub version: String,
+    pub version: Option<String>,
     pub tier: String,
-    pub probe: HarnessProbe,
+    pub status: HarnessStatus,
 }
 
 /// What the app emits when a backgrounded producer settles.
@@ -2599,101 +2772,102 @@ pub struct RunSettledDto {
     pub outcome: String,
 }
 
-/// Every harness the app can dispatch to right now: detection only, no model
-/// call (SPEC: 测试连接只跑版本/能力探针）. Config-declared kimi connections
-/// win over PATH detection — the author's declaration is the authority.
-#[tauri::command]
-#[specta::specta]
-fn list_harnesses(state: tauri::State<'_, AppState>) -> Vec<HarnessDto> {
-    let mut out = Vec::new();
-    let kimi_connections: Vec<refrain_store::config::HarnessConnection> = state
-        .config
-        .as_ref()
-        .and_then(|store| store.snapshot().ok())
-        .map(|snapshot| {
-            snapshot
-                .config
-                .harness_connections
-                .into_iter()
-                .filter(|connection| {
-                    connection.adapter == refrain_store::config::AdapterKind::KimiCode
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    if kimi_connections.is_empty() {
-        if let Some(kimi) = KimiPrint::detect() {
-            out.push(HarnessDto {
-                agent_id: KIMI_PRINT_AGENT.to_string(),
-                label: "Kimi Code · print".to_string(),
-                version: kimi.version().to_string(),
-                tier: "l1".to_string(),
-                probe: kimi.probe().unwrap_or(HarnessProbe {
-                    id: "kimi-print".to_string(),
-                    program: kimi.program().clone(),
-                    version: kimi.version().to_string(),
-                    tier: refrain_host::Tier::L1,
-                }),
-            });
-        }
-        return out;
+fn tier_label(tier: refrain_host::Tier) -> &'static str {
+    match tier {
+        refrain_host::Tier::L0 => "手动往返",
+        refrain_host::Tier::L1 => "可直接派发",
+        refrain_host::Tier::L2 => "可直接派发并回报运行详情",
     }
-    for connection in kimi_connections {
-        if let Some(kimi) = KimiPrint::at(connection.executable.clone()) {
-            let stem = connection
-                .executable
-                .file_stem()
-                .map(|stem| stem.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "kimi".to_string());
-            out.push(HarnessDto {
-                agent_id: connection.id.to_string(),
-                label: format!("Kimi Code · {stem}"),
-                version: kimi.version().to_string(),
-                tier: "l1".to_string(),
-                probe: kimi.probe().unwrap_or(HarnessProbe {
-                    id: "kimi-print".to_string(),
-                    program: kimi.program().clone(),
-                    version: kimi.version().to_string(),
-                    tier: refrain_host::Tier::L1,
-                }),
-            });
-        }
-    }
-    out
 }
 
-/// Register a harness connection in the one Config (SPEC 6.5). The exact
-/// executable answers `--version` before it is stored — a connection that
-/// cannot be probed is not registered. The C12 surface registers kimi only;
-/// other adapter kinds land with their adapters.
+/// List the two adapter implementations this build can really dispatch.
+/// Discovery runs fixed, version-only probes for known program names. The
+/// renderer cannot add another name or path to this search space.
+#[tauri::command]
+#[specta::specta]
+fn list_harnesses(state: tauri::State<'_, AppState>) -> Result<Vec<HarnessDto>, RefrainError> {
+    let store = state.config.as_ref().ok_or_else(|| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "read a damaged Config",
+            "connections",
+        )
+    })?;
+    let snapshot = store.snapshot().map_err(|failure| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "read the Config",
+            failure.to_string(),
+        )
+    })?;
+    let mut out = Vec::new();
+    let mut connected_candidates = HashSet::new();
+    for connection in &snapshot.config.harness_connections {
+        let Some(candidate_id) = candidate_for_adapter(connection.adapter) else {
+            continue;
+        };
+        connected_candidates.insert(candidate_id);
+        let live = LocalHarness::from_connection(connection);
+        out.push(HarnessDto {
+            candidate_id: candidate_id.to_string(),
+            connection_id: Some(connection.id.to_string()),
+            label: SUPPORTED_CANDIDATES
+                .iter()
+                .find_map(|(id, label)| (*id == candidate_id).then_some(*label))
+                .unwrap_or(candidate_id)
+                .to_string(),
+            version: live.as_ref().map(|harness| harness.version().to_string()),
+            tier: live
+                .as_ref()
+                .map_or("可直接派发", |harness| tier_label(harness.tier()))
+                .to_string(),
+            status: if live.is_some() {
+                HarnessStatus::Connected
+            } else {
+                HarnessStatus::NeedsAttention
+            },
+        });
+    }
+    for (candidate_id, label) in SUPPORTED_CANDIDATES {
+        if connected_candidates.contains(candidate_id) {
+            continue;
+        }
+        let live = LocalHarness::detect(candidate_id);
+        out.push(HarnessDto {
+            candidate_id: candidate_id.to_string(),
+            connection_id: None,
+            label: label.to_string(),
+            version: live.as_ref().map(|harness| harness.version().to_string()),
+            tier: live
+                .as_ref()
+                .map_or("可直接派发", |harness| tier_label(harness.tier()))
+                .to_string(),
+            status: if live.is_some() {
+                HarnessStatus::Available
+            } else {
+                HarnessStatus::Missing
+            },
+        });
+    }
+    Ok(out)
+}
+
+/// Register one fixed PATH candidate. The renderer supplies a stable ID, not
+/// a program or path; Rust discovers, verifies, and canonicalizes it again.
 #[tauri::command]
 #[specta::specta]
 fn upsert_harness_connection(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
-    executable: String,
+    candidate_id: String,
 ) -> Result<refrain_store::config::ConfigSnapshot, RefrainError> {
-    let program = PathBuf::from(&executable);
-    let exists = program.try_exists().map_err(|error| {
+    let harness = LocalHarness::detect(&candidate_id).ok_or_else(|| {
         RefrainError::new(
-            ErrorCode::Io,
-            "check a connection executable",
-            executable.clone(),
+            ErrorCode::StateUnavailable,
+            "connect a local Agent tool",
+            candidate_id.clone(),
         )
-        .with_detail(error.to_string())
-    })?;
-    if !exists {
-        return Err(
-            RefrainError::new(ErrorCode::Io, "register a connection", executable)
-                .with_detail("the executable does not exist"),
-        );
-    }
-    KimiPrint::at(program.clone()).ok_or_else(|| {
-        RefrainError::new(
-            ErrorCode::Io,
-            "probe a connection before registering",
-            executable.clone(),
-        )
+        .with_detail("not found on PATH or the program identity check failed")
     })?;
     let store = state.config.as_ref().ok_or_else(|| {
         RefrainError::new(
@@ -2702,17 +2876,24 @@ fn upsert_harness_connection(
             "connections",
         )
     })?;
+    let current = store.snapshot().map_err(|failure| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "read the Config",
+            failure.to_string(),
+        )
+    })?;
+    let id = current
+        .config
+        .harness_connections
+        .iter()
+        .find(|connection| connection.adapter == harness.adapter_kind())
+        .map_or_else(Id::new, |connection| connection.id);
     let snapshot = store
         .apply(
-            refrain_store::config::ConfigChange::UpsertHarnessConnection(
-                refrain_store::config::HarnessConnection {
-                    id: Id::new(),
-                    adapter: refrain_store::config::AdapterKind::KimiCode,
-                    executable: program,
-                    argv: Vec::new(),
-                    env_allow: Vec::new(),
-                },
-            ),
+            refrain_store::config::ConfigChange::UpsertHarnessConnection(connection_from_detected(
+                id, &harness,
+            )),
         )
         .map_err(|failure| {
             RefrainError::new(ErrorCode::Io, "write the Config", failure.to_string())
@@ -2747,51 +2928,64 @@ fn remove_harness_connection(
     Ok(snapshot)
 }
 
-/// The Connections page's probe: argv-exact `--version`, nothing else (SPEC:
-/// 测试连接只跑版本/能力探针，不调模型）.
+/// Re-check an existing Config connection. No path crosses the bridge.
 #[tauri::command]
 #[specta::specta]
-fn probe_connection(executable: String) -> Result<String, RefrainError> {
-    let outcome = refrain_host::process::launch(&refrain_host::process::LaunchSpec {
-        program: PathBuf::from(&executable),
-        args: vec!["--version".to_string()],
-        env: vec![],
-        cwd: std::env::temp_dir(),
-        stdin_piped: false,
-    })
-    .and_then(refrain_host::process::ProcessHandle::wait)
-    .map_err(|error| {
-        RefrainError::new(ErrorCode::Io, "probe a connection", executable.clone())
-            .with_detail(error.to_string())
+fn probe_connection(
+    state: tauri::State<'_, AppState>,
+    connection_id: String,
+) -> Result<String, RefrainError> {
+    let id = parse_id(&connection_id, "connection")?;
+    let store = state.config.as_ref().ok_or_else(|| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "read a damaged Config",
+            "connections",
+        )
     })?;
-    if outcome.code != Some(0) {
-        return Err(
-            RefrainError::new(ErrorCode::Io, "probe a connection", executable).with_detail(
-                format!("exit {:?}: {}", outcome.code, outcome.stderr.trim()),
-            ),
-        );
-    }
-    Ok(outcome.stdout.trim().to_string())
-}
-
-/// The Kimi Print channel for one run's agent: the built-in detected entry,
-/// or the exact executable of the Config connection naming it (C12 roster).
-fn kimi_for_agent(state: &AppState, agent: &str) -> Result<KimiPrint, RefrainError> {
-    let agent = &resolve_channel(state, agent);
-    if agent == KIMI_PRINT_AGENT {
-        return KimiPrint::detect().ok_or_else(|| {
+    let snapshot = store.snapshot().map_err(|failure| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "read the Config",
+            failure.to_string(),
+        )
+    })?;
+    let connection = snapshot
+        .config
+        .harness_connections
+        .iter()
+        .find(|connection| connection.id == id)
+        .ok_or_else(|| {
             RefrainError::new(
                 ErrorCode::StateUnavailable,
-                "dispatch to Kimi Code",
-                "kimi CLI not on PATH",
+                "check a connection",
+                "no such connection",
             )
-        });
+        })?;
+    LocalHarness::from_connection(connection)
+        .map(|harness| harness.version().to_string())
+        .ok_or_else(|| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "check a connection",
+                candidate_for_adapter(connection.adapter).unwrap_or("unsupported adapter"),
+            )
+            .with_detail("the saved program is missing or failed its identity check")
+        })
+}
+
+fn connection_for_agent(
+    state: &AppState,
+    agent: &str,
+) -> Result<Option<refrain_store::config::HarnessConnection>, RefrainError> {
+    if agent == L0_FILE_CHANNEL_AGENT {
+        return Ok(None);
     }
     let store = state.config.as_ref().ok_or_else(|| {
         RefrainError::new(
             ErrorCode::StateUnavailable,
             "read the Config for a connection",
-            agent,
+            agent.to_string(),
         )
     })?;
     let snapshot = store.snapshot().map_err(|failure| {
@@ -2801,45 +2995,32 @@ fn kimi_for_agent(state: &AppState, agent: &str) -> Result<KimiPrint, RefrainErr
             failure.to_string(),
         )
     })?;
-    let connection = snapshot
+    let connection_id = if let Some(profile) = snapshot
+        .config
+        .agents
+        .iter()
+        .find(|profile| profile.id.to_string() == agent)
+    {
+        let Some(id) = profile.connection_id else {
+            return Ok(None);
+        };
+        id
+    } else {
+        parse_id(agent, "agent or connection")?
+    };
+    snapshot
         .config
         .harness_connections
         .iter()
-        .find(|connection| {
-            connection.id.to_string() == *agent
-                && connection.adapter == refrain_store::config::AdapterKind::KimiCode
-        })
+        .find(|connection| connection.id == connection_id)
+        .cloned()
+        .map(Some)
         .ok_or_else(|| {
             RefrainError::new(
                 ErrorCode::StateUnavailable,
                 "dispatch over a connection",
-                "no such kimi connection",
+                "the Agent's connection no longer exists",
             )
-        })?;
-    KimiPrint::at(connection.executable.clone()).ok_or_else(|| {
-        RefrainError::new(
-            ErrorCode::StateUnavailable,
-            "probe a declared connection",
-            connection.executable.display().to_string(),
-        )
-    })
-}
-
-/// Whether the agent id names a Config-declared kimi connection.
-fn kimi_connection_named(state: &AppState, agent: &str) -> bool {
-    state
-        .config
-        .as_ref()
-        .and_then(|store| store.snapshot().ok())
-        .is_some_and(|snapshot| {
-            snapshot
-                .config
-                .harness_connections
-                .iter()
-                .any(|connection| {
-                    connection.id.to_string() == agent
-                        && connection.adapter == refrain_store::config::AdapterKind::KimiCode
-                })
         })
 }
 
@@ -2861,24 +3042,6 @@ fn persona_of(state: &AppState, agent_id: &str) -> Option<String> {
                 .find(|profile| profile.id.to_string() == agent_id)
                 .and_then(|profile| profile.persona.clone())
         })
-}
-
-/// An AgentProfile id resolves to its channel's connection id; anything else
-/// passes through unchanged.
-fn resolve_channel(state: &AppState, agent: &str) -> String {
-    state
-        .config
-        .as_ref()
-        .and_then(|store| store.snapshot().ok())
-        .and_then(|snapshot| {
-            snapshot
-                .config
-                .agents
-                .iter()
-                .find(|profile| profile.id.to_string() == agent)
-                .and_then(|profile| profile.connection_id.map(|id| id.to_string()))
-        })
-        .unwrap_or_else(|| agent.to_string())
 }
 
 /// One Agent as the surface lists it: the profile plus its channel's facts.
@@ -2912,7 +3075,7 @@ fn list_agents(state: tauri::State<'_, AppState>) -> Vec<AgentDto> {
                 name: profile.name.clone(),
                 connection_id: None,
                 has_persona: profile.persona.is_some(),
-                channel: "L0 文件通道".to_string(),
+                channel: "手动往返".to_string(),
                 version: "—".to_string(),
             },
             Some(connection_id) => {
@@ -2923,15 +3086,19 @@ fn list_agents(state: tauri::State<'_, AppState>) -> Vec<AgentDto> {
                     .find(|entry| entry.id == connection_id);
                 let (channel, version) = connection
                     .map(|entry| {
-                        let stem = entry
-                            .executable
-                            .file_stem()
-                            .map(|stem| stem.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| "kimi".to_string());
-                        let version = KimiPrint::at(entry.executable.clone())
-                            .map(|kimi| kimi.version().to_string())
-                            .unwrap_or_else(|| "未知".to_string());
-                        (format!("Kimi Code · {stem}"), version)
+                        let candidate = candidate_for_adapter(entry.adapter);
+                        let live = LocalHarness::from_connection(entry);
+                        let label = candidate
+                            .and_then(|id| {
+                                SUPPORTED_CANDIDATES.iter().find_map(|(candidate, label)| {
+                                    (*candidate == id).then_some(*label)
+                                })
+                            })
+                            .unwrap_or("暂不支持的连接");
+                        let version = live
+                            .map(|harness| harness.version().to_string())
+                            .unwrap_or_else(|| "需要重新连接".to_string());
+                        (label.to_string(), version)
                     })
                     .unwrap_or_else(|| ("连接已删".to_string(), "—".to_string()));
                 AgentDto {
@@ -3049,7 +3216,21 @@ fn harness_dispatch_inner(
     agent: &str,
     run_id: Id,
 ) -> Result<RunDto, RefrainError> {
-    let kimi = kimi_for_agent(state, agent)?;
+    let connection = connection_for_agent(state, agent)?.ok_or_else(|| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "dispatch to a local Agent tool",
+            "the selected Agent uses manual return",
+        )
+    })?;
+    let harness = LocalHarness::from_connection(&connection).ok_or_else(|| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "dispatch to a local Agent tool",
+            candidate_for_adapter(connection.adapter).unwrap_or("unsupported adapter"),
+        )
+        .with_detail("the saved program is missing or failed its identity check")
+    })?;
     let (workspace, workspace_abs, request_md) = state.with_project(root_id, |_state, entry| {
         let context = DirectoryContext::new(entry.store.layout().state_dir.clone());
         let mut host = open_host(&mut entry.store)?;
@@ -3083,7 +3264,7 @@ fn harness_dispatch_inner(
         ))
     })?;
 
-    let receipt = match kimi.dispatch(&adapters::DispatchSpec {
+    let receipt = match harness.dispatch(&adapters::DispatchSpec {
         run_id,
         workspace: workspace_abs,
         request_md,
@@ -3099,13 +3280,41 @@ fn harness_dispatch_inner(
                 })
                 .map_err(into_domain_host)
             })?;
-            return Err(
-                RefrainError::new(ErrorCode::Io, "launch the harness", "kimi -p")
-                    .with_detail(error.to_string()),
-            );
+            return Err(RefrainError::new(
+                ErrorCode::Io,
+                "launch the local Agent tool",
+                harness.label(),
+            )
+            .with_detail(error.to_string()));
         }
     };
     let receipt_text = receipt.receipt.clone();
+    let active_run = Arc::new(Mutex::new(ActiveRun {
+        cancel: receipt.handle.cancel_token(),
+        cancelled: false,
+    }));
+    let active_key = (root_id.to_string(), run_id);
+    let previous = state
+        .active_runs
+        .lock()
+        .map_err(|_| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "lock the active Run table",
+                run_id.to_string(),
+            )
+        })?
+        .insert(active_key.clone(), Arc::clone(&active_run));
+    if previous.is_some() {
+        if let Ok(active) = active_run.lock() {
+            let _ = active.cancel.cancel_tree();
+        }
+        return Err(RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "register a live producer",
+            "the Run already has a process handle",
+        ));
+    }
 
     let dto = state.with_project(root_id, |_state, entry| {
         let mut host = open_host(&mut entry.store)?;
@@ -3120,7 +3329,27 @@ fn harness_dispatch_inner(
             .position(|run| run.id == run_id)
             .ok_or_else(|| into_domain_host(HostRefusal::UnknownRun(run_id)))?;
         Ok(run_dto(&host.runs()[index]))
-    })?;
+    });
+    let dto = match dto {
+        Ok(dto) => dto,
+        Err(error) => {
+            state
+                .active_runs
+                .lock()
+                .map_err(|_| {
+                    RefrainError::new(
+                        ErrorCode::StateUnavailable,
+                        "lock the active Run table",
+                        run_id.to_string(),
+                    )
+                })?
+                .remove(&active_key);
+            if let Ok(active) = active_run.lock() {
+                let _ = active.cancel.cancel_tree();
+            }
+            return Err(error);
+        }
+    };
 
     // Observe in the background: the turn may run for minutes. On settle, the
     // reply lands atomically as the attempt's result; an empty reply fails
@@ -3128,11 +3357,41 @@ fn harness_dispatch_inner(
     let root_for_thread = root_id.to_string();
     let app = app.clone();
     std::thread::spawn(move || {
-        let outcome = kimi.observe(receipt);
+        let outcome = harness.observe(receipt);
+        let cancellation_confirmed = active_run
+            .lock()
+            .map(|active| active.cancelled)
+            .unwrap_or(false);
         let state = app.state::<AppState>();
+        if let Ok(mut active) = state.active_runs.lock() {
+            active.remove(&(root_for_thread.clone(), run_id));
+        }
         let settled = state.with_project(&root_for_thread, |_state, entry| {
             let context = DirectoryContext::new(entry.store.layout().state_dir.clone());
             let mut host = open_host(&mut entry.store)?;
+            let cancelled = cancellation_confirmed
+                || host
+                    .runs()
+                    .iter()
+                    .find(|run| run.id == run_id)
+                    .is_some_and(|run| matches!(run.progress, RunProgress::Cancelled));
+            if cancelled {
+                if let Ok(produced) = &outcome
+                    && !produced.reply_text.trim().is_empty()
+                {
+                    context
+                        .land_result(&workspace, run_id, produced.reply_text.as_bytes())
+                        .map_err(|error| {
+                            RefrainError::new(
+                                ErrorCode::Io,
+                                "preserve a cancelled producer's partial reply",
+                                workspace.clone(),
+                            )
+                            .with_detail(error.to_string())
+                        })?;
+                }
+                return Ok("cancelled".to_string());
+            }
             match outcome {
                 Ok(produced) if !produced.reply_text.trim().is_empty() => {
                     context
@@ -3372,19 +3631,61 @@ fn commit_material_action(
 
 // ── C12.3: source import — six reference formats become Materials ──────────
 
-/// Import one source file (PDF / EPUB / HTML / DOCX / PPTX / XLSX) as a
-/// Material (Plan C12.3). Extraction is local — no cloud conversion; the
-/// material opens with a provenance header pinning the source bytes, then
-/// the projected text. The manuscript editor stays Markdown-only.
+fn chosen_file(path: PathBuf) -> Result<PathBuf, RefrainError> {
+    let canonical = path.canonicalize().map_err(|error| {
+        RefrainError::new(
+            ErrorCode::Io,
+            "use a chosen source",
+            path.display().to_string(),
+        )
+        .with_detail(error.to_string())
+    })?;
+    if !canonical.is_file() {
+        return Err(RefrainError::new(
+            ErrorCode::UnsupportedFormat,
+            "use a chosen source",
+            canonical.display().to_string(),
+        ));
+    }
+    Ok(canonical)
+}
+
+/// The native chooser and the import are one authority boundary: release IPC
+/// never receives a source path from the renderer.
 #[tauri::command]
 #[specta::specta]
-fn import_material(
+async fn choose_and_import_material(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     root_id: String,
-    source_path: String,
+) -> Result<Option<DocumentRow>, RefrainError> {
+    use tauri_plugin_dialog::DialogExt as _;
+    app.dialog()
+        .file()
+        .set_title("选择资料")
+        .add_filter(
+            "Reference",
+            &["pdf", "epub", "html", "htm", "docx", "pptx", "xlsx"],
+        )
+        .blocking_pick_file()
+        .map(|selected| {
+            let path = selected.into_path().map_err(|error| {
+                RefrainError::new(ErrorCode::Io, "use a chosen source", error.to_string())
+            })?;
+            import_material_at(state, root_id, path)
+        })
+        .transpose()
+}
+
+/// Import one previously authorised source file as a Material.
+fn import_material_at(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    source_path: PathBuf,
 ) -> Result<DocumentRow, RefrainError> {
+    let source_path = chosen_file(source_path)?;
     state.with_project(&root_id, |state, entry| {
-        let ingested = refrain_store::ingest::ingest(std::path::Path::new(&source_path))?;
+        let ingested = refrain_store::ingest::ingest(&source_path)?;
         // KL9: the source never moves. The original bytes join the project's
         // read-only zone before the projected material exists — every later
         // edit happens only on the project's own material document.
@@ -3417,21 +3718,15 @@ fn import_material(
 
 // ── C12.6: drag-drop import — text becomes a chapter, the rest a Material ──
 
-/// Import one dropped text file (.md / .markdown / .txt) as a manuscript
-/// chapter. The source is only read — it never moves (KL9: 源文件永远不动);
-/// the chapter's own bytes are what the project edits from now on.
-#[tauri::command]
-#[specta::specta]
-fn import_manuscript(
+/// Import one previously authorised UTF-8 text file as a chapter.
+fn import_manuscript_at(
     state: tauri::State<'_, AppState>,
     root_id: String,
-    source_path: String,
+    source_path: PathBuf,
 ) -> Result<DocumentRow, RefrainError> {
-    let path = std::path::Path::new(&source_path);
-    let bytes = std::fs::read(path).map_err(|error| {
-        RefrainError::new(ErrorCode::Io, "read the dropped file", source_path.clone())
-            .with_detail(error.to_string())
-    })?;
+    let source_path = chosen_file(source_path)?;
+    let path = source_path.as_path();
+    let bytes = refrain_store::ingest::read_source(path)?;
     let text_bytes = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
         &bytes[3..]
     } else {
@@ -3453,4 +3748,108 @@ fn import_manuscript(
     state.with_project(&root_id, |state, entry| {
         create_material_with_body(state, entry, &title, &text, DocumentRole::Chapter)
     })
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn choose_and_import_manuscript(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+) -> Result<Option<DocumentRow>, RefrainError> {
+    use tauri_plugin_dialog::DialogExt as _;
+    app.dialog()
+        .file()
+        .set_title("选择手稿")
+        .add_filter("Manuscript", &["md", "markdown", "mdown", "txt"])
+        .blocking_pick_file()
+        .map(|selected| {
+            let path = selected.into_path().map_err(|error| {
+                RefrainError::new(ErrorCode::Io, "use a chosen source", error.to_string())
+            })?;
+            import_manuscript_at(state, root_id, path)
+        })
+        .transpose()
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum DroppedImportKind {
+    Manuscript,
+    Material,
+}
+
+/// A dropped path remains renderer-supplied, so Rust binds it to one explicit
+/// native confirmation before reading a byte.
+#[tauri::command]
+#[specta::specta]
+async fn confirm_and_import_dropped(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    source_path: String,
+    kind: DroppedImportKind,
+) -> Result<Option<DocumentRow>, RefrainError> {
+    use tauri_plugin_dialog::{DialogExt as _, MessageDialogButtons};
+    let path = chosen_file(PathBuf::from(source_path))?;
+    let approved = app
+        .dialog()
+        .message(format!("导入这份文件？\n{}", path.display()))
+        .title("确认导入")
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "导入".to_string(),
+            "取消".to_string(),
+        ))
+        .blocking_show();
+    if !approved {
+        return Ok(None);
+    }
+    match kind {
+        DroppedImportKind::Manuscript => import_manuscript_at(state, root_id, path).map(Some),
+        DroppedImportKind::Material => import_material_at(state, root_id, path).map(Some),
+    }
+}
+
+#[cfg(all(debug_assertions, not(feature = "generate-bindings")))]
+#[tauri::command]
+#[specta::specta]
+fn debug_adopt_root(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    kind: RootKind,
+) -> Result<ProjectOpenedDto, RefrainError> {
+    adopt_root_at(state, PathBuf::from(path), kind)
+}
+
+#[cfg(all(debug_assertions, not(feature = "generate-bindings")))]
+#[tauri::command]
+#[specta::specta]
+fn debug_create_project(
+    state: tauri::State<'_, AppState>,
+    parent: String,
+    name: String,
+) -> Result<ProjectOpenedDto, RefrainError> {
+    create_project_at(state, PathBuf::from(parent), name)
+}
+
+#[cfg(all(debug_assertions, not(feature = "generate-bindings")))]
+#[tauri::command]
+#[specta::specta]
+fn debug_import_material(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    source_path: String,
+) -> Result<DocumentRow, RefrainError> {
+    import_material_at(state, root_id, PathBuf::from(source_path))
+}
+
+#[cfg(all(debug_assertions, not(feature = "generate-bindings")))]
+#[tauri::command]
+#[specta::specta]
+fn debug_import_manuscript(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    source_path: String,
+) -> Result<DocumentRow, RefrainError> {
+    import_manuscript_at(state, root_id, PathBuf::from(source_path))
 }

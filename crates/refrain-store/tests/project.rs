@@ -697,6 +697,14 @@ fn adopting_scans_existing_manuscripts_into_rows() {
     assert_eq!(paths, ["material/年表.md", "第一章.md"]);
     assert_eq!(rows[0].role, DocumentRole::Material);
     assert_eq!(rows[1].role, DocumentRole::Chapter);
+    assert!(store.open_registered_document("第一章.md").is_ok());
+    assert!(
+        matches!(
+            store.open_registered_document("notes.bin"),
+            Err(ProjectFailure::NotADocument(_))
+        ),
+        "a contained file is not authorised until indexing registers it"
+    );
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }
