@@ -50,6 +50,12 @@ export const commands = {
 	/**  The generated theme list, for the Settings picker. */
 	listThemes: () => __TAURI_INVOKE<ThemeInfoDto[]>("list_themes"),
 	/**
+	 *  Installed families and the weights the machine can actually draw. The
+	 *  catalog is scanned once per application session and never launches a shell.
+	 */
+	listFonts: () => typedError<FontFamilyDto[], RefrainError>(__TAURI_INVOKE("list_fonts")),
+	listBuiltinTypographyPresets: () => __TAURI_INVOKE<BuiltinTypographyPreset[]>("list_builtin_typography_presets"),
+	/**
 	 *  Pick an icon for the Universal Button. The pipeline judges by content
 	 *  (SPEC 9.8); the digest is all the Config ever stores.
 	 */
@@ -269,17 +275,17 @@ export type AppearanceConfig = {
 	 *  load, because the theme list is generated, not a hand copy.
 	 */
 	theme: string,
-	fonts?: FontConfig,
+	typography: TypographyConfig,
+	/**
+	 *  Named snapshots of complete typography values. The active value above
+	 *  remains authoritative; a preset changes nothing until the author applies it.
+	 */
+	typography_presets?: TypographyPreset[],
 	/**  The manuscript sheet's edge: none / hairline / paper. */
 	paper?: PaperMode,
-	/**  Manuscript text size in px (SPEC 9.8: 排版可调,默认 17). */
-	text_size?: number,
-	/**  Manuscript line height in percent (默认 190 = 1.9). */
-	line_height?: number,
 	/**
-	 *  The Universal Button icon, by content digest (SPEC 9.8). The asset
-	 *  named by this digest lives in the application data assets directory;
-	 *  the Config never stores the image itself.
+	 *  The writing-entry icon, by content digest. The asset named by this
+	 *  digest lives in the application data assets directory.
 	 */
 	icon_digest?: string | null,
 };
@@ -321,6 +327,11 @@ export type BackupStatus = { kind: "taken"; value: {
 export type BlockDto = {
 	id: string,
 	text: string,
+};
+
+export type BuiltinTypographyPreset = {
+	id: string,
+	typography: TypographyConfig,
 };
 
 /**
@@ -477,6 +488,12 @@ export type FontConfig = {
 	chinese: string,
 	japanese: string,
 	priority: [FontSlot, FontSlot, FontSlot],
+};
+
+export type FontFamilyDto = {
+	family: string,
+	weights: number[],
+	bundledSlot: FontSlot | null,
 };
 
 /**
@@ -752,10 +769,7 @@ export type PaperMode = "none" | "hairline" | "paper";
  *  The preferences the Settings surface may change (SPEC 6.5). Connection
  *  management is its own command pair; this is the author's choices.
  */
-export type PreferencesChangeDto = { kind: "karaAutoEnter"; value: boolean } | { kind: "setTheme"; value: string } | { kind: "setPaper"; value: PaperMode } | { kind: "setTextSize"; value: number } | { kind: "setLineHeight"; value: number } | { kind: "setFontFamily"; value: {
-	slot: FontSlot,
-	family: string,
-} } | { kind: "setFontPriority"; value: [FontSlot, FontSlot, FontSlot] } | { kind: "resetVisual" } | { kind: "resetTypography" } | { kind: "restoreAppearance"; value: AppearanceConfig };
+export type PreferencesChangeDto = { kind: "karaAutoEnter"; value: boolean } | { kind: "setTheme"; value: string } | { kind: "setPaper"; value: PaperMode } | { kind: "setTypography"; value: TypographyConfig } | { kind: "saveTypographyPreset"; value: string } | { kind: "removeTypographyPreset"; value: Id } | { kind: "resetVisual" } | { kind: "resetTypography" } | { kind: "restoreAppearance"; value: AppearanceConfig };
 
 /**  A Root as the interface names it. */
 export type ProjectOpenedDto = {
@@ -899,6 +913,8 @@ export type TaskDto = {
 	progress: string,
 };
 
+export type TextAlignment = "left" | "justify";
+
 /**  The confirmed outcome of one applied action. */
 export type TextTransitionDto = {
 	revision: string,
@@ -932,6 +948,35 @@ export type Tier =
  *  and never serialised as zero (INV-3).
  */
 export type Tokens = { kind: "actual"; value: number } | { kind: "estimated"; value: number } | { kind: "unknown" };
+
+/**
+ *  Every typographic material that changes the manuscript surface. Units live
+ *  in field names so persisted numbers remain readable without UI context.
+ */
+export type TypographyConfig = {
+	fonts: FontConfig,
+	text_size_tenths_px: number,
+	font_weight: number,
+	line_height_percent: number,
+	letter_spacing_thousandths_em: number,
+	word_spacing_thousandths_em: number,
+	measure_tenths_em: number,
+	first_line_indent_tenths_em: number,
+	paragraph_spacing_percent: number,
+	alignment: TextAlignment,
+	page_top_padding_tenths_rem: number,
+	page_bottom_padding_tenths_vh: number,
+	/**  Zero disables the grid; 1–6 draws one rule every N line boxes. */
+	baseline_grid_lines: number,
+	zoom_percent: number,
+};
+
+/**  One author-named snapshot. IDs make rename and overwrite unambiguous. */
+export type TypographyPreset = {
+	id: Id,
+	name: string,
+	typography: TypographyConfig,
+};
 
 /**
  *  The persisted shape of one judgment. `AcceptModified` carries its final

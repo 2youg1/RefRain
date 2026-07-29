@@ -132,6 +132,7 @@ onBeforeUnmount(() => {
 });
 
 defineExpose({
+  focus: (): void => editor?.focus(),
   isComposing: () => editor?.isComposing() ?? false,
   caret: () => editor?.caret() ?? null,
   /** Resolves when the pending-action queue has fully drained (SPEC 7.2-5). */
@@ -154,6 +155,8 @@ defineExpose({
 <style>
 .editor-wrap {
   position: relative;
+  height: 100%;
+  overflow-y: auto;
 }
 
 /* 柱（hashira）：和装本的书脊题名，竖写细墨，只在有边缘的纸面档出现。 */
@@ -161,7 +164,7 @@ defineExpose({
   display: none;
   position: fixed;
   top: 84px;
-  right: calc(50% - 354px);
+  right: max(16px, calc((100vw - var(--manuscript-measure, 30em) - 96px) / 2 - 24px));
   writing-mode: vertical-rl;
   font-family: var(--serif);
   font-size: 12px;
@@ -188,12 +191,23 @@ defineExpose({
  * 细边 —— 默认，发丝边界，无影；
  * 纸张 —— 边框加影，给从 Word 来的作者一张看得见的纸。 */
 .editor-host {
-  max-width: 720px;
+  width: min(calc(var(--manuscript-measure, 30em) + 96px), calc(100% - 56px));
+  max-width: none;
   margin: 0 auto;
-  padding: 56px 48px 120px;
+  padding: var(--page-top-padding, 3rem) 48px var(--page-bottom-padding, 50vh);
   line-height: var(--manuscript-leading, 1.9);
   font-size: var(--manuscript-size, 17px);
   font-family: var(--manuscript-family, var(--serif));
+  font-weight: var(--manuscript-weight, 400);
+  letter-spacing: var(--manuscript-tracking, 0.01em);
+  word-spacing: var(--manuscript-word-spacing, 0);
+  text-align: var(--manuscript-align, left);
+  hanging-punctuation: allow-end last;
+  text-spacing-trim: trim-start;
+  font-feature-settings:
+    "halt" 1,
+    "vhal" 1;
+  font-variant-east-asian: proportional-width;
 }
 
 :root[data-paper="none"] .editor-host p[data-block-id] {
@@ -224,5 +238,23 @@ defineExpose({
 .editor-host p[data-block-id] {
   cursor: text;
   caret-color: var(--caret);
+  margin: 0 0 var(--paragraph-gap, 1.9em);
+  text-indent: var(--manuscript-indent, 0);
+}
+
+.editor-host p[data-block-id]:last-child {
+  margin-bottom: 0;
+}
+
+:root[data-baseline-grid="on"] .editor-host p[data-block-id] {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(var(--rule-at) - 1px),
+    color-mix(in oklab, var(--seal) 22%, transparent) calc(var(--rule-at) - 1px),
+    color-mix(in oklab, var(--seal) 22%, transparent) var(--rule-at),
+    transparent var(--rule-at),
+    transparent var(--grid-period)
+  );
 }
 </style>

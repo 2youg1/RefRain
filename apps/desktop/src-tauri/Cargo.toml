@@ -18,6 +18,7 @@ tauri-build = { version = "=2.6.3", features = [] }
 refrain-core = { workspace = true }
 refrain-host = { workspace = true }
 refrain-store = { workspace = true }
+fontdb = "=0.23.0"
 rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

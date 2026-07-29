@@ -6,15 +6,16 @@
 //! are runtime objects, not a second copy of business state.
 
 mod display;
+mod fonts;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use refrain_core::{
     DocumentRole, EditorAction, EditorChange, ErrorCode, Id, Insertion, KaraAutoEntry, KaraEvent,
-    KaraMachine, KaraPolicy, KaraTransition, Lineage, Manuscript, RefrainError, Replacement,
-    SourceSnapshot, TextCommand,
+    KaraMachine, KaraPolicy, KaraTransition, Lineage, Manuscript, RecoveryStep, RefrainError,
+    Replacement, SourceSnapshot, TextCommand,
 };
 use refrain_store::project::{
     BackupStatus, DocumentCommit, DocumentRow, FileStamp, ProjectFailure, ProjectStore, RootLocator,
@@ -28,6 +29,7 @@ use tauri::Manager;
 use tauri_specta::{Builder, collect_commands};
 
 use display::display_profile;
+use fonts::{FontCatalog, FontFamilyDto};
 
 /// The commit this build was made from. Set by CI; absent in a local build,
 /// and absent is reported as absent rather than as an empty string (INV-3's
@@ -49,6 +51,7 @@ pub struct AppState {
     kara: Mutex<KaraMachine>,
     config: Option<refrain_store::config::ConfigStore>,
     config_notice: Mutex<Option<String>>,
+    fonts: Arc<FontCatalog>,
     data_dir: PathBuf,
 }
 
@@ -93,6 +96,7 @@ impl AppState {
             kara: Mutex::new(KaraMachine::new()),
             config,
             config_notice: Mutex::new(config_notice),
+            fonts: Arc::new(FontCatalog::default()),
             data_dir: app_data_dir.to_path_buf(),
         })
     }
@@ -841,6 +845,31 @@ fn universal_icon(state: tauri::State<'_, AppState>) -> Option<Vec<u8>> {
     refrain_store::icons::read_icon(&icon_assets_dir(&state), &digest).ok()
 }
 
+/// Installed families and the weights the machine can actually draw. The
+/// catalog is scanned once per application session and never launches a shell.
+#[tauri::command]
+#[specta::specta]
+async fn list_fonts(state: tauri::State<'_, AppState>) -> Result<Vec<FontFamilyDto>, RefrainError> {
+    let catalog = Arc::clone(&state.fonts);
+    tauri::async_runtime::spawn_blocking(move || catalog.list())
+        .await
+        .map_err(|error| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "scan installed fonts",
+                "system font catalog",
+            )
+            .with_detail(error.to_string())
+            .with_recovery(vec![RecoveryStep::Retry, RecoveryStep::ReportDefect])
+        })
+}
+
+#[tauri::command]
+#[specta::specta]
+fn list_builtin_typography_presets() -> Vec<refrain_store::config::BuiltinTypographyPreset> {
+    refrain_store::config::builtin_typography_presets()
+}
+
 /// The preferences the Settings surface may change (SPEC 6.5). Connection
 /// management is its own command pair; this is the author's choices.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -849,13 +878,9 @@ pub enum PreferencesChangeDto {
     KaraAutoEnter(bool),
     SetTheme(String),
     SetPaper(refrain_store::config::PaperMode),
-    SetTextSize(u16),
-    SetLineHeight(u16),
-    SetFontFamily {
-        slot: refrain_store::config::FontSlot,
-        family: String,
-    },
-    SetFontPriority([refrain_store::config::FontSlot; 3]),
+    SetTypography(refrain_store::config::TypographyConfig),
+    SaveTypographyPreset(String),
+    RemoveTypographyPreset(Id),
     ResetVisual,
     ResetTypography,
     RestoreAppearance(refrain_store::config::AppearanceConfig),
@@ -883,17 +908,14 @@ fn update_preferences(
             refrain_store::config::ConfigChange::SetTheme(theme)
         }
         PreferencesChangeDto::SetPaper(mode) => refrain_store::config::ConfigChange::SetPaper(mode),
-        PreferencesChangeDto::SetTextSize(px) => {
-            refrain_store::config::ConfigChange::SetTextSize(px)
+        PreferencesChangeDto::SetTypography(typography) => {
+            refrain_store::config::ConfigChange::SetTypography(typography)
         }
-        PreferencesChangeDto::SetLineHeight(pct) => {
-            refrain_store::config::ConfigChange::SetLineHeight(pct)
+        PreferencesChangeDto::SaveTypographyPreset(name) => {
+            refrain_store::config::ConfigChange::SaveTypographyPreset(name)
         }
-        PreferencesChangeDto::SetFontFamily { slot, family } => {
-            refrain_store::config::ConfigChange::SetFontFamily { slot, family }
-        }
-        PreferencesChangeDto::SetFontPriority(priority) => {
-            refrain_store::config::ConfigChange::SetFontPriority(priority)
+        PreferencesChangeDto::RemoveTypographyPreset(id) => {
+            refrain_store::config::ConfigChange::RemoveTypographyPreset(id)
         }
         PreferencesChangeDto::ResetVisual => refrain_store::config::ConfigChange::ResetVisual,
         PreferencesChangeDto::ResetTypography => {
@@ -972,6 +994,8 @@ pub fn builder() -> Builder<tauri::Wry> {
         read_config,
         update_preferences,
         list_themes,
+        list_fonts,
+        list_builtin_typography_presets,
         set_universal_icon,
         universal_icon,
         inject_fixture_proposal,

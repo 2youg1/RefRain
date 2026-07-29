@@ -8,6 +8,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { describe, unwrap } from "../bridge";
 import { commands } from "../generated/bindings.gen";
+import LogoMark from "./LogoMark.vue";
+import { iconDataUrl } from "./universal-icon";
 
 const iconUrl = ref<string | null>(null);
 const error = ref<string | null>(null);
@@ -15,15 +17,9 @@ const fileInput = ref<HTMLInputElement | null>(null);
 let disposed = false;
 let stopConfig: UnlistenFn | null = null;
 
-const toDataUrl = (bytes: number[]): string => {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return `data:image/png;base64,${btoa(binary)}`;
-};
-
 const refresh = async (): Promise<void> => {
   const bytes = await commands.universalIcon();
-  iconUrl.value = bytes === null ? null : toDataUrl(bytes);
+  iconUrl.value = bytes === null ? null : iconDataUrl(bytes);
 };
 
 const refreshSafely = async (): Promise<void> => {
@@ -78,7 +74,7 @@ onBeforeUnmount(() => {
   <div class="icon-picker">
     <button type="button" class="icon-button" title="写作入口图标" @click="pick">
       <img v-if="iconUrl" :src="iconUrl" alt="写作入口图标" />
-      <span v-else>◇</span>
+      <LogoMark v-else :size="18" />
     </button>
     <input
       ref="fileInput"
