@@ -969,6 +969,9 @@ pub fn builder() -> Builder<tauri::Wry> {
         list_material_drafts,
         commit_material_action,
         agent_reading_ledger,
+        upsert_harness_connection,
+        remove_harness_connection,
+        probe_connection,
     ])
 }
 
@@ -2145,8 +2148,8 @@ fn launch_run(
             .ok_or_else(|| into_domain_host(HostRefusal::UnknownRun(run_id)))?;
         Ok(run.agent_id.to_string())
     })?;
-    if agent == KIMI_PRINT_AGENT {
-        return harness_dispatch_inner(&app, &state, &root_id, run_id);
+    if agent == KIMI_PRINT_AGENT || kimi_connection_named(&state, &agent) {
+        return harness_dispatch_inner(&app, &state, &root_id, &agent, run_id);
     }
     state.with_project(&root_id, |_state, entry| {
         let mut host = open_host(&mut entry.store)?;
@@ -2539,26 +2542,238 @@ pub struct RunSettledDto {
 }
 
 /// Every harness the app can dispatch to right now: detection only, no model
-/// call (SPEC: 测试连接只跑版本/能力探针）.
+/// call (SPEC: 测试连接只跑版本/能力探针）. Config-declared kimi connections
+/// win over PATH detection — the author's declaration is the authority.
 #[tauri::command]
 #[specta::specta]
-fn list_harnesses() -> Vec<HarnessDto> {
+fn list_harnesses(state: tauri::State<'_, AppState>) -> Vec<HarnessDto> {
     let mut out = Vec::new();
-    if let Some(kimi) = KimiPrint::detect() {
-        out.push(HarnessDto {
-            agent_id: KIMI_PRINT_AGENT.to_string(),
-            label: "Kimi Code · print".to_string(),
-            version: kimi.version().to_string(),
-            tier: "l1".to_string(),
-            probe: kimi.probe().unwrap_or(HarnessProbe {
-                id: "kimi-print".to_string(),
-                program: kimi.program().clone(),
+    let kimi_connections: Vec<refrain_store::config::HarnessConnection> = state
+        .config
+        .as_ref()
+        .and_then(|store| store.snapshot().ok())
+        .map(|snapshot| {
+            snapshot
+                .config
+                .harness_connections
+                .into_iter()
+                .filter(|connection| {
+                    connection.adapter == refrain_store::config::AdapterKind::KimiCode
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if kimi_connections.is_empty() {
+        if let Some(kimi) = KimiPrint::detect() {
+            out.push(HarnessDto {
+                agent_id: KIMI_PRINT_AGENT.to_string(),
+                label: "Kimi Code · print".to_string(),
                 version: kimi.version().to_string(),
-                tier: refrain_host::Tier::L1,
-            }),
-        });
+                tier: "l1".to_string(),
+                probe: kimi.probe().unwrap_or(HarnessProbe {
+                    id: "kimi-print".to_string(),
+                    program: kimi.program().clone(),
+                    version: kimi.version().to_string(),
+                    tier: refrain_host::Tier::L1,
+                }),
+            });
+        }
+        return out;
+    }
+    for connection in kimi_connections {
+        if let Some(kimi) = KimiPrint::at(connection.executable.clone()) {
+            let stem = connection
+                .executable
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "kimi".to_string());
+            out.push(HarnessDto {
+                agent_id: connection.id.to_string(),
+                label: format!("Kimi Code · {stem}"),
+                version: kimi.version().to_string(),
+                tier: "l1".to_string(),
+                probe: kimi.probe().unwrap_or(HarnessProbe {
+                    id: "kimi-print".to_string(),
+                    program: kimi.program().clone(),
+                    version: kimi.version().to_string(),
+                    tier: refrain_host::Tier::L1,
+                }),
+            });
+        }
     }
     out
+}
+
+/// Register a harness connection in the one Config (SPEC 6.5). The exact
+/// executable answers `--version` before it is stored — a connection that
+/// cannot be probed is not registered. The C12 surface registers kimi only;
+/// other adapter kinds land with their adapters.
+#[tauri::command]
+#[specta::specta]
+fn upsert_harness_connection(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    executable: String,
+) -> Result<refrain_store::config::ConfigSnapshot, RefrainError> {
+    let program = PathBuf::from(&executable);
+    let exists = program.try_exists().map_err(|error| {
+        RefrainError::new(
+            ErrorCode::Io,
+            "check a connection executable",
+            executable.clone(),
+        )
+        .with_detail(error.to_string())
+    })?;
+    if !exists {
+        return Err(
+            RefrainError::new(ErrorCode::Io, "register a connection", executable)
+                .with_detail("the executable does not exist"),
+        );
+    }
+    KimiPrint::at(program.clone()).ok_or_else(|| {
+        RefrainError::new(
+            ErrorCode::Io,
+            "probe a connection before registering",
+            executable.clone(),
+        )
+    })?;
+    let store = state.config.as_ref().ok_or_else(|| {
+        RefrainError::new(ErrorCode::StateUnavailable, "write a damaged Config", "connections")
+    })?;
+    let snapshot = store
+        .apply(
+            refrain_store::config::ConfigChange::UpsertHarnessConnection(
+                refrain_store::config::HarnessConnection {
+                    id: Id::new(),
+                    adapter: refrain_store::config::AdapterKind::KimiCode,
+                    executable: program,
+                    argv: Vec::new(),
+                    env_allow: Vec::new(),
+                },
+            ),
+        )
+        .map_err(|failure| {
+            RefrainError::new(ErrorCode::Io, "write the Config", failure.to_string())
+        })?;
+    let _ = app.emit("config-changed", &snapshot.config.appearance.theme);
+    Ok(snapshot)
+}
+
+/// Remove a connection by id (SPEC 6.5). Trust evidence in app.db is not the
+/// author's parameter and is not touched here (Q24).
+#[tauri::command]
+#[specta::specta]
+fn remove_harness_connection(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<refrain_store::config::ConfigSnapshot, RefrainError> {
+    let id = parse_id(&id, "connection")?;
+    let store = state.config.as_ref().ok_or_else(|| {
+        RefrainError::new(ErrorCode::StateUnavailable, "write a damaged Config", "connections")
+    })?;
+    let snapshot = store
+        .apply(refrain_store::config::ConfigChange::RemoveHarnessConnection(id))
+        .map_err(|failure| {
+            RefrainError::new(ErrorCode::Io, "write the Config", failure.to_string())
+        })?;
+    let _ = app.emit("config-changed", &snapshot.config.appearance.theme);
+    Ok(snapshot)
+}
+
+/// The Connections page's probe: argv-exact `--version`, nothing else (SPEC:
+/// 测试连接只跑版本/能力探针，不调模型）.
+#[tauri::command]
+#[specta::specta]
+fn probe_connection(executable: String) -> Result<String, RefrainError> {
+    let outcome = refrain_host::process::launch(&refrain_host::process::LaunchSpec {
+        program: PathBuf::from(&executable),
+        args: vec!["--version".to_string()],
+        env: vec![],
+        cwd: std::env::temp_dir(),
+        stdin_piped: false,
+    })
+    .and_then(refrain_host::process::ProcessHandle::wait)
+    .map_err(|error| {
+        RefrainError::new(ErrorCode::Io, "probe a connection", executable.clone())
+            .with_detail(error.to_string())
+    })?;
+    if outcome.code != Some(0) {
+        return Err(
+            RefrainError::new(ErrorCode::Io, "probe a connection", executable).with_detail(
+                format!("exit {:?}: {}", outcome.code, outcome.stderr.trim()),
+            ),
+        );
+    }
+    Ok(outcome.stdout.trim().to_string())
+}
+
+/// The Kimi Print channel for one run's agent: the built-in detected entry,
+/// or the exact executable of the Config connection naming it (C12 roster).
+fn kimi_for_agent(state: &AppState, agent: &str) -> Result<KimiPrint, RefrainError> {
+    if agent == KIMI_PRINT_AGENT {
+        return KimiPrint::detect().ok_or_else(|| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "dispatch to Kimi Code",
+                "kimi CLI not on PATH",
+            )
+        });
+    }
+    let store = state.config.as_ref().ok_or_else(|| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "read the Config for a connection",
+            agent,
+        )
+    })?;
+    let snapshot = store.snapshot().map_err(|failure| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "read the Config for a connection",
+            failure.to_string(),
+        )
+    })?;
+    let connection = snapshot
+        .config
+        .harness_connections
+        .iter()
+        .find(|connection| {
+            connection.id.to_string() == agent
+                && connection.adapter == refrain_store::config::AdapterKind::KimiCode
+        })
+        .ok_or_else(|| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "dispatch over a connection",
+                "no such kimi connection",
+            )
+        })?;
+    KimiPrint::at(connection.executable.clone()).ok_or_else(|| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "probe a declared connection",
+            connection.executable.display().to_string(),
+        )
+    })
+}
+
+/// Whether the agent id names a Config-declared kimi connection.
+fn kimi_connection_named(state: &AppState, agent: &str) -> bool {
+    state
+        .config
+        .as_ref()
+        .and_then(|store| store.snapshot().ok())
+        .is_some_and(|snapshot| {
+            snapshot
+                .config
+                .harness_connections
+                .iter()
+                .any(|connection| {
+                    connection.id.to_string() == agent
+                        && connection.adapter == refrain_store::config::AdapterKind::KimiCode
+                })
+        })
 }
 
 /// Launch one authorized run on a real harness: promote the frozen request,
@@ -2569,15 +2784,10 @@ fn harness_dispatch_inner(
     app: &tauri::AppHandle,
     state: &AppState,
     root_id: &str,
+    agent: &str,
     run_id: Id,
 ) -> Result<RunDto, RefrainError> {
-    let kimi = KimiPrint::detect().ok_or_else(|| {
-        RefrainError::new(
-            ErrorCode::StateUnavailable,
-            "dispatch to Kimi Code",
-            "kimi CLI not on PATH",
-        )
-    })?;
+    let kimi = kimi_for_agent(state, agent)?;
     let (workspace, workspace_abs, request_md) = state.with_project(root_id, |_state, entry| {
         let context = DirectoryContext::new(entry.store.layout().state_dir.clone());
         let mut host = open_host(&mut entry.store)?;
@@ -2722,7 +2932,16 @@ fn harness_dispatch(
     root_id: String,
     run_id: String,
 ) -> Result<RunDto, RefrainError> {
-    harness_dispatch_inner(&app, &state, &root_id, parse_id(&run_id, "run")?)
+    let run_id = parse_id(&run_id, "run")?;
+    let agent = state.with_project(&root_id, |_state, entry| {
+        let host = open_host(&mut entry.store)?;
+        host.runs()
+            .iter()
+            .find(|run| run.id == run_id)
+            .map(|run| run.agent_id.to_string())
+            .ok_or_else(|| into_domain_host(HostRefusal::UnknownRun(run_id)))
+    })?;
+    harness_dispatch_inner(&app, &state, &root_id, &agent, run_id)
 }
 
 // ── C12: materials — drafts review and the Human Material Action (SPEC 8.7) ──

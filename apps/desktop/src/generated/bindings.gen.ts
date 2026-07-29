@@ -91,7 +91,8 @@ export const commands = {
 	l0FileChannelAgent: () => __TAURI_INVOKE<string>("l0_file_channel_agent"),
 	/**
 	 *  Every harness the app can dispatch to right now: detection only, no model
-	 *  call (SPEC: 测试连接只跑版本/能力探针）.
+	 *  call (SPEC: 测试连接只跑版本/能力探针）. Config-declared kimi connections
+	 *  win over PATH detection — the author's declaration is the authority.
 	 */
 	listHarnesses: () => __TAURI_INVOKE<HarnessDto[]>("list_harnesses"),
 	authorizeDispatch: (request: AuthorizeDispatchRequest) => typedError<RunDto[], RefrainError>(__TAURI_INVOKE("authorize_dispatch", { request })),
@@ -141,6 +142,23 @@ export const commands = {
 	headBlockIds: string | null,
 } | null, RefrainError>(__TAURI_INVOKE("commit_material_action", { rootId, draftId, editedBody, dismiss })),
 	agentReadingLedger: (rootId: string) => typedError<AgentReadingDto_Serialize[], RefrainError>(__TAURI_INVOKE("agent_reading_ledger", { rootId })),
+	/**
+	 *  Register a harness connection in the one Config (SPEC 6.5). The exact
+	 *  executable answers `--version` before it is stored — a connection that
+	 *  cannot be probed is not registered. The C12 surface registers kimi only;
+	 *  other adapter kinds land with their adapters.
+	 */
+	upsertHarnessConnection: (executable: string) => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("upsert_harness_connection", { executable })),
+	/**
+	 *  Remove a connection by id (SPEC 6.5). Trust evidence in app.db is not the
+	 *  author's parameter and is not touched here (Q24).
+	 */
+	removeHarnessConnection: (id: string) => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("remove_harness_connection", { id })),
+	/**
+	 *  The Connections page's probe: argv-exact `--version`, nothing else (SPEC:
+	 *  测试连接只跑版本/能力探针，不调模型）.
+	 */
+	probeConnection: (executable: string) => typedError<string, RefrainError>(__TAURI_INVOKE("probe_connection", { executable })),
 };
 
 /* Types */

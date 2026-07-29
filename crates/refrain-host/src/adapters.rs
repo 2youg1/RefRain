@@ -131,6 +131,13 @@ impl KimiPrint {
         Some(Self { program, version })
     }
 
+    /// The connection the author declared in Config: probe that exact
+    /// executable, never a PATH lookup.
+    pub fn at(program: PathBuf) -> Option<Self> {
+        let version = version_of(&program).ok()?;
+        Some(Self { program, version })
+    }
+
     #[must_use]
     pub fn program(&self) -> &PathBuf {
         &self.program

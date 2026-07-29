@@ -981,6 +981,82 @@ const run = async (): Promise<void> => {
     pointerRequest.includes("按 RefRain 兼容格式输出") &&
       !pointerRequest.includes("One <replacement> per scope"),
   );
+  await cancelRun(pointerRun.id);
+
+  // ── Connections (C12 roster): register → probe → dispatch through →
+  // remove. The declared connection replaces PATH detection on the ticket. ──
+  const fakeKimiExe = join(fixtureBin, "kimi.exe");
+  await invoke("upsert_harness_connection", { executable: fakeKimiExe });
+  const cfg = (await invoke("read_config", {})) as {
+    config: { harness_connections: { id: string; adapter: string; executable: string }[] };
+  };
+  check(
+    "the connection landed in the one Config without any trust bit",
+    cfg.config.harness_connections.length === 1 &&
+      cfg.config.harness_connections[0]?.executable === fakeKimiExe &&
+      !("trusted" in (cfg.config.harness_connections[0] ?? {})),
+    cfg.config.harness_connections.length,
+  );
+  const conn = cfg.config.harness_connections[0];
+  if (conn === undefined) throw new Error("no registered connection");
+  const probed = (await invoke("probe_connection", { executable: fakeKimiExe })) as string;
+  check("the probe reads the fake kimi's version", probed === "9.9.9-fake", probed);
+  const registered = (await invoke("list_harnesses", {})) as { agentId: string }[];
+  check(
+    "the declared connection replaces PATH detection",
+    registered.length === 1 && registered[0]?.agentId === conn.id,
+    registered.map((harness) => harness.agentId),
+  );
+
+  // The ticket loads its agent list on mount: remount it so the connection
+  // appears, then dispatch through it. A first-round harness gets the FULL
+  // contract (KL9's contract injection).
+  await clickButton("收起");
+  await clickButton("派发");
+  await waitFor("the remounted ticket", async () =>
+    Boolean(await execute(`return document.querySelector(".dispatch-agent") !== null`)),
+  );
+  await execute(
+    `const s = document.querySelector(".dispatch-agent");
+     s.value = ${JSON.stringify(conn.id)};
+     s.dispatchEvent(new Event("change", { bubbles: true }));`,
+    [],
+  );
+  const connRun = await dispatchOnce("经登记连接改写第二段。");
+  const connRequest = requestOf(connRun);
+  check(
+    "a harness's first round carries the full generated protocol",
+    connRequest.includes("unsupported-version"),
+  );
+  await waitFor(
+    "the connection result to land",
+    async () =>
+      existsSync(join(fixture, ".refrain", connRun.workspace, "attempts", connRun.id, "result.md")),
+    30_000,
+  );
+  await clickButton("收取");
+  await waitFor("the connection run to complete", async () => {
+    const s = await hostState(rootId);
+    return s.runs.find((r) => r.id === connRun.id)?.progress === "completed";
+  });
+  const connProposals = (await invoke("list_proposals", { rootId, path: "长章.md" })) as {
+    after: string | null;
+  }[];
+  check(
+    "the connection's artifact froze into a proposal",
+    connProposals.filter((p) => (p.after ?? "").includes("伪 Agent 改写")).length >= 2,
+    connProposals.length,
+  );
+
+  await invoke("remove_harness_connection", { id: conn.id });
+  const cfgAfter = (await invoke("read_config", {})) as {
+    config: { harness_connections: unknown[] };
+  };
+  check(
+    "the remove leaves the Config empty",
+    cfgAfter.config.harness_connections.length === 0,
+    cfgAfter.config.harness_connections.length,
+  );
 
   await stop();
   if (failures.length > 0) {
