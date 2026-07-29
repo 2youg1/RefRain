@@ -972,6 +972,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         upsert_harness_connection,
         remove_harness_connection,
         probe_connection,
+        import_material,
     ])
 }
 
@@ -2958,6 +2959,108 @@ fn list_material_drafts(
     })
 }
 
+/// The shared Human Material Action body (SPEC 8.7): create the material
+/// document, write its body through the same journaled text path the editor
+/// uses, persist. Used by draft resolution and by source import (C12.3).
+fn create_material_with_body(
+    state: &AppState,
+    entry: &mut ProjectEntry,
+    title: &str,
+    body: &str,
+) -> Result<DocumentRow, RefrainError> {
+    let created = entry
+        .store
+        .create(&refrain_store::project::CreateDocument {
+            title: title.to_string(),
+            role: DocumentRole::Material,
+        })
+        .map_err(into_domain)?;
+    let opened = entry
+        .store
+        .open_document(&created.row.path)
+        .map_err(into_domain)?;
+    open_in_entry(state, entry, &created.row.path, opened)?;
+
+    let paragraphs: Vec<String> = body
+        .split("\n\n")
+        .map(str::trim)
+        .filter(|paragraph| !paragraph.is_empty())
+        .map(str::to_string)
+        .collect();
+    if !paragraphs.is_empty() {
+        let base = entry
+            .manuscripts
+            .get(&created.row.path)
+            .map(|manuscript| manuscript.head().id().to_string())
+            .ok_or_else(|| {
+                RefrainError::new(
+                    ErrorCode::StateUnavailable,
+                    "write a material that is not open",
+                    created.row.path.clone(),
+                )
+            })?;
+        let action_dto = EditorActionDto {
+            base,
+            changes: vec![EditorChangeDto::Insert {
+                before: None,
+                texts: paragraphs.clone(),
+            }],
+        };
+        let action_json = serde_json::to_string(&action_dto).map_err(|error| {
+            RefrainError::new(
+                ErrorCode::Io,
+                "serialise the material body",
+                created.row.path.clone(),
+            )
+            .with_detail(error.to_string())
+        })?;
+        let journal_id = entry
+            .store
+            .journal_append(&created.row.path, &action_json)
+            .map_err(into_domain)?;
+        // The executed action is the journaled one, through the same
+        // conversion the replay path uses — one construction, no drift.
+        let domain_action = to_domain_action(action_dto)?;
+        let outcome = {
+            let manuscript = entry
+                .manuscripts
+                .get_mut(&created.row.path)
+                .ok_or_else(|| {
+                    RefrainError::new(
+                        ErrorCode::StateUnavailable,
+                        "write a material that is not open",
+                        created.row.path.clone(),
+                    )
+                })?;
+            manuscript.execute(TextCommand::Editor(domain_action))
+        };
+        match outcome {
+            Ok(_transition) => {
+                entry
+                    .store
+                    .journal_remove(journal_id)
+                    .map_err(into_domain)?;
+            }
+            Err(refusal) => {
+                return Err(RefrainError::new(
+                    ErrorCode::Io,
+                    "write the material body",
+                    created.row.path.clone(),
+                )
+                .with_detail(refusal.to_string()));
+            }
+        }
+    }
+    match persist_in_entry(entry, &created.row.path, None)? {
+        SaveOutcomeDto::Saved { .. } => Ok(created.row),
+        SaveOutcomeDto::ChangedUnderneath { .. } => Err(RefrainError::new(
+            ErrorCode::Io,
+            "confirm a new material",
+            "the file moved underneath",
+        )),
+    }
+}
+
 /// The only way a draft becomes a Material (SPEC 8.7: a Human Material
 /// Action). Save writes the body through the same text path as the editor —
 /// create, insert, confirm — never a direct file write. Dismiss keeps the
@@ -2994,103 +3097,51 @@ fn commit_material_action(
         }
 
         let body = edited_body.unwrap_or_else(|| draft.body.clone());
-        let created = entry
-            .store
-            .create(&refrain_store::project::CreateDocument {
-                title: draft.title.clone(),
-                role: DocumentRole::Material,
-            })
-            .map_err(into_domain)?;
-        let opened = entry
-            .store
-            .open_document(&created.row.path)
-            .map_err(into_domain)?;
-        open_in_entry(state, entry, &created.row.path, opened)?;
-
-        let paragraphs: Vec<String> = body
-            .split("\n\n")
-            .map(str::trim)
-            .filter(|paragraph| !paragraph.is_empty())
-            .map(str::to_string)
-            .collect();
-        if !paragraphs.is_empty() {
-            let base = entry
-                .manuscripts
-                .get(&created.row.path)
-                .map(|manuscript| manuscript.head().id().to_string())
-                .ok_or_else(|| {
-                    RefrainError::new(
-                        ErrorCode::StateUnavailable,
-                        "write a material that is not open",
-                        created.row.path.clone(),
-                    )
-                })?;
-            let action_dto = EditorActionDto {
-                base,
-                changes: vec![EditorChangeDto::Insert {
-                    before: None,
-                    texts: paragraphs.clone(),
-                }],
-            };
-            let action_json = serde_json::to_string(&action_dto).map_err(|error| {
-                RefrainError::new(
-                    ErrorCode::Io,
-                    "serialise the material body",
-                    created.row.path.clone(),
-                )
-                .with_detail(error.to_string())
-            })?;
-            let journal_id = entry
-                .store
-                .journal_append(&created.row.path, &action_json)
-                .map_err(into_domain)?;
-            // The executed action is the journaled one, through the same
-            // conversion the replay path uses — one construction, no drift.
-            let domain_action = to_domain_action(action_dto)?;
-            let outcome = {
-                let manuscript = entry
-                    .manuscripts
-                    .get_mut(&created.row.path)
-                    .ok_or_else(|| {
-                        RefrainError::new(
-                            ErrorCode::StateUnavailable,
-                            "write a material that is not open",
-                            created.row.path.clone(),
-                        )
-                    })?;
-                manuscript.execute(TextCommand::Editor(domain_action))
-            };
-            match outcome {
-                Ok(_transition) => {
-                    entry
-                        .store
-                        .journal_remove(journal_id)
-                        .map_err(into_domain)?;
-                }
-                Err(refusal) => {
-                    return Err(RefrainError::new(
-                        ErrorCode::Io,
-                        "write the material body",
-                        created.row.path.clone(),
-                    )
-                    .with_detail(refusal.to_string()));
-                }
-            }
-        }
-        match persist_in_entry(entry, &created.row.path, None)? {
-            SaveOutcomeDto::Saved { .. } => {}
-            SaveOutcomeDto::ChangedUnderneath { .. } => {
-                return Err(RefrainError::new(
-                    ErrorCode::Io,
-                    "confirm a new material",
-                    "the file moved underneath",
-                ));
-            }
-        }
+        let row = create_material_with_body(state, entry, &draft.title, &body)?;
         entry
             .store
             .material_draft_take(&draft_id)
             .map_err(into_domain)?;
-        Ok(Some(created.row))
+        Ok(Some(row))
+    })
+}
+
+// ── C12.3: source import — six reference formats become Materials ──────────
+
+/// Import one source file (PDF / EPUB / HTML / DOCX / PPTX / XLSX) as a
+/// Material (Plan C12.3). Extraction is local — no cloud conversion; the
+/// material opens with a provenance header pinning the source bytes, then
+/// the projected text. The manuscript editor stays Markdown-only.
+#[tauri::command]
+#[specta::specta]
+fn import_material(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    source_path: String,
+) -> Result<DocumentRow, RefrainError> {
+    state.with_project(&root_id, |state, entry| {
+        let ingested = refrain_store::ingest::ingest(std::path::Path::new(&source_path))?;
+        // KL9: the source never moves. The original bytes join the project's
+        // read-only zone before the projected material exists — every later
+        // edit happens only on the project's own material document.
+        let clone = entry
+            .store
+            .clone_material_source(&ingested.source_path, &ingested.source_digest)
+            .map_err(into_domain)?;
+        let clone_display = clone
+            .strip_prefix(entry.store.layout().source_backup_dir.parent().unwrap_or(
+                std::path::Path::new(""),
+            ))
+            .unwrap_or(&clone)
+            .display();
+        let header = format!(
+            "> 来源：{}（{} · sha256 {}）；原件克隆：{}",
+            ingested.source_path.display(),
+            ingested.format.as_str(),
+            &ingested.source_digest[..12],
+            clone_display
+        );
+        let body = format!("{header}\n\n{}", ingested.text);
+        create_material_with_body(state, entry, &ingested.title, &body)
     })
 }

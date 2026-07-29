@@ -158,6 +158,21 @@ const onMaterialSaved = (row: DocumentRow): void => {
   };
 };
 
+// Import a source file (C12.3): extraction is local, the Material opens with
+// its provenance header. The button is a thin prompt over the command.
+const importMaterial = async (): Promise<void> => {
+  if (!project.value) return;
+  const source = window.prompt("资料文件路径（PDF / EPUB / HTML / DOCX / PPTX / XLSX）");
+  if (!source) return;
+  try {
+    const row = await unwrap(commands.importMaterial(project.value.rootId, source));
+    onMaterialSaved(row);
+    notice.value = "已导入";
+  } catch (error) {
+    fail(error);
+  }
+};
+
 const save = async (): Promise<void> => {
   if (!project.value || !active.value) return;
   // A save mid-composition is deferred, not refused (INV-7).
@@ -263,6 +278,7 @@ const onKeydown = (event: KeyboardEvent): void => {
       <nav v-show="!kara.engaged.value" class="rail" aria-label="文档">
         <button type="button" @click="newDocument('chapter')">新章</button>
         <button type="button" @click="newDocument('material')">新资料</button>
+        <button type="button" @click="importMaterial">导入</button>
         <button v-if="active" type="button" @click="reviewing = !reviewing">
           {{ reviewing ? "返回编辑" : "Review" }}
         </button>

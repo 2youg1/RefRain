@@ -9,6 +9,7 @@
 use rusqlite::params;
 
 use crate::project::{ProjectFailure, ProjectStore};
+use sha2::Digest as _;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -83,6 +84,51 @@ impl ProjectStore {
             .execute("DELETE FROM material_drafts WHERE id = ?1", params![id])?;
         Ok(row)
     }
+
+    /// Clone one material's source into the project's read-only zone (KL9:
+    /// the source never moves — backtracking forever needs the original
+    /// bytes inside the project, not just the projected text). The clone is
+    /// digest-named and write-once: an existing clone of the same bytes is
+    /// proof, not a collision, and nothing ever overwrites it. The expected
+    /// digest must match what was ingested; a source that moved between
+    /// ingest and clone is a typed refusal, not a quiet re-read.
+    pub fn clone_material_source(
+        &self,
+        source: &std::path::Path,
+        expected_digest: &str,
+    ) -> Result<std::path::PathBuf, ProjectFailure> {
+        let bytes = std::fs::read(source).map_err(|source_error| ProjectFailure::Io {
+            path: source.to_path_buf(),
+            source: source_error,
+        })?;
+        let digest = format!("{:x}", sha2::Sha256::digest(&bytes));
+        if digest != expected_digest {
+            return Err(ProjectFailure::Domain(refrain_core::RefrainError::new(
+                refrain_core::ErrorCode::StateUnavailable,
+                "clone a source that changed since ingest",
+                source.display().to_string(),
+            )));
+        }
+        let dir = self.layout().source_backup_dir.join("materials");
+        std::fs::create_dir_all(&dir).map_err(|source_error| ProjectFailure::Io {
+            path: dir.clone(),
+            source: source_error,
+        })?;
+        let extension = source
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("bin");
+        let target = dir.join(format!("{digest}.{extension}"));
+        if !target.exists() {
+            crate::atomic::replace_file_atomically(&target, &bytes, |_| Ok(())).map_err(
+                |source_error| ProjectFailure::Io {
+                    path: target.clone(),
+                    source: source_error,
+                },
+            )?;
+        }
+        Ok(target)
+    }
 }
 
 #[cfg(test)]
@@ -132,5 +178,28 @@ mod tests {
             store.material_draft_take("d1").is_err(),
             "a resolved draft is gone"
         );
+    }
+
+    #[test]
+    fn a_source_clone_is_write_once_and_digest_verified() {
+        let store = scratch_store();
+        let dir = std::env::temp_dir().join(format!("refrain-src-{}", refrain_core::Id::new()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("参考.html");
+        std::fs::write(&source, "<p>原件。</p>").unwrap();
+        let digest = format!("{:x}", sha2::Sha256::digest("<p>原件。</p>".as_bytes()));
+
+        let clone = store.clone_material_source(&source, &digest).unwrap();
+        assert!(clone.exists(), "the clone landed");
+        assert_eq!(std::fs::read(&clone).unwrap(), "<p>原件。</p>".as_bytes());
+
+        // A second import of the same bytes writes nothing new.
+        let again = store.clone_material_source(&source, &digest).unwrap();
+        assert_eq!(clone, again);
+
+        // A stale digest is a typed refusal; a changed source cannot sneak in.
+        assert!(store.clone_material_source(&source, &"0".repeat(64)).is_err());
+        std::fs::write(&source, "<p>被换过。</p>").unwrap();
+        assert!(store.clone_material_source(&source, &digest).is_err());
     }
 }
