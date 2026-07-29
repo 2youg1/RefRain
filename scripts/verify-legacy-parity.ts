@@ -25,8 +25,12 @@ if (!isRecord(raw) || raw.schemaVersion !== 1 || !Array.isArray(raw.entries)) {
 }
 
 const current: string[] = [];
-for await (const file of new Glob("**/*.test.ts").scan({ cwd: "legacy" })) {
-  current.push(`legacy/${file.split(/[/\\]/).join("/")}`);
+// At v0.2.0 the oracle is gone: a missing legacy/ tree maps to zero files,
+// and every entry must already be owned or retired (enforced below).
+if (await Bun.file("legacy").exists()) {
+  for await (const file of new Glob("**/*.test.ts").scan({ cwd: "legacy" })) {
+    current.push(`legacy/${file.split(/[/\\]/).join("/")}`);
+  }
 }
 
 const failures: string[] = [];

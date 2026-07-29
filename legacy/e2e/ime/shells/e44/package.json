@@ -1,9 +1,0 @@
-{
-  "name": "shell-e44",
-  "private": true,
-  "version": "1.0.0",
-  "main": "main.js",
-  "dependencies": {
-    "electron": "44.0.0-alpha.6"
-  }
-}

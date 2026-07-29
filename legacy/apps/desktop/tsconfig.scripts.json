@@ -1,8 +1,0 @@
-{
-  "extends": "../../tsconfig.base.json",
-  "compilerOptions": {
-    "lib": ["esnext", "dom"],
-    "types": ["bun"]
-  },
-  "include": ["scripts/**/*.ts", "vite.config.ts"]
-}
