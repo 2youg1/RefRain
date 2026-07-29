@@ -183,7 +183,13 @@ const run = async (): Promise<void> => {
             "--disable-extensions",
           ],
         },
-        "tauri:options": { application: exe.replaceAll("/", "\\") },
+        "tauri:options": {
+          application: exe.replaceAll("/", "\\"),
+          // CI runners cannot write the default WebView2 user-data folder; a
+          // dead profile kills the browser before its devtools port exists
+          // (tauri-apps/tauri#10670).
+          webviewOptions: { userDataFolder: join(dataDir, "webview") },
+        },
       },
     },
   };
