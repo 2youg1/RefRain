@@ -1,9 +1,0 @@
-{
-  "name": "shell-e42",
-  "private": true,
-  "version": "1.0.0",
-  "main": "main.js",
-  "dependencies": {
-    "electron": "42.7.1"
-  }
-}
