@@ -755,7 +755,7 @@ export type PaperMode = "none" | "hairline" | "paper";
 export type PreferencesChangeDto = { kind: "karaAutoEnter"; value: boolean } | { kind: "setTheme"; value: string } | { kind: "setPaper"; value: PaperMode } | { kind: "setTextSize"; value: number } | { kind: "setLineHeight"; value: number } | { kind: "setFontFamily"; value: {
 	slot: FontSlot,
 	family: string,
-} } | { kind: "setFontPriority"; value: [FontSlot, FontSlot, FontSlot] };
+} } | { kind: "setFontPriority"; value: [FontSlot, FontSlot, FontSlot] } | { kind: "resetVisual" } | { kind: "resetTypography" } | { kind: "restoreAppearance"; value: AppearanceConfig };
 
 /**  A Root as the interface names it. */
 export type ProjectOpenedDto = {

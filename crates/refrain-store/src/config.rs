@@ -224,6 +224,9 @@ pub enum ConfigChange {
     SetFontFamily { slot: FontSlot, family: String },
     SetFontPriority([FontSlot; 3]),
     SetIconDigest(Option<String>),
+    ResetVisual,
+    ResetTypography,
+    RestoreAppearance(AppearanceConfig),
     UpsertHarnessConnection(HarnessConnection),
     RemoveHarnessConnection(Id),
     UpsertAgent(AgentProfile),
@@ -367,6 +370,21 @@ impl ConfigStore {
             }
             ConfigChange::SetIconDigest(digest) => {
                 snapshot.config.appearance.icon_digest = digest;
+            }
+            ConfigChange::ResetVisual => {
+                let defaults = AppearanceConfig::default();
+                snapshot.config.appearance.theme = defaults.theme;
+                snapshot.config.appearance.paper = defaults.paper;
+                snapshot.config.appearance.icon_digest = defaults.icon_digest;
+            }
+            ConfigChange::ResetTypography => {
+                let defaults = AppearanceConfig::default();
+                snapshot.config.appearance.fonts = defaults.fonts;
+                snapshot.config.appearance.text_size = defaults.text_size;
+                snapshot.config.appearance.line_height = defaults.line_height;
+            }
+            ConfigChange::RestoreAppearance(appearance) => {
+                snapshot.config.appearance = appearance;
             }
             ConfigChange::UpsertHarnessConnection(connection) => {
                 match snapshot

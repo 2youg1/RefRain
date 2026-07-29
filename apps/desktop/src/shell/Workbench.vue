@@ -29,6 +29,7 @@ import ReviewSurface from "./ReviewSurface.vue";
 import SettingsSurface from "./SettingsSurface.vue";
 import StatusLine from "./StatusLine.vue";
 import WindowChrome from "./WindowChrome.vue";
+import { reduceSurface, type SurfaceTarget, type WorkbenchSurface } from "./workbench-surface";
 
 type SaveState =
   | { kind: "clean" }
@@ -45,10 +46,7 @@ const saveState = ref<SaveState>({ kind: "clean" });
 const notice = ref<string | null>(null);
 const conflict = ref<{ mine: string; theirs: string; stamp: FileStamp_Serialize } | null>(null);
 const editor = ref<InstanceType<typeof EditorHost> | null>(null);
-const reviewing = ref(false);
-const dispatching = ref(false);
-const connecting = ref(false);
-const settings = ref(false);
+const surface = ref<WorkbenchSurface>({ kind: "writing" });
 const kara = useKara();
 
 // Chrome recede (C12.6): the rail is visible on entry — the author should
@@ -110,7 +108,16 @@ onUnmounted(() => {
  * sends the drawer home. The rail never moves the manuscript — it is an
  * overlay, so the column holds its centre in the window at all times. */
 const recedeRail = (): void => {
+  if (surface.value.kind !== "writing") return;
   if (!chromePinned()) railReceded.value = true;
+};
+
+const openSurface = (target: SurfaceTarget): void => {
+  surface.value = reduceSurface(surface.value, { kind: "open", target }, active.value !== null);
+};
+
+const returnToWriting = (): void => {
+  surface.value = reduceSurface(surface.value, { kind: "return" }, active.value !== null);
 };
 
 // ── Drag-drop import (C12.6) ─────────────────────────────────────────────
@@ -182,7 +189,7 @@ const dispatchBlock = (accumulate: boolean): void => {
   const menu = contextMenu.value;
   if (!menu) return;
   dispatchSeed.value = accumulate ? [...dispatchSeed.value, menu.blockId] : [menu.blockId];
-  dispatching.value = true;
+  surface.value = { kind: "dispatch" };
   contextMenu.value = null;
 };
 
@@ -265,6 +272,7 @@ const select = async (path: string): Promise<void> => {
     stamp.value = opened.stamp;
     saveState.value = { kind: "clean" };
     conflict.value = null;
+    surface.value = reduceSurface(surface.value, { kind: "documentSelected" }, true);
     if (opened.staleJournal.length > 0) {
       notice.value = `有 ${opened.staleJournal.length} 条未确认的行动无法恢复，已留作证据。`;
     } else if (opened.replayed > 0) {
@@ -372,7 +380,7 @@ const resolveConflict = async (choice: "mine" | "theirs"): Promise<void> => {
 };
 
 const afterCommit = async (): Promise<void> => {
-  reviewing.value = false;
+  returnToWriting();
   if (!project.value || !active.value) return;
   // Never reopen from disk here: the committed head lives in the session,
   // and reopening would replace it with the pre-commit bytes (losing the
@@ -447,13 +455,13 @@ const onKeydown = (event: KeyboardEvent): void => {
 
     <template v-else>
       <div
-        v-show="railReceded && !kara.engaged.value"
+        v-show="railReceded && !kara.engaged.value && surface.kind !== 'settings'"
         class="rail-strip"
         aria-hidden="true"
       ></div>
       <nav
         class="rail"
-        :class="{ receded: railReceded || kara.engaged.value }"
+        :class="{ receded: railReceded || kara.engaged.value || surface.kind === 'settings' }"
         aria-label="文档"
       >
         <div
@@ -507,33 +515,56 @@ const onKeydown = (event: KeyboardEvent): void => {
           </div>
         </div>
         <div class="rail-foot">
-          <button v-if="active" type="button" @click="reviewing = !reviewing">
-            {{ reviewing ? "返回编辑" : "Review" }}
+          <button
+            v-if="active"
+            type="button"
+            :class="{ current: surface.kind === 'review' }"
+            @click="openSurface('review')"
+          >
+            Review
           </button>
-          <button v-if="active && !reviewing" type="button" @click="dispatching = !dispatching">
-            {{ dispatching ? "收起" : "派发" }}
+          <button
+            v-if="active"
+            type="button"
+            :class="{ current: surface.kind === 'dispatch' }"
+            @click="openSurface('dispatch')"
+          >
+            派发
           </button>
-          <button type="button" @click="connecting = !connecting">
-            {{ connecting ? "收起" : "连接" }}
+          <button
+            type="button"
+            :class="{ current: surface.kind === 'connections' }"
+            @click="openSurface('connections')"
+          >
+            连接
           </button>
-          <button type="button" @click="settings = !settings">
-            {{ settings ? "收起" : "设置" }}
+          <button
+            type="button"
+            :class="{ current: surface.kind === 'settings' }"
+            @click="openSurface('settings')"
+          >
+            设置
           </button>
         </div>
       </nav>
 
       <main class="stage" @pointerdown="recedeRail">
         <p v-if="notice" class="notice">{{ notice }}</p>
+        <SettingsSurface
+          v-if="surface.kind === 'settings'"
+          :return-label="active?.document.path ?? '工作台'"
+          @closed="returnToWriting"
+          @theme-picked="(slug: string) => $emit('theme-changed', slug)"
+        />
         <ReviewSurface
-          v-if="reviewing && active"
+          v-else-if="surface.kind === 'review' && active"
           :root-id="project.rootId"
           :path="active.document.path"
           @committed="afterCommit"
-          @closed="reviewing = false"
+          @closed="returnToWriting"
         />
         <div v-else-if="active" class="stage-row" @contextmenu="onContextMenu">
           <EditorHost
-            v-if="!reviewing"
             ref="editor"
             :key="active.document.path"
             :root-id="project.rootId"
@@ -543,7 +574,7 @@ const onKeydown = (event: KeyboardEvent): void => {
             @rejected="fail"
           />
           <DispatchSurface
-            v-if="dispatching"
+            v-if="surface.kind === 'dispatch'"
             :key="active.document.path"
             :root-id="project.rootId"
             :path="active.document.path"
@@ -552,22 +583,16 @@ const onKeydown = (event: KeyboardEvent): void => {
             :seed="dispatchSeed"
             @collected="(count: number) => (notice = `${count} 条提案已冻结，点 Review 逐句裁决。`)"
             @material-saved="onMaterialSaved"
-            @closed="dispatching = false"
+            @closed="returnToWriting"
           />
-          <ConnectionsSurface v-if="connecting" :root-id="project.rootId" @closed="connecting = false" />
-          <SettingsSurface
-            v-if="settings"
-            @closed="settings = false"
-            @theme-picked="(slug: string) => $emit('theme-changed', slug)"
+          <ConnectionsSurface
+            v-if="surface.kind === 'connections'"
+            :root-id="project.rootId"
+            @closed="returnToWriting"
           />
         </div>
-        <div v-else-if="connecting || settings" class="stage-row">
-          <ConnectionsSurface v-if="connecting" :root-id="project.rootId" @closed="connecting = false" />
-          <SettingsSurface
-            v-if="settings"
-            @closed="settings = false"
-            @theme-picked="(slug: string) => $emit('theme-changed', slug)"
-          />
+        <div v-else-if="surface.kind === 'connections'" class="stage-row">
+          <ConnectionsSurface :root-id="project.rootId" @closed="returnToWriting" />
         </div>
         <p v-else class="empty">从左侧选一个文档，或新建一章。</p>
       </main>
@@ -757,6 +782,12 @@ const onKeydown = (event: KeyboardEvent): void => {
   background: color-mix(in oklab, var(--rail-ink) 9%, transparent);
 }
 
+.rail-foot button.current {
+  color: var(--rail-ink);
+  background: color-mix(in oklab, var(--rail-ink) 12%, transparent);
+  box-shadow: inset 2px 0 var(--seal);
+}
+
 .rail ul {
   list-style: none;
   padding: 0;
@@ -827,7 +858,9 @@ const onKeydown = (event: KeyboardEvent): void => {
   position: relative;
   display: flow-root;
   min-width: 0;
-  min-height: calc(100vh - var(--chrome-height) - var(--status-height));
+  height: calc(100vh - var(--chrome-height) - var(--status-height));
+  min-height: 0;
+  overflow: hidden;
   background: var(--paper);
 }
 
@@ -836,8 +869,8 @@ const onKeydown = (event: KeyboardEvent): void => {
   min-height: calc(100vh - var(--chrome-height) - var(--status-height));
 }
 
-/* 浮纸面板：派发/设置/连接。右侧滑入，不挤压版心。 */
-.stage-row > :is(.dispatch, .settings, .connections) {
+/* 写作中的临时工作面：右侧滑入，不挤压版心。Settings 单独拥有整个 Stage。 */
+.stage-row > :is(.dispatch, .connections) {
   position: absolute;
   right: 0;
   top: 0;

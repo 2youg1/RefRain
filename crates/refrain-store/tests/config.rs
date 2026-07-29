@@ -5,7 +5,8 @@
 
 use refrain_core::Id;
 use refrain_store::config::{
-    AdapterKind, Config, ConfigChange, ConfigFailure, ConfigStore, HarnessConnection,
+    AdapterKind, AppearanceConfig, Config, ConfigChange, ConfigFailure, ConfigStore, FontConfig,
+    HarnessConnection, PaperMode,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -61,6 +62,67 @@ fn a_typed_change_round_trips_through_disk() {
 
     let (_reopened, reloaded) = ConfigStore::load(&dir).unwrap();
     assert!(!reloaded.config.kara.auto_enter_on_first_manuscript);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn settings_reset_each_page_without_touching_the_other_and_can_restore_the_entry_snapshot() {
+    let dir = scratch();
+    let (store, _) = ConfigStore::load(&dir).unwrap();
+    let entered = AppearanceConfig {
+        theme: "sumi".to_string(),
+        fonts: FontConfig {
+            latin: "Jost".to_string(),
+            chinese: "Noto Sans SC".to_string(),
+            japanese: "Murecho".to_string(),
+            priority: [
+                refrain_store::config::FontSlot::Japanese,
+                refrain_store::config::FontSlot::Chinese,
+                refrain_store::config::FontSlot::Latin,
+            ],
+        },
+        paper: PaperMode::Paper,
+        text_size: 21,
+        line_height: 225,
+        icon_digest: Some("original-icon".to_string()),
+    };
+    store
+        .apply(ConfigChange::RestoreAppearance(entered.clone()))
+        .unwrap();
+
+    let visual_reset = store.apply(ConfigChange::ResetVisual).unwrap();
+    let defaults = AppearanceConfig::default();
+    assert_eq!(visual_reset.config.appearance.theme, defaults.theme);
+    assert_eq!(visual_reset.config.appearance.paper, defaults.paper);
+    assert_eq!(
+        visual_reset.config.appearance.icon_digest,
+        defaults.icon_digest
+    );
+    assert_eq!(visual_reset.config.appearance.fonts, entered.fonts);
+    assert_eq!(visual_reset.config.appearance.text_size, entered.text_size);
+    assert_eq!(
+        visual_reset.config.appearance.line_height,
+        entered.line_height
+    );
+
+    let typography_reset = store.apply(ConfigChange::ResetTypography).unwrap();
+    assert_eq!(typography_reset.config.appearance.fonts, defaults.fonts);
+    assert_eq!(
+        typography_reset.config.appearance.text_size,
+        defaults.text_size
+    );
+    assert_eq!(
+        typography_reset.config.appearance.line_height,
+        defaults.line_height
+    );
+    assert_eq!(typography_reset.config.appearance.theme, defaults.theme);
+    assert_eq!(typography_reset.config.appearance.paper, defaults.paper);
+
+    store
+        .apply(ConfigChange::RestoreAppearance(entered.clone()))
+        .unwrap();
+    let (_reopened, reloaded) = ConfigStore::load(&dir).unwrap();
+    assert_eq!(reloaded.config.appearance, entered);
     fs::remove_dir_all(dir).unwrap();
 }
 

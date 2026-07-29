@@ -856,6 +856,9 @@ pub enum PreferencesChangeDto {
         family: String,
     },
     SetFontPriority([refrain_store::config::FontSlot; 3]),
+    ResetVisual,
+    ResetTypography,
+    RestoreAppearance(refrain_store::config::AppearanceConfig),
 }
 
 #[tauri::command]
@@ -891,6 +894,13 @@ fn update_preferences(
         }
         PreferencesChangeDto::SetFontPriority(priority) => {
             refrain_store::config::ConfigChange::SetFontPriority(priority)
+        }
+        PreferencesChangeDto::ResetVisual => refrain_store::config::ConfigChange::ResetVisual,
+        PreferencesChangeDto::ResetTypography => {
+            refrain_store::config::ConfigChange::ResetTypography
+        }
+        PreferencesChangeDto::RestoreAppearance(appearance) => {
+            refrain_store::config::ConfigChange::RestoreAppearance(appearance)
         }
     };
     let store = state.config.as_ref().ok_or_else(|| {
