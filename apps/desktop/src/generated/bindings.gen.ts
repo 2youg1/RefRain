@@ -140,6 +140,7 @@ export const commands = {
 	currentHead: string | null,
 	headBlockIds: string | null,
 } | null, RefrainError>(__TAURI_INVOKE("commit_material_action", { rootId, draftId, editedBody, dismiss })),
+	agentReadingLedger: (rootId: string) => typedError<AgentReadingDto_Serialize[], RefrainError>(__TAURI_INVOKE("agent_reading_ledger", { rootId })),
 };
 
 /* Types */
@@ -154,6 +155,46 @@ export type Activity = "writing" | "reviewing";
  *  channel any producer — including a human pasting into a web chat — can serve.
  */
 export type AdapterKind = "l0" | "codex" | "claude-code" | "pi" | "kimi-code" | "hermes";
+
+/**
+ *  One agent's reading of one document: rounds read, the baseline it last
+ *  stood on, and whether the current head has left that baseline behind.
+ *  A lag count needs the pinned-revision chain (SPEC 10.1), which does not
+ *  exist yet — the honest shape today is a stale flag, not a number.
+ */
+export type AgentReadingDto = AgentReadingDto_Serialize | AgentReadingDto_Deserialize;
+
+/**
+ *  One agent's reading of one document: rounds read, the baseline it last
+ *  stood on, and whether the current head has left that baseline behind.
+ *  A lag count needs the pinned-revision chain (SPEC 10.1), which does not
+ *  exist yet — the honest shape today is a stale flag, not a number.
+ */
+export type AgentReadingDto_Deserialize = {
+	agentId: string,
+	document: string,
+	rounds: number,
+	lastBaseline: string,
+	lastAt: string,
+	currentHead: string | null,
+	stale: boolean,
+};
+
+/**
+ *  One agent's reading of one document: rounds read, the baseline it last
+ *  stood on, and whether the current head has left that baseline behind.
+ *  A lag count needs the pinned-revision chain (SPEC 10.1), which does not
+ *  exist yet — the honest shape today is a stale flag, not a number.
+ */
+export type AgentReadingDto_Serialize = {
+	agentId: string,
+	document: string,
+	rounds: number,
+	lastBaseline: string,
+	lastAt: string,
+	currentHead: string | null,
+	stale: boolean,
+};
 
 /**
  *  What the author sees (SPEC 9.8). Values extend the same schema; nothing

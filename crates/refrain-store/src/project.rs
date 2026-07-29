@@ -80,7 +80,7 @@ impl From<BackupOutcome> for BackupStatus {
 /// `u64` on the bridge, without the precision loss Specta forbids: the wire
 /// carries these as decimal strings, and both halves of the encoding live in
 /// one place so they cannot drift.
-pub(crate) mod u64_string {
+pub mod u64_string {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     pub fn serialize<S: Serializer>(value: &u64, serializer: S) -> Result<S::Ok, S::Error> {

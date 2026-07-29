@@ -968,6 +968,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         collect_attempt,
         list_material_drafts,
         commit_material_action,
+        agent_reading_ledger,
     ])
 }
 
@@ -2124,6 +2125,87 @@ fn host_state(
                 .map(Id::to_string)
                 .collect(),
         })
+    })
+}
+
+// ── C12: the agent reading ledger — what each agent read at which baseline,
+// and whether the manuscript has moved since (rebuilt from the journal) ──
+
+/// One agent's reading of one document: rounds read, the baseline it last
+/// stood on, and whether the current head has left that baseline behind.
+/// A lag count needs the pinned-revision chain (SPEC 10.1), which does not
+/// exist yet — the honest shape today is a stale flag, not a number.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentReadingDto {
+    pub agent_id: String,
+    pub document: String,
+    pub rounds: u32,
+    pub last_baseline: String,
+    #[serde(with = "refrain_store::project::u64_string")]
+    #[specta(type = String)]
+    pub last_at: u64,
+    pub current_head: Option<String>,
+    pub stale: bool,
+}
+
+#[tauri::command]
+#[specta::specta]
+fn agent_reading_ledger(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+) -> Result<Vec<AgentReadingDto>, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        // Heads come out before the host opens: the journal holds the store
+        // for the rest of the closure.
+        let heads: HashMap<String, Option<String>> = entry
+            .store
+            .documents()?
+            .into_iter()
+            .map(|row| {
+                (
+                    row.path,
+                    row.current_head.as_ref().map(|head| head.to_string()),
+                )
+            })
+            .collect();
+        let host = open_host(&mut entry.store)?;
+        let mut read_at: HashMap<Id, u64> = HashMap::new();
+        for authorization in host.authorizations() {
+            for run_id in &authorization.run_ids {
+                read_at.insert(*run_id, authorization.authorized_at);
+            }
+        }
+        let mut ledger: HashMap<(Id, String), AgentReadingDto> = HashMap::new();
+        for run in host.runs() {
+            let Some(task) = host.tasks().iter().find(|task| task.id == run.task_id) else {
+                continue;
+            };
+            let at = read_at.get(&run.id).copied().unwrap_or(0);
+            let slot = ledger
+                .entry((run.agent_id, task.document.clone()))
+                .or_insert_with(|| AgentReadingDto {
+                    agent_id: run.agent_id.to_string(),
+                    document: task.document.clone(),
+                    rounds: 0,
+                    last_baseline: String::new(),
+                    last_at: 0,
+                    current_head: None,
+                    stale: false,
+                });
+            slot.rounds += 1;
+            if at >= slot.last_at {
+                slot.last_at = at;
+                slot.last_baseline = task.baseline.to_string();
+            }
+        }
+        let mut readings: Vec<AgentReadingDto> = ledger.into_values().collect();
+        for reading in &mut readings {
+            reading.current_head = heads.get(&reading.document).cloned().flatten();
+            reading.stale = reading.current_head.as_deref() != Some(reading.last_baseline.as_str());
+        }
+        readings.sort_by(|a, b| (&a.agent_id, &a.document).cmp(&(&b.agent_id, &b.document)));
+        Ok(readings)
     })
 }
 

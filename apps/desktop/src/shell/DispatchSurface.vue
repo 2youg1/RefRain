@@ -9,6 +9,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { describe, unwrap } from "../bridge";
 import {
+  type AgentReadingDto,
   type BlockDto,
   commands,
   type DispatchPreviewDto,
@@ -43,6 +44,7 @@ const taskId = ref<string | null>(null);
 const phase = ref<Phase>({ kind: "editing" });
 const preview = ref<DispatchPreviewDto | null>(null);
 const host = ref<HostStateDto | null>(null);
+const ledger = ref<AgentReadingDto[]>([]);
 const drafts = ref<MaterialDraftRow_Serialize[]>([]);
 const editingDraft = ref<string | null>(null);
 const editedBody = ref("");
@@ -86,10 +88,19 @@ const refresh = async (): Promise<void> => {
   try {
     host.value = await unwrap(commands.hostState(props.rootId));
     drafts.value = await unwrap(commands.listMaterialDrafts(props.rootId));
+    ledger.value = await unwrap(commands.agentReadingLedger(props.rootId));
   } catch (error) {
     fail(error);
   }
 };
+
+// The ticket's top hint (C12): what the picked agent has read of this
+// document, and whether the manuscript has moved since.
+const reading = computed<AgentReadingDto | null>(
+  () =>
+    ledger.value.find((row) => row.agentId === agentId.value && row.document === props.path) ??
+    null,
+);
 
 const toggle = (id: string): void => {
   const next = new Set(selected.value);
@@ -413,6 +424,9 @@ onUnmounted(() => {
             <option :value="3">并行 ×3</option>
           </select>
         </span>
+        <span v-if="reading" class="reading">
+          {{ reading.rounds }} 轮 · {{ reading.stale ? "落后" : "同步" }}
+        </span>
       </div>
       <textarea
         v-model="prompt"
@@ -688,6 +702,12 @@ onUnmounted(() => {
   gap: 8px;
   align-items: baseline;
   margin: 8px 0;
+}
+
+.reading {
+  margin-left: auto;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
 }
 
 .dispatch-agent {
