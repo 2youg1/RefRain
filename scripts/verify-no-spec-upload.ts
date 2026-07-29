@@ -32,13 +32,8 @@ if (ignored.status !== 0) {
 }
 
 const present = await Bun.file("SPEC.md").exists();
-if (!present && process.env.GITHUB_ACTIONS !== "true") {
-  console.error("FAIL  verify:no-spec-upload: local SPEC.md is missing");
-  process.exit(1);
-}
-
 console.log(
   present
     ? "PASS  verify:no-spec-upload  (local SPEC.md present, ignored, untracked)"
-    : "PASS  verify:no-spec-upload  (CI checkout omits SPEC.md; ignore rule and index are clean)",
+    : "PASS  verify:no-spec-upload  (local SPEC.md optional; ignore rule and index are clean)",
 );

@@ -4,7 +4,8 @@
 //! path that escapes its Root.
 
 use refrain_store::files::{
-    Direction, FileCommand, FileOutcome, FilePageQuery, Kind, Order, RootFiles, SearchQuery,
+    Direction, FileCommand, FileOutcome, FilePageQuery, Kind, OpError, Order, RootFiles,
+    SearchQuery,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -261,19 +262,32 @@ fn trashing_outside_the_roots_is_refused_and_the_file_stays() {
     fixture.cleanup();
 }
 
-/// The real trash, on the release platform: a trashed fixture file leaves the
-/// disk through `IFileOperation` and the per-path outcome is reported.
+/// A selected file must enter a real system trash. A volume can have no trash;
+/// in that case the file stays in place until the caller selects SPEC Q8's
+/// via-home path. Batch results remain per-path.
 #[test]
-fn trash_goes_to_the_system_trash_and_batches_report_per_path() {
+fn trash_goes_to_the_system_trash_or_routes_through_home_and_batches_report_per_path() {
     let fixture = fixture();
     let files = fixture.open();
     let doomed = fixture.root.join("chapter-10.md");
 
-    files
-        .execute(&FileCommand::Trash {
-            target: doomed.clone(),
-        })
-        .unwrap();
+    match files.execute(&FileCommand::Trash {
+        target: doomed.clone(),
+    }) {
+        Ok(_) => {}
+        Err(OpError::NoTrashHere { .. }) => {
+            assert!(
+                doomed.try_exists().unwrap(),
+                "a volume without a trash must leave the selected file in place"
+            );
+            files
+                .execute(&FileCommand::TrashViaHome {
+                    target: doomed.clone(),
+                })
+                .unwrap();
+        }
+        Err(error) => panic!("system trash failed for an unrelated reason: {error:?}"),
+    }
     assert!(!doomed.try_exists().unwrap());
 
     let outcome = files
