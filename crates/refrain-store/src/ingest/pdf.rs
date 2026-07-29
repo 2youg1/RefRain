@@ -48,12 +48,20 @@ fn fragments_of(document: &Document) -> Result<Vec<Fragment>, RefrainError> {
     let mut fragments = Vec::new();
     for (page, page_id) in document.get_pages() {
         let content = document.get_page_content(page_id).map_err(|error| {
-            RefrainError::new(ErrorCode::UnsupportedFormat, "read a PDF page", format!("{page}"))
-                .with_detail(error.to_string())
+            RefrainError::new(
+                ErrorCode::UnsupportedFormat,
+                "read a PDF page",
+                format!("{page}"),
+            )
+            .with_detail(error.to_string())
         })?;
         let content = Content::decode(&content).map_err(|error| {
-            RefrainError::new(ErrorCode::UnsupportedFormat, "decode a PDF stream", format!("{page}"))
-                .with_detail(error.to_string())
+            RefrainError::new(
+                ErrorCode::UnsupportedFormat,
+                "decode a PDF stream",
+                format!("{page}"),
+            )
+            .with_detail(error.to_string())
         })?;
         let mut x = 0.0_f32;
         let mut y = 0.0_f32;

@@ -198,7 +198,11 @@ mod tests {
         assert_eq!(clone, again);
 
         // A stale digest is a typed refusal; a changed source cannot sneak in.
-        assert!(store.clone_material_source(&source, &"0".repeat(64)).is_err());
+        assert!(
+            store
+                .clone_material_source(&source, &"0".repeat(64))
+                .is_err()
+        );
         std::fs::write(&source, "<p>被换过。</p>").unwrap();
         assert!(store.clone_material_source(&source, &digest).is_err());
     }

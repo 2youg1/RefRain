@@ -17,10 +17,8 @@ fn zip_failure(what: &str) -> RefrainError {
 
 fn members(bytes: &[u8]) -> Result<std::collections::HashMap<String, Vec<u8>>, RefrainError> {
     let cursor = std::io::Cursor::new(bytes);
-    let mut archive = zip::ZipArchive::new(cursor).map_err(|error| {
-        zip_failure("not a zip container")
-            .with_detail(error.to_string())
-    })?;
+    let mut archive = zip::ZipArchive::new(cursor)
+        .map_err(|error| zip_failure("not a zip container").with_detail(error.to_string()))?;
     let mut out = std::collections::HashMap::new();
     for index in 0..archive.len() {
         let mut file = archive.by_index(index).map_err(|error| {
@@ -62,7 +60,11 @@ fn tag_contents<'a>(xml: &'a str, tag: &str) -> Vec<&'a str> {
         let Some(end) = after_open.find('>') else {
             break;
         };
-        if after_open[..end].chars().any(|ch| !ch.is_whitespace() && ch != '/') && after_open[..end].contains('<') {
+        if after_open[..end]
+            .chars()
+            .any(|ch| !ch.is_whitespace() && ch != '/')
+            && after_open[..end].contains('<')
+        {
             rest = after_open;
             continue;
         }
@@ -229,7 +231,9 @@ pub fn extract_epub(bytes: &[u8]) -> Result<String, RefrainError> {
     let mut items: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let mut rest = opf;
     while let Some(at) = rest.find("<item ") {
-        let chunk_end = rest[at..].find('>').ok_or_else(|| zip_failure("manifest item"))?;
+        let chunk_end = rest[at..]
+            .find('>')
+            .ok_or_else(|| zip_failure("manifest item"))?;
         let chunk = &rest[at..at + chunk_end];
         let id = attr(chunk, "id");
         let href = attr(chunk, "href");
@@ -304,12 +308,21 @@ mod tests {
     #[test]
     fn pptx_slides_come_out_in_slide_order() {
         let bytes = zip_of(&[
-            ("ppt/slides/slide2.xml", "<p:sld><a:p><a:t>第二页</a:t></a:p></p:sld>"),
-            ("ppt/slides/slide1.xml", "<p:sld><a:p><a:t>第一页</a:t> <a:t>标题</a:t></a:p></p:sld>"),
+            (
+                "ppt/slides/slide2.xml",
+                "<p:sld><a:p><a:t>第二页</a:t></a:p></p:sld>",
+            ),
+            (
+                "ppt/slides/slide1.xml",
+                "<p:sld><a:p><a:t>第一页</a:t> <a:t>标题</a:t></a:p></p:sld>",
+            ),
         ]);
         let text = extract_pptx(&bytes).unwrap();
         assert!(text.contains("第一页 标题"), "{text}");
-        assert!(text.find("第一页").unwrap() < text.find("第二页").unwrap(), "{text}");
+        assert!(
+            text.find("第一页").unwrap() < text.find("第二页").unwrap(),
+            "{text}"
+        );
     }
 
     #[test]
@@ -350,6 +363,9 @@ mod tests {
             ("OEBPS/c2.xhtml", "<html><body><p>承接。</p></body></html>"),
         ]);
         let text = extract_epub(&bytes).unwrap();
-        assert!(text.find("开篇").unwrap() < text.find("承接").unwrap(), "{text}");
+        assert!(
+            text.find("开篇").unwrap() < text.find("承接").unwrap(),
+            "{text}"
+        );
     }
 }

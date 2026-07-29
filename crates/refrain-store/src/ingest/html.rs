@@ -6,12 +6,42 @@
 use html5gum::{EndTag, StartTag, Token, Tokenizer};
 
 const BLOCK_TAGS: &[&[u8]] = &[
-    b"p", b"div", b"br", b"li", b"ul", b"ol", b"section", b"article", b"blockquote", b"tr", b"td",
-    b"th", b"table", b"header", b"footer", b"main", b"aside", b"figure", b"figcaption", b"hr",
-    b"h1", b"h2", b"h3", b"h4", b"h5", b"h6",
+    b"p",
+    b"div",
+    b"br",
+    b"li",
+    b"ul",
+    b"ol",
+    b"section",
+    b"article",
+    b"blockquote",
+    b"tr",
+    b"td",
+    b"th",
+    b"table",
+    b"header",
+    b"footer",
+    b"main",
+    b"aside",
+    b"figure",
+    b"figcaption",
+    b"hr",
+    b"h1",
+    b"h2",
+    b"h3",
+    b"h4",
+    b"h5",
+    b"h6",
 ];
 
-const SKIP_TAGS: &[&[u8]] = &[b"script", b"style", b"noscript", b"template", b"svg", b"head"];
+const SKIP_TAGS: &[&[u8]] = &[
+    b"script",
+    b"style",
+    b"noscript",
+    b"template",
+    b"svg",
+    b"head",
+];
 
 fn is_tag(name: &[u8], list: &[&[u8]]) -> bool {
     list.iter().any(|tag| name.eq_ignore_ascii_case(tag))
@@ -55,7 +85,7 @@ mod tests {
         let html = r#"<!doctype html><html><head><title>忽略我</title>
             <style>.a { color: red }</style></head>
             <body><h1>标题 &amp; 副题</h1>
-            <p>第一段，有<a href="#local">链接</a>。</p>
+            <p>第一段，有<a href='#local'>链接</a>。</p>
             <script>alert("不该出现")</script>
             <ul><li>甲</li><li>乙</li></ul></body></html>"#;
         let text = extract(html);
