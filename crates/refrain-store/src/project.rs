@@ -121,6 +121,19 @@ impl FileStamp {
     }
 }
 
+/// A frozen candidate row (SPEC 9.7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProposalRow {
+    pub id: String,
+    pub run: String,
+    pub baseline: String,
+    pub document_path: String,
+    pub scope: String,
+    pub before_text: String,
+    pub after_text: Option<String>,
+    pub created_at: u64,
+}
+
 /// A document row as the project database knows it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -418,6 +431,89 @@ impl ProjectStore {
     #[must_use]
     pub fn permit(&self) -> &RootPermit {
         &self.permit
+    }
+
+    /// A frozen candidate (SPEC 9.7). `after_text` NULL is a deletion.
+    pub fn proposal_insert(&mut self, row: &ProposalRow) -> Result<(), ProjectFailure> {
+        self.db
+            .execute(
+                "INSERT OR IGNORE INTO proposals
+                     (id, run, baseline, document_path, scope, before_text, after_text, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    row.id,
+                    row.run,
+                    row.baseline,
+                    row.document_path,
+                    row.scope,
+                    row.before_text,
+                    row.after_text,
+                    row.created_at as i64,
+                ],
+            )
+            .map_err(crate::schema::StoreError::from)?;
+        Ok(())
+    }
+
+    pub fn proposals_for(&self, path: &str) -> Result<Vec<ProposalRow>, ProjectFailure> {
+        let mut statement = self
+            .db
+            .prepare(
+                "SELECT id, run, baseline, document_path, scope, before_text, after_text, created_at
+                 FROM proposals WHERE document_path = ?1 ORDER BY created_at, rowid",
+            )
+            .map_err(crate::schema::StoreError::from)?;
+        let rows = statement
+            .query_map(params![path], |row| {
+                Ok(ProposalRow {
+                    id: row.get(0)?,
+                    run: row.get(1)?,
+                    baseline: row.get(2)?,
+                    document_path: row.get(3)?,
+                    scope: row.get(4)?,
+                    before_text: row.get(5)?,
+                    after_text: row.get(6)?,
+                    created_at: row.get::<_, i64>(7)? as u64,
+                })
+            })
+            .map_err(crate::schema::StoreError::from)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(crate::schema::StoreError::from)?;
+        Ok(rows)
+    }
+
+    /// The per-document review session: cursor and batch are staging (SPEC
+    /// 9.7). Both write through immediately; a kill loses nothing but time.
+    pub fn review_session_set(
+        &mut self,
+        path: &str,
+        cursor: u32,
+        batch_json: &str,
+    ) -> Result<(), ProjectFailure> {
+        self.db
+            .execute(
+                "INSERT INTO review_sessions (document_path, cursor, batch, updated_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(document_path) DO UPDATE SET
+                     cursor = excluded.cursor,
+                     batch = excluded.batch,
+                     updated_at = excluded.updated_at",
+                params![path, cursor as i64, batch_json, now_millis() as i64],
+            )
+            .map_err(crate::schema::StoreError::from)?;
+        Ok(())
+    }
+
+    pub fn review_session_get(&self, path: &str) -> Result<Option<(u32, String)>, ProjectFailure> {
+        self.db
+            .query_row(
+                "SELECT cursor, batch FROM review_sessions WHERE document_path = ?1",
+                params![path],
+                |row| Ok((row.get::<_, i64>(0)? as u32, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(crate::schema::StoreError::from)
+            .map_err(ProjectFailure::from)
     }
 
     /// The schema version this project's database is at, for migration tests.

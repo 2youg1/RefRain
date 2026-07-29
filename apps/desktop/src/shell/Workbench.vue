@@ -22,6 +22,7 @@ import IconPicker from "./IconPicker.vue";
 import KaraSurface from "./KaraSurface.vue";
 import { useKara } from "./kara-state";
 import { pickDocumentFile, pickProjectFolder, pickProjectParent } from "./pick";
+import ReviewSurface from "./ReviewSurface.vue";
 import StatusLine from "./StatusLine.vue";
 import ThemePicker from "./ThemePicker.vue";
 
@@ -40,6 +41,7 @@ const saveState = ref<SaveState>({ kind: "clean" });
 const notice = ref<string | null>(null);
 const conflict = ref<{ mine: string; theirs: string; stamp: FileStamp_Serialize } | null>(null);
 const editor = ref<InstanceType<typeof EditorHost> | null>(null);
+const reviewing = ref(false);
 const kara = useKara();
 
 /** The caret as a ReturnPoint: block id, offset, and the sentence tail the
@@ -186,6 +188,19 @@ const resolveConflict = async (choice: "mine" | "theirs"): Promise<void> => {
   }
 };
 
+const afterCommit = async (): Promise<void> => {
+  reviewing.value = false;
+  if (!project.value || !active.value) return;
+  // Never reopen from disk here: the committed head lives in the session,
+  // and reopening would replace it with the pre-commit bytes (losing the
+  // batch and any unsaved edits with it).
+  const session = await unwrap(
+    commands.currentDocument(project.value.rootId, active.value.document.path),
+  );
+  active.value = { ...active.value, revision: session.revision, blocks: session.blocks };
+  saveState.value = { kind: "dirty" };
+};
+
 const markDirty = (): void => {
   if (saveState.value.kind === "clean") saveState.value = { kind: "dirty" };
   trackReturnPoint();
@@ -229,6 +244,9 @@ const onKeydown = (event: KeyboardEvent): void => {
       <nav v-show="!kara.engaged.value" class="rail" aria-label="文档">
         <button type="button" @click="newDocument('chapter')">新章</button>
         <button type="button" @click="newDocument('material')">新资料</button>
+        <button v-if="active" type="button" @click="reviewing = !reviewing">
+          {{ reviewing ? "返回编辑" : "Review" }}
+        </button>
         <ul>
           <li v-for="row in documents" :key="row.id">
             <button
@@ -246,8 +264,15 @@ const onKeydown = (event: KeyboardEvent): void => {
 
       <main class="stage">
         <p v-if="notice" class="notice">{{ notice }}</p>
+        <ReviewSurface
+          v-if="reviewing && active"
+          :root-id="project.rootId"
+          :path="active.document.path"
+          @committed="afterCommit"
+          @closed="reviewing = false"
+        />
         <EditorHost
-          v-if="active"
+          v-if="active && !reviewing"
           ref="editor"
           :root-id="project.rootId"
           :path="active.document.path"

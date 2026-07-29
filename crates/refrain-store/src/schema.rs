@@ -175,6 +175,34 @@ impl Database for ProjectDb {
                     )
                 },
             },
+            Migration {
+                version: SchemaVersion(3),
+                name: "review-ledger",
+                apply: |tx| {
+                    // The review loop's persistence (SPEC 9.7): frozen
+                    // candidates and the per-document review session. The
+                    // cursor and the batch are staging, not truth — truth is
+                    // the verdict rows, which already landed in C3.
+                    tx.execute_batch(
+                        "CREATE TABLE proposals (
+                             id            TEXT PRIMARY KEY,
+                             run           TEXT NOT NULL,
+                             baseline      TEXT NOT NULL,
+                             document_path TEXT NOT NULL,
+                             scope         TEXT NOT NULL,
+                             before_text   TEXT NOT NULL,
+                             after_text    TEXT,
+                             created_at    INTEGER NOT NULL
+                         ) STRICT;
+                         CREATE TABLE review_sessions (
+                             document_path TEXT PRIMARY KEY,
+                             cursor        INTEGER NOT NULL DEFAULT 0,
+                             batch         TEXT NOT NULL DEFAULT '[]',
+                             updated_at    INTEGER NOT NULL
+                         ) STRICT;",
+                    )
+                },
+            },
         ]
     }
 }

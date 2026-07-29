@@ -5,7 +5,7 @@
 //! The session map holds live handles — open stores and manuscripts — which
 //! are runtime objects, not a second copy of business state.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -915,6 +915,12 @@ fn read_config(
     })
 }
 
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis() as u64)
+}
+
 /// The single command registry. Generation and the runtime read the same list,
 /// so a command cannot exist in one and be missing from the other.
 pub fn builder() -> Builder<tauri::Wry> {
@@ -934,6 +940,12 @@ pub fn builder() -> Builder<tauri::Wry> {
         list_themes,
         set_universal_icon,
         universal_icon,
+        inject_fixture_proposal,
+        list_proposals,
+        record_verdict,
+        set_review_batch,
+        review_state,
+        commit_decision_batch,
     ])
 }
 
@@ -960,4 +972,463 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running RefRain");
+}
+// The review loop commands: fixture injection (debug only), proposal
+// listing, write-through verdicts, batch staging, and the one commit path.
+
+use refrain_core::{DecisionBatch, EditScope, Proposal, ReviewSliceId, Verdict, VerdictKind};
+use refrain_store::ledger::{VerdictKindName, VerdictRecord};
+
+/// One sentence for the surface.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewSliceDto {
+    /// "<proposal>:<ordinal>" — the exact key the commit path parses back.
+    pub id: String,
+    pub kind: String,
+    pub text: String,
+    pub lead: String,
+    pub trail: String,
+}
+
+/// A frozen candidate for the surface.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ProposalDto {
+    pub id: String,
+    pub run: String,
+    pub baseline: String,
+    pub before: String,
+    pub after: Option<String>,
+    pub change_class: String,
+    pub slices: Vec<ReviewSliceDto>,
+}
+
+/// One fixture replacement (debug builds only; SPEC R3: the fixture command
+/// is excluded from release).
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct FixtureReplacementDto {
+    pub blocks: Vec<String>,
+    pub after: Option<String>,
+}
+
+/// The recovered review session (SPEC 9.7's five things: cursor, verdicts,
+/// reasons, final texts, batch — all here).
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewStateDto {
+    pub proposals: Vec<ProposalDto>,
+    pub verdicts: Vec<refrain_store::ledger::VerdictRecord>,
+    pub cursor: u32,
+    pub batch: Vec<String>,
+}
+
+fn slice_dto(proposal: &Proposal, slice: &refrain_core::ReviewSlice) -> ReviewSliceDto {
+    ReviewSliceDto {
+        id: format!("{}:{}", proposal.id(), slice.id().ordinal()),
+        kind: match slice.kind() {
+            refrain_core::SliceKind::Same => "same".to_string(),
+            refrain_core::SliceKind::Delete => "delete".to_string(),
+            refrain_core::SliceKind::Insert => "insert".to_string(),
+        },
+        text: slice.text().to_string(),
+        lead: slice.lead().to_string(),
+        trail: slice.trail().to_string(),
+    }
+}
+
+fn proposal_dto(proposal: &Proposal) -> ProposalDto {
+    ProposalDto {
+        id: proposal.id().to_string(),
+        run: proposal.run().to_string(),
+        baseline: proposal.baseline().to_string(),
+        before: proposal.before().to_string(),
+        after: proposal.after().map(str::to_string),
+        change_class: match proposal.change_class() {
+            refrain_core::ChangeClass::Formatting => "formatting".to_string(),
+            refrain_core::ChangeClass::Semantic => "semantic".to_string(),
+        },
+        slices: proposal
+            .slices()
+            .iter()
+            .map(|slice| slice_dto(proposal, slice))
+            .collect(),
+    }
+}
+
+/// Rebuild a persisted candidate exactly (deterministic slices, stable id).
+fn rebuild_proposal(row: &refrain_store::project::ProposalRow) -> Result<Proposal, RefrainError> {
+    let scope_ids: Vec<Id> = serde_json::from_str(&row.scope).map_err(|error| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "read a proposal scope",
+            row.id.clone(),
+        )
+        .with_detail(error.to_string())
+    })?;
+    let scope = EditScope::new(scope_ids).map_err(|error| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "read a proposal scope",
+            row.id.clone(),
+        )
+        .with_detail(error.to_string())
+    })?;
+    Ok(Proposal::with_id(
+        parse_id(&row.id, "proposal")?,
+        parse_id(&row.run, "run")?,
+        parse_id(&row.baseline, "baseline")?,
+        scope,
+        row.before_text.clone(),
+        row.after_text.clone(),
+    ))
+}
+
+/// Inject fixture candidates (debug builds only). The candidates freeze
+/// against the document's current head, exactly like a real Run's output
+/// will in C10.
+#[tauri::command]
+#[specta::specta]
+fn inject_fixture_proposal(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    path: String,
+    replacements: Vec<FixtureReplacementDto>,
+) -> Result<Vec<ProposalDto>, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        let manuscript = entry.manuscripts.get(&path).ok_or_else(|| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "inject into a document that is not open",
+                path.clone(),
+            )
+        })?;
+        let baseline = manuscript.head().id();
+        let head_blocks: HashMap<Id, &str> = manuscript
+            .head()
+            .blocks()
+            .iter()
+            .map(|block| (block.id(), block.text()))
+            .collect();
+
+        let run = Id::new();
+        let mut out = Vec::new();
+        for replacement in replacements {
+            let block_ids: Vec<Id> = replacement
+                .blocks
+                .iter()
+                .map(|raw| parse_id(raw, "fixture block"))
+                .collect::<Result<_, _>>()?;
+            let before = block_ids
+                .iter()
+                .map(|id| {
+                    head_blocks.get(id).copied().ok_or_else(|| {
+                        RefrainError::new(ErrorCode::Io, "name a fixture block", id.to_string())
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?
+                .join("\n\n");
+            let scope = EditScope::new(block_ids.clone()).map_err(|error| {
+                RefrainError::new(ErrorCode::Io, "build a fixture scope", path.clone())
+                    .with_detail(error.to_string())
+            })?;
+            let proposal = Proposal::new(
+                run,
+                baseline,
+                scope,
+                before.clone(),
+                replacement.after.clone(),
+            );
+            entry
+                .store
+                .proposal_insert(&refrain_store::project::ProposalRow {
+                    id: proposal.id().to_string(),
+                    run: run.to_string(),
+                    baseline: baseline.to_string(),
+                    document_path: path.clone(),
+                    scope: serde_json::to_string(&block_ids).map_err(|error| {
+                        RefrainError::new(ErrorCode::Io, "serialise a scope", path.clone())
+                            .with_detail(error.to_string())
+                    })?,
+                    before_text: before,
+                    after_text: replacement.after,
+                    created_at: now_millis(),
+                })
+                .map_err(into_domain)?;
+            out.push(proposal_dto(&proposal));
+        }
+        Ok(out)
+    })
+}
+
+/// Every candidate for a document, newest last, for the review surface.
+#[tauri::command]
+#[specta::specta]
+fn list_proposals(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    path: String,
+) -> Result<Vec<ProposalDto>, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        entry
+            .store
+            .proposals_for(&path)
+            .map_err(into_domain)?
+            .iter()
+            .map(|row| rebuild_proposal(row).map(|p| proposal_dto(&p)))
+            .collect()
+    })
+}
+
+/// Record one judgment. It lands in the ledger the moment it is made (SPEC
+/// 9.7: 判即写穿 staging).
+#[tauri::command]
+#[specta::specta]
+fn record_verdict(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    proposal_id: String,
+    slice_id: String,
+    kind: String,
+    reason: Option<String>,
+    final_text: Option<String>,
+) -> Result<refrain_store::ledger::VerdictRecord, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        let kind_name = match kind.as_str() {
+            "accept" => VerdictKindName::Accept,
+            "accept-modified" => VerdictKindName::AcceptModified,
+            "reject" => VerdictKindName::Reject,
+            "comment-only" => VerdictKindName::CommentOnly,
+            other => {
+                return Err(RefrainError::new(
+                    ErrorCode::IllegalName,
+                    "name a verdict kind",
+                    other,
+                ));
+            }
+        };
+        let record = VerdictRecord {
+            id: Id::new().to_string(),
+            proposal_id,
+            slice_id,
+            kind: kind_name,
+            final_text,
+            reason,
+            decided_at: now_millis(),
+            legacy_baseline: None,
+        };
+        entry
+            .store
+            .ledger()
+            .record(&record)
+            .map_err(into_domain_store)?;
+        Ok(record)
+    })
+}
+
+fn into_domain_store(failure: refrain_store::schema::StoreError) -> RefrainError {
+    RefrainError::new(
+        ErrorCode::StateUnavailable,
+        "write the verdict ledger",
+        failure.to_string(),
+    )
+}
+
+/// Stage the batch and the cursor (SPEC 9.7: cursor and batch persist with
+/// every change, not at commit time).
+#[tauri::command]
+#[specta::specta]
+fn set_review_batch(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    path: String,
+    cursor: u32,
+    batch: Vec<String>,
+) -> Result<(), RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        let batch_json = serde_json::to_string(&batch).map_err(|error| {
+            RefrainError::new(ErrorCode::Io, "serialise a batch", path.clone())
+                .with_detail(error.to_string())
+        })?;
+        entry
+            .store
+            .review_session_set(&path, cursor, &batch_json)
+            .map_err(into_domain)
+    })
+}
+
+/// The recovered review session: candidates, judgments so far, cursor, batch.
+#[tauri::command]
+#[specta::specta]
+fn review_state(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    path: String,
+) -> Result<ReviewStateDto, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        let proposals = entry
+            .store
+            .proposals_for(&path)
+            .map_err(into_domain)?
+            .iter()
+            .map(|row| rebuild_proposal(row).map(|p| proposal_dto(&p)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let proposal_ids: HashSet<String> = proposals.iter().map(|p| p.id.clone()).collect();
+        let verdicts = entry
+            .store
+            .ledger()
+            .all()
+            .map_err(into_domain_store)?
+            .into_iter()
+            .filter(|row| proposal_ids.contains(&row.proposal_id))
+            .collect();
+        let (cursor, batch) = match entry.store.review_session_get(&path).map_err(into_domain)? {
+            Some((cursor, batch_json)) => {
+                let batch: Vec<String> = serde_json::from_str(&batch_json).unwrap_or_default();
+                (cursor, batch)
+            }
+            None => (0, Vec::new()),
+        };
+        Ok(ReviewStateDto {
+            proposals,
+            verdicts,
+            cursor,
+            batch,
+        })
+    })
+}
+
+/// The one commit path: staged judgments become one Text Action (SPEC 7.4).
+/// The batch and cursor clear; candidates stay for the audit.
+#[tauri::command]
+#[specta::specta]
+fn commit_decision_batch(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    path: String,
+) -> Result<TextTransitionDto, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        let (_cursor, batch_json) = entry
+            .store
+            .review_session_get(&path)
+            .map_err(into_domain)?
+            .ok_or_else(|| {
+                RefrainError::new(
+                    ErrorCode::StateUnavailable,
+                    "commit an empty batch",
+                    path.clone(),
+                )
+            })?;
+        let batch_ids: Vec<String> = serde_json::from_str(&batch_json).map_err(|error| {
+            RefrainError::new(ErrorCode::StateUnavailable, "read a batch", path.clone())
+                .with_detail(error.to_string())
+        })?;
+        if batch_ids.is_empty() {
+            return Err(RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "commit an empty batch",
+                path.clone(),
+            ));
+        }
+        let rows = entry
+            .store
+            .ledger()
+            .find_many(&batch_ids)
+            .map_err(into_domain_store)?;
+        let proposals = entry
+            .store
+            .proposals_for(&path)
+            .map_err(into_domain)?
+            .iter()
+            .map(rebuild_proposal)
+            .collect::<Result<Vec<_>, _>>()?;
+        let proposal_at: HashMap<Id, &Proposal> = proposals.iter().map(|p| (p.id(), p)).collect();
+
+        let mut verdicts = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let proposal_id = parse_id(&row.proposal_id, "verdict proposal")?;
+            let proposal = proposal_at.get(&proposal_id).ok_or_else(|| {
+                RefrainError::new(
+                    ErrorCode::StateUnavailable,
+                    "judge a candidate that is not here",
+                    row.proposal_id.clone(),
+                )
+            })?;
+            let (proposal_uuid, ordinal) = row.slice_id.rsplit_once(':').ok_or_else(|| {
+                RefrainError::new(
+                    ErrorCode::StateUnavailable,
+                    "read a slice id",
+                    row.slice_id.clone(),
+                )
+            })?;
+            let slice = ReviewSliceId::new(
+                parse_id(proposal_uuid, "slice proposal")?,
+                ordinal.parse::<u32>().map_err(|error| {
+                    RefrainError::new(
+                        ErrorCode::StateUnavailable,
+                        "read a slice ordinal",
+                        &row.slice_id,
+                    )
+                    .with_detail(error.to_string())
+                })?,
+            );
+            let kind = match row.kind {
+                VerdictKindName::Accept => VerdictKind::Accept,
+                VerdictKindName::AcceptModified => {
+                    VerdictKind::AcceptModified(row.final_text.clone().ok_or_else(|| {
+                        RefrainError::new(
+                            ErrorCode::StateUnavailable,
+                            "apply a modified verdict without its final text",
+                            row.id.clone(),
+                        )
+                    })?)
+                }
+                VerdictKindName::Reject => VerdictKind::Reject,
+                VerdictKindName::CommentOnly => VerdictKind::CommentOnly,
+            };
+            verdicts.push(
+                Verdict::new(proposal, slice, kind, row.reason.clone()).map_err(|error| {
+                    RefrainError::new(
+                        ErrorCode::StateUnavailable,
+                        "rebuild a verdict",
+                        row.id.clone(),
+                    )
+                    .with_detail(error.to_string())
+                })?,
+            );
+        }
+
+        let manuscript = entry.manuscripts.get_mut(&path).ok_or_else(|| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "commit against a document that is not open",
+                path.clone(),
+            )
+        })?;
+        let base = manuscript.head().id();
+        let transition = manuscript
+            .execute(TextCommand::CommitDecisionBatch(DecisionBatch::new(
+                base, proposals, verdicts,
+            )))
+            .map_err(|error| {
+                RefrainError::new(ErrorCode::Io, "commit a decision batch", path.clone())
+                    .with_detail(error.to_string())
+            })?;
+
+        entry
+            .store
+            .review_session_set(&path, 0, "[]")
+            .map_err(into_domain)?;
+        Ok(TextTransitionDto {
+            revision: transition.head().id().to_string(),
+            action_id: transition.action().id().to_string(),
+            touched_blocks: transition
+                .action()
+                .touched_blocks()
+                .iter()
+                .map(Id::to_string)
+                .collect(),
+        })
+    })
 }
