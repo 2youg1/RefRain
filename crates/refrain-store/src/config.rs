@@ -38,6 +38,9 @@ pub struct Config {
     pub appearance: AppearanceConfig,
     #[serde(default)]
     pub harness_connections: Vec<HarnessConnection>,
+    /// The author's Agents: a name, a channel, an optional persona.
+    #[serde(default)]
+    pub agents: Vec<AgentProfile>,
 }
 
 impl Default for Config {
@@ -47,6 +50,7 @@ impl Default for Config {
             kara: KaraConfig::default(),
             appearance: AppearanceConfig::default(),
             harness_connections: Vec::new(),
+            agents: Vec::new(),
         }
     }
 }
@@ -162,6 +166,22 @@ impl Default for KaraConfig {
     }
 }
 
+/// One Agent the author works with (KL9 2026-07-29): a name, the channel it
+/// runs on (`None` = the L0 file channel), and an optional persona — one
+/// Markdown identity injected right after the contract on every round.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(deny_unknown_fields)]
+pub struct AgentProfile {
+    pub id: Id,
+    pub name: String,
+    /// The connection this agent runs on; `None` is the L0 file channel.
+    #[serde(default)]
+    pub connection_id: Option<Id>,
+    /// The identity text, injected into the request after the contract.
+    #[serde(default)]
+    pub persona: Option<String>,
+}
+
 /// A machine-level execution channel (SPEC 2.3). Capability probes and trust
 /// evidence are machine facts and live in `app.db` — never here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -206,6 +226,8 @@ pub enum ConfigChange {
     SetIconDigest(Option<String>),
     UpsertHarnessConnection(HarnessConnection),
     RemoveHarnessConnection(Id),
+    UpsertAgent(AgentProfile),
+    RemoveAgent(Id),
 }
 
 /// A load or write that could not honour the rules above.
@@ -362,6 +384,20 @@ impl ConfigStore {
                     .config
                     .harness_connections
                     .retain(|existing| existing.id != id);
+            }
+            ConfigChange::UpsertAgent(profile) => {
+                match snapshot
+                    .config
+                    .agents
+                    .iter_mut()
+                    .find(|existing| existing.id == profile.id)
+                {
+                    Some(existing) => *existing = profile,
+                    None => snapshot.config.agents.push(profile),
+                }
+            }
+            ConfigChange::RemoveAgent(id) => {
+                snapshot.config.agents.retain(|existing| existing.id != id);
             }
         }
         let outcome = self.write(&snapshot.config)?;

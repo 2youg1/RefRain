@@ -172,6 +172,13 @@ export const commands = {
 	 *  the chapter's own bytes are what the project edits from now on.
 	 */
 	importManuscript: (rootId: string, sourcePath: string) => typedError<DocumentRow, RefrainError>(__TAURI_INVOKE("import_manuscript", { rootId, sourcePath })),
+	listAgents: () => __TAURI_INVOKE<AgentDto[]>("list_agents"),
+	/**
+	 *  Create or update one Agent (SPEC 6.5: typed changes only). A connection
+	 *  reference must name an existing connection; `None` is the L0 channel.
+	 */
+	upsertAgent: (name: string, connectionId: string | null, persona: string | null) => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("upsert_agent", { name, connectionId, persona })),
+	removeAgent: (id: string) => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("remove_agent", { id })),
 };
 
 /* Types */
@@ -186,6 +193,30 @@ export type Activity = "writing" | "reviewing";
  *  channel any producer — including a human pasting into a web chat — can serve.
  */
 export type AdapterKind = "l0" | "codex" | "claude-code" | "pi" | "kimi-code" | "hermes";
+
+/**  One Agent as the surface lists it: the profile plus its channel's facts. */
+export type AgentDto = {
+	id: string,
+	name: string,
+	connectionId: string | null,
+	hasPersona: boolean,
+	channel: string,
+	version: string,
+};
+
+/**
+ *  One Agent the author works with (KL9 2026-07-29): a name, the channel it
+ *  runs on (`None` = the L0 file channel), and an optional persona — one
+ *  Markdown identity injected right after the contract on every round.
+ */
+export type AgentProfile = {
+	id: Id,
+	name: string,
+	/**  The connection this agent runs on; `None` is the L0 file channel. */
+	connection_id?: Id | null,
+	/**  The identity text, injected into the request after the contract. */
+	persona?: string | null,
+};
 
 /**
  *  One agent's reading of one document: rounds read, the baseline it last
@@ -240,6 +271,10 @@ export type AppearanceConfig = {
 	fonts?: FontConfig,
 	/**  The manuscript sheet's edge: none / hairline / paper. */
 	paper?: PaperMode,
+	/**  Manuscript text size in px (SPEC 9.8: 排版可调,默认 17). */
+	text_size?: number,
+	/**  Manuscript line height in percent (默认 190 = 1.9). */
+	line_height?: number,
 	/**
 	 *  The Universal Button icon, by content digest (SPEC 9.8). The asset
 	 *  named by this digest lives in the application data assets directory;
@@ -324,6 +359,8 @@ export type Config = {
 	kara: KaraConfig,
 	appearance?: AppearanceConfig,
 	harness_connections?: HarnessConnection[],
+	/**  The author's Agents: a name, a channel, an optional persona. */
+	agents?: AgentProfile[],
 };
 
 /**

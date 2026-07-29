@@ -8,6 +8,7 @@
 import { onMounted, ref } from "vue";
 import { describe, unwrap } from "../bridge";
 import {
+  type AgentDto,
   type AgentReadingDto,
   type ConfigSnapshot,
   commands,
@@ -23,9 +24,13 @@ const emit = defineEmits<{ closed: [] }>();
 
 const connections = ref<HarnessConnection[]>([]);
 const detected = ref<HarnessDto[]>([]);
+const agents = ref<AgentDto[]>([]);
 const versions = ref<Record<string, string>>({});
 const ledger = ref<AgentReadingDto[]>([]);
 const executable = ref("");
+const agentName = ref("");
+const agentChannel = ref("");
+const agentPersona = ref("");
 const notice = ref<string | null>(null);
 const busy = ref(false);
 
@@ -38,11 +43,49 @@ const refresh = async (): Promise<void> => {
     const snapshot: ConfigSnapshot = await unwrap(commands.readConfig());
     connections.value = snapshot.config.harness_connections ?? [];
     detected.value = await unwrap(commands.listHarnesses());
+    agents.value = await unwrap(commands.listAgents());
     if (props.rootId) {
       ledger.value = await unwrap(commands.agentReadingLedger(props.rootId));
     }
   } catch (error) {
     fail(error);
+  }
+};
+
+const createAgent = async (): Promise<void> => {
+  if (busy.value || agentName.value.trim().length === 0) return;
+  busy.value = true;
+  notice.value = null;
+  try {
+    await unwrap(
+      commands.upsertAgent(
+        agentName.value.trim(),
+        agentChannel.value === "" ? null : agentChannel.value,
+        agentPersona.value.trim() === "" ? null : agentPersona.value,
+      ),
+    );
+    agentName.value = "";
+    agentPersona.value = "";
+    notice.value = "已建";
+    await refresh();
+  } catch (error) {
+    fail(error);
+  } finally {
+    busy.value = false;
+  }
+};
+
+const removeAgent = async (id: string): Promise<void> => {
+  if (busy.value) return;
+  busy.value = true;
+  try {
+    await unwrap(commands.removeAgent(id));
+    notice.value = "已删";
+    await refresh();
+  } catch (error) {
+    fail(error);
+  } finally {
+    busy.value = false;
   }
 };
 
@@ -147,6 +190,35 @@ onMounted(refresh);
       <button type="button" :disabled="busy" @click="register(executable)">添加</button>
     </div>
 
+    <h3 class="agent-title">Agent</h3>
+    <div v-for="agent in agents" :key="agent.id" class="conn-row">
+      <span class="peek">
+        {{ agent.name }}
+        <span class="agent-sub">{{ agent.channel }} · {{ agent.version }}</span>
+      </span>
+      <span class="agent-persona">{{ agent.hasPersona ? "persona ✓" : "无 persona" }}</span>
+      <span v-if="readingOf(agent.id)" class="reading">
+        {{ readingOf(agent.id)?.rounds }} 轮 · {{ readingOf(agent.id)?.stale ? "落后" : "同步" }}
+      </span>
+      <button type="button" :disabled="busy" @click="removeAgent(agent.id)">删除</button>
+    </div>
+    <div class="agent-form">
+      <input v-model="agentName" class="conn-input" placeholder="名字（如：历史教授）" />
+      <select v-model="agentChannel" class="conn-input" aria-label="通道">
+        <option value="">L0 文件通道</option>
+        <option v-for="connection in connections" :key="connection.id" :value="connection.id">
+          {{ connection.executable }}
+        </option>
+      </select>
+      <textarea
+        v-model="agentPersona"
+        class="agent-persona-input"
+        rows="3"
+        placeholder="persona（Markdown，可留空）"
+      ></textarea>
+      <button type="button" :disabled="busy" @click="createAgent">创建</button>
+    </div>
+
     <button type="button" class="conn-close" @click="emit('closed')">收起</button>
   </section>
 </template>
@@ -245,5 +317,46 @@ onMounted(refresh);
 .conn-close {
   margin-top: 12px;
   color: var(--ink-faint);
+}
+
+.agent-title {
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.2em;
+  color: var(--ink-faint);
+  margin: 18px 0 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+}
+
+.agent-sub {
+  display: block;
+  color: var(--ink-ghost);
+  font-size: 11px;
+}
+
+.agent-persona {
+  color: var(--ink-faint);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.agent-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.agent-persona-input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  resize: vertical;
 }
 </style>

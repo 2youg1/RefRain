@@ -984,6 +984,9 @@ pub fn builder() -> Builder<tauri::Wry> {
         probe_connection,
         import_material,
         import_manuscript,
+        list_agents,
+        upsert_agent,
+        remove_agent,
     ])
 }
 
@@ -1728,6 +1731,7 @@ fn compile_package(
     prompt: &str,
     carry: CarryMode,
     contract: ContractMode,
+    persona: Option<String>,
 ) -> Result<DispatchPackage, RefrainError> {
     let blocks = manuscript.head().blocks();
     let mut selected: Vec<(usize, &str)> = Vec::with_capacity(block_ids.len());
@@ -1819,7 +1823,7 @@ fn compile_package(
         materials.push((name, String::from_utf8_lossy(&opened.bytes).into_owned()));
     }
     let input = DispatchInput {
-        persona: None,
+        persona,
         manuscript: manuscript_text,
         changes,
         materials,
@@ -2035,6 +2039,7 @@ fn preview_dispatch(
             &prompt,
             carry,
             mode,
+            persona_of(_state, &agent_id),
         )?;
         Ok(DispatchPreviewDto {
             manifest: package.manifest.clone(),
@@ -2109,6 +2114,7 @@ fn authorize_dispatch(
             &prompt,
             carry,
             mode,
+            persona_of(_state, &agent_id),
         )?;
         let task_id = parse_id(&task_id, "task")?;
         let mut host = open_host(&mut entry.store)?;
@@ -2158,7 +2164,10 @@ fn launch_run(
             .ok_or_else(|| into_domain_host(HostRefusal::UnknownRun(run_id)))?;
         Ok(run.agent_id.to_string())
     })?;
-    if agent == KIMI_PRINT_AGENT || kimi_connection_named(&state, &agent) {
+    if agent == KIMI_PRINT_AGENT
+        || kimi_connection_named(&state, &agent)
+        || kimi_connection_named(&state, &resolve_channel(&state, &agent))
+    {
         return harness_dispatch_inner(&app, &state, &root_id, &agent, run_id);
     }
     state.with_project(&root_id, |_state, entry| {
@@ -2729,6 +2738,7 @@ fn probe_connection(executable: String) -> Result<String, RefrainError> {
 /// The Kimi Print channel for one run's agent: the built-in detected entry,
 /// or the exact executable of the Config connection naming it (C12 roster).
 fn kimi_for_agent(state: &AppState, agent: &str) -> Result<KimiPrint, RefrainError> {
+    let agent = &resolve_channel(state, agent);
     if agent == KIMI_PRINT_AGENT {
         return KimiPrint::detect().ok_or_else(|| {
             RefrainError::new(
@@ -2757,7 +2767,7 @@ fn kimi_for_agent(state: &AppState, agent: &str) -> Result<KimiPrint, RefrainErr
         .harness_connections
         .iter()
         .find(|connection| {
-            connection.id.to_string() == agent
+            connection.id.to_string() == *agent
                 && connection.adapter == refrain_store::config::AdapterKind::KimiCode
         })
         .ok_or_else(|| {
@@ -2792,6 +2802,201 @@ fn kimi_connection_named(state: &AppState, agent: &str) -> bool {
                         && connection.adapter == refrain_store::config::AdapterKind::KimiCode
                 })
         })
+}
+
+// ── Agents: a name, a channel, an optional persona (KL9 2026-07-29) ────────
+
+/// The persona an AgentProfile carries for this agent id, if any. Injected
+/// into the request right where the compiler renders it: the Context section,
+/// after the contract.
+fn persona_of(state: &AppState, agent_id: &str) -> Option<String> {
+    state
+        .config
+        .as_ref()
+        .and_then(|store| store.snapshot().ok())
+        .and_then(|snapshot| {
+            snapshot
+                .config
+                .agents
+                .iter()
+                .find(|profile| profile.id.to_string() == agent_id)
+                .and_then(|profile| profile.persona.clone())
+        })
+}
+
+/// An AgentProfile id resolves to its channel's connection id; anything else
+/// passes through unchanged.
+fn resolve_channel(state: &AppState, agent: &str) -> String {
+    state
+        .config
+        .as_ref()
+        .and_then(|store| store.snapshot().ok())
+        .and_then(|snapshot| {
+            snapshot
+                .config
+                .agents
+                .iter()
+                .find(|profile| profile.id.to_string() == agent)
+                .and_then(|profile| profile.connection_id.map(|id| id.to_string()))
+        })
+        .unwrap_or_else(|| agent.to_string())
+}
+
+/// One Agent as the surface lists it: the profile plus its channel's facts.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentDto {
+    pub id: String,
+    pub name: String,
+    pub connection_id: Option<String>,
+    pub has_persona: bool,
+    pub channel: String,
+    pub version: String,
+}
+
+#[tauri::command]
+#[specta::specta]
+fn list_agents(state: tauri::State<'_, AppState>) -> Vec<AgentDto> {
+    let Some(store) = state.config.as_ref() else {
+        return Vec::new();
+    };
+    let Ok(snapshot) = store.snapshot() else {
+        return Vec::new();
+    };
+    snapshot
+        .config
+        .agents
+        .iter()
+        .map(|profile| match profile.connection_id {
+            None => AgentDto {
+                id: profile.id.to_string(),
+                name: profile.name.clone(),
+                connection_id: None,
+                has_persona: profile.persona.is_some(),
+                channel: "L0 文件通道".to_string(),
+                version: "—".to_string(),
+            },
+            Some(connection_id) => {
+                let connection = snapshot
+                    .config
+                    .harness_connections
+                    .iter()
+                    .find(|entry| entry.id == connection_id);
+                let (channel, version) = connection
+                    .map(|entry| {
+                        let stem = entry
+                            .executable
+                            .file_stem()
+                            .map(|stem| stem.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| "kimi".to_string());
+                        let version = KimiPrint::at(entry.executable.clone())
+                            .map(|kimi| kimi.version().to_string())
+                            .unwrap_or_else(|| "未知".to_string());
+                        (format!("Kimi Code · {stem}"), version)
+                    })
+                    .unwrap_or_else(|| ("连接已删".to_string(), "—".to_string()));
+                AgentDto {
+                    id: profile.id.to_string(),
+                    name: profile.name.clone(),
+                    connection_id: Some(connection_id.to_string()),
+                    has_persona: profile.persona.is_some(),
+                    channel,
+                    version,
+                }
+            }
+        })
+        .collect()
+}
+
+/// Create or update one Agent (SPEC 6.5: typed changes only). A connection
+/// reference must name an existing connection; `None` is the L0 channel.
+#[tauri::command]
+#[specta::specta]
+fn upsert_agent(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    name: String,
+    connection_id: Option<String>,
+    persona: Option<String>,
+) -> Result<refrain_store::config::ConfigSnapshot, RefrainError> {
+    if name.trim().is_empty() {
+        return Err(RefrainError::new(
+            ErrorCode::IllegalName,
+            "name an agent",
+            "empty name",
+        ));
+    }
+    let store = state.config.as_ref().ok_or_else(|| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "write a damaged Config",
+            "agents",
+        )
+    })?;
+    let connection_id = match connection_id {
+        None => None,
+        Some(raw) => {
+            let id = parse_id(&raw, "connection")?;
+            let snapshot = store.snapshot().map_err(|failure| {
+                RefrainError::new(
+                    ErrorCode::StateUnavailable,
+                    "read the Config",
+                    failure.to_string(),
+                )
+            })?;
+            if !snapshot
+                .config
+                .harness_connections
+                .iter()
+                .any(|entry| entry.id == id)
+            {
+                return Err(RefrainError::new(
+                    ErrorCode::StateUnavailable,
+                    "attach an agent to a connection",
+                    "no such connection",
+                ));
+            }
+            Some(id)
+        }
+    };
+    let snapshot = store
+        .apply(refrain_store::config::ConfigChange::UpsertAgent(
+            refrain_store::config::AgentProfile {
+                id: Id::new(),
+                name: name.trim().to_string(),
+                connection_id,
+                persona: persona.filter(|text| !text.trim().is_empty()),
+            },
+        ))
+        .map_err(|failure| {
+            RefrainError::new(ErrorCode::Io, "write the Config", failure.to_string())
+        })?;
+    let _ = app.emit("config-changed", &snapshot.config.appearance.theme);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+#[specta::specta]
+fn remove_agent(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<refrain_store::config::ConfigSnapshot, RefrainError> {
+    let id = parse_id(&id, "agent")?;
+    let store = state.config.as_ref().ok_or_else(|| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "write a damaged Config",
+            "agents",
+        )
+    })?;
+    let snapshot = store
+        .apply(refrain_store::config::ConfigChange::RemoveAgent(id))
+        .map_err(|failure| {
+            RefrainError::new(ErrorCode::Io, "write the Config", failure.to_string())
+        })?;
+    let _ = app.emit("config-changed", &snapshot.config.appearance.theme);
+    Ok(snapshot)
 }
 
 /// Launch one authorized run on a real harness: promote the frozen request,
