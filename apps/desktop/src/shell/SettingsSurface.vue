@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // biome-ignore-all lint/correctness/noUnusedVariables: Vue templates use these bindings.
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { describe, unwrap } from "../bridge";
 import {
   type AppearanceConfig,
@@ -16,8 +16,9 @@ import TypographyPanel from "./TypographyPanel.vue";
 const props = withDefaults(
   defineProps<{
     returnLabel?: string;
+    initialSection?: "appearance" | "typography" | "shortcuts";
   }>(),
-  { returnLabel: "工作台" },
+  { returnLabel: "工作台", initialSection: "appearance" },
 );
 
 const emit = defineEmits<{
@@ -27,12 +28,18 @@ const emit = defineEmits<{
 
 const SECTIONS = [
   { id: "appearance", label: "外观", detail: "主题、纸面与入口图标" },
-  { id: "typography", label: "排版", detail: "字体、字号与行距" },
+  { id: "typography", label: "排版", detail: "字体、版心、段落与预设" },
   { id: "shortcuts", label: "快捷键", detail: "当前可用的键盘操作" },
 ] as const;
 type Section = (typeof SECTIONS)[number]["id"];
 
-const section = ref<Section>("appearance");
+const section = ref<Section>(props.initialSection);
+watch(
+  () => props.initialSection,
+  (next) => {
+    section.value = next;
+  },
+);
 const entered = ref<AppearanceConfig | null>(null);
 const changed = ref(false);
 const busy = ref(false);
@@ -180,7 +187,7 @@ onBeforeUnmount(() => {
         >
           <div class="card-heading">
             <span>手稿排版</span>
-            <p>分别指定西文、中文与日文字体，再决定共享汉字优先由哪一槽绘制。</p>
+            <p>从本机字体与语言预设开始，再调整字形、段落、版心和页面留白。</p>
           </div>
           <TypographyPanel />
         </article>
@@ -396,7 +403,7 @@ onBeforeUnmount(() => {
 
 .typography-card,
 .shortcuts-card {
-  width: min(760px, 100%);
+  width: min(1000px, 100%);
 }
 
 .settings-error {

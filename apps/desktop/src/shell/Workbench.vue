@@ -28,7 +28,10 @@ import { pickDocumentFile, pickProjectFolder, pickProjectParent } from "./pick";
 import ReviewSurface from "./ReviewSurface.vue";
 import SettingsSurface from "./SettingsSurface.vue";
 import StatusLine from "./StatusLine.vue";
+import UniversalButton from "./UniversalButton.vue";
+import UniversalMenu from "./UniversalMenu.vue";
 import WindowChrome from "./WindowChrome.vue";
+import { commandCatalog, type WorkbenchCommandId } from "./workbench-commands";
 import { reduceSurface, type SurfaceTarget, type WorkbenchSurface } from "./workbench-surface";
 
 type SaveState =
@@ -48,6 +51,29 @@ const conflict = ref<{ mine: string; theirs: string; stamp: FileStamp_Serialize 
 const editor = ref<InstanceType<typeof EditorHost> | null>(null);
 const surface = ref<WorkbenchSurface>({ kind: "writing" });
 const kara = useKara();
+const commandMenuOpen = ref(false);
+const settingsSection = ref<"appearance" | "typography" | "shortcuts">("appearance");
+const commandEntries = computed(() =>
+  commandCatalog({ hasProject: project.value !== null, hasDocument: active.value !== null }),
+);
+let commandReturnFocus: HTMLElement | null = null;
+
+const openCommandMenu = (): void => {
+  if (commandMenuOpen.value) return;
+  commandReturnFocus =
+    document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  commandMenuOpen.value = true;
+};
+
+const closeCommandMenu = (): void => {
+  commandMenuOpen.value = false;
+  const target = commandReturnFocus;
+  commandReturnFocus = null;
+  window.setTimeout(() => {
+    if (target?.isConnected && !target.closest(".universal-button-zone")) target.focus();
+    else editor.value?.focus();
+  }, 0);
+};
 
 // Chrome recede (C12.6): the rail is visible on entry — the author should
 // know what tools exist before KARA takes them away. It steps back only
@@ -76,6 +102,7 @@ const wake = (event: PointerEvent): void => {
 
 onMounted(() => {
   window.addEventListener("pointermove", wake, { passive: true });
+  window.addEventListener("keydown", onKeydown);
   // Armed from the start: a reader who never touches the mouse still gets
   // the quiet room.
   idleTimer = window.setTimeout(() => {
@@ -100,6 +127,7 @@ onMounted(() => {
 });
 onUnmounted(() => {
   window.removeEventListener("pointermove", wake);
+  window.removeEventListener("keydown", onKeydown);
   unlistenDrop?.();
   if (idleTimer !== null) window.clearTimeout(idleTimer);
 });
@@ -118,6 +146,11 @@ const openSurface = (target: SurfaceTarget): void => {
 
 const returnToWriting = (): void => {
   surface.value = reduceSurface(surface.value, { kind: "return" }, active.value !== null);
+};
+
+const openSettings = (section: "appearance" | "typography" | "shortcuts"): void => {
+  settingsSection.value = section;
+  surface.value = { kind: "settings" };
 };
 
 // ── Drag-drop import (C12.6) ─────────────────────────────────────────────
@@ -412,7 +445,65 @@ const requestClose = (): void => {
     });
 };
 
+const executeCommand = (id: WorkbenchCommandId): void => {
+  commandMenuOpen.value = false;
+  commandReturnFocus = null;
+  switch (id) {
+    case "return-writing":
+      returnToWriting();
+      window.setTimeout(() => editor.value?.focus(), 0);
+      return;
+    case "open-review":
+      openSurface("review");
+      return;
+    case "open-project":
+      void openProjectFolder();
+      return;
+    case "create-project":
+      void newProject();
+      return;
+    case "open-document":
+      void openSingleDocument();
+      return;
+    case "new-chapter":
+      void newDocument("chapter");
+      return;
+    case "new-material":
+      void newDocument("material");
+      return;
+    case "import-material":
+      void importMaterial();
+      return;
+    case "save-document":
+      void save();
+      return;
+    case "open-dispatch":
+      openSurface("dispatch");
+      return;
+    case "open-connections":
+      openSurface("connections");
+      return;
+    case "open-appearance":
+      openSettings("appearance");
+      return;
+    case "open-typography":
+      openSettings("typography");
+      return;
+    case "open-shortcuts":
+      openSettings("shortcuts");
+      return;
+  }
+};
+
 const onKeydown = (event: KeyboardEvent): void => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "k") {
+    if (event.isComposing || editor.value?.isComposing()) return;
+    event.preventDefault();
+    if (commandMenuOpen.value) closeCommandMenu();
+    else openCommandMenu();
+    return;
+  }
+  if (commandMenuOpen.value) return;
   if ((event.ctrlKey || event.metaKey) && event.key === "s") {
     event.preventDefault();
     void save();
@@ -433,11 +524,21 @@ const onKeydown = (event: KeyboardEvent): void => {
 </script>
 
 <template>
-  <div class="workbench" @keydown="onKeydown">
+  <div class="workbench">
     <WindowChrome
       :title="active?.document.path ?? 'RefRain'"
       @close-requested="requestClose"
       @error="(message) => (notice = message)"
+    />
+    <UniversalButton
+      v-if="project && active && surface.kind === 'writing'"
+      @activate="openCommandMenu"
+    />
+    <UniversalMenu
+      v-if="commandMenuOpen"
+      :entries="commandEntries"
+      @choose="executeCommand"
+      @close="closeCommandMenu"
     />
     <template v-if="!project">
       <section class="welcome">
@@ -541,7 +642,7 @@ const onKeydown = (event: KeyboardEvent): void => {
           <button
             type="button"
             :class="{ current: surface.kind === 'settings' }"
-            @click="openSurface('settings')"
+            @click="openSettings('appearance')"
           >
             设置
           </button>
@@ -552,6 +653,7 @@ const onKeydown = (event: KeyboardEvent): void => {
         <p v-if="notice" class="notice">{{ notice }}</p>
         <SettingsSurface
           v-if="surface.kind === 'settings'"
+          :initial-section="settingsSection"
           :return-label="active?.document.path ?? '工作台'"
           @closed="returnToWriting"
           @theme-picked="(slug: string) => $emit('theme-changed', slug)"

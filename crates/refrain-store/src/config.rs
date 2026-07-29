@@ -16,6 +16,7 @@
 
 use refrain_core::Id;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -23,7 +24,7 @@ use crate::atomic;
 
 /// The schema version this build reads and writes. Monotonic: it only ever
 /// increases, and only when the shape itself changes — never per edit.
-pub const CONFIG_VERSION: u32 = 1;
+pub const CONFIG_VERSION: u32 = 2;
 
 pub const CONFIG_FILE_NAME: &str = "config.toml";
 
@@ -63,43 +64,139 @@ pub struct AppearanceConfig {
     /// One of the themes the generator emitted; validated on apply, not on
     /// load, because the theme list is generated, not a hand copy.
     pub theme: String,
+    pub typography: TypographyConfig,
+    /// Named snapshots of complete typography values. The active value above
+    /// remains authoritative; a preset changes nothing until the author applies it.
     #[serde(default)]
-    pub fonts: FontConfig,
+    pub typography_presets: Vec<TypographyPreset>,
     /// The manuscript sheet's edge: none / hairline / paper.
     #[serde(default)]
     pub paper: PaperMode,
-    /// Manuscript text size in px (SPEC 9.8: 排版可调,默认 17).
-    #[serde(default = "default_text_size")]
-    pub text_size: u16,
-    /// Manuscript line height in percent (默认 190 = 1.9).
-    #[serde(default = "default_line_height")]
-    pub line_height: u16,
-    /// The Universal Button icon, by content digest (SPEC 9.8). The asset
-    /// named by this digest lives in the application data assets directory;
-    /// the Config never stores the image itself.
+    /// The writing-entry icon, by content digest. The asset named by this
+    /// digest lives in the application data assets directory.
     #[serde(default)]
     pub icon_digest: Option<String>,
-}
-
-fn default_text_size() -> u16 {
-    17
-}
-
-fn default_line_height() -> u16 {
-    190
 }
 
 impl Default for AppearanceConfig {
     fn default() -> Self {
         Self {
             theme: "tou".to_string(),
-            fonts: FontConfig::default(),
+            typography: TypographyConfig::default(),
+            typography_presets: Vec::new(),
             paper: PaperMode::default(),
-            text_size: default_text_size(),
-            line_height: default_line_height(),
             icon_digest: None,
         }
     }
+}
+
+/// Every typographic material that changes the manuscript surface. Units live
+/// in field names so persisted numbers remain readable without UI context.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(deny_unknown_fields)]
+pub struct TypographyConfig {
+    pub fonts: FontConfig,
+    pub text_size_tenths_px: u16,
+    pub font_weight: u16,
+    pub line_height_percent: u16,
+    pub letter_spacing_thousandths_em: i16,
+    pub word_spacing_thousandths_em: i16,
+    pub measure_tenths_em: u16,
+    pub first_line_indent_tenths_em: u16,
+    pub paragraph_spacing_percent: u16,
+    pub alignment: TextAlignment,
+    pub page_top_padding_tenths_rem: u16,
+    pub page_bottom_padding_tenths_vh: u16,
+    /// Zero disables the grid; 1–6 draws one rule every N line boxes.
+    pub baseline_grid_lines: u8,
+    pub zoom_percent: u16,
+}
+
+impl Default for TypographyConfig {
+    fn default() -> Self {
+        Self {
+            fonts: FontConfig::default(),
+            text_size_tenths_px: 170,
+            font_weight: 400,
+            line_height_percent: 190,
+            letter_spacing_thousandths_em: 10,
+            word_spacing_thousandths_em: 0,
+            measure_tenths_em: 300,
+            first_line_indent_tenths_em: 0,
+            paragraph_spacing_percent: 100,
+            alignment: TextAlignment::Left,
+            page_top_padding_tenths_rem: 30,
+            page_bottom_padding_tenths_vh: 500,
+            baseline_grid_lines: 0,
+            zoom_percent: 100,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum TextAlignment {
+    #[default]
+    Left,
+    Justify,
+}
+
+/// One author-named snapshot. IDs make rename and overwrite unambiguous.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(deny_unknown_fields)]
+pub struct TypographyPreset {
+    pub id: Id,
+    pub name: String,
+    pub typography: TypographyConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(deny_unknown_fields)]
+pub struct BuiltinTypographyPreset {
+    pub id: String,
+    pub typography: TypographyConfig,
+}
+
+pub fn builtin_typography_presets() -> Vec<BuiltinTypographyPreset> {
+    let chinese = TypographyConfig {
+        first_line_indent_tenths_em: 20,
+        paragraph_spacing_percent: 50,
+        measure_tenths_em: 320,
+        ..TypographyConfig::default()
+    };
+    let japanese = TypographyConfig {
+        fonts: FontConfig {
+            priority: [FontSlot::Latin, FontSlot::Japanese, FontSlot::Chinese],
+            ..FontConfig::default()
+        },
+        first_line_indent_tenths_em: 10,
+        paragraph_spacing_percent: 50,
+        measure_tenths_em: 320,
+        letter_spacing_thousandths_em: 0,
+        ..TypographyConfig::default()
+    };
+    let english = TypographyConfig {
+        line_height_percent: 170,
+        letter_spacing_thousandths_em: 0,
+        word_spacing_thousandths_em: 50,
+        measure_tenths_em: 360,
+        paragraph_spacing_percent: 75,
+        ..TypographyConfig::default()
+    };
+    vec![
+        BuiltinTypographyPreset {
+            id: "chinese-prose".to_string(),
+            typography: chinese,
+        },
+        BuiltinTypographyPreset {
+            id: "japanese-prose".to_string(),
+            typography: japanese,
+        },
+        BuiltinTypographyPreset {
+            id: "english-prose".to_string(),
+            typography: english,
+        },
+    ]
 }
 
 /// The manuscript sheet's edge (SPEC 9.8): an edgeless Web-like column, a
@@ -147,6 +244,107 @@ impl Default for FontConfig {
             japanese: "Shippori Mincho".to_string(),
             priority: FontSlot::ALL,
         }
+    }
+}
+
+impl TypographyConfig {
+    fn validate(&self) -> Result<(), String> {
+        let numeric = [
+            (
+                "text_size_tenths_px",
+                i32::from(self.text_size_tenths_px),
+                100,
+                480,
+            ),
+            ("font_weight", i32::from(self.font_weight), 100, 900),
+            (
+                "line_height_percent",
+                i32::from(self.line_height_percent),
+                100,
+                400,
+            ),
+            (
+                "letter_spacing_thousandths_em",
+                i32::from(self.letter_spacing_thousandths_em),
+                -100,
+                500,
+            ),
+            (
+                "word_spacing_thousandths_em",
+                i32::from(self.word_spacing_thousandths_em),
+                -200,
+                2000,
+            ),
+            (
+                "measure_tenths_em",
+                i32::from(self.measure_tenths_em),
+                140,
+                800,
+            ),
+            (
+                "first_line_indent_tenths_em",
+                i32::from(self.first_line_indent_tenths_em),
+                0,
+                80,
+            ),
+            (
+                "paragraph_spacing_percent",
+                i32::from(self.paragraph_spacing_percent),
+                0,
+                400,
+            ),
+            (
+                "page_top_padding_tenths_rem",
+                i32::from(self.page_top_padding_tenths_rem),
+                0,
+                300,
+            ),
+            (
+                "page_bottom_padding_tenths_vh",
+                i32::from(self.page_bottom_padding_tenths_vh),
+                0,
+                1000,
+            ),
+            (
+                "baseline_grid_lines",
+                i32::from(self.baseline_grid_lines),
+                0,
+                6,
+            ),
+            ("zoom_percent", i32::from(self.zoom_percent), 50, 200),
+        ];
+        for (field, value, min, max) in numeric {
+            if !(min..=max).contains(&value) {
+                return Err(format!(
+                    "{field} must be between {min} and {max}; got {value}"
+                ));
+            }
+        }
+
+        for (slot, family) in [
+            ("latin", &self.fonts.latin),
+            ("chinese", &self.fonts.chinese),
+            ("japanese", &self.fonts.japanese),
+        ] {
+            let invalid = family.trim().is_empty()
+                || family.chars().count() > 128
+                || family.chars().any(char::is_control)
+                || family.contains(['"', '\'', '\\', ';']);
+            if invalid {
+                return Err(format!("{slot} font family is not a safe family name"));
+            }
+        }
+        if FontSlot::ALL.iter().any(|slot| {
+            self.fonts
+                .priority
+                .iter()
+                .filter(|entry| *entry == slot)
+                .count()
+                != 1
+        }) {
+            return Err("font priority must contain each slot exactly once".to_string());
+        }
+        Ok(())
     }
 }
 
@@ -219,10 +417,9 @@ pub enum ConfigChange {
     KaraAutoEnter(bool),
     SetTheme(String),
     SetPaper(PaperMode),
-    SetTextSize(u16),
-    SetLineHeight(u16),
-    SetFontFamily { slot: FontSlot, family: String },
-    SetFontPriority([FontSlot; 3]),
+    SetTypography(TypographyConfig),
+    SaveTypographyPreset(String),
+    RemoveTypographyPreset(Id),
     SetIconDigest(Option<String>),
     ResetVisual,
     ResetTypography,
@@ -233,6 +430,86 @@ pub enum ConfigChange {
     RemoveAgent(Id),
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConfigV1 {
+    version: u32,
+    kara: KaraConfig,
+    #[serde(default)]
+    appearance: AppearanceConfigV1,
+    #[serde(default)]
+    harness_connections: Vec<HarnessConnection>,
+    #[serde(default)]
+    agents: Vec<AgentProfile>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AppearanceConfigV1 {
+    theme: String,
+    #[serde(default)]
+    fonts: FontConfig,
+    #[serde(default)]
+    paper: PaperMode,
+    #[serde(default = "v1_default_text_size")]
+    text_size: u16,
+    #[serde(default = "v1_default_line_height")]
+    line_height: u16,
+    #[serde(default)]
+    icon_digest: Option<String>,
+}
+
+impl Default for AppearanceConfigV1 {
+    fn default() -> Self {
+        Self {
+            theme: "tou".to_string(),
+            fonts: FontConfig::default(),
+            paper: PaperMode::default(),
+            text_size: v1_default_text_size(),
+            line_height: v1_default_line_height(),
+            icon_digest: None,
+        }
+    }
+}
+
+const fn v1_default_text_size() -> u16 {
+    17
+}
+
+const fn v1_default_line_height() -> u16 {
+    190
+}
+
+impl ConfigV1 {
+    fn migrate(self) -> Config {
+        debug_assert_eq!(self.version, 1);
+        let typography = TypographyConfig {
+            fonts: self.appearance.fonts,
+            text_size_tenths_px: self.appearance.text_size.saturating_mul(10),
+            line_height_percent: self.appearance.line_height,
+            ..TypographyConfig::default()
+        };
+        Config {
+            version: CONFIG_VERSION,
+            kara: self.kara,
+            appearance: AppearanceConfig {
+                theme: self.appearance.theme,
+                typography,
+                typography_presets: Vec::new(),
+                paper: self.appearance.paper,
+                icon_digest: self.appearance.icon_digest,
+            },
+            harness_connections: self.harness_connections,
+            agents: self.agents,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct VersionProbe {
+    version: u32,
+}
+
 /// A load or write that could not honour the rules above.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigFailure {
@@ -240,6 +517,9 @@ pub enum ConfigFailure {
     /// untouched; the interface enters Safety with the field detail.
     #[error("config at {path} is damaged: {detail}")]
     Damaged { path: PathBuf, detail: String },
+    /// A typed change was outside the schema's admitted domain.
+    #[error("invalid Config value: {detail}")]
+    Invalid { detail: String },
     /// Written by a newer build. Refused, not rewritten.
     #[error("config version {found} is newer than this build's {supported}")]
     TooNew { found: u32, supported: u32 },
@@ -249,6 +529,37 @@ pub enum ConfigFailure {
         #[source]
         source: io::Error,
     },
+}
+
+impl Config {
+    fn validate(&self) -> Result<(), String> {
+        if self.version != CONFIG_VERSION {
+            return Err(format!(
+                "version must be {CONFIG_VERSION} after migration; got {}",
+                self.version
+            ));
+        }
+        self.appearance.typography.validate()?;
+
+        let mut ids = HashSet::new();
+        let mut names = HashSet::new();
+        for preset in &self.appearance.typography_presets {
+            let name = preset.name.trim();
+            if name.is_empty() || name.chars().count() > 40 || name.chars().any(char::is_control) {
+                return Err(
+                    "typography preset names must contain 1–40 visible characters".to_string(),
+                );
+            }
+            if !ids.insert(preset.id) {
+                return Err(format!("duplicate typography preset id {}", preset.id));
+            }
+            if !names.insert(name.to_lowercase()) {
+                return Err(format!("duplicate typography preset name {name}"));
+            }
+            preset.typography.validate()?;
+        }
+        Ok(())
+    }
 }
 
 /// The effective Config plus anything the author must be told about the load
@@ -295,37 +606,23 @@ impl ConfigStore {
             ));
         }
 
-        let bytes = std::fs::read(&store.path).map_err(|source| ConfigFailure::Io {
-            path: store.path.clone(),
-            source,
-        })?;
-        let text = String::from_utf8(bytes).map_err(|error| ConfigFailure::Damaged {
-            path: store.path.clone(),
-            detail: format!("not valid UTF-8: {error}"),
-        })?;
-        let config: Config = toml::from_str(&text).map_err(|error| ConfigFailure::Damaged {
-            path: store.path.clone(),
-            detail: error.to_string(),
-        })?;
-        if config.version > CONFIG_VERSION {
-            return Err(ConfigFailure::TooNew {
-                found: config.version,
-                supported: CONFIG_VERSION,
-            });
-        }
+        let text = Self::read_text(&store.path)?;
+        let (config, migrated) = Self::decode(&store.path, &text)?;
 
-        // A leftover residue from an interrupted save is resolved now, before
-        // the next write could hide it.
-        let outcome =
+        // Resolve interrupted evidence before a migration writes the v2 shape.
+        let recovered =
             atomic::recover_interrupted_write(&store.path).map_err(|source| ConfigFailure::Io {
                 path: store.path.clone(),
                 source,
             })?;
+        let migration = migrated.then(|| store.write(&config)).transpose()?;
         Ok((
             store,
             ConfigSnapshot {
                 config,
-                recovery_evidence: outcome.recovery_evidence,
+                recovery_evidence: recovered
+                    .recovery_evidence
+                    .or_else(|| migration.and_then(|outcome| outcome.recovery_evidence)),
             },
         ))
     }
@@ -351,22 +648,40 @@ impl ConfigStore {
             ConfigChange::SetPaper(mode) => {
                 snapshot.config.appearance.paper = mode;
             }
-            ConfigChange::SetTextSize(px) => {
-                snapshot.config.appearance.text_size = px;
+            ConfigChange::SetTypography(typography) => {
+                snapshot.config.appearance.typography = typography;
             }
-            ConfigChange::SetLineHeight(pct) => {
-                snapshot.config.appearance.line_height = pct;
-            }
-            ConfigChange::SetFontFamily { slot, family } => {
-                let fonts = &mut snapshot.config.appearance.fonts;
-                match slot {
-                    FontSlot::Latin => fonts.latin = family,
-                    FontSlot::Chinese => fonts.chinese = family,
-                    FontSlot::Japanese => fonts.japanese = family,
+            ConfigChange::SaveTypographyPreset(name) => {
+                let name = name.trim().to_string();
+                let typography = snapshot.config.appearance.typography.clone();
+                match snapshot
+                    .config
+                    .appearance
+                    .typography_presets
+                    .iter_mut()
+                    .find(|existing| existing.name.eq_ignore_ascii_case(&name))
+                {
+                    Some(existing) => {
+                        existing.name = name;
+                        existing.typography = typography;
+                    }
+                    None => snapshot
+                        .config
+                        .appearance
+                        .typography_presets
+                        .push(TypographyPreset {
+                            id: Id::new(),
+                            name,
+                            typography,
+                        }),
                 }
             }
-            ConfigChange::SetFontPriority(priority) => {
-                snapshot.config.appearance.fonts.priority = priority;
+            ConfigChange::RemoveTypographyPreset(id) => {
+                snapshot
+                    .config
+                    .appearance
+                    .typography_presets
+                    .retain(|preset| preset.id != id);
             }
             ConfigChange::SetIconDigest(digest) => {
                 snapshot.config.appearance.icon_digest = digest;
@@ -378,10 +693,7 @@ impl ConfigStore {
                 snapshot.config.appearance.icon_digest = defaults.icon_digest;
             }
             ConfigChange::ResetTypography => {
-                let defaults = AppearanceConfig::default();
-                snapshot.config.appearance.fonts = defaults.fonts;
-                snapshot.config.appearance.text_size = defaults.text_size;
-                snapshot.config.appearance.line_height = defaults.line_height;
+                snapshot.config.appearance.typography = TypographyConfig::default();
             }
             ConfigChange::RestoreAppearance(appearance) => {
                 snapshot.config.appearance = appearance;
@@ -418,6 +730,11 @@ impl ConfigStore {
                 snapshot.config.agents.retain(|existing| existing.id != id);
             }
         }
+        snapshot.config.version = CONFIG_VERSION;
+        snapshot
+            .config
+            .validate()
+            .map_err(|detail| ConfigFailure::Invalid { detail })?;
         let outcome = self.write(&snapshot.config)?;
         snapshot.recovery_evidence = outcome.recovery_evidence;
         Ok(snapshot)
@@ -427,31 +744,72 @@ impl ConfigStore {
     /// Config edited on disk between load and save is not silently flattened:
     /// a damaged or newer on-disk file stops the apply, it is not "repaired".
     fn current(path: &Path) -> Result<ConfigSnapshot, ConfigFailure> {
-        let bytes = std::fs::read(path).map_err(|source| ConfigFailure::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        let text = String::from_utf8(bytes).map_err(|error| ConfigFailure::Damaged {
-            path: path.to_path_buf(),
-            detail: format!("not valid UTF-8: {error}"),
-        })?;
-        let config: Config = toml::from_str(&text).map_err(|error| ConfigFailure::Damaged {
-            path: path.to_path_buf(),
-            detail: error.to_string(),
-        })?;
-        if config.version > CONFIG_VERSION {
-            return Err(ConfigFailure::TooNew {
-                found: config.version,
-                supported: CONFIG_VERSION,
-            });
-        }
+        let text = Self::read_text(path)?;
+        let (config, _) = Self::decode(path, &text)?;
         Ok(ConfigSnapshot {
             config,
             recovery_evidence: None,
         })
     }
 
+    fn read_text(path: &Path) -> Result<String, ConfigFailure> {
+        let bytes = std::fs::read(path).map_err(|source| ConfigFailure::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        String::from_utf8(bytes).map_err(|error| ConfigFailure::Damaged {
+            path: path.to_path_buf(),
+            detail: format!("not valid UTF-8: {error}"),
+        })
+    }
+
+    fn decode(path: &Path, text: &str) -> Result<(Config, bool), ConfigFailure> {
+        let probe: VersionProbe = toml::from_str(text).map_err(|error| ConfigFailure::Damaged {
+            path: path.to_path_buf(),
+            detail: error.to_string(),
+        })?;
+        if probe.version > CONFIG_VERSION {
+            return Err(ConfigFailure::TooNew {
+                found: probe.version,
+                supported: CONFIG_VERSION,
+            });
+        }
+
+        let (config, migrated) = match probe.version {
+            1 => (
+                toml::from_str::<ConfigV1>(text)
+                    .map_err(|error| ConfigFailure::Damaged {
+                        path: path.to_path_buf(),
+                        detail: error.to_string(),
+                    })?
+                    .migrate(),
+                true,
+            ),
+            CONFIG_VERSION => (
+                toml::from_str::<Config>(text).map_err(|error| ConfigFailure::Damaged {
+                    path: path.to_path_buf(),
+                    detail: error.to_string(),
+                })?,
+                false,
+            ),
+            version => {
+                return Err(ConfigFailure::Damaged {
+                    path: path.to_path_buf(),
+                    detail: format!("unsupported Config version {version}"),
+                });
+            }
+        };
+        config.validate().map_err(|detail| ConfigFailure::Damaged {
+            path: path.to_path_buf(),
+            detail,
+        })?;
+        Ok((config, migrated))
+    }
+
     fn write(&self, config: &Config) -> Result<atomic::AtomicOutcome, ConfigFailure> {
+        config
+            .validate()
+            .map_err(|detail| ConfigFailure::Invalid { detail })?;
         let text = toml::to_string(config).map_err(|error| ConfigFailure::Damaged {
             path: self.path.clone(),
             detail: format!("the effective Config cannot be serialised: {error}"),

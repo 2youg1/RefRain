@@ -137,7 +137,6 @@ export function mountEditor(
       // A block that renders empty collapses to zero height; the author must
       // still be able to click into it.
       paragraph.style.minHeight = "1em";
-      paragraph.style.margin = "0 0 1em";
       paragraph.style.whiteSpace = "pre-wrap";
       paragraph.style.outline = "none";
       element.append(paragraph);
