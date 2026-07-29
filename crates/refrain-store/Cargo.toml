@@ -11,6 +11,10 @@ description = "Sole persistence authority: app.db, refrain.db, atomic writes, Ro
 [dependencies]
 refrain-core = { workspace = true }
 ignore = { workspace = true }
+image = { workspace = true }
+resvg = { workspace = true }
+tiny-skia = { workspace = true }
+usvg = { workspace = true }
 memchr = { workspace = true }
 rayon = { workspace = true }
 rusqlite = { workspace = true }

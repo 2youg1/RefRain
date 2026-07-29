@@ -18,6 +18,7 @@ import {
   type ProjectOpenedDto,
 } from "../generated/bindings.gen";
 import ConflictDialog from "./ConflictDialog.vue";
+import IconPicker from "./IconPicker.vue";
 import KaraSurface from "./KaraSurface.vue";
 import { useKara } from "./kara-state";
 import { pickDocumentFile, pickProjectFolder, pickProjectParent } from "./pick";
@@ -239,6 +240,7 @@ const onKeydown = (event: KeyboardEvent): void => {
             </button>
           </li>
         </ul>
+        <IconPicker />
         <ThemePicker @picked="(slug: string) => $emit('theme-changed', slug)" />
       </nav>
 

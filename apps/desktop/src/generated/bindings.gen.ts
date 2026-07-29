@@ -52,6 +52,16 @@ export const commands = {
 	updatePreferences: (change: PreferencesChangeDto) => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("update_preferences", { change })),
 	/**  The generated theme list, for the Settings picker. */
 	listThemes: () => __TAURI_INVOKE<ThemeInfoDto[]>("list_themes"),
+	/**
+	 *  Pick an icon for the Universal Button. The pipeline judges by content
+	 *  (SPEC 9.8); the digest is all the Config ever stores.
+	 */
+	setUniversalIcon: (bytes: number[]) => typedError<string, RefrainError>(__TAURI_INVOKE("set_universal_icon", { bytes })),
+	/**
+	 *  The stored icon, for the data-URL projection. Absent is a value, not an
+	 *  empty string (INV-3's discipline).
+	 */
+	universalIcon: () => __TAURI_INVOKE<number[] | null>("universal_icon"),
 };
 
 /* Types */
@@ -78,6 +88,12 @@ export type AppearanceConfig = {
 	 */
 	theme: string,
 	fonts?: FontConfig,
+	/**
+	 *  The Universal Button icon, by content digest (SPEC 9.8). The asset
+	 *  named by this digest lives in the application data assets directory;
+	 *  the Config never stores the image itself.
+	 */
+	icon_digest?: string | null,
 };
 
 /**
