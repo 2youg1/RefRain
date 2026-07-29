@@ -172,7 +172,17 @@ const run = async (): Promise<void> => {
     capabilities: {
       alwaysMatch: {
         browserName: "webview2",
-        "ms:edgeOptions": { args: ["--enable-logging=stderr", "--v=0"] },
+        "ms:edgeOptions": {
+          // CI runners have no GPU-backed desktop; without these the WebView2
+          // browser process dies before it opens its devtools port.
+          args: [
+            "--enable-logging=stderr",
+            "--v=0",
+            "--disable-gpu",
+            "--no-first-run",
+            "--disable-extensions",
+          ],
+        },
         "tauri:options": { application: exe.replaceAll("/", "\\") },
       },
     },

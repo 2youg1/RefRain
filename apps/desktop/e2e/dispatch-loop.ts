@@ -120,7 +120,11 @@ const caps = () => ({
   capabilities: {
     alwaysMatch: {
       browserName: "webview2",
-      "ms:edgeOptions": {},
+      "ms:edgeOptions": {
+        // CI runners have no GPU-backed desktop; without these the WebView2
+        // browser process dies before it opens its devtools port.
+        args: ["--disable-gpu", "--no-first-run", "--disable-extensions"],
+      },
       "tauri:options": { application: exe.replaceAll("/", "\\") },
     },
   },
@@ -137,6 +141,7 @@ const start = async (): Promise<void> => {
       env: { ...process.env, REFRAIN_DATA_DIR: dataDir },
     },
   );
+  driver.stderr?.on("data", (chunk: Buffer) => process.stderr.write(`[tauri-driver] ${chunk}`));
   await waitFor("tauri-driver to listen", async () => {
     try {
       await fetch(`${base}/status`);
