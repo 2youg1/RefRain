@@ -12,10 +12,15 @@
   --serif: "Chiron Sung HK", "Shippori Mincho", serif;
   --mono: "Courier Prime", ui-monospace, monospace;
   --display: "Antic Didone", "Chiron Sung HK", serif;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 * {
   box-sizing: border-box;
+}
+
+::selection {
+  background: var(--seal-wash);
 }
 
 body {
@@ -95,11 +100,11 @@ code {
 
 @media (prefers-reduced-motion: reduce) {
   *,
-  /* biome-ignore lint/complexity/noImportantStyles: reduced-motion must win over every component transition. */
   *::before,
-  /* biome-ignore lint/complexity/noImportantStyles: reduced-motion must win over every component transition. */
   *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: reduced-motion must win over every component transition. */
     transition-duration: 0.01ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: reduced-motion must win over every component transition. */
     animation-duration: 0.01ms !important;
   }
 }

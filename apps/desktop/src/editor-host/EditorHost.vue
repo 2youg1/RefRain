@@ -145,10 +145,44 @@ defineExpose({
 </script>
 
 <template>
-  <div ref="host" class="editor-host" data-testid="editor-host" />
+  <div class="editor-wrap">
+    <div ref="host" class="editor-host" data-testid="editor-host" />
+    <div class="hashira" aria-hidden="true">{{ path }}</div>
+  </div>
 </template>
 
 <style>
+.editor-wrap {
+  position: relative;
+}
+
+/* 柱（hashira）：和装本的书脊题名，竖写细墨，只在有边缘的纸面档出现。 */
+.hashira {
+  display: none;
+  position: fixed;
+  top: 84px;
+  right: calc(50% - 354px);
+  writing-mode: vertical-rl;
+  font-family: var(--serif);
+  font-size: 12px;
+  letter-spacing: 0.34em;
+  color: var(--ink-ghost);
+  user-select: none;
+  pointer-events: none;
+}
+
+:root[data-paper="hairline"] .hashira,
+:root:not([data-paper]) .hashira,
+:root[data-paper="paper"] .hashira {
+  display: block;
+}
+
+@media (max-width: 780px) {
+  .hashira {
+    display: none;
+  }
+}
+
 /* 版心三档（SPEC 9.8，data-paper 由 App.vue 从 Config 投影）：
  * 无 —— Web 模式，无边缘，只留文字下的行线；
  * 细边 —— 默认，发丝边界，无影；
@@ -172,7 +206,8 @@ defineExpose({
   background: var(--sheet);
   border-left: 1px solid var(--rule);
   border-right: 1px solid var(--rule);
-  min-height: 100vh;
+  margin-top: 28px;
+  min-height: calc(100vh - 28px);
 }
 
 :root[data-paper="paper"] .editor-host {

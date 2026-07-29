@@ -6,6 +6,7 @@
 // Rust confirms → save → close/reopen → conflict → recovery. State the Rust
 // side already owns is projected here; nothing is re-derived (INV-10).
 
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { describe, unwrap } from "../bridge";
 // biome-ignore lint/style/useImportType: the component renders — a type-only import unmounts it.
@@ -70,11 +71,71 @@ const wake = (event: PointerEvent): void => {
   }
 };
 
-onMounted(() => window.addEventListener("pointermove", wake, { passive: true }));
+onMounted(() => {
+  window.addEventListener("pointermove", wake, { passive: true });
+  void (async () => {
+    const factor = await getCurrentWindow().scaleFactor();
+    unlistenDrop = await getCurrentWindow().onDragDropEvent((event) => {
+      const payload = event.payload;
+      if (payload.type === "enter" || payload.type === "over") {
+        const { x, y } = payload.position;
+        dropTarget.value = shelfAt(x / factor, y / factor) ?? "stage";
+      } else if (payload.type === "drop") {
+        const { x, y } = payload.position;
+        void onDropped(event.payload.paths, shelfAt(x / factor, y / factor));
+        dropTarget.value = null;
+      } else {
+        dropTarget.value = null;
+      }
+    });
+  })();
+});
 onUnmounted(() => {
   window.removeEventListener("pointermove", wake);
+  unlistenDrop?.();
   if (idleTimer !== null) window.clearTimeout(idleTimer);
 });
+
+/** Writing is the signal to clear the desk: any contact with the stage
+ * sends the drawer home. The rail never moves the manuscript — it is an
+ * overlay, so the column holds its centre in the window at all times. */
+const recedeRail = (): void => {
+  if (!chromePinned()) railReceded.value = true;
+};
+
+// ── Drag-drop import (C12.6) ─────────────────────────────────────────────
+// Text (.md/.txt) becomes a chapter; every other format becomes a Material
+// (the manuscript editor is Markdown-only anyway). Dropping on a shelf pins
+// the intent: 原稿 = 修改稿, 资料 = 解析链接.
+const MANUSCRIPT_EXT = /\.(md|markdown|mdown|txt)$/i;
+const dropTarget = ref<"manuscript" | "material" | "stage" | null>(null);
+let unlistenDrop: (() => void) | null = null;
+
+const shelfAt = (x: number, y: number): "manuscript" | "material" | null => {
+  const shelf = document.elementFromPoint(x, y)?.closest("[data-shelf]");
+  const zone = shelf?.getAttribute("data-shelf");
+  return zone === "manuscript" || zone === "material" ? zone : null;
+};
+
+const onDropped = async (
+  paths: string[],
+  zone: "manuscript" | "material" | null,
+): Promise<void> => {
+  if (!project.value) return;
+  for (const source of paths) {
+    const asManuscript =
+      zone === "manuscript" || (zone !== "material" && MANUSCRIPT_EXT.test(source));
+    try {
+      const row = asManuscript
+        ? await unwrap(commands.importManuscript(project.value.rootId, source))
+        : await unwrap(commands.importMaterial(project.value.rootId, source));
+      onMaterialSaved(row);
+      notice.value = asManuscript ? "已收入原稿" : "已收入资料";
+    } catch (error) {
+      fail(error);
+    }
+  }
+};
 
 /** The caret as a ReturnPoint: block id, offset, and the sentence tail the
  * return card shows (SPEC 9.3 "你停在这里"). */
@@ -230,8 +291,13 @@ const save = async (): Promise<void> => {
       }
     } else {
       saveState.value = { kind: "failed", reason: "磁盘上的版本已经变了" };
+      // The author's side is the confirmed session text, not the blocks the
+      // document was opened with — confirmed edits since then are theirs too.
+      const session = await unwrap(
+        commands.currentDocument(project.value.rootId, active.value.document.path),
+      );
       conflict.value = {
-        mine: active.value.blocks.map((block) => block.text).join("\n\n"),
+        mine: session.blocks.map((block) => block.text).join("\n\n"),
         theirs: outcome.value.onDisk,
         stamp: outcome.value.stamp,
       };
@@ -316,9 +382,8 @@ const onKeydown = (event: KeyboardEvent): void => {
         aria-hidden="true"
       ></div>
       <nav
-        v-show="!kara.engaged.value"
         class="rail"
-        :class="{ receded: railReceded }"
+        :class="{ receded: railReceded || kara.engaged.value }"
         aria-label="文档"
       >
         <div class="brand"><span class="brand-mark"></span><span class="brand-word">RefRain</span></div>
@@ -327,19 +392,24 @@ const onKeydown = (event: KeyboardEvent): void => {
           <button type="button" @click="newDocument('material')">新资料</button>
           <button type="button" @click="importMaterial">导入</button>
         </div>
-        <div class="rail-group">原稿</div>
-        <ul>
-          <li v-for="row in chapterDocs" :key="row.id">
-            <button
-              type="button"
-              :class="{ current: active?.document.path === row.path }"
-              @click="select(row.path)"
-            >
-              {{ row.path }}
-            </button>
-          </li>
-        </ul>
-        <template v-if="materialRows.length > 0">
+        <div class="shelf" data-shelf="manuscript">
+          <div class="rail-group">原稿</div>
+          <ul>
+            <li v-for="row in chapterDocs" :key="row.id">
+              <button
+                type="button"
+                :class="{ current: active?.document.path === row.path }"
+                @click="select(row.path)"
+              >
+                {{ row.path }}
+              </button>
+            </li>
+          </ul>
+          <div v-if="dropTarget" class="drop-hint" :class="{ hot: dropTarget === 'manuscript' }">
+            修改稿
+          </div>
+        </div>
+        <div v-if="materialRows.length > 0 || dropTarget" class="shelf" data-shelf="material">
           <div class="rail-group">资料</div>
           <ul>
             <li v-for="row in materialRows" :key="row.id">
@@ -352,7 +422,10 @@ const onKeydown = (event: KeyboardEvent): void => {
               </button>
             </li>
           </ul>
-        </template>
+          <div v-if="dropTarget" class="drop-hint" :class="{ hot: dropTarget === 'material' }">
+            资料
+          </div>
+        </div>
         <div class="rail-foot">
           <button v-if="active" type="button" @click="reviewing = !reviewing">
             {{ reviewing ? "返回编辑" : "Review" }}
@@ -369,7 +442,7 @@ const onKeydown = (event: KeyboardEvent): void => {
         </div>
       </nav>
 
-      <main class="stage">
+      <main class="stage" @pointerdown="recedeRail">
         <p v-if="notice" class="notice">{{ notice }}</p>
         <ReviewSurface
           v-if="reviewing && active"
@@ -382,6 +455,7 @@ const onKeydown = (event: KeyboardEvent): void => {
           <EditorHost
             v-if="!reviewing"
             ref="editor"
+            :key="active.document.path"
             :root-id="project.rootId"
             :path="active.document.path"
             :document="active"
@@ -417,7 +491,11 @@ const onKeydown = (event: KeyboardEvent): void => {
         <p v-else class="empty">从左侧选一个文档，或新建一章。</p>
       </main>
 
-      <StatusLine v-show="!kara.engaged.value" :state="saveState" :path="active?.document.path ?? null" />
+      <StatusLine
+        :class="{ dimmed: kara.engaged.value }"
+        :state="saveState"
+        :path="active?.document.path ?? null"
+      />
       <KaraSurface v-if="kara.engaged.value" />
       <ConflictDialog
         v-if="conflict"
@@ -431,66 +509,105 @@ const onKeydown = (event: KeyboardEvent): void => {
 
 <style>
 .workbench {
-  display: grid;
-  grid-template-columns: auto 1fr;
   min-height: 100vh;
 }
 
 /* ── 欢迎屏 ── */
 .welcome {
-  grid-column: 1 / -1;
-  align-self: center;
-  justify-self: center;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
 }
 
 .welcome-brand {
   font-family: var(--display);
-  font-size: 44px;
+  font-size: 64px;
   font-weight: 400;
-  letter-spacing: 0.18em;
-  margin: 0 0 10px;
+  letter-spacing: 0.2em;
+  margin: 0 0 14px;
+}
+
+.welcome-brand::after {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--seal);
+  margin-left: 14px;
 }
 
 .welcome-tag {
   font-family: var(--serif);
+  font-size: 15px;
   color: var(--ink-soft);
-  margin: 0 0 30px;
+  margin: 0 0 42px;
 }
 
 .welcome-open {
   font-size: 15px;
-  padding: 9px 34px;
+  padding: 10px 36px;
+  letter-spacing: 0.12em;
 }
 
 .secondary {
-  margin-top: 14px;
+  margin-top: 22px;
   display: flex;
-  gap: 12px;
+  gap: 28px;
   justify-content: center;
 }
 
-/* ── Rail：房间。深配重，工具先可见，静止后分层退场。 ── */
+.secondary button {
+  border: none;
+  padding: 4px 2px;
+  color: var(--ink-soft);
+  text-decoration: underline;
+  text-underline-offset: 5px;
+  text-decoration-color: color-mix(in oklab, var(--ink) 30%, transparent);
+}
+
+.secondary button:hover:not(:disabled) {
+  background: none;
+  color: var(--ink);
+  text-decoration-color: var(--seal);
+}
+
+/* ── Rail：抽屉。覆盖于桌面之上，版心永远居中、永不横移。 ── */
 .rail {
-  width: 232px;
-  max-height: 100vh;
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 20;
+  width: 264px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  padding: 14px 10px 40px; /* the fixed status line owns the bottom 26px */
+  padding: 18px 12px 40px;
   background: var(--rail);
   color: var(--rail-ink);
   border-right: 1px solid var(--rail-rule);
+  box-shadow: 24px 0 48px color-mix(in oklab, var(--ink) 14%, transparent);
   font-size: 13px;
+  visibility: visible;
   transition:
-    transform 200ms ease,
-    opacity 200ms ease;
+    transform 240ms var(--ease),
+    opacity 240ms var(--ease),
+    visibility 0s;
 }
 
 .rail.receded {
-  transform: translateX(-104%);
+  transform: translateX(-102%);
   opacity: 0;
   pointer-events: none;
+  visibility: hidden;
+  transition:
+    transform 240ms var(--ease),
+    opacity 240ms var(--ease),
+    visibility 0s 240ms;
 }
 
 .rail-strip {
@@ -506,8 +623,8 @@ const onKeydown = (event: KeyboardEvent): void => {
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 2px 8px 14px;
+  gap: 9px;
+  padding: 2px 10px 18px;
 }
 
 .brand-mark {
@@ -520,14 +637,15 @@ const onKeydown = (event: KeyboardEvent): void => {
 
 .brand-word {
   font-family: var(--display);
-  font-size: 15px;
-  letter-spacing: 0.14em;
+  font-size: 16px;
+  letter-spacing: 0.22em;
 }
 
 .rail-actions {
   display: flex;
-  gap: 6px;
-  padding: 0 2px 10px;
+  flex-direction: column;
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--rail-rule);
 }
 
 .rail button {
@@ -537,13 +655,24 @@ const onKeydown = (event: KeyboardEvent): void => {
   font-size: 12.5px;
 }
 
+/* Rail 内的动作不作盒：整行文字条目，hover 只给洗底（1.6 展开式）。 */
+.rail-actions button,
+.rail-foot button {
+  border: none;
+  border-radius: 0;
+  text-align: left;
+  padding: 6px 10px;
+  color: var(--rail-ink);
+}
+
 .rail button:hover:not(:disabled) {
   border-color: color-mix(in oklab, var(--rail-ink) 48%, transparent);
   background: color-mix(in oklab, var(--rail-ink) 9%, transparent);
 }
 
-.rail-actions button {
-  flex: 1;
+.rail-actions button:hover:not(:disabled),
+.rail-foot button:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--rail-ink) 9%, transparent);
 }
 
 .rail ul {
@@ -554,11 +683,28 @@ const onKeydown = (event: KeyboardEvent): void => {
 
 .rail-group {
   font-size: 10px;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.24em;
   color: var(--rail-faint);
-  padding: 4px 10px 4px;
+  padding: 10px 10px 4px;
 }
 
+.drop-hint {
+  margin: 6px 4px;
+  border: 1px dashed color-mix(in oklab, var(--rail-ink) 45%, transparent);
+  border-radius: 3px;
+  padding: 10px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--rail-faint);
+}
+
+.drop-hint.hot {
+  border-color: var(--seal);
+  color: var(--seal);
+  background: color-mix(in oklab, var(--seal) 12%, transparent);
+}
+
+/* 文档条目是标题，不是文件行：明朝体 + 印色竖线。 */
 .rail li button {
   display: block;
   width: 100%;
@@ -566,7 +712,9 @@ const onKeydown = (event: KeyboardEvent): void => {
   border: none;
   border-left: 2px solid transparent;
   border-radius: 0;
-  padding: 5px 8px 5px 10px;
+  padding: 7px 10px 7px 12px;
+  font-family: var(--serif);
+  font-size: 14px;
   color: var(--rail-faint);
   white-space: nowrap;
   overflow: hidden;
@@ -586,27 +734,42 @@ const onKeydown = (event: KeyboardEvent): void => {
 
 .rail-foot {
   margin-top: auto;
-  padding-top: 10px;
+  padding-top: 8px;
   border-top: 1px solid var(--rail-rule);
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
 }
 
-/* ── Stage：桌面。平纸，无光效；版心由 EditorHost 的纸面档绘制。 ── */
+/* ── Stage：桌面。平纸，占满窗口；面板浮于其上。 ── */
 .stage {
+  position: relative;
   min-width: 0;
+  min-height: 100vh;
   background: var(--paper);
 }
 
 .stage-row {
-  display: flex;
-  align-items: stretch;
+  min-height: 100vh;
 }
 
-.stage-row > :first-child {
-  flex: 1;
-  min-width: 0;
+/* 浮纸面板：派发/设置/连接。右侧滑入，不挤压版心。 */
+.stage-row > :is(.dispatch, .settings, .connections) {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 10;
+  width: 400px;
+  max-width: 48vw;
+  box-shadow: -20px 0 44px color-mix(in oklab, var(--ink) 10%, transparent);
+  animation: panel-in 240ms var(--ease);
+}
+
+@keyframes panel-in {
+  from {
+    transform: translateX(32px);
+    opacity: 0;
+  }
 }
 
 .notice {
@@ -616,7 +779,12 @@ const onKeydown = (event: KeyboardEvent): void => {
 }
 
 .empty {
-  padding: 48px 24px;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 20vh 24px 0;
+  text-align: center;
+  font-family: var(--serif);
+  font-size: 15px;
   color: var(--ink-faint);
 }
 </style>

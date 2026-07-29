@@ -166,6 +166,12 @@ export const commands = {
 	 *  the projected text. The manuscript editor stays Markdown-only.
 	 */
 	importMaterial: (rootId: string, sourcePath: string) => typedError<DocumentRow, RefrainError>(__TAURI_INVOKE("import_material", { rootId, sourcePath })),
+	/**
+	 *  Import one dropped text file (.md / .markdown / .txt) as a manuscript
+	 *  chapter. The source is only read — it never moves (KL9: 源文件永远不动);
+	 *  the chapter's own bytes are what the project edits from now on.
+	 */
+	importManuscript: (rootId: string, sourcePath: string) => typedError<DocumentRow, RefrainError>(__TAURI_INVOKE("import_manuscript", { rootId, sourcePath })),
 };
 
 /* Types */

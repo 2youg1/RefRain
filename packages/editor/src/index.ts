@@ -126,7 +126,10 @@ export function mountEditor(
   const render = (next: readonly Block[]): void => {
     element.textContent = "";
     byId.clear();
-    for (const block of next) {
+    // An empty document still needs somewhere to put the caret: one seed
+    // paragraph whose first settled text becomes an insert action.
+    const shown = next.length === 0 ? [{ id: "", text: "" }] : next;
+    for (const block of shown) {
       const paragraph = element.ownerDocument.createElement(BLOCK_TAG);
       paragraph.dataset.blockId = block.id;
       paragraph.contentEditable = "true";
@@ -155,8 +158,23 @@ export function mountEditor(
 
   const settleBlock = (id: string): void => {
     const paragraph = byId.get(id);
+    if (!paragraph) return;
+    if (id === "") {
+      // The seed paragraph of an empty document: its text is an insertion,
+      // not a replacement — there is no block to replace yet.
+      const seed = paragraph.textContent ?? "";
+      if (seed === "") return;
+      submit([{ kind: "insert", before: null, texts: [seed] }]);
+      const minted = blocks.at(-1);
+      if (minted !== undefined) {
+        paragraph.dataset.blockId = minted.id;
+        byId.delete("");
+        byId.set(minted.id, paragraph);
+      }
+      return;
+    }
     const block = known(id);
-    if (!paragraph || !block) return;
+    if (!block) return;
     const current = paragraph.textContent ?? "";
     if (current === block.text) return;
     submit([{ kind: "replace", blocks: [id], text: current === "" ? null : current }]);

@@ -31,7 +31,7 @@ if (!exe) {
   process.exit(2);
 }
 
-const DRIVER_PORT = 4444;
+const DRIVER_PORT = Number(process.env.REFRAIN_E2E_PORT ?? 4444);
 const fixture = mkdtempSync(join(tmpdir(), "refrain-dispatch-"));
 const dataDir = mkdtempSync(join(tmpdir(), "refrain-dispatch-data-"));
 const fixtureBin = mkdtempSync(join(tmpdir(), "refrain-dispatch-bin-"));
@@ -159,7 +159,14 @@ let driver: ChildProcess | null = null;
 const start = async (): Promise<void> => {
   driver = spawn(
     "tauri-driver",
-    ["--native-driver", process.env.REFRAIN_MSEDGEDRIVER ?? "msedgedriver"],
+    [
+      "--native-driver",
+      process.env.REFRAIN_MSEDGEDRIVER ?? "msedgedriver",
+      "--port",
+      String(DRIVER_PORT),
+      "--native-port",
+      String(DRIVER_PORT + 100),
+    ],
     {
       stdio: ["ignore", "ignore", "pipe"],
       env: {
