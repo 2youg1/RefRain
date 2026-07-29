@@ -207,7 +207,7 @@ defineExpose({
   border-left: 1px solid var(--rule);
   border-right: 1px solid var(--rule);
   margin-top: 28px;
-  min-height: calc(100vh - 28px);
+  min-height: calc(100vh - var(--chrome-height) - var(--status-height) - 28px);
 }
 
 :root[data-paper="paper"] .editor-host {
@@ -215,7 +215,7 @@ defineExpose({
   border: 1px solid var(--rule);
   border-radius: 2px;
   margin: 28px auto;
-  min-height: calc(100vh - 56px);
+  min-height: calc(100vh - var(--chrome-height) - var(--status-height) - 56px);
   box-shadow:
     0 1px 2px color-mix(in oklab, var(--ink) 6%, transparent),
     0 14px 36px color-mix(in oklab, var(--ink) 9%, transparent);

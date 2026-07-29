@@ -29,6 +29,15 @@ tauri-plugin-dialog = "=2.7.2"
 tauri-specta = { workspace = true }
 uuid = { workspace = true }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "=0.61.3", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+] }
+
+[dev-dependencies]
+image = { workspace = true }
+
 [features]
 # Generation runs as a test so it needs no extra binary and no network.
 generate-bindings = []

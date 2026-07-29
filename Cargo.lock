@@ -3424,6 +3424,7 @@ dependencies = [
 name = "refrain-desktop"
 version = "0.2.0"
 dependencies = [
+ "image",
  "refrain-core",
  "refrain-host",
  "refrain-store",
@@ -3438,6 +3439,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-specta",
  "uuid",
+ "windows 0.61.3",
 ]
 
 [[package]]

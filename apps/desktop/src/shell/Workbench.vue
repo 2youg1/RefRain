@@ -23,10 +23,12 @@ import ConnectionsSurface from "./ConnectionsSurface.vue";
 import DispatchSurface from "./DispatchSurface.vue";
 import KaraSurface from "./KaraSurface.vue";
 import { useKara } from "./kara-state";
+import LogoMark from "./LogoMark.vue";
 import { pickDocumentFile, pickProjectFolder, pickProjectParent } from "./pick";
 import ReviewSurface from "./ReviewSurface.vue";
 import SettingsSurface from "./SettingsSurface.vue";
 import StatusLine from "./StatusLine.vue";
+import WindowChrome from "./WindowChrome.vue";
 
 type SaveState =
   | { kind: "clean" }
@@ -387,6 +389,21 @@ const markDirty = (): void => {
   trackReturnPoint();
 };
 
+const canClose = (): boolean => {
+  if (saveState.value.kind === "clean" || !active.value) return true;
+  notice.value = "正文尚未保存。请先保存，再关闭窗口。";
+  return false;
+};
+
+const requestClose = (): void => {
+  if (!canClose()) return;
+  void getCurrentWindow()
+    .destroy()
+    .catch((error: unknown) => {
+      notice.value = describe(error);
+    });
+};
+
 const onKeydown = (event: KeyboardEvent): void => {
   if ((event.ctrlKey || event.metaKey) && event.key === "s") {
     event.preventDefault();
@@ -409,8 +426,14 @@ const onKeydown = (event: KeyboardEvent): void => {
 
 <template>
   <div class="workbench" @keydown="onKeydown">
+    <WindowChrome
+      :title="active?.document.path ?? 'RefRain'"
+      @close-requested="requestClose"
+      @error="(message) => (notice = message)"
+    />
     <template v-if="!project">
       <section class="welcome">
+        <LogoMark class="welcome-mark" :size="64" />
         <h1 class="welcome-brand">RefRain</h1>
         <p class="welcome-tag">一个本地写作工作台。你写的每一个字都在磁盘上。</p>
         <button class="primary welcome-open" type="button" @click="openProjectFolder">打开文件夹</button>
@@ -433,7 +456,17 @@ const onKeydown = (event: KeyboardEvent): void => {
         :class="{ receded: railReceded || kara.engaged.value }"
         aria-label="文档"
       >
-        <div class="brand" role="button" tabindex="0" title="收起 / 展开" @click="railReceded = !railReceded" @keydown.enter="railReceded = !railReceded"><span class="brand-mark"></span><span class="brand-word">RefRain</span></div>
+        <div
+          class="brand"
+          role="button"
+          tabindex="0"
+          title="收起 / 展开"
+          aria-label="收起或展开文档栏"
+          @click="railReceded = !railReceded"
+          @keydown.enter="railReceded = !railReceded"
+        >
+          <LogoMark :size="28" label="RefRain" />
+        </div>
         <div class="rail-actions">
           <button type="button" @click="newDocument('chapter')">新章</button>
           <button type="button" @click="newDocument('material')">新资料</button>
@@ -570,17 +603,25 @@ const onKeydown = (event: KeyboardEvent): void => {
 
 <style>
 .workbench {
+  --chrome-height: 38px;
+  --status-height: 26px;
   min-height: 100vh;
+  padding-top: var(--chrome-height);
 }
 
 /* ── 欢迎屏 ── */
 .welcome {
-  min-height: 100vh;
+  min-height: calc(100vh - var(--chrome-height));
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   text-align: center;
+}
+
+.welcome-mark {
+  margin-bottom: 18px;
+  color: var(--ink);
 }
 
 .welcome-brand {
@@ -591,15 +632,6 @@ const onKeydown = (event: KeyboardEvent): void => {
   margin: 0 0 14px;
 }
 
-.welcome-brand::after {
-  content: "";
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
-  background: var(--seal);
-  margin-left: 14px;
-}
 
 .welcome-tag {
   font-family: var(--serif);
@@ -640,8 +672,8 @@ const onKeydown = (event: KeyboardEvent): void => {
 .rail {
   position: fixed;
   left: 0;
-  top: 0;
-  bottom: 0;
+  top: var(--chrome-height);
+  bottom: var(--status-height);
   z-index: 20;
   width: 264px;
   overflow-y: auto;
@@ -674,8 +706,8 @@ const onKeydown = (event: KeyboardEvent): void => {
 .rail-strip {
   position: fixed;
   left: 0;
-  top: 0;
-  bottom: 0;
+  top: var(--chrome-height);
+  bottom: var(--status-height);
   width: 6px;
   background: color-mix(in oklab, var(--rail) 55%, transparent);
   z-index: 5;
@@ -690,19 +722,6 @@ const onKeydown = (event: KeyboardEvent): void => {
   user-select: none;
 }
 
-.brand-mark {
-  width: 10px;
-  height: 10px;
-  border-radius: 2.5px;
-  background: var(--seal);
-  flex: none;
-}
-
-.brand-word {
-  font-family: var(--display);
-  font-size: 16px;
-  letter-spacing: 0.22em;
-}
 
 .rail-actions {
   display: flex;
@@ -806,13 +825,15 @@ const onKeydown = (event: KeyboardEvent): void => {
 /* ── Stage：桌面。平纸，占满窗口；面板浮于其上。 ── */
 .stage {
   position: relative;
+  display: flow-root;
   min-width: 0;
-  min-height: 100vh;
+  min-height: calc(100vh - var(--chrome-height) - var(--status-height));
   background: var(--paper);
 }
 
 .stage-row {
-  min-height: 100vh;
+  display: flow-root;
+  min-height: calc(100vh - var(--chrome-height) - var(--status-height));
 }
 
 /* 浮纸面板：派发/设置/连接。右侧滑入，不挤压版心。 */

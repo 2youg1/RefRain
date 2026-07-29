@@ -21,6 +21,8 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["verify:no-spec-upload", ["bun", "scripts/verify-no-spec-upload.ts"]],
   ["verify:no-network", ["bun", "scripts/verify-no-network.ts"]],
   ["verify:bridge", ["bun", "scripts/verify-bridge.ts"]],
+  ["verify:logo", ["bun", "scripts/verify-logo.ts"]],
+  ["verify:window-chrome", ["bun", "scripts/verify-window-chrome.ts"]],
   ["verify:write-path", ["bun", "scripts/verify-write-path.ts"]],
   ["verify:core-purity", ["bun", "scripts/verify-core-purity.ts"]],
   ["verify:config-authority", ["bun", "scripts/verify-config-authority.ts"]],
