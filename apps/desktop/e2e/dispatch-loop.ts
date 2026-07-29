@@ -141,7 +141,12 @@ const caps = () => ({
       "ms:edgeOptions": {
         // CI runners have no GPU-backed desktop; without these the WebView2
         // browser process dies before it opens its devtools port.
-        args: ["--disable-gpu", "--no-first-run", "--disable-extensions"],
+        args: [
+          `--user-data-dir=${join(dataDir, "webview-args")}`,
+          "--disable-gpu",
+          "--no-first-run",
+          "--disable-extensions",
+        ],
       },
       "tauri:options": {
         application: exe.replaceAll("/", "\\"),

@@ -82,6 +82,7 @@ jobs:
         run: |
           cargo install tauri-driver --locked
           $pv = (Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}').pv
+          "WebView2 runtime pv=$pv"
           Invoke-WebRequest -Uri "https://msedgedriver.microsoft.com/$pv/edgedriver_win64.zip" -OutFile $env:TEMP\edgedriver.zip
           Expand-Archive -Force $env:TEMP\edgedriver.zip $env:TEMP\edgedriver
           "REFRAIN_MSEDGEDRIVER=$env:TEMP\edgedriver\msedgedriver.exe" | Out-File -FilePath $env:GITHUB_ENV -Append

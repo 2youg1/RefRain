@@ -140,7 +140,12 @@ const run = async (): Promise<void> => {
           alwaysMatch: {
             browserName: "webview2",
             "ms:edgeOptions": {
-              args: ["--disable-gpu", "--no-first-run", "--disable-extensions"],
+              args: [
+                `--user-data-dir=${join(dataDir, "webview-args")}`,
+                "--disable-gpu",
+                "--no-first-run",
+                "--disable-extensions",
+              ],
             },
             "tauri:options": {
               application: exe.replaceAll("/", "\\"),
