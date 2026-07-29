@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// biome-ignore-all lint/correctness/noUnusedVariables: template-only bindings are real usage.
 // The review surface (SPEC 9.7): original fixed left, current unit right;
 // every judgment writes through on the keypress, not at commit; progress is
 // a count, never a percentage. Keyboard is the primary path; the mouse path
