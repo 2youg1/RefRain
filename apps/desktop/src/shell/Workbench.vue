@@ -18,6 +18,7 @@ import {
   type ProjectOpenedDto,
 } from "../generated/bindings.gen";
 import ConflictDialog from "./ConflictDialog.vue";
+import DispatchSurface from "./DispatchSurface.vue";
 import IconPicker from "./IconPicker.vue";
 import KaraSurface from "./KaraSurface.vue";
 import { useKara } from "./kara-state";
@@ -42,6 +43,7 @@ const notice = ref<string | null>(null);
 const conflict = ref<{ mine: string; theirs: string; stamp: FileStamp_Serialize } | null>(null);
 const editor = ref<InstanceType<typeof EditorHost> | null>(null);
 const reviewing = ref(false);
+const dispatching = ref(false);
 const kara = useKara();
 
 /** The caret as a ReturnPoint: block id, offset, and the sentence tail the
@@ -247,6 +249,9 @@ const onKeydown = (event: KeyboardEvent): void => {
         <button v-if="active" type="button" @click="reviewing = !reviewing">
           {{ reviewing ? "返回编辑" : "Review" }}
         </button>
+        <button v-if="active && !reviewing" type="button" @click="dispatching = !dispatching">
+          {{ dispatching ? "收起発送" : "発送" }}
+        </button>
         <ul>
           <li v-for="row in documents" :key="row.id">
             <button
@@ -271,15 +276,26 @@ const onKeydown = (event: KeyboardEvent): void => {
           @committed="afterCommit"
           @closed="reviewing = false"
         />
-        <EditorHost
-          v-if="active && !reviewing"
-          ref="editor"
-          :root-id="project.rootId"
-          :path="active.document.path"
-          :document="active"
-          @confirmed="markDirty"
-          @rejected="fail"
-        />
+        <div v-else-if="active" class="stage-row">
+          <EditorHost
+            v-if="!reviewing"
+            ref="editor"
+            :root-id="project.rootId"
+            :path="active.document.path"
+            :document="active"
+            @confirmed="markDirty"
+            @rejected="fail"
+          />
+          <DispatchSurface
+            v-if="dispatching"
+            :key="active.document.path"
+            :root-id="project.rootId"
+            :path="active.document.path"
+            :blocks="active.blocks"
+            @collected="(count: number) => (notice = `${count} 条提案已冻结，点 Review 逐句裁决。`)"
+            @closed="dispatching = false"
+          />
+        </div>
         <p v-else class="empty">从左侧选一个文档，或新建一章。</p>
       </main>
 
@@ -350,6 +366,16 @@ const onKeydown = (event: KeyboardEvent): void => {
 }
 
 .stage {
+  min-width: 0;
+}
+
+.stage-row {
+  display: flex;
+  align-items: stretch;
+}
+
+.stage-row > :first-child {
+  flex: 1;
   min-width: 0;
 }
 

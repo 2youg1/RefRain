@@ -87,6 +87,32 @@ export const commands = {
 	 *  The batch and cursor clear; candidates stay for the audit.
 	 */
 	commitDecisionBatch: (rootId: string, path: string) => typedError<TextTransitionDto, RefrainError>(__TAURI_INVOKE("commit_decision_batch", { rootId, path })),
+	/**  Draft the collaboration: prompt, document, and the head it pins (Q27). */
+	draftReviewTask: (rootId: string, path: string, prompt: string) => typedError<TaskDto, RefrainError>(__TAURI_INVOKE("draft_review_task", { rootId, path, prompt })),
+	/**  The manifest the author reads before the click (SPEC 9.6: 逐块字节清单). */
+	previewDispatch: (rootId: string, path: string, blockIds: string[], prompt: string) => typedError<DispatchPreviewDto, RefrainError>(__TAURI_INVOKE("preview_dispatch", { rootId, path, blockIds, prompt })),
+	/**  The built-in agent the ticket always offers (SPEC 8.3a's first row). */
+	l0FileChannelAgent: () => __TAURI_INVOKE<string>("l0_file_channel_agent"),
+	authorizeDispatch: (request: AuthorizeDispatchRequest) => typedError<RunDto[], RefrainError>(__TAURI_INVOKE("authorize_dispatch", { request })),
+	/**
+	 *  Launch one authorized run. L0's dispatch is the file becoming visible;
+	 *  the receipt says so. Real adapters take this seam over in C11.
+	 */
+	launchRun: (rootId: string, runId: string) => typedError<RunDto, RefrainError>(__TAURI_INVOKE("launch_run", { rootId, runId })),
+	/**  The orchestration world as the surface renders it. */
+	hostState: (rootId: string) => typedError<HostStateDto, RefrainError>(__TAURI_INVOKE("host_state", { rootId })),
+	/**  Cancel a run that has not reached a terminal state. */
+	cancelRun: (rootId: string, runId: string) => typedError<RunDto, RefrainError>(__TAURI_INVOKE("cancel_run", { rootId, runId })),
+	/**
+	 *  Retry is a new Run, queued, pointing at the old one (§8.4b). Its
+	 *  authorization is a fresh click through `authorize_dispatch`.
+	 */
+	retryRun: (rootId: string, runId: string) => typedError<RunDto, RefrainError>(__TAURI_INVOKE("retry_run", { rootId, runId })),
+	/**
+	 *  Collect a dispatched run's result: validate against the frozen contract,
+	 *  complete the run, and freeze the proposals the artifact carries.
+	 */
+	collectAttempt: (rootId: string, runId: string) => typedError<CollectOutcomeDto, RefrainError>(__TAURI_INVOKE("collect_attempt", { rootId, runId })),
 };
 
 /* Types */
@@ -122,6 +148,22 @@ export type AppearanceConfig = {
 };
 
 /**
+ *  The click. Re-compiles from the same inputs; INV-14 refuses a drifted
+ *  digest before any Run exists. One command, two shapes: the first
+ *  authorization mints the runs; a retry's authorization names queued runs.
+ */
+export type AuthorizeDispatchRequest = {
+	rootId: string,
+	taskId: string,
+	path: string,
+	blockIds: string[],
+	prompt: string,
+	clickedDigest: string,
+	newAgents: string[],
+	retryRunIds: string[],
+};
+
+/**
  *  What the Source Backup attempt produced, in the author's terms. `Failed`
  *  is a degradation the interface reports and offers to retry — the Root
  *  stays editable (Q23).
@@ -136,6 +178,16 @@ export type BlockDto = {
 	id: string,
 	text: string,
 };
+
+export type CollectOutcomeDto = 
+/**  No result yet; nothing moved. */
+{ kind: "waiting" } | { kind: "completed"; value: {
+	proposals: number,
+	memos: number,
+} } | { kind: "failed"; value: {
+	code: string,
+	detail: string,
+} };
 
 /**
  *  The complete effective Config. This is the only shape Settings and
@@ -159,6 +211,12 @@ export type ConfigSnapshot = {
 	 *  proceeded (SPEC 11: evidence, not silence).
 	 */
 	recoveryEvidence: string | null,
+};
+
+export type DispatchPreviewDto = {
+	manifest: ManifestEntry[],
+	digest: string,
+	requestMd: string,
 };
 
 /**  What a Markdown file is to the work. */
@@ -285,6 +343,13 @@ export type HealthReport = {
 	echo: string,
 };
 
+export type HostStateDto = {
+	tasks: TaskDto[],
+	runs: RunDto[],
+	recoveryRequired: string[],
+	awaitingLaunch: string[],
+};
+
 /**
  *  An opaque, time-ordered identifier for a persistent entity.
  * 
@@ -406,6 +471,15 @@ export type KaraState = { kind: "off" } | { kind: "entering"; value: {
 export type KaraTransition = {
 	machine: KaraMachine,
 	effects: KaraEffect[],
+};
+
+/**  One manifest row: a section, its source, its digest, its size. */
+export type ManifestEntry = {
+	section: string,
+	source: string,
+	digest: string,
+	bytes: number,
+	tokens: Tokens,
 };
 
 /**
@@ -549,6 +623,16 @@ export type ReviewStateDto_Serialize = {
  */
 export type RootKind = "folder" | "file";
 
+export type RunDto = {
+	id: string,
+	taskId: string,
+	agentId: string,
+	workspace: string,
+	progress: string,
+	failure: string | null,
+	retryOf: string | null,
+};
+
 /**  What a save became. `ChangedUnderneath` is a Safety surface, not an error. */
 export type SaveOutcomeDto = SaveOutcomeDto_Serialize | SaveOutcomeDto_Deserialize;
 
@@ -581,6 +665,14 @@ export type SessionDocumentDto = {
 	blocks: BlockDto[],
 };
 
+export type TaskDto = {
+	id: string,
+	baseline: string,
+	document: string,
+	prompt: string,
+	progress: string,
+};
+
 /**  The confirmed outcome of one applied action. */
 export type TextTransitionDto = {
 	revision: string,
@@ -594,6 +686,12 @@ export type ThemeInfoDto = {
 	cn: string,
 	mode: string,
 };
+
+/**
+ *  A token count, three-stated (SPEC 2.3). `Unknown` is a first-class value
+ *  and never serialised as zero (INV-3).
+ */
+export type Tokens = { kind: "actual"; value: number } | { kind: "estimated"; value: number } | { kind: "unknown" };
 
 /**
  *  The persisted shape of one judgment. `AcceptModified` carries its final

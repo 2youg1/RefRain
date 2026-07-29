@@ -946,6 +946,15 @@ pub fn builder() -> Builder<tauri::Wry> {
         set_review_batch,
         review_state,
         commit_decision_batch,
+        draft_review_task,
+        preview_dispatch,
+        l0_file_channel_agent,
+        authorize_dispatch,
+        launch_run,
+        host_state,
+        cancel_run,
+        retry_run,
+        collect_attempt,
     ])
 }
 
@@ -1429,6 +1438,820 @@ fn commit_decision_batch(
                 .iter()
                 .map(Id::to_string)
                 .collect(),
+        })
+    })
+}
+
+// ── C10: the host bridge — the dispatch ticket and the L0 file channel ──────
+//
+// The commands below map one-to-one onto SPEC 6.5's host use cases. The
+// journal lives in refrain.db through StoreJournal; the frozen context lives
+// in .refrain/ through DirectoryContext. Nothing here decides a domain rule:
+// the host's state machine does.
+
+use refrain_core::agent_protocol::{self, ArtifactContract};
+use refrain_core::context_compiler::{
+    self, BeforeScope, DispatchInput, DispatchPackage, ManifestEntry,
+};
+use refrain_host::host::{
+    AgentHost, DispatchAuthorization, HostCommand, HostJournal, HostRefusal, HostState, ReviewTask,
+    Run, RunProgress, TaskProgress,
+};
+use refrain_host::staging::DirectoryContext;
+use refrain_store::orchestration::{AuthorizationRow, RunRow, TaskRow};
+use sha2::Digest;
+
+/// The built-in L0 agent: a file channel, including copy-paste into a web
+/// chat (SPEC 8.3a). Real harness connections arrive with C11; this id names
+/// the one producer that always exists.
+const L0_FILE_CHANNEL_AGENT: &str = "00000000-0000-0000-0000-0000000000e0";
+
+/// One dispatch's byte ceiling for the artifact body (shown in the contract).
+const ARTIFACT_MAX_BYTES: u64 = 64 * 1024;
+
+fn into_domain_host(refusal: HostRefusal) -> RefrainError {
+    RefrainError::new(
+        ErrorCode::StateUnavailable,
+        "orchestrate a dispatch",
+        refusal.to_string(),
+    )
+}
+
+fn json_of<T: Serialize>(value: &T, what: &str) -> Result<String, RefrainError> {
+    serde_json::to_string(value).map_err(|error| {
+        RefrainError::new(ErrorCode::Io, "serialise orchestration state", what)
+            .with_detail(error.to_string())
+    })
+}
+
+fn entity_of<T: serde::de::DeserializeOwned>(raw: &str, what: &str) -> Result<T, RefrainError> {
+    serde_json::from_str(raw).map_err(|error| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "read orchestration state",
+            what,
+        )
+        .with_detail(error.to_string())
+    })
+}
+
+fn task_kind(progress: &TaskProgress) -> &'static str {
+    match progress {
+        TaskProgress::Draft => "draft",
+        TaskProgress::Open { .. } => "open",
+        TaskProgress::Closed { .. } => "closed",
+    }
+}
+
+fn run_kind(progress: &RunProgress) -> &'static str {
+    match progress {
+        RunProgress::Queued => "queued",
+        RunProgress::Authorized { .. } => "authorized",
+        RunProgress::Launching { .. } => "launching",
+        RunProgress::Dispatched { .. } => "dispatched",
+        RunProgress::Completed { .. } => "completed",
+        RunProgress::Failed { .. } => "failed",
+        RunProgress::Cancelled => "cancelled",
+    }
+}
+
+fn task_row(task: &ReviewTask) -> Result<TaskRow, RefrainError> {
+    Ok(TaskRow {
+        id: task.id.to_string(),
+        baseline: task.baseline.to_string(),
+        progress_kind: task_kind(&task.progress).to_string(),
+        entity: json_of(task, "task")?,
+    })
+}
+
+fn run_row(run: &Run) -> Result<RunRow, RefrainError> {
+    Ok(RunRow {
+        id: run.id.to_string(),
+        task_id: run.task_id.to_string(),
+        agent_id: run.agent_id.to_string(),
+        progress_kind: run_kind(&run.progress).to_string(),
+        retry_of: run.retry_of.map(|id| id.to_string()),
+        entity: json_of(run, "run")?,
+    })
+}
+
+fn authorization_row(
+    authorization: &DispatchAuthorization,
+) -> Result<AuthorizationRow, RefrainError> {
+    Ok(AuthorizationRow {
+        id: authorization.id.to_string(),
+        manifest_digest: authorization.manifest_digest.clone(),
+        authorized_at: i64::try_from(authorization.authorized_at).unwrap_or(i64::MAX),
+        entity: json_of(authorization, "authorization")?,
+    })
+}
+
+/// The journal seam over refrain.db. New and re-authorized runs reach the
+/// store pre-split by existence: the store refuses an overwriting insert and
+/// a missing update, so the split must be honest.
+struct StoreJournal<'a> {
+    store: &'a mut ProjectStore,
+}
+
+impl HostJournal for StoreJournal<'_> {
+    type Error = RefrainError;
+
+    fn load(&self) -> Result<HostState, RefrainError> {
+        let rows = self.store.host_rows().map_err(into_domain)?;
+        Ok(HostState {
+            tasks: rows
+                .tasks
+                .iter()
+                .map(|row| entity_of(&row.entity, "task"))
+                .collect::<Result<Vec<_>, _>>()?,
+            runs: rows
+                .runs
+                .iter()
+                .map(|row| entity_of(&row.entity, "run"))
+                .collect::<Result<Vec<_>, _>>()?,
+            authorizations: rows
+                .authorizations
+                .iter()
+                .map(|row| entity_of(&row.entity, "authorization"))
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+    }
+
+    fn append_task(&mut self, task: &ReviewTask) -> Result<(), RefrainError> {
+        self.store
+            .host_task_append(&task_row(task)?)
+            .map_err(into_domain)
+    }
+
+    fn record_authorization(
+        &mut self,
+        task: &ReviewTask,
+        runs: &[Run],
+        authorization: &DispatchAuthorization,
+    ) -> Result<(), RefrainError> {
+        let mut new_runs = Vec::new();
+        let mut reauthorized = Vec::new();
+        for run in runs {
+            if self
+                .store
+                .host_run_known(&run.id.to_string())
+                .map_err(into_domain)?
+            {
+                reauthorized.push(run_row(run)?);
+            } else {
+                new_runs.push(run_row(run)?);
+            }
+        }
+        self.store
+            .host_authorization_record(
+                &task_row(task)?,
+                &new_runs,
+                &reauthorized,
+                &authorization_row(authorization)?,
+            )
+            .map_err(into_domain)
+    }
+
+    fn update_task(&mut self, task: &ReviewTask) -> Result<(), RefrainError> {
+        self.store
+            .host_task_update(&task_row(task)?)
+            .map_err(into_domain)
+    }
+
+    fn update_run(&mut self, run: &Run) -> Result<(), RefrainError> {
+        self.store
+            .host_run_update(&run_row(run)?)
+            .map_err(into_domain)
+    }
+
+    fn append_run(&mut self, run: &Run) -> Result<(), RefrainError> {
+        self.store
+            .host_run_append(&run_row(run)?)
+            .map_err(into_domain)
+    }
+}
+
+fn open_host(
+    store: &mut ProjectStore,
+) -> Result<AgentHost<StoreJournal<'_>, DirectoryContext>, RefrainError> {
+    let context = DirectoryContext::new(store.layout().state_dir.clone());
+    let journal = StoreJournal { store };
+    AgentHost::open(journal, context).map_err(into_domain_host)
+}
+
+/// The scope id's doc part: the file stem, so `ch01.md` reads as `ch01`.
+fn doc_slug(path: &str) -> String {
+    Path::new(path)
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "document".to_string())
+}
+
+/// Compile the package the ticket shows and the click authorizes. Called at
+/// preview AND again at authorize: any drift between the two compilations —
+/// an edited block, a changed prompt — changes the digest and kills the
+/// authorization (INV-14).
+fn compile_package(
+    manuscript: &Manuscript,
+    path: &str,
+    block_ids: &[Id],
+    prompt: &str,
+) -> Result<DispatchPackage, RefrainError> {
+    let blocks = manuscript.head().blocks();
+    let mut selected: Vec<(usize, &str)> = Vec::with_capacity(block_ids.len());
+    for (index, block) in blocks.iter().enumerate() {
+        if block_ids.contains(&block.id()) {
+            selected.push((index, block.text()));
+        }
+    }
+    if selected.len() != block_ids.len() {
+        return Err(RefrainError::new(
+            ErrorCode::Io,
+            "name every scope block",
+            format!(
+                "{} of {} blocks found in {path}",
+                selected.len(),
+                block_ids.len()
+            ),
+        ));
+    }
+    let slug = doc_slug(path);
+    let scope = match (selected.first(), selected.last()) {
+        (Some((first, _)), Some((last, _))) if first == last => format!("{slug}:b{}", first + 1),
+        (Some((first, _)), Some((last, _))) => format!("{slug}:b{}-b{}", first + 1, last + 1),
+        _ => {
+            return Err(RefrainError::new(
+                ErrorCode::Io,
+                "select at least one block",
+                path.to_string(),
+            ));
+        }
+    };
+    let text = selected
+        .iter()
+        .map(|(_, text)| *text)
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let input = DispatchInput {
+        persona: None,
+        manuscript: None,
+        changes: vec![],
+        materials: vec![],
+        request: prompt.to_string(),
+        scopes: vec![BeforeScope { scope, text }],
+        result_path: format!(
+            "runs/{0}/attempts/{0}/result.md",
+            refrain_host::host::RUN_ID_PLACEHOLDER
+        ),
+        max_bytes: ARTIFACT_MAX_BYTES,
+    };
+    Ok(context_compiler::compile(&input))
+}
+
+/// Parse the frozen request's `# Before` section back into (scope id, text)
+/// pairs. The promoted request is the authority at collect time: it is the
+/// bytes the producer answered.
+fn before_sections(request: &str) -> Vec<(String, String)> {
+    let Some(after_heading) = request.split("# Before").nth(1) else {
+        return vec![];
+    };
+    let section = after_heading.split("\n# ").next().unwrap_or(after_heading);
+    let mut out = Vec::new();
+    for chunk in section.split("<!-- scope ").skip(1) {
+        let Some((id, rest)) = chunk.split_once(" -->") else {
+            continue;
+        };
+        let text = rest
+            .strip_prefix('\n')
+            .unwrap_or(rest)
+            .trim_end_matches('\n')
+            .to_string();
+        out.push((id.trim().to_string(), text));
+    }
+    out
+}
+
+/// Find the block range whose joined text is exactly the frozen before-text.
+/// Byte-exact: a scope the author has since edited is not found, and the run
+/// fails honestly instead of proposing against text it never saw.
+fn find_scope_blocks(manuscript: &Manuscript, before: &str) -> Option<Vec<Id>> {
+    let blocks = manuscript.head().blocks();
+    for start in 0..blocks.len() {
+        let mut text = String::new();
+        for block in &blocks[start..] {
+            if !text.is_empty() {
+                text.push_str("\n\n");
+            }
+            text.push_str(block.text());
+            if text == before {
+                let end = start + text.matches("\n\n").count();
+                return Some(blocks[start..=end].iter().map(|block| block.id()).collect());
+            }
+            if text.len() > before.len() {
+                break;
+            }
+        }
+    }
+    None
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskDto {
+    pub id: String,
+    pub baseline: String,
+    pub document: String,
+    pub prompt: String,
+    pub progress: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RunDto {
+    pub id: String,
+    pub task_id: String,
+    pub agent_id: String,
+    pub workspace: String,
+    pub progress: String,
+    pub failure: Option<String>,
+    pub retry_of: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct HostStateDto {
+    pub tasks: Vec<TaskDto>,
+    pub runs: Vec<RunDto>,
+    pub recovery_required: Vec<String>,
+    pub awaiting_launch: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DispatchPreviewDto {
+    pub manifest: Vec<ManifestEntry>,
+    pub digest: String,
+    pub request_md: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "kebab-case", tag = "kind", content = "value")]
+pub enum CollectOutcomeDto {
+    /// No result yet; nothing moved.
+    Waiting,
+    Completed {
+        proposals: u32,
+        memos: u32,
+    },
+    Failed {
+        code: String,
+        detail: String,
+    },
+}
+
+fn task_dto(task: &ReviewTask) -> TaskDto {
+    TaskDto {
+        id: task.id.to_string(),
+        baseline: task.baseline.to_string(),
+        document: task.document.clone(),
+        prompt: task.prompt.clone(),
+        progress: task_kind(&task.progress).to_string(),
+    }
+}
+
+fn run_dto(run: &Run) -> RunDto {
+    RunDto {
+        id: run.id.to_string(),
+        task_id: run.task_id.to_string(),
+        agent_id: run.agent_id.to_string(),
+        workspace: run.workspace.clone(),
+        progress: run_kind(&run.progress).to_string(),
+        failure: match &run.progress {
+            RunProgress::Failed { failure } => Some(failure.clone()),
+            _ => None,
+        },
+        retry_of: run.retry_of.map(|id| id.to_string()),
+    }
+}
+
+fn parse_ids(raw: &[String], what: &str) -> Result<Vec<Id>, RefrainError> {
+    raw.iter().map(|one| parse_id(one, what)).collect()
+}
+
+/// Draft the collaboration: prompt, document, and the head it pins (Q27).
+#[tauri::command]
+#[specta::specta]
+fn draft_review_task(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    path: String,
+    prompt: String,
+) -> Result<TaskDto, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        // Q27: Rust pins the baseline from the current Text Head at enqueue.
+        // A renderer-authored revision is not accepted (SPEC 6.2: nothing the
+        // renderer says authorizes).
+        let baseline = entry
+            .manuscripts
+            .get(&path)
+            .ok_or_else(|| {
+                RefrainError::new(
+                    ErrorCode::StateUnavailable,
+                    "draft a task for a document that is not open",
+                    path.clone(),
+                )
+            })?
+            .head()
+            .id();
+        let mut host = open_host(&mut entry.store)?;
+        host.execute(HostCommand::DraftTask {
+            baseline,
+            document: path,
+            prompt,
+            context_digest: String::new(),
+        })
+        .map_err(into_domain_host)?;
+        Ok(task_dto(&host.tasks()[host.tasks().len() - 1]))
+    })
+}
+
+/// The manifest the author reads before the click (SPEC 9.6: 逐块字节清单).
+#[tauri::command]
+#[specta::specta]
+fn preview_dispatch(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    path: String,
+    block_ids: Vec<String>,
+    prompt: String,
+) -> Result<DispatchPreviewDto, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        let manuscript = entry.manuscripts.get(&path).ok_or_else(|| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "preview a dispatch for a document that is not open",
+                path.clone(),
+            )
+        })?;
+        let package = compile_package(
+            manuscript,
+            &path,
+            &parse_ids(&block_ids, "scope block")?,
+            &prompt,
+        )?;
+        Ok(DispatchPreviewDto {
+            manifest: package.manifest.clone(),
+            digest: package.digest.clone(),
+            request_md: package.request_md,
+        })
+    })
+}
+
+/// The click. Re-compiles from the same inputs; INV-14 refuses a drifted
+/// digest before any Run exists. One command, two shapes: the first
+/// authorization mints the runs; a retry's authorization names queued runs.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthorizeDispatchRequest {
+    pub root_id: String,
+    pub task_id: String,
+    pub path: String,
+    pub block_ids: Vec<String>,
+    pub prompt: String,
+    pub clicked_digest: String,
+    pub new_agents: Vec<String>,
+    pub retry_run_ids: Vec<String>,
+}
+
+/// The built-in agent the ticket always offers (SPEC 8.3a's first row).
+#[tauri::command]
+#[specta::specta]
+fn l0_file_channel_agent() -> String {
+    L0_FILE_CHANNEL_AGENT.to_string()
+}
+
+#[tauri::command]
+#[specta::specta]
+fn authorize_dispatch(
+    state: tauri::State<'_, AppState>,
+    request: AuthorizeDispatchRequest,
+) -> Result<Vec<RunDto>, RefrainError> {
+    let AuthorizeDispatchRequest {
+        root_id,
+        task_id,
+        path,
+        block_ids,
+        prompt,
+        clicked_digest,
+        new_agents,
+        retry_run_ids,
+    } = request;
+    state.with_project(&root_id, |_state, entry| {
+        let manuscript = entry.manuscripts.get(&path).ok_or_else(|| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "authorize a dispatch for a document that is not open",
+                path.clone(),
+            )
+        })?;
+        let package = compile_package(
+            manuscript,
+            &path,
+            &parse_ids(&block_ids, "scope block")?,
+            &prompt,
+        )?;
+        let task_id = parse_id(&task_id, "task")?;
+        let mut host = open_host(&mut entry.store)?;
+        host.execute(HostCommand::AuthorizeDispatch {
+            task_id,
+            new_agents: parse_ids(&new_agents, "agent")?,
+            retry_runs: parse_ids(&retry_run_ids, "run")?,
+            package,
+            clicked_digest,
+            authorized_at: now_millis(),
+        })
+        .map_err(into_domain_host)?;
+        let covered: Vec<Id> = host
+            .authorizations()
+            .last()
+            .map(|authorization| authorization.run_ids.clone())
+            .unwrap_or_default();
+        Ok(host
+            .runs()
+            .iter()
+            .filter(|run| covered.contains(&run.id))
+            .map(run_dto)
+            .collect())
+    })
+}
+
+/// Launch one authorized run. L0's dispatch is the file becoming visible;
+/// the receipt says so. Real adapters take this seam over in C11.
+#[tauri::command]
+#[specta::specta]
+fn launch_run(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    run_id: String,
+) -> Result<RunDto, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        let run_id = parse_id(&run_id, "run")?;
+        let mut host = open_host(&mut entry.store)?;
+        let workspace = format!("runs/{run_id}");
+        host.execute(HostCommand::LaunchRun {
+            run_id,
+            workspace: workspace.clone(),
+        })
+        .map_err(into_domain_host)?;
+        host.execute(HostCommand::CompleteDispatch {
+            run_id,
+            receipt: format!("l0:request-visible@{workspace}"),
+        })
+        .map_err(into_domain_host)?;
+        Ok(run_dto(&host.runs()[host.runs().len() - 1]))
+    })
+}
+
+/// The orchestration world as the surface renders it.
+#[tauri::command]
+#[specta::specta]
+fn host_state(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+) -> Result<HostStateDto, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        let host = open_host(&mut entry.store)?;
+        Ok(HostStateDto {
+            tasks: host.tasks().iter().map(task_dto).collect(),
+            runs: host.runs().iter().map(run_dto).collect(),
+            recovery_required: host
+                .runs_requiring_recovery()
+                .iter()
+                .map(Id::to_string)
+                .collect(),
+            awaiting_launch: host
+                .runs_awaiting_launch()
+                .iter()
+                .map(Id::to_string)
+                .collect(),
+        })
+    })
+}
+
+/// Cancel a run that has not reached a terminal state.
+#[tauri::command]
+#[specta::specta]
+fn cancel_run(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    run_id: String,
+) -> Result<RunDto, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        let run_id = parse_id(&run_id, "run")?;
+        let mut host = open_host(&mut entry.store)?;
+        host.execute(HostCommand::CancelRun {
+            run_id,
+            at: now_millis(),
+        })
+        .map_err(into_domain_host)?;
+        let index = host
+            .runs()
+            .iter()
+            .position(|run| run.id == run_id)
+            .ok_or_else(|| {
+                RefrainError::new(
+                    ErrorCode::StateUnavailable,
+                    "find a cancelled run",
+                    run_id.to_string(),
+                )
+            })?;
+        Ok(run_dto(&host.runs()[index]))
+    })
+}
+
+/// Retry is a new Run, queued, pointing at the old one (§8.4b). Its
+/// authorization is a fresh click through `authorize_dispatch`.
+#[tauri::command]
+#[specta::specta]
+fn retry_run(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    run_id: String,
+) -> Result<RunDto, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        let run_id = parse_id(&run_id, "run")?;
+        let mut host = open_host(&mut entry.store)?;
+        host.execute(HostCommand::RetryRun { run_id })
+            .map_err(into_domain_host)?;
+        Ok(run_dto(&host.runs()[host.runs().len() - 1]))
+    })
+}
+
+/// Collect a dispatched run's result: validate against the frozen contract,
+/// complete the run, and freeze the proposals the artifact carries.
+#[tauri::command]
+#[specta::specta]
+fn collect_attempt(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    run_id: String,
+) -> Result<CollectOutcomeDto, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        let run_id = parse_id(&run_id, "run")?;
+        let context = DirectoryContext::new(entry.store.layout().state_dir.clone());
+        // Basis evidence for the contract is gathered before the host opens:
+        // the journal holds the store for the rest of the closure.
+        let basis: Vec<String> = entry
+            .store
+            .documents()?
+            .iter()
+            .filter_map(|row| {
+                row.current_head
+                    .as_ref()
+                    .map(|head| format!("{}@{}", row.path, head))
+            })
+            .collect();
+        let mut host = open_host(&mut entry.store)?;
+        let index = host
+            .runs()
+            .iter()
+            .position(|run| run.id == run_id)
+            .ok_or_else(|| into_domain_host(HostRefusal::UnknownRun(run_id)))?;
+        let run = host.runs()[index].clone();
+
+        let Some(bytes) = context
+            .read_result(&run.workspace, run_id)
+            .map_err(|error| {
+                RefrainError::new(
+                    ErrorCode::Io,
+                    "read the run's result",
+                    run.workspace.clone(),
+                )
+                .with_detail(error.to_string())
+            })?
+        else {
+            return Ok(CollectOutcomeDto::Waiting);
+        };
+        let request = context
+            .read_workspace_request(&run.workspace)
+            .map_err(|error| {
+                RefrainError::new(
+                    ErrorCode::Io,
+                    "read the frozen request",
+                    run.workspace.clone(),
+                )
+                .with_detail(error.to_string())
+            })?
+            .ok_or_else(|| {
+                RefrainError::new(
+                    ErrorCode::StateUnavailable,
+                    "read the frozen request",
+                    "the promoted request is missing",
+                )
+            })?;
+
+        // The contract comes from the frozen bytes the producer answered,
+        // never from the artifact's own claims (SPEC 8.4).
+        let scopes = before_sections(&request);
+        let scope_ids: Vec<String> = scopes.iter().map(|(id, _)| id.clone()).collect();
+        let contract = ArtifactContract {
+            scopes: &scope_ids,
+            basis: &basis,
+        };
+
+        let fail = |host: &mut AgentHost<StoreJournal<'_>, DirectoryContext>,
+                    code: &str,
+                    detail: &str|
+         -> Result<CollectOutcomeDto, RefrainError> {
+            host.execute(HostCommand::FailRun {
+                run_id,
+                failure: code.to_string(),
+                at: now_millis(),
+            })
+            .map_err(into_domain_host)?;
+            Ok(CollectOutcomeDto::Failed {
+                code: code.to_string(),
+                detail: detail.to_string(),
+            })
+        };
+
+        let artifact = match agent_protocol::parse(&bytes, &contract) {
+            Ok(artifact) => artifact,
+            Err(error) => return fail(&mut host, error.code.as_str(), &error.detail),
+        };
+
+        let task = host
+            .tasks()
+            .iter()
+            .find(|task| task.id == run.task_id)
+            .ok_or_else(|| into_domain_host(HostRefusal::UnknownTask(run.task_id)))?
+            .clone();
+        let manuscript = entry.manuscripts.get(&task.document).ok_or_else(|| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "collect into a document that is not open",
+                task.document.clone(),
+            )
+        })?;
+
+        let before_by_scope: HashMap<String, String> = scopes.into_iter().collect();
+        let mut proposals: Vec<(Proposal, Vec<Id>)> = Vec::new();
+        for replacement in &artifact.replacements {
+            let Some(before) = before_by_scope.get(&replacement.scope) else {
+                return fail(&mut host, "unknown-scope", &replacement.scope);
+            };
+            let Some(blocks) = find_scope_blocks(manuscript, before) else {
+                // The author edited the scope under the dispatch. The artifact
+                // stays on disk; the run fails with the reason, not a guess.
+                return fail(&mut host, "scope-text-moved", &replacement.scope);
+            };
+            let scope = EditScope::new(blocks.clone()).map_err(|error| {
+                RefrainError::new(
+                    ErrorCode::Io,
+                    "build a proposal scope",
+                    task.document.clone(),
+                )
+                .with_detail(error.to_string())
+            })?;
+            proposals.push((
+                Proposal::new(
+                    run_id,
+                    task.baseline,
+                    scope,
+                    before.clone(),
+                    replacement.text.clone(),
+                ),
+                blocks,
+            ));
+        }
+
+        // §8.4b: validated first, Completed second, proposals frozen third.
+        let artifact_digest = format!("{:x}", sha2::Sha256::digest(&bytes));
+        host.execute(HostCommand::CollectAttempt {
+            run_id,
+            artifact_digest,
+            at: now_millis(),
+        })
+        .map_err(into_domain_host)?;
+        let count = proposals.len() as u32;
+        for (proposal, blocks) in &proposals {
+            entry
+                .store
+                .proposal_insert(&refrain_store::project::ProposalRow {
+                    id: proposal.id().to_string(),
+                    run: run_id.to_string(),
+                    baseline: proposal.baseline().to_string(),
+                    document_path: task.document.clone(),
+                    scope: json_of(blocks, "proposal scope")?,
+                    before_text: proposal.before().to_string(),
+                    after_text: proposal.after().map(str::to_string),
+                    created_at: now_millis(),
+                })
+                .map_err(into_domain)?;
+        }
+        Ok(CollectOutcomeDto::Completed {
+            proposals: count,
+            memos: artifact.memos.len() as u32,
         })
     })
 }

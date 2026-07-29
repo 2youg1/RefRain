@@ -197,6 +197,7 @@ const apcaY = (rgb: readonly [number, number, number]): number => {
   const SRGB_GAMMA = 2.4;
   const [r, g, b] = rgb.map((c) => (c / 255) ** SRGB_GAMMA) as [number, number, number];
   const y = 0.2126729 * r + 0.7151522 * g + 0.072175 * b;
+  // biome-ignore lint/suspicious/noApproximativeNumericConstant: APCA 规范钉的就是 1.414，不是 Math.SQRT2——改值会改变全部主题对比度输出。
   return y >= 0.022 ? y : y + (0.022 - y) ** 1.414;
 };
 

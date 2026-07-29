@@ -21,6 +21,7 @@ refrain-store = { workspace = true }
 rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 specta = { workspace = true }
 specta-typescript = { workspace = true }
 tauri = { version = "=2.11.5", features = [] }

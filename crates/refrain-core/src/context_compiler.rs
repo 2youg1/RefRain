@@ -19,8 +19,8 @@ use specta::Type;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase", tag = "kind", content = "value")]
 pub enum Tokens {
-    Actual(u64),
-    Estimated(u64),
+    Actual(u32),
+    Estimated(u32),
     Unknown,
 }
 
@@ -77,7 +77,7 @@ pub struct ManifestEntry {
     pub section: String,
     pub source: String,
     pub digest: String,
-    pub bytes: u64,
+    pub bytes: u32,
     pub tokens: Tokens,
 }
 
@@ -95,10 +95,10 @@ fn digest_of(text: &str) -> String {
 
 /// Rough token estimate for CJK-heavy prose. It is an estimate and says so;
 /// the only honest alternatives are the harness's own count or unknown.
-fn estimate_tokens(bytes: u64) -> Tokens {
+fn estimate_tokens(bytes: u32) -> Tokens {
     // CJK prose runs near 2 bytes per token in modern tokenisers; the estimate
     // is rounded to the nearest ten so it never reads as a measurement.
-    let estimated = ((bytes as f64) / 2.0).round() as u64 / 10 * 10;
+    let estimated = ((f64::from(bytes)) / 2.0).round() as u32 / 10 * 10;
     Tokens::Estimated(estimated.max(10))
 }
 
@@ -107,8 +107,8 @@ fn entry(section: &str, source: &str, text: &str) -> ManifestEntry {
         section: section.to_string(),
         source: source.to_string(),
         digest: digest_of(text),
-        bytes: text.len() as u64,
-        tokens: estimate_tokens(text.len() as u64),
+        bytes: text.len() as u32,
+        tokens: estimate_tokens(text.len() as u32),
     }
 }
 
@@ -316,7 +316,7 @@ pub fn narrate_artifact(artifact: &VerifiedArtifact) -> Narration {
 /// 「这次发送把第三章全文（1.2 万字）与你上一轮的 12 条裁决交给 Agent 甲，产生 1 个 Run。」
 #[must_use]
 pub fn narrate_manifest(manifest: &[ManifestEntry]) -> Narration {
-    let total_bytes: u64 = manifest.iter().map(|entry| entry.bytes).sum();
+    let total_bytes: u64 = manifest.iter().map(|entry| u64::from(entry.bytes)).sum();
     let sections = manifest
         .iter()
         .map(|entry| match entry.section.as_str() {
