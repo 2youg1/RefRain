@@ -10,6 +10,7 @@ description = "Pure domain: text, Revision, Proposal, Verdict, Decision Batch, A
 # std::fs project writes, processes, or the DOM. `verify:core-purity` asserts it.
 [dependencies]
 serde = { workspace = true }
+sha2 = { workspace = true }
 specta = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }

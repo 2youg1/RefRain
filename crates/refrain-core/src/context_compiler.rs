@@ -1,0 +1,597 @@
+//! The Context Compiler (SPEC 8.3b, 8.5) and the narration layer (§8.4a).
+//!
+//! One authority for what crosses to the agent: the request file's four
+//! sections in cache-stable order — everything stable first, everything that
+//! changes per round last. The manifest lists every section with source,
+//! digest, byte count, and a token estimate state; tokens are three-stated
+//! (`actual / estimated / unknown`), never billed (INV-3).
+//!
+//! Narration is the deterministic, fact-only translation of machine artifacts
+//! into the author's language. It never infers, never evaluates.
+
+use sha2::{Digest, Sha256};
+
+use serde::{Deserialize, Serialize};
+use specta::Type;
+
+/// A token count, three-stated (SPEC 2.3). `Unknown` is a first-class value
+/// and never serialised as zero (INV-3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase", tag = "kind", content = "value")]
+pub enum Tokens {
+    Actual(u32),
+    Estimated(u32),
+    Unknown,
+}
+
+/// One Edit Scope in the `# Before` section: a scope id and the original text
+/// the agent must address with it, byte for byte.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BeforeScope {
+    pub scope: String,
+    pub text: String,
+}
+
+/// One verdict from a previous round, as it serialises into `<changes>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangeEntry {
+    pub reference: String,
+    pub kind: ChangeKind,
+    pub reason: Option<String>,
+    pub final_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChangeKind {
+    Accept,
+    AcceptModified,
+    Reject,
+    CommentOnly,
+}
+
+/// Everything the compiler needs for one request file.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DispatchInput {
+    /// The author's persona for the agent, if one travels this round.
+    pub persona: Option<String>,
+    /// The manuscript (full text) when the round carries it.
+    pub manuscript: Option<String>,
+    /// Previous rounds' verdicts, in decision order.
+    pub changes: Vec<ChangeEntry>,
+    /// Material contents the author ticked for this round.
+    pub materials: Vec<(String, String)>,
+    /// The author's request, verbatim.
+    pub request: String,
+    /// The Edit Scopes, in manuscript order.
+    pub scopes: Vec<BeforeScope>,
+    /// Where the artifact must be written (shown in the short contract).
+    pub result_path: String,
+    /// Byte cap for the artifact body (shown in the short contract).
+    pub max_bytes: u64,
+    /// How much protocol the request itself carries (KL9's contract tiers).
+    pub contract_mode: ContractMode,
+}
+
+/// The contract tier a request carries (§8.4, KL9 2026-07-29): the parser is
+/// the only authority; these are presentation frequencies per channel, never
+/// a protocol fork.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContractMode {
+    /// L0's channel has no session: the short contract rides every request.
+    #[default]
+    Short,
+    /// A harness's first round: the full generated protocol document.
+    Full,
+    /// Later rounds on a harness that already holds the full text: one line.
+    Pointer,
+}
+
+/// One manifest row: a section, its source, its digest, its size.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ManifestEntry {
+    pub section: String,
+    pub source: String,
+    pub digest: String,
+    pub bytes: u32,
+    pub tokens: Tokens,
+}
+
+/// The compiled package: the request file and its manifest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DispatchPackage {
+    pub request_md: String,
+    pub manifest: Vec<ManifestEntry>,
+    pub digest: String,
+}
+
+fn digest_of(text: &str) -> String {
+    format!("{:x}", Sha256::digest(text.as_bytes()))
+}
+
+/// Rough token estimate for CJK-heavy prose. It is an estimate and says so;
+/// the only honest alternatives are the harness's own count or unknown.
+fn estimate_tokens(bytes: u32) -> Tokens {
+    // CJK prose runs near 2 bytes per token in modern tokenisers; the estimate
+    // is rounded to the nearest ten so it never reads as a measurement.
+    let estimated = ((f64::from(bytes)) / 2.0).round() as u32 / 10 * 10;
+    Tokens::Estimated(estimated.max(10))
+}
+
+fn entry(section: &str, source: &str, text: &str) -> ManifestEntry {
+    ManifestEntry {
+        section: section.to_string(),
+        source: source.to_string(),
+        digest: digest_of(text),
+        bytes: text.len() as u32,
+        tokens: estimate_tokens(text.len() as u32),
+    }
+}
+
+// ── escaping (xml.ts, owned here since C9) ────────────────────────────────
+
+fn xml_text(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn xml_attribute(text: &str) -> String {
+    xml_text(text).replace('"', "&quot;")
+}
+
+/// CDATA is the only channel that may carry markup; a `]]>` inside the text
+/// cannot survive one pair, so it is split across two (SPEC 8.4: CDATA 唯一通道).
+fn cdata(text: &str) -> String {
+    format!("<![CDATA[{}]]>", text.replace("]]>", "]]]]><![CDATA[>"))
+}
+
+/// The verdicts of previous rounds as the `<changes>` stream, `n` stable.
+pub fn serialize_changes(changes: &[ChangeEntry]) -> String {
+    let mut out = String::from("<changes>");
+    for (index, change) in changes.iter().enumerate() {
+        let kind = match change.kind {
+            ChangeKind::Accept => "accept",
+            ChangeKind::AcceptModified => "accept-modified",
+            ChangeKind::Reject => "reject",
+            ChangeKind::CommentOnly => "comment-only",
+        };
+        out.push_str(&format!(
+            "\n<verdict n=\"{}\" ref=\"{}\" kind=\"{}\">",
+            index + 1,
+            xml_attribute(&change.reference),
+            kind,
+        ));
+        if let Some(final_text) = &change.final_text {
+            out.push_str(&format!("\n  <final>{}</final>", cdata(final_text)));
+        }
+        if let Some(reason) = &change.reason {
+            out.push_str(&format!("\n  <reason>{}</reason>", xml_text(reason)));
+        }
+        out.push_str("\n</verdict>");
+    }
+    out.push_str("\n</changes>");
+    out
+}
+
+/// The per-request short contract (§8.4), generated from the protocol shape —
+/// the same source the parser and the full documentation read, so the three
+/// can never disagree about an element or a code.
+pub fn short_contract(input: &DispatchInput) -> String {
+    let scopes = input
+        .scopes
+        .iter()
+        .map(|scope| format!("<!-- scope {} -->", scope.scope))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "Reply with one <agent-result version=\"2\"> element and nothing else — no\n\
+         preamble, no closing remark, no code fence. Text outside the element is\n\
+         rejected and the run fails.\n\n\
+         <agent-result version=\"2\">\n\
+         \x20 <replacement scope=\"SCOPE-ID\">the rewritten text</replacement>\n\
+         \x20 <comments>\n\
+         \x20   <comment target=\"SCOPE-ID\">an observation that changes nothing</comment>\n\
+         \x20 </comments>\n\
+         \x20 <memo topic=\"optional label\">what you want to still know next time</memo>\n\
+         \x20 <material-draft kind=\"KIND\" title=\"TITLE\">\n\
+         \x20   <basis ref=\"DOCUMENT@REVISION\" />\n\
+         \x20   <body><![CDATA[the draft]]></body>\n\
+         \x20 </material-draft>\n\
+         </agent-result>\n\n\
+         Rules:\n\
+         - Use the scope ids marked in \"# Before\" above, exactly as written:\n{scopes}\n\
+         - One <replacement> per scope at most. Repeating a scope fails the run.\n\
+         - An empty <replacement> deletes that scope's text.\n\
+         - Every <comment> goes inside <comments>, and uses target= rather than scope=.\n\
+         - <material-draft> becomes a draft only; nothing it says reaches the manuscript.\n\
+         - Write the artifact to: {result}\n\
+         - The artifact body must not exceed {max} bytes.\n\
+         - You are writing a proposal, not the manuscript. A human reads every change\n\
+         \x20 and decides. Nothing you write reaches the text without that decision.",
+        scopes = scopes,
+        result = input.result_path,
+        max = input.max_bytes,
+    )
+}
+
+/// Compile one request package (§8.3b): four sections, stable order.
+pub fn compile(input: &DispatchInput) -> DispatchPackage {
+    let mut sections: Vec<(&'static str, String, String)> = Vec::new();
+
+    let mut before = String::from("# Before");
+    for scope in &input.scopes {
+        before.push_str(&format!(
+            "\n\n<!-- scope {} -->\n{}",
+            scope.scope, scope.text
+        ));
+    }
+    sections.push(("before", "edit-scopes".to_string(), before));
+
+    let mut context_parts: Vec<(String, String)> = Vec::new();
+    if let Some(persona) = &input.persona {
+        context_parts.push(("persona".to_string(), persona.clone()));
+    }
+    if let Some(manuscript) = &input.manuscript {
+        context_parts.push(("manuscript".to_string(), manuscript.clone()));
+    }
+    if !input.changes.is_empty() {
+        context_parts.push(("changes".to_string(), serialize_changes(&input.changes)));
+    }
+    for (name, content) in &input.materials {
+        context_parts.push((format!("material:{name}"), content.clone()));
+    }
+    let context = if context_parts.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "# Context\n\n{}",
+            context_parts
+                .iter()
+                .map(|(_, content)| content.clone())
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        )
+    };
+
+    let request = format!("# Request\n\n{}", input.request);
+    let contract_body = match input.contract_mode {
+        ContractMode::Short => short_contract(input),
+        ContractMode::Full => crate::agent_protocol::skill_doc(),
+        ContractMode::Pointer => "按 RefRain 兼容格式输出。".to_string(),
+    };
+    let contract = format!("# Reply format\n\n{contract_body}");
+    let reply =
+        "# Agent reply\n\n<!-- Your <agent-result> element replaces this comment. -->".to_string();
+
+    let mut parts = vec![sections[0].2.clone()];
+    if !context.is_empty() {
+        parts.push(context.clone());
+    }
+    parts.push(request.clone());
+    parts.push(contract.clone());
+    parts.push(reply.clone());
+    let request_md = parts.join("\n\n");
+
+    let mut manifest = vec![entry("before", "edit-scopes", &sections[0].2)];
+    for (source, content) in &context_parts {
+        manifest.push(entry("context", source, content));
+    }
+    manifest.push(entry("request", "author", &request));
+    manifest.push(entry("reply-format", "protocol-schema", &contract));
+
+    DispatchPackage {
+        digest: digest_of(&request_md),
+        request_md,
+        manifest,
+    }
+}
+
+// ── narration (§8.4a) ─────────────────────────────────────────────────────
+
+use crate::agent_protocol::VerifiedArtifact;
+
+/// One narration: fact-only sentences in the author's language, as structured
+/// JSON for the CLI and the UI alike.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct Narration {
+    pub sentences: Vec<String>,
+}
+
+/// 「Agent 对第 3 段给了一个改写，对第 4 段只留了一条批注没有改；另写了一条工作备忘（主题：语气）。」
+#[must_use]
+pub fn narrate_artifact(artifact: &VerifiedArtifact) -> Narration {
+    let mut sentences = Vec::new();
+    for replacement in &artifact.replacements {
+        sentences.push(match &replacement.text {
+            Some(_) => format!("对 {} 给了一个改写", replacement.scope),
+            None => format!("对 {} 提议删除", replacement.scope),
+        });
+    }
+    for comment in &artifact.comments {
+        sentences.push(format!("对 {} 只留了一条批注没有改", comment.target));
+    }
+    if !sentences.is_empty() {
+        let head = sentences.join("，");
+        sentences = vec![format!("Agent {head}。")];
+    }
+    for memo in &artifact.memos {
+        sentences.push(match &memo.topic {
+            Some(topic) => format!("另写了一条工作备忘（主题:{topic}）。"),
+            None => "另写了一条工作备忘。".to_string(),
+        });
+    }
+    for draft in &artifact.material_drafts {
+        sentences.push(format!(
+            "另起草了一份资料「{}」（只成草稿，未落盘）。",
+            draft.title
+        ));
+    }
+    if sentences.is_empty() {
+        sentences.push("Agent 没有给出任何改动或批注。".to_string());
+    }
+    Narration { sentences }
+}
+
+/// 「这次发送把第三章全文（1.2 万字）与你上一轮的 12 条裁决交给 Agent 甲，产生 1 个 Run。」
+#[must_use]
+pub fn narrate_manifest(manifest: &[ManifestEntry]) -> Narration {
+    let total_bytes: u64 = manifest.iter().map(|entry| u64::from(entry.bytes)).sum();
+    let sections = manifest
+        .iter()
+        .map(|entry| match entry.section.as_str() {
+            "before" => format!("选中的原文（{} 字节）", entry.bytes),
+            "request" => "你的要求".to_string(),
+            "reply-format" => "回复契约".to_string(),
+            "context" => format!("上下文（{}，{} 字节）", entry.source, entry.bytes),
+            other => other.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("、");
+    let tokens = match manifest.iter().find_map(|entry| match entry.tokens {
+        Tokens::Actual(value) => Some(format!("token 实报 {value}")),
+        Tokens::Estimated(value) => Some(format!("token 预估约 {value}")),
+        Tokens::Unknown => None,
+    }) {
+        Some(text) => format!("；{text}"),
+        None => "；token 未知".to_string(),
+    };
+    Narration {
+        sentences: vec![format!(
+            "这次发送把 {sections} 交给 Agent，共 {total_bytes} 字节{tokens}。"
+        )],
+    }
+}
+
+/// 「上一轮 20 条裁决：接受 11、拒绝 6（其中 4 条附理由）、改后接受 3。」
+#[must_use]
+pub fn narrate_changes(changes: &[ChangeEntry]) -> Narration {
+    let count = |kind: ChangeKind| changes.iter().filter(|entry| entry.kind == kind).count();
+    let reasons = changes
+        .iter()
+        .filter(|entry| entry.reason.is_some())
+        .count();
+    Narration {
+        sentences: vec![format!(
+            "上一轮 {} 条裁决：接受 {}、拒绝 {}（其中 {} 条附理由）、改后接受 {}。",
+            changes.len(),
+            count(ChangeKind::Accept),
+            count(ChangeKind::Reject),
+            reasons,
+            count(ChangeKind::AcceptModified),
+        )],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_protocol::{ArtifactContract, parse};
+
+    fn scopes() -> Vec<BeforeScope> {
+        vec![
+            BeforeScope {
+                scope: "ch01:b3".to_string(),
+                text: "这里是第三段的原文。".to_string(),
+            },
+            BeforeScope {
+                scope: "ch01:b4".to_string(),
+                text: "这里是第四段的原文。".to_string(),
+            },
+        ]
+    }
+
+    fn input() -> DispatchInput {
+        DispatchInput {
+            persona: Some("你是一位克制的编辑。".to_string()),
+            manuscript: None,
+            changes: vec![ChangeEntry {
+                reference: "p7.s2".to_string(),
+                kind: ChangeKind::Reject,
+                reason: Some("不要用设问句结尾".to_string()),
+                final_text: None,
+            }],
+            materials: vec![],
+            request: "把这两段的语气改得更克制。".to_string(),
+            scopes: scopes(),
+            result_path: ".refrain/runs/r1/attempts/a1/result.md".to_string(),
+            max_bytes: 65_536,
+            contract_mode: ContractMode::Short,
+        }
+    }
+
+    #[test]
+    fn the_four_sections_hold_in_stable_order() {
+        let package = compile(&input());
+        let before = package.request_md.find("# Before").unwrap();
+        let context = package.request_md.find("# Context").unwrap();
+        let request = package.request_md.find("# Request").unwrap();
+        let format = package.request_md.find("# Reply format").unwrap();
+        let reply = package.request_md.find("# Agent reply").unwrap();
+        assert!(before < context && context < request && request < format && format < reply);
+
+        assert!(package.request_md.contains("<!-- scope ch01:b3 -->"));
+        assert!(
+            package
+                .request_md
+                .contains("<verdict n=\"1\" ref=\"p7.s2\" kind=\"reject\">")
+        );
+        assert!(
+            package
+                .request_md
+                .contains("<reason>不要用设问句结尾</reason>")
+        );
+        assert!(package.request_md.contains("version=\"2\""));
+    }
+
+    #[test]
+    fn the_manifest_carries_source_digest_bytes_and_three_stated_tokens() {
+        let package = compile(&input());
+        assert!(package.manifest.len() >= 3);
+        for entry in &package.manifest {
+            assert_eq!(entry.digest.len(), 64);
+            assert!(entry.bytes > 0);
+            assert!(!matches!(entry.tokens, Tokens::Actual(0)));
+        }
+        assert_eq!(package.digest.len(), 64);
+    }
+
+    #[test]
+    fn the_short_contract_mentions_every_scope_once() {
+        let package = compile(&input());
+        let contract = package
+            .request_md
+            .split("# Reply format")
+            .nth(1)
+            .expect("reply format");
+        assert_eq!(contract.matches("<!-- scope ch01:b3 -->").count(), 1);
+        assert_eq!(contract.matches("<!-- scope ch01:b4 -->").count(), 1);
+        assert!(contract.contains(".refrain/runs/r1/attempts/a1/result.md"));
+    }
+
+    #[test]
+    fn contract_tiers_are_presentation_frequencies_not_a_fork() {
+        let short = compile(&input());
+        assert!(
+            short
+                .request_md
+                .contains("One <replacement> per scope at most")
+        );
+
+        let mut full_input = input();
+        full_input.contract_mode = ContractMode::Full;
+        let full = compile(&full_input);
+        // The full tier is the generated protocol document, error table and all.
+        assert!(full.request_md.contains("unsupported-version"));
+        assert!(full.request_md.contains("<material-draft>"));
+
+        let mut pointer_input = input();
+        pointer_input.contract_mode = ContractMode::Pointer;
+        let pointer = compile(&pointer_input);
+        let body = pointer
+            .request_md
+            .split("# Reply format\n\n")
+            .nth(1)
+            .expect("reply format");
+        assert_eq!(body.lines().next(), Some("按 RefRain 兼容格式输出。"));
+        assert!(
+            !pointer
+                .request_md
+                .contains("One <replacement> per scope at most")
+        );
+
+        // Same input, different tier: the digest must move (INV-14).
+        assert_ne!(short.digest, full.digest);
+        assert_ne!(short.digest, pointer.digest);
+    }
+
+    #[test]
+    fn changes_serialise_with_stable_n_and_escaped_reasons() {
+        let xml = serialize_changes(&[
+            ChangeEntry {
+                reference: "p7.s2".to_string(),
+                kind: ChangeKind::Accept,
+                reason: None,
+                final_text: None,
+            },
+            ChangeEntry {
+                reference: "p7.s5".to_string(),
+                kind: ChangeKind::Reject,
+                reason: Some("引用里有个「引号」和 <标签>".to_string()),
+                final_text: None,
+            },
+        ]);
+        assert!(xml.contains("<verdict n=\"1\" ref=\"p7.s2\" kind=\"accept\">"));
+        assert!(xml.contains("<verdict n=\"2\" ref=\"p7.s5\" kind=\"reject\">"));
+        assert!(xml.contains("「引号」和 &lt;标签&gt;"));
+    }
+
+    #[test]
+    fn narration_of_an_artifact_is_fact_only() {
+        let artifact = parse(
+            r#"<agent-result version="2">
+  <replacement scope="s1"><![CDATA[改写后的第三段。]]></replacement>
+  <comments><comment target="s2">引文出处无法核实。</comment></comments>
+  <memo topic="语气">这位作者不接受设问句结尾。</memo>
+</agent-result>"#
+                .as_bytes(),
+            &ArtifactContract {
+                scopes: &["s1".to_string(), "s2".to_string()],
+                basis: &[],
+            },
+        )
+        .unwrap();
+        let narration = narrate_artifact(&artifact);
+        assert_eq!(
+            narration.sentences[0],
+            "Agent 对 s1 给了一个改写，对 s2 只留了一条批注没有改。"
+        );
+        assert_eq!(narration.sentences[1], "另写了一条工作备忘（主题:语气）。");
+    }
+
+    #[test]
+    fn narration_of_a_manifest_names_sections_and_unknown_tokens() {
+        let package = compile(&input());
+        let narration = narrate_manifest(&package.manifest);
+        assert!(narration.sentences[0].contains("选中的原文"));
+        assert!(
+            narration.sentences[0].contains("token 预估约")
+                || narration.sentences[0].contains("token 未知")
+        );
+    }
+
+    #[test]
+    fn narration_of_changes_counts_each_kind_and_reasoned() {
+        let narration = narrate_changes(&[
+            ChangeEntry {
+                reference: "a".into(),
+                kind: ChangeKind::Accept,
+                reason: None,
+                final_text: None,
+            },
+            ChangeEntry {
+                reference: "b".into(),
+                kind: ChangeKind::Accept,
+                reason: None,
+                final_text: None,
+            },
+            ChangeEntry {
+                reference: "c".into(),
+                kind: ChangeKind::Reject,
+                reason: Some("太长".into()),
+                final_text: None,
+            },
+            ChangeEntry {
+                reference: "d".into(),
+                kind: ChangeKind::AcceptModified,
+                reason: None,
+                final_text: Some("改后".into()),
+            },
+        ]);
+        assert_eq!(
+            narration.sentences[0],
+            "上一轮 4 条裁决：接受 2、拒绝 1（其中 1 条附理由）、改后接受 1。"
+        );
+    }
+}

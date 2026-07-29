@@ -2,7 +2,8 @@
 //!
 //! Two transaction domains (SPEC D6): `app.db` for machine-level facts and a
 //! per-project `refrain.db`. Both carry a monotonic schema version and share
-//! one runner. R0 lands the frame; R1 fills the tables.
+//! one runner. The frame landed in R0; C3 filled the first real tables
+//! directly (v0.2 is unreleased, so no second "migrate the placeholder" debt).
 //!
 //! Three rules the runner enforces, each with a test that fails without it:
 //!
@@ -87,8 +88,10 @@ fn read_version(connection: &Connection) -> Result<SchemaVersion, StoreError> {
     Ok(SchemaVersion(version))
 }
 
-/// Machine-level state: preferences, Root permits, Harness Connections, icon
-/// assets, WorkContext (SPEC 10.1).
+/// Machine-level state: Root permits, Harness capability/trust evidence, icon
+/// assets, WorkContext (SPEC 10.1). User settings and Harness Connection
+/// parameters are NOT here — `config.toml` is their only authority (D18), and
+/// `verify:config-authority` fails the build if a settings table returns.
 pub struct AppDb;
 
 impl Database for AppDb {
@@ -98,9 +101,13 @@ impl Database for AppDb {
             name: "app-frame",
             apply: |tx| {
                 tx.execute_batch(
-                    "CREATE TABLE preferences (
-                         key   TEXT PRIMARY KEY,
-                         value TEXT NOT NULL
+                    "CREATE TABLE root_permits (
+                         root_id        TEXT PRIMARY KEY,
+                         canonical_path TEXT NOT NULL UNIQUE,
+                         kind           TEXT NOT NULL CHECK (kind IN ('folder', 'file')),
+                         identity       TEXT NOT NULL,
+                         nonce          TEXT NOT NULL,
+                         adopted_at     INTEGER NOT NULL
                      ) STRICT;",
                 )
             },
@@ -114,19 +121,143 @@ pub struct ProjectDb;
 
 impl Database for ProjectDb {
     fn migrations() -> &'static [Migration] {
-        &[Migration {
-            version: SchemaVersion(1),
-            name: "project-frame",
-            apply: |tx| {
-                tx.execute_batch(
-                    "CREATE TABLE migration_log (
-                         id         TEXT PRIMARY KEY,
-                         applied_at TEXT NOT NULL,
-                         name       TEXT NOT NULL
-                     ) STRICT;",
-                )
+        &[
+            Migration {
+                version: SchemaVersion(1),
+                name: "project-frame",
+                apply: |tx| {
+                    tx.execute_batch(
+                        "CREATE TABLE migration_log (
+                             id         TEXT PRIMARY KEY,
+                             applied_at TEXT NOT NULL,
+                             name       TEXT NOT NULL
+                         ) STRICT;
+                         CREATE TABLE documents (
+                             id        TEXT PRIMARY KEY,
+                             path      TEXT NOT NULL UNIQUE,
+                             role      TEXT NOT NULL CHECK (role IN ('document', 'chapter', 'material')),
+                             digest    TEXT,
+                             legacy_id TEXT
+                         ) STRICT;
+                         CREATE TABLE verdicts (
+                             id              TEXT PRIMARY KEY,
+                             proposal_id     TEXT NOT NULL,
+                             slice_id        TEXT NOT NULL,
+                             kind            TEXT NOT NULL CHECK (kind IN (
+                                                 'accept', 'accept-modified', 'reject', 'comment-only')),
+                             final_text      TEXT,
+                             reason          TEXT,
+                             decided_at      INTEGER NOT NULL,
+                             legacy_baseline TEXT
+                         ) STRICT;",
+                    )
+                },
             },
-        }]
+            Migration {
+                version: SchemaVersion(2),
+                name: "revision-continuity",
+                apply: |tx| {
+                    // Crash recovery (SPEC 7.2): the confirmed revision id and
+                    // the lineage it pairs with, plus the pending-action
+                    // journal. The journal is written before an EditorAction
+                    // executes and cleared after, so a kill between the two
+                    // replays on the next open — through the same validation,
+                    // never by writing files directly.
+                    tx.execute_batch(
+                        "ALTER TABLE documents ADD COLUMN current_head TEXT;
+                         ALTER TABLE documents ADD COLUMN head_block_ids TEXT;
+                         CREATE TABLE pending_actions (
+                             id         TEXT PRIMARY KEY,
+                             path       TEXT NOT NULL,
+                             action     TEXT NOT NULL,
+                             created_at INTEGER NOT NULL
+                         ) STRICT;",
+                    )
+                },
+            },
+            Migration {
+                version: SchemaVersion(3),
+                name: "review-ledger",
+                apply: |tx| {
+                    // The review loop's persistence (SPEC 9.7): frozen
+                    // candidates and the per-document review session. The
+                    // cursor and the batch are staging, not truth — truth is
+                    // the verdict rows, which already landed in C3.
+                    tx.execute_batch(
+                        "CREATE TABLE proposals (
+                             id            TEXT PRIMARY KEY,
+                             run           TEXT NOT NULL,
+                             baseline      TEXT NOT NULL,
+                             document_path TEXT NOT NULL,
+                             scope         TEXT NOT NULL,
+                             before_text   TEXT NOT NULL,
+                             after_text    TEXT,
+                             created_at    INTEGER NOT NULL
+                         ) STRICT;
+                         CREATE TABLE review_sessions (
+                             document_path TEXT PRIMARY KEY,
+                             cursor        INTEGER NOT NULL DEFAULT 0,
+                             batch         TEXT NOT NULL DEFAULT '[]',
+                             updated_at    INTEGER NOT NULL
+                         ) STRICT;",
+                    )
+                },
+            },
+            Migration {
+                version: SchemaVersion(4),
+                name: "orchestration",
+                apply: |tx| {
+                    // Orchestration truth (SPEC 8.1, 6.3): Task, Run,
+                    // Authorization. The entity column carries the whole fact
+                    // as JSON; the named columns exist because the rail and
+                    // the recovery view query by them.
+                    tx.execute_batch(
+                        "CREATE TABLE tasks (
+                             id            TEXT PRIMARY KEY,
+                             baseline      TEXT NOT NULL,
+                             progress_kind TEXT NOT NULL,
+                             entity        TEXT NOT NULL
+                         ) STRICT;
+                         CREATE TABLE runs (
+                             id            TEXT PRIMARY KEY,
+                             task_id       TEXT NOT NULL REFERENCES tasks(id),
+                             agent_id      TEXT NOT NULL,
+                             progress_kind TEXT NOT NULL,
+                             retry_of      TEXT,
+                             entity        TEXT NOT NULL
+                         ) STRICT;
+                         CREATE TABLE authorizations (
+                             id              TEXT PRIMARY KEY,
+                             manifest_digest TEXT NOT NULL,
+                             authorized_at   INTEGER NOT NULL,
+                             entity          TEXT NOT NULL
+                         ) STRICT;",
+                    )
+                },
+            },
+            Migration {
+                version: SchemaVersion(5),
+                name: "material-drafts",
+                apply: |tx| {
+                    // Material drafts (SPEC 8.7): an artifact's material-draft
+                    // is only ever a draft until a Human Material Action saves
+                    // it. The draft row is all there is; the Material itself
+                    // is a plain Markdown document with role 'material'.
+                    tx.execute_batch(
+                        "CREATE TABLE material_drafts (
+                             id         TEXT PRIMARY KEY,
+                             run_id     TEXT NOT NULL,
+                             document   TEXT NOT NULL,
+                             kind       TEXT NOT NULL,
+                             title      TEXT NOT NULL,
+                             basis      TEXT NOT NULL,
+                             body       TEXT NOT NULL,
+                             created_at INTEGER NOT NULL
+                         ) STRICT;",
+                    )
+                },
+            },
+        ]
     }
 }
 

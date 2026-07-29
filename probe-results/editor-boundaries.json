@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "probe": "prosemirror-markdown-boundaries",
+  "parser": {
+    "prosemirrorMarkdown": "1.13.5",
+    "markdownIt": "14.3.0"
+  },
+  "sourceOracle": {
+    "file": "tests/corpora/layouts.json",
+    "sha256": "38d5f7ee431814edebda4bbb433ecea9ec9d4a338beda29bb6843d6a3d21180f",
+    "corpora": 20
+  },
+  "matched": 16,
+  "mismatched": 4,
+  "mismatches": [
+    {
+      "corpus": "blockquote-and-list",
+      "expectedSpans": [
+        {
+          "start": 0,
+          "end": 23
+        },
+        {
+          "start": 25,
+          "end": 36
+        },
+        {
+          "start": 38,
+          "end": 51
+        }
+      ],
+      "actualSpans": [
+        {
+          "start": 0,
+          "end": 23
+        },
+        {
+          "start": 25,
+          "end": 37
+        },
+        {
+          "start": 38,
+          "end": 51
+        }
+      ],
+      "expectedBlocks": 3,
+      "actualBlocks": 3
+    },
+    {
+      "corpus": "tabs",
+      "expectedSpans": [
+        {
+          "start": 0,
+          "end": 19
+        },
+        {
+          "start": 21,
+          "end": 41
+        }
+      ],
+      "actualSpans": [
+        {
+          "start": 0,
+          "end": 41
+        }
+      ],
+      "expectedBlocks": 2,
+      "actualBlocks": 1
+    },
+    {
+      "corpus": "empty-file",
+      "expectedSpans": [],
+      "actualSpans": [],
+      "expectedBlocks": 0,
+      "actualBlocks": 1
+    },
+    {
+      "corpus": "only-whitespace",
+      "expectedSpans": [],
+      "actualSpans": [],
+      "expectedBlocks": 0,
+      "actualBlocks": 1
+    }
+  ],
+  "decision": "direct-dom",
+  "reason": "ProseMirror must not impose block boundaries that differ from the byte-authoritative manuscript layout."
+}

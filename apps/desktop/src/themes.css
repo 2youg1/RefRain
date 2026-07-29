@@ -1,0 +1,478 @@
+/*
+ * RefRain — 7 套主题。由 scripts/generate-themes.ts 生成，勿手改。
+ *
+ * 昼夜不是同一套配色的正反两面。一套主题属于一个时段，为那个时段设计：
+ * 日间5套（濤・霞・砂・桦・侘）与夜间2套（墨・韶）各自成立。
+ * 夜间不是把日间反相得来的——那样得到的是被翻过来的屏幕，不是灯下的纸。
+ *
+ * 颜色一律以 OKLCH 声明。同一亮度上换色相不会让灰色发浑，这是 HSL 做不到的，
+ * 也是夜间那几套能读作「一盏灯照着纸」而非「一块发光的板」的原因。
+ *
+ * 对比度用 APCA（W3C Silver 草案）而非 WCAG 2 的亮度比：WCAG 2 在深色底上
+ * 会把浅字算得比实际好读，而这里有数套主题整个活在那种条件下。每套注释里的
+ * Lc 是生成时实测的——正文门槛 |75|，界面与强调 |45|，不达标则脚本拒绝写出。
+ *
+ * 每套只由四个锚点定义（纸・墨・印・副强调），其余全部推导。加一套主题是写
+ * 四个颜色而非四十个，「侧栏跟随纸面」这类关系也就不可能只在某一套里走样。
+ */
+
+/* ── 濤 tou · 日间 · 北斎《神奈川沖浪裏》 ────────── */
+/*
+ * 工件实测。暖纸配群青墨，冷暖对撞；金取自浪尖的落款印泥，作第二强调。
+ * 八套里唯一敢把深蓝当正文墨色的一套。
+ * 出典：纸 #f3eddf／墨 #19345c／印 #ca4d23／副
+ *  #c39d32，自 2026-07-25 的工件像素采样
+ *
+ * APCA Lc（W3C Silver 草案；WCAG 2 在深色底上判断失准）
+ *   正文墨/纸    87.6   门槛 |75|
+ *   侧栏文/侧   -78.9   门槛 |75|
+ *   侧栏次/侧   -53.4   门槛 |45|
+ *   印色/纸　    60.3   门槛 |45|
+ *   接受/纸　    70.7   门槛 |45|
+ *   退回/纸　    73.2   门槛 |45|
+ *   代理/纸　    57.8   门槛 |45|
+ *   引用/纸　    71.6   门槛 |45|
+ *
+ * 本段由 scripts/generate-themes.ts 生成，勿手改。
+ * 改锚点后重跑 `bun scripts/generate-themes.ts`。
+ */
+:root,
+:root[data-theme="tou"] {
+  color-scheme: light;
+
+  --paper: oklch(0.947 0.0197 87.5); /* #f3eddf */
+  --paper-raised: oklch(0.966 0.0177 87.5); /* #f9f3e7 */
+  --paper-sunk: oklch(0.921 0.0217 87.5); /* #ebe4d5 */
+  --lamp: oklch(0.975 0.0108 87.5); /* #faf6ef */
+  --shade: oklch(0.847 0.0236 87.5); /* #d3ccbc */
+  --sheet: oklch(0.961 0.0162 87.5); /* #f7f2e6 */
+  --rule: oklch(0.871 0.0256 87.5); /* #dcd4c2 */
+  --rule-strong: oklch(0.797 0.0295 87.5); /* #c5bca8 */
+  --rail: oklch(0.352 0.0723 258.2); /* #223b60 */
+  --rail-ink: oklch(0.902 0.026 258.2); /* #d4e0f0 */
+  --rail-faint: oklch(0.77 0.034 258.2); /* #a7b5ca */
+  --rail-rule: oklch(0.432 0.0795 258.2); /* #34517c */
+  --ink: oklch(0.326 0.0786 258.2); /* #19345c */
+  --ink-soft: oklch(0.476 0.0802 258.2); /* #405d89 */
+  --ink-faint: oklch(0.612 0.0747 258.2); /* #6885b1 */
+  --ink-ghost: oklch(0.736 0.0668 258.2); /* #90abd4 */
+  --seal: oklch(0.583 0.168 38); /* #ca4d23 */
+  --seal-bright: oklch(0.673 0.1596 42); /* #e56f3e */
+  --seal-wash: oklch(0.937 0.0504 38); /* #ffdfd2 */
+  --caret: oklch(0.267 0.1932 38); /* #660000 */
+  --agent: oklch(0.59 0.132 88.4); /* #9d7700 */
+  --agent-wash: oklch(0.935 0.03 88.4); /* #f2e9d3 */
+  --accepted: oklch(0.478 0.096 152); /* #2b6c41 */
+  --accepted-wash: oklch(0.935 0.026 152); /* #ddefe1 */
+  --refused: oklch(0.478 0.128 24); /* #983938 */
+  --refused-wash: oklch(0.935 0.028 24); /* #fce3e0 */
+  --source: oklch(0.476 0.078 232); /* #266481 */
+  --source-wash: oklch(0.935 0.024 232); /* #daedf7 */
+  --pending: oklch(0.583 0.168 38); /* #ca4d23 */
+  --pending-wash: oklch(0.935 0.0504 38); /* #ffdfd2 */
+
+  --role-pending: var(--pending);
+  --role-pending-wash: var(--pending-wash);
+  --role-accepted: var(--accepted);
+  --role-accepted-wash: var(--accepted-wash);
+  --role-refused: var(--refused);
+  --role-refused-wash: var(--refused-wash);
+  --role-agent: var(--agent);
+  --role-agent-wash: var(--agent-wash);
+  --role-source: var(--source);
+  --role-source-wash: var(--source-wash);
+}
+
+/* ── 霞 kasumi · 日间 · 新海誠・波子汽水 ──────── */
+/*
+ * 新海诚式的高透明感：纸是夏日正午被光照透的云，墨是积雨云底那层深蓝。
+ * 印仍是樱色——停在 L .700，再推白就跌破 Lc 45；副强调取
+ * 波子汽水的瓶身蓝。侧栏留在明度上半区：高调题材的深侧栏是全屏对比最强
+ * 的一块，会把「清晨」拽回「专业工具」。
+ * 出典：云のむこう・波子汽水。高调冷白 + 樱印 + 瓶身蓝
+ *
+ * APCA Lc（W3C Silver 草案；WCAG 2 在深色底上判断失准）
+ *   正文墨/纸    91.6   门槛 |75|
+ *   侧栏文/侧    78.4   门槛 |75|
+ *   侧栏次/侧    61.7   门槛 |45|
+ *   印色/纸　    45.9   门槛 |45|
+ *   接受/纸　    72.7   门槛 |45|
+ *   退回/纸　    75.3   门槛 |45|
+ *   代理/纸　    52.8   门槛 |45|
+ *   引用/纸　    73.6   门槛 |45|
+ *
+ * 本段由 scripts/generate-themes.ts 生成，勿手改。
+ * 改锚点后重跑 `bun scripts/generate-themes.ts`。
+ */
+:root[data-theme="kasumi"] {
+  color-scheme: light;
+
+  --paper: oklch(0.955 0.023 208); /* #dff5f8 */
+  --paper-raised: oklch(0.966 0.0207 208); /* #e5f8fb */
+  --paper-sunk: oklch(0.929 0.0253 208); /* #d5edf0 */
+  --lamp: oklch(0.983 0.0127 208); /* #f0fcfe */
+  --shade: oklch(0.855 0.0276 208); /* #bcd5d9 */
+  --sheet: oklch(0.969 0.0189 208); /* #e7f9fb */
+  --rule: oklch(0.879 0.0299 208); /* #c2dde1 */
+  --rule-strong: oklch(0.805 0.0345 208); /* #a7c6cb */
+  --rail: oklch(0.883 0.0345 208); /* #bfdfe4 */
+  --rail-ink: oklch(0.29 0.06 242); /* #092e46 */
+  --rail-faint: oklch(0.466 0.048 242); /* #415d73 */
+  --rail-rule: oklch(0.821 0.038 208); /* #a9ccd1 */
+  --ink: oklch(0.298 0.06 242); /* #0b3049 */
+  --ink-soft: oklch(0.448 0.0612 242); /* #345974 */
+  --ink-faint: oklch(0.584 0.057 242); /* #5d809b */
+  --ink-ghost: oklch(0.708 0.051 242); /* #85a5be */
+  --seal: oklch(0.7 0.152 8); /* #eb728c */
+  --seal-bright: oklch(0.79 0.1444 12); /* #ff91a2 */
+  --seal-wash: oklch(0.945 0.0456 8); /* #ffe1e7 */
+  --caret: oklch(0.38 0.24 8); /* #990029 */
+  --agent: oklch(0.61 0.17 228); /* #0093d2 */
+  --agent-wash: oklch(0.943 0.03 228); /* #d8f1fc */
+  --accepted: oklch(0.478 0.096 152); /* #2b6c41 */
+  --accepted-wash: oklch(0.943 0.026 152); /* #e0f2e4 */
+  --refused: oklch(0.478 0.128 24); /* #983938 */
+  --refused-wash: oklch(0.943 0.028 24); /* #ffe5e3 */
+  --source: oklch(0.476 0.078 232); /* #266481 */
+  --source-wash: oklch(0.943 0.024 232); /* #ddeffa */
+  --pending: oklch(0.7 0.152 8); /* #eb728c */
+  --pending-wash: oklch(0.943 0.0456 8); /* #ffe0e6 */
+
+  --role-pending: var(--pending);
+  --role-pending-wash: var(--pending-wash);
+  --role-accepted: var(--accepted);
+  --role-accepted-wash: var(--accepted-wash);
+  --role-refused: var(--refused);
+  --role-refused-wash: var(--refused-wash);
+  --role-agent: var(--agent);
+  --role-agent-wash: var(--agent-wash);
+  --role-source: var(--source);
+  --role-source-wash: var(--source-wash);
+}
+
+/* ── 砂 suna · 日间 · 枯山水 ────────────────────── */
+/*
+ * 砂は白、苔は緑、石は影。纸取耙过的白砂，墨取苔绿——这是工件实测值，
+ * 也正是枯山水的关系：白砂之上唯一的活物是苔。印取石影的青灰蓝。
+ * 出典：墨 #404c41 工件实测；纸与印按枯山水三素重构
+ *
+ * APCA Lc（W3C Silver 草案；WCAG 2 在深色底上判断失准）
+ *   正文墨/纸    82.5   门槛 |75|
+ *   侧栏文/侧   -78.9   门槛 |75|
+ *   侧栏次/侧     -54   门槛 |45|
+ *   印色/纸　    69.4   门槛 |45|
+ *   接受/纸　      73   门槛 |45|
+ *   退回/纸　    75.5   门槛 |45|
+ *   代理/纸　      63   门槛 |45|
+ *   引用/纸　    73.8   门槛 |45|
+ *
+ * 本段由 scripts/generate-themes.ts 生成，勿手改。
+ * 改锚点后重跑 `bun scripts/generate-themes.ts`。
+ */
+:root[data-theme="suna"] {
+  color-scheme: light;
+
+  --paper: oklch(0.959 0.0057 84.6); /* #f3f1ed */
+  --paper-raised: oklch(0.966 0.0051 84.6); /* #f5f3f0 */
+  --paper-sunk: oklch(0.933 0.0063 84.6); /* #ebe9e4 */
+  --lamp: oklch(0.985 0.0031 84.6); /* #fbfaf8 */
+  --shade: oklch(0.859 0.0068 84.6); /* #d3d0cc */
+  --sheet: oklch(0.972 0.0047 84.6); /* #f7f6f2 */
+  --rule: oklch(0.883 0.0074 84.6); /* #dbd8d3 */
+  --rule-strong: oklch(0.809 0.0086 84.6); /* #c3c0ba */
+  --rail: oklch(0.352 0.03 147.4); /* #313f32 */
+  --rail-ink: oklch(0.902 0.012 147.4); /* #dae1da */
+  --rail-faint: oklch(0.77 0.018 147.4); /* #adb8ae */
+  --rail-rule: oklch(0.432 0.033 147.4); /* #445646 */
+  --ink: oklch(0.402 0.0238 147.4); /* #404c41 */
+  --ink-soft: oklch(0.552 0.0243 147.4); /* #69766a */
+  --ink-faint: oklch(0.688 0.0226 147.4); /* #929f93 */
+  --ink-ghost: oklch(0.812 0.0202 147.4); /* #b9c5ba */
+  --seal: oklch(0.52 0.132 262); /* #3d66b4 */
+  --seal-bright: oklch(0.61 0.1254 266); /* #6080ce */
+  --seal-wash: oklch(0.949 0.0396 262); /* #e0efff */
+  --caret: oklch(0.279 0.1518 262); /* #001a71 */
+  --agent: oklch(0.56 0.062 196); /* #458080 */
+  --agent-wash: oklch(0.947 0.0174 196); /* #e1f1f1 */
+  --accepted: oklch(0.478 0.096 152); /* #2b6c41 */
+  --accepted-wash: oklch(0.947 0.026 152); /* #e1f3e5 */
+  --refused: oklch(0.478 0.128 24); /* #983938 */
+  --refused-wash: oklch(0.947 0.028 24); /* #ffe7e4 */
+  --source: oklch(0.476 0.078 232); /* #266481 */
+  --source-wash: oklch(0.947 0.024 232); /* #def1fb */
+  --pending: oklch(0.52 0.132 262); /* #3d66b4 */
+  --pending-wash: oklch(0.947 0.0396 262); /* #dfeeff */
+
+  --role-pending: var(--pending);
+  --role-pending-wash: var(--pending-wash);
+  --role-accepted: var(--accepted);
+  --role-accepted-wash: var(--accepted-wash);
+  --role-refused: var(--refused);
+  --role-refused-wash: var(--refused-wash);
+  --role-agent: var(--agent);
+  --role-agent-wash: var(--agent-wash);
+  --role-source: var(--source);
+  --role-source-wash: var(--source-wash);
+}
+
+/* ── 桦 hua · 日间 · 桦木・木漏れ日 ──────────────── */
+/*
+ * 桦皮的暖白纸，杉肌的红褐墨，印取木漏れ日的橙黄。土色留在墨里，但整套
+ * 不再是单温——那束漏下的光就是它的温差。
+ * 出典：墨 #413a31 工件实测；印取黄丹 ōni
+ *
+ * APCA Lc（W3C Silver 草案；WCAG 2 在深色底上判断失准）
+ *   正文墨/纸    85.6   门槛 |75|
+ *   侧栏文/侧   -78.9   门槛 |75|
+ *   侧栏次/侧   -53.6   门槛 |45|
+ *   印色/纸　    57.4   门槛 |45|
+ *   接受/纸　    70.9   门槛 |45|
+ *   退回/纸　    73.4   门槛 |45|
+ *   代理/纸　      66   门槛 |45|
+ *   引用/纸　    71.8   门槛 |45|
+ *
+ * 本段由 scripts/generate-themes.ts 生成，勿手改。
+ * 改锚点后重跑 `bun scripts/generate-themes.ts`。
+ */
+:root[data-theme="hua"] {
+  color-scheme: light;
+
+  --paper: oklch(0.948 0.0097 72.7); /* #f2ede7 */
+  --paper-raised: oklch(0.966 0.0087 72.7); /* #f7f3ee */
+  --paper-sunk: oklch(0.922 0.0107 72.7); /* #eae4de */
+  --lamp: oklch(0.976 0.0053 72.7); /* #f9f7f3 */
+  --shade: oklch(0.848 0.0116 72.7); /* #d2ccc5 */
+  --sheet: oklch(0.962 0.008 72.7); /* #f6f2ed */
+  --rule: oklch(0.872 0.0126 72.7); /* #dad4cc */
+  --rule-strong: oklch(0.798 0.0146 72.7); /* #c3bcb3 */
+  --rail: oklch(0.352 0.03 74.1); /* #45392a */
+  --rail-ink: oklch(0.902 0.012 74.1); /* #e4ded6 */
+  --rail-faint: oklch(0.77 0.018 74.1); /* #bbb3a8 */
+  --rail-rule: oklch(0.432 0.033 74.1); /* #5b4e3c */
+  --ink: oklch(0.353 0.018 74.1); /* #413a31 */
+  --ink-soft: oklch(0.503 0.0184 74.1); /* #6b6359 */
+  --ink-faint: oklch(0.639 0.0171 74.1); /* #928b81 */
+  --ink-ghost: oklch(0.763 0.0153 74.1); /* #b8b1a8 */
+  --seal: oklch(0.596 0.146 76); /* #af7000 */
+  --seal-bright: oklch(0.686 0.1387 80); /* #c68f11 */
+  --seal-wash: oklch(0.938 0.0438 76); /* #fce7cb */
+  --caret: oklch(0.268 0.1679 76); /* #4f0400 */
+  --agent: oklch(0.52 0.088 152); /* #3e774f */
+  --agent-wash: oklch(0.936 0.0246 152); /* #deefe2 */
+  --accepted: oklch(0.478 0.096 152); /* #2b6c41 */
+  --accepted-wash: oklch(0.936 0.026 152); /* #deefe1 */
+  --refused: oklch(0.478 0.128 24); /* #983938 */
+  --refused-wash: oklch(0.936 0.028 24); /* #fce3e1 */
+  --source: oklch(0.476 0.078 232); /* #266481 */
+  --source-wash: oklch(0.936 0.024 232); /* #dbedf7 */
+  --pending: oklch(0.596 0.146 76); /* #af7000 */
+  --pending-wash: oklch(0.936 0.0438 76); /* #fbe7ca */
+
+  --role-pending: var(--pending);
+  --role-pending-wash: var(--pending-wash);
+  --role-accepted: var(--accepted);
+  --role-accepted-wash: var(--accepted-wash);
+  --role-refused: var(--refused);
+  --role-refused-wash: var(--refused-wash);
+  --role-agent: var(--agent);
+  --role-agent-wash: var(--agent-wash);
+  --role-source: var(--source);
+  --role-source-wash: var(--source-wash);
+}
+
+/* ── 侘 wabi · 日间 · 青瓷・侘び ────────────────── */
+/*
+ * 秘色的纸，釉里的青作墨。印取常磐——不是红，是瓷器窑变里那点更深的绿
+ * 。貫入的细线是分隔线的形状依据。
+ * 出典：秘色青瓷；印取常磐 tokiwa
+ *
+ * APCA Lc（W3C Silver 草案；WCAG 2 在深色底上判断失准）
+ *   正文墨/纸    90.8   门槛 |75|
+ *   侧栏文/侧   -78.6   门槛 |75|
+ *   侧栏次/侧   -53.7   门槛 |45|
+ *   印色/纸　    67.7   门槛 |45|
+ *   接受/纸　    72.2   门槛 |45|
+ *   退回/纸　    74.7   门槛 |45|
+ *   代理/纸　    63.7   门槛 |45|
+ *   引用/纸　    73.1   门槛 |45|
+ *
+ * 本段由 scripts/generate-themes.ts 生成，勿手改。
+ * 改锚点后重跑 `bun scripts/generate-themes.ts`。
+ */
+:root[data-theme="wabi"] {
+  color-scheme: light;
+
+  --paper: oklch(0.953 0.0105 155); /* #eaf2ec */
+  --paper-raised: oklch(0.966 0.0095 155); /* #eff6f1 */
+  --paper-sunk: oklch(0.927 0.0116 155); /* #e1e9e3 */
+  --lamp: oklch(0.981 0.0058 155); /* #f6faf7 */
+  --shade: oklch(0.853 0.0126 155); /* #c9d1cb */
+  --sheet: oklch(0.967 0.0086 155); /* #f0f6f2 */
+  --rule: oklch(0.877 0.0137 155); /* #d0d9d3 */
+  --rule-strong: oklch(0.803 0.0158 155); /* #b7c2ba */
+  --rail: oklch(0.352 0.03 196); /* #284040 */
+  --rail-ink: oklch(0.902 0.012 196); /* #d6e1e1 */
+  --rail-faint: oklch(0.77 0.018 196); /* #a8b8b8 */
+  --rail-rule: oklch(0.432 0.033 196); /* #3b5656 */
+  --ink: oklch(0.3 0.03 196); /* #1b3333 */
+  --ink-soft: oklch(0.45 0.0306 196); /* #415b5b */
+  --ink-faint: oklch(0.586 0.0285 196); /* #698282 */
+  --ink-ghost: oklch(0.71 0.0255 196); /* #90a7a7 */
+  --seal: oklch(0.5 0.15 152); /* #007a34 */
+  --seal-bright: oklch(0.59 0.1425 156); /* #039558 */
+  --seal-wash: oklch(0.943 0.045 152); /* #d7f5de */
+  --caret: oklch(0.273 0.1725 152); /* #003a00 */
+  --agent: oklch(0.556 0.07 262); /* #5d749d */
+  --agent-wash: oklch(0.941 0.0196 262); /* #e4ecf9 */
+  --accepted: oklch(0.478 0.096 152); /* #2b6c41 */
+  --accepted-wash: oklch(0.941 0.026 152); /* #dff1e3 */
+  --refused: oklch(0.478 0.128 24); /* #983938 */
+  --refused-wash: oklch(0.941 0.028 24); /* #fee5e2 */
+  --source: oklch(0.476 0.078 232); /* #266481 */
+  --source-wash: oklch(0.941 0.024 232); /* #dceff9 */
+  --pending: oklch(0.5 0.15 152); /* #007a34 */
+  --pending-wash: oklch(0.941 0.045 152); /* #d6f5dd */
+
+  --role-pending: var(--pending);
+  --role-pending-wash: var(--pending-wash);
+  --role-accepted: var(--accepted);
+  --role-accepted-wash: var(--accepted-wash);
+  --role-refused: var(--refused);
+  --role-refused-wash: var(--refused-wash);
+  --role-agent: var(--agent);
+  --role-agent-wash: var(--agent-wash);
+  --role-source: var(--source);
+  --role-source-wash: var(--source-wash);
+}
+
+/* ── 墨 sumi · 夜间 · AI 业黑白・人文の朱 ────── */
+/*
+ * 夜间。当代 AI 前端的黑白骨架配人文的暖：纸是近黑的中性暖灰，墨是
+ * 带纸温的白；全套只有两处有颜色——印泥的朱（人的裁决）与象牙的暖灰（
+ * 机器痕迹），其余都是明度。
+ * 出典：AI 业黑白主流 + 印泥朱一点
+ *
+ * APCA Lc（W3C Silver 草案；WCAG 2 在深色底上判断失准）
+ *   正文墨/纸   -90.4   门槛 |75|
+ *   侧栏文/侧   -83.2   门槛 |75|
+ *   侧栏次/侧   -58.3   门槛 |45|
+ *   印色/纸　   -49.8   门槛 |45|
+ *   接受/纸　   -52.7   门槛 |45|
+ *   退回/纸　   -49.2   门槛 |45|
+ *   代理/纸　   -51.9   门槛 |45|
+ *   引用/纸　   -51.4   门槛 |45|
+ *
+ * 本段由 scripts/generate-themes.ts 生成，勿手改。
+ * 改锚点后重跑 `bun scripts/generate-themes.ts`。
+ */
+:root[data-theme="sumi"] {
+  color-scheme: dark;
+
+  --paper: oklch(0.215 0.008 75); /* #1c1915 */
+  --paper-raised: oklch(0.245 0.0072 75); /* #22201d */
+  --paper-sunk: oklch(0.189 0.0088 75); /* #16130f */
+  --lamp: oklch(0.345 0.0044 75); /* #3b3937 */
+  --shade: oklch(0.165 0.0096 75); /* #110e0a */
+  --sheet: oklch(0.231 0.0066 75); /* #1f1d1a */
+  --rule: oklch(0.291 0.0104 75); /* #2f2b26 */
+  --rule-strong: oklch(0.365 0.012 75); /* #423e38 */
+  --rail: oklch(0.152 0.016 75); /* #100b05 */
+  --rail-ink: oklch(0.884 0.0064 90); /* #dad9d4 */
+  --rail-faint: oklch(0.752 0.0096 90); /* #b1aea8 */
+  --rail-rule: oklch(0.242 0.0176 75); /* #251f16 */
+  --ink: oklch(0.925 0.008 90); /* #e8e6e0 */
+  --ink-soft: oklch(0.781 0.0082 90); /* #bab7b2 */
+  --ink-faint: oklch(0.657 0.0076 90); /* #93918c */
+  --ink-ghost: oklch(0.533 0.0068 90); /* #6e6c68 */
+  --seal: oklch(0.72 0.16 40); /* #f67d51 */
+  --seal-bright: oklch(0.81 0.152 44); /* #ff9e6b */
+  --seal-wash: oklch(0.225 0.048 40); /* #2e1309 */
+  --caret: oklch(0.935 0.184 40); /* #ffbb86 */
+  --agent: oklch(0.72 0.03 80); /* #afa390 */
+  --agent-wash: oklch(0.227 0.0084 80); /* #1e1c18 */
+  --accepted: oklch(0.712 0.096 152); /* #73b484 */
+  --accepted-wash: oklch(0.227 0.026 152); /* #132016 */
+  --refused: oklch(0.716 0.128 24); /* #e9817c */
+  --refused-wash: oklch(0.227 0.028 24); /* #281716 */
+  --source: oklch(0.712 0.078 232); /* #6eabcb */
+  --source-wash: oklch(0.227 0.024 232); /* #101e26 */
+  --pending: oklch(0.82 0.16 40); /* #ff9d71 */
+  --pending-wash: oklch(0.227 0.048 40); /* #2f130a */
+
+  --role-pending: var(--pending);
+  --role-pending-wash: var(--pending-wash);
+  --role-accepted: var(--accepted);
+  --role-accepted-wash: var(--accepted-wash);
+  --role-refused: var(--refused);
+  --role-refused-wash: var(--refused-wash);
+  --role-agent: var(--agent);
+  --role-agent-wash: var(--agent-wash);
+  --role-source: var(--source);
+  --role-source-wash: var(--source-wash);
+}
+
+/* ── 韶 shao · 夜间 · Blade Runner の雨夜・Edgerunners ── */
+/*
+ * 夜间。赛博但克制：底色是雨夜的深蓝黑，不用纯黑。霓虹只在远处——青与
+ * 绯红各占一个语义位，绝不同屏出现；无黄无紫（KL9 裁决，原洋红近紫
+ * 已裁）。正文墨仍是可长读的冷白，不是荧光。
+ * 出典：夜间独立设计。霓虹作强调而非底色；绯红取代洋红
+ *
+ * APCA Lc（W3C Silver 草案；WCAG 2 在深色底上判断失准）
+ *   正文墨/纸   -86.5   门槛 |75|
+ *   侧栏文/侧   -83.4   门槛 |75|
+ *   侧栏次/侧   -58.8   门槛 |45|
+ *   印色/纸　   -62.4   门槛 |45|
+ *   接受/纸　   -52.7   门槛 |45|
+ *   退回/纸　   -49.2   门槛 |45|
+ *   代理/纸　   -47.4   门槛 |45|
+ *   引用/纸　   -51.4   门槛 |45|
+ *
+ * 本段由 scripts/generate-themes.ts 生成，勿手改。
+ * 改锚点后重跑 `bun scripts/generate-themes.ts`。
+ */
+:root[data-theme="shao"] {
+  color-scheme: dark;
+
+  --paper: oklch(0.216 0.028 262); /* #131a27 */
+  --paper-raised: oklch(0.246 0.0252 262); /* #1a212d */
+  --paper-sunk: oklch(0.19 0.0308 262); /* #0c1422 */
+  --lamp: oklch(0.346 0.0154 262); /* #353a42 */
+  --shade: oklch(0.166 0.0336 262); /* #070e1d */
+  --sheet: oklch(0.232 0.023 262); /* #171d28 */
+  --rule: oklch(0.292 0.0364 262); /* #222c3e */
+  --rule-strong: oklch(0.366 0.042 262); /* #333f55 */
+  --rail: oklch(0.152 0.056 262); /* #010923 */
+  --rail-ink: oklch(0.884 0.0224 232); /* #cbdce5 */
+  --rail-faint: oklch(0.752 0.0336 232); /* #9ab3c1 */
+  --rail-rule: oklch(0.242 0.0616 262); /* #0f1f3d */
+  --ink: oklch(0.905 0.015 232); /* #d6e2e8 */
+  --ink-soft: oklch(0.761 0.0153 232); /* #a8b3ba */
+  --ink-faint: oklch(0.637 0.0142 232); /* #838d93 */
+  --ink-ghost: oklch(0.513 0.0127 232); /* #60686d */
+  --seal: oklch(0.76 0.132 192); /* #00cbc7 */
+  --seal-bright: oklch(0.85 0.1254 196); /* #4fe7e8 */
+  --seal-wash: oklch(0.226 0.0396 192); /* #002221 */
+  --caret: oklch(0.936 0.1518 192); /* #3affff */
+  --agent: oklch(0.72 0.19 25); /* #ff6a65 */
+  --agent-wash: oklch(0.228 0.03 25); /* #291715 */
+  --accepted: oklch(0.712 0.096 152); /* #73b484 */
+  --accepted-wash: oklch(0.228 0.026 152); /* #132016 */
+  --refused: oklch(0.716 0.128 24); /* #e9817c */
+  --refused-wash: oklch(0.228 0.028 24); /* #281716 */
+  --source: oklch(0.712 0.078 232); /* #6eabcb */
+  --source-wash: oklch(0.228 0.024 232); /* #111f26 */
+  --pending: oklch(0.86 0.132 192); /* #47ece7 */
+  --pending-wash: oklch(0.228 0.0396 192); /* #002221 */
+
+  --role-pending: var(--pending);
+  --role-pending-wash: var(--pending-wash);
+  --role-accepted: var(--accepted);
+  --role-accepted-wash: var(--accepted-wash);
+  --role-refused: var(--refused);
+  --role-refused-wash: var(--refused-wash);
+  --role-agent: var(--agent);
+  --role-agent-wash: var(--agent-wash);
+  --role-source: var(--source);
+  --role-source-wash: var(--source-wash);
+}

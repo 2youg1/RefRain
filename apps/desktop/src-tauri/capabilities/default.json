@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "The minimum a manuscript workbench needs: its own window. No shell, no HTTP client, no updater, no websocket (INV-1).",
   "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-start-dragging"]
+  "permissions": ["core:default", "core:window:allow-start-dragging", "dialog:default"]
 }

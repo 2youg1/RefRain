@@ -1,0 +1,54 @@
+/*
+ * The eight shipped faces (SPEC 9.8: 八张字面不变). Family names are the
+ * contract — the pixel gate proves the binary behind each name, and the
+ * font-priority order decides which tradition draws shared Han.
+ * No unicode-range: the stack order, not a range, is the mechanism.
+ */
+
+@font-face {
+  font-family: "Chiron Sung HK";
+  src: url("./fonts/ChironSungHK.woff2") format("woff2");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Noto Sans SC";
+  src: url("./fonts/NotoSansSC-Regular.woff2") format("woff2");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Shippori Mincho";
+  src: url("./fonts/ShipporiMincho-Regular.woff2") format("woff2");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Zen Kaku Gothic New";
+  src: url("./fonts/ZenKakuGothicNew-Regular.woff2") format("woff2");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Murecho";
+  src: url("./fonts/Murecho.woff2") format("woff2");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Antic Didone";
+  src: url("./fonts/AnticDidone.woff2") format("woff2");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Jost";
+  src: url("./fonts/Jost.woff2") format("woff2");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Courier Prime";
+  src: url("./fonts/CourierPrime.woff2") format("woff2");
+  font-display: swap;
+}

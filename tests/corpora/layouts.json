@@ -1,0 +1,287 @@
+{
+  "schemaVersion": 1,
+  "corpora": [
+    {
+      "name": "ideographic-indent",
+      "file": "ideographic-indent.md",
+      "spans": [
+        {
+          "start": 0,
+          "end": 57
+        },
+        {
+          "start": 59,
+          "end": 80
+        }
+      ]
+    },
+    {
+      "name": "half-width-indent",
+      "file": "half-width-indent.md",
+      "spans": [
+        {
+          "start": 0,
+          "end": 30
+        },
+        {
+          "start": 32,
+          "end": 38
+        }
+      ]
+    },
+    {
+      "name": "consecutive-blank-lines",
+      "file": "consecutive-blank-lines.md",
+      "spans": [
+        {
+          "start": 0,
+          "end": 3
+        },
+        {
+          "start": 7,
+          "end": 10
+        },
+        {
+          "start": 13,
+          "end": 16
+        }
+      ]
+    },
+    {
+      "name": "fence-holding-a-blank-line",
+      "file": "fence-holding-a-blank-line.md",
+      "spans": [
+        {
+          "start": 0,
+          "end": 6
+        },
+        {
+          "start": 8,
+          "end": 44
+        },
+        {
+          "start": 46,
+          "end": 52
+        }
+      ]
+    },
+    {
+      "name": "tilde-fence",
+      "file": "tilde-fence.md",
+      "spans": [
+        {
+          "start": 0,
+          "end": 8
+        },
+        {
+          "start": 10,
+          "end": 19
+        }
+      ]
+    },
+    {
+      "name": "nested-fence-markers",
+      "file": "nested-fence-markers.md",
+      "spans": [
+        {
+          "start": 0,
+          "end": 35
+        }
+      ]
+    },
+    {
+      "name": "hard-line-break",
+      "file": "hard-line-break.md",
+      "spans": [
+        {
+          "start": 0,
+          "end": 30
+        },
+        {
+          "start": 32,
+          "end": 44
+        }
+      ]
+    },
+    {
+      "name": "crlf",
+      "file": "crlf.md",
+      "spans": [
+        {
+          "start": 0,
+          "end": 12
+        },
+        {
+          "start": 16,
+          "end": 28
+        },
+        {
+          "start": 34,
+          "end": 46
+        }
+      ]
+    },
+    {
+      "name": "no-trailing-newline",
+      "file": "no-trailing-newline.md",
+      "spans": [
+        {
+          "start": 0,
+          "end": 30
+        }
+      ]
+    },
+    {
+      "name": "byte-order-mark",
+      "file": "byte-order-mark.md",
+      "spans": [
+        {
+          "start": 0,
+          "end": 15
+        },
+        {
+          "start": 17,
+          "end": 29
+        }
+      ]
+    },
+    {
+      "name": "leading-blank-lines",
+      "file": "leading-blank-lines.md",
+      "spans": [
+        {
+          "start": 3,
+          "end": 24
+        }
+      ]
+    },
+    {
+      "name": "trailing-blank-lines",
+      "file": "trailing-blank-lines.md",
+      "spans": [
+        {
+          "start": 0,
+          "end": 21
+        }
+      ]
+    },
+    {
+      "name": "astral-characters",
+      "file": "astral-characters.md",
+      "spans": [
+        {
+          "start": 0,
+          "end": 30
+        },
+        {
+          "start": 32,
+          "end": 52
+        }
+      ]
+    },
+    {
+      "name": "mixed-scripts",
+      "file": "mixed-scripts.md",
+      "spans": [
+        {
+          "start": 0,
+          "end": 27
+        },
+        {
+          "start": 29,
+          "end": 59
+        },
+        {
+          "start": 61,
+          "end": 77
+        }
+      ]
+    },
+    {
+      "name": "blockquote-and-list",
+      "file": "blockquote-and-list.md",
+      "spans": [
+        {
+          "start": 0,
+          "end": 23
+        },
+        {
+          "start": 25,
+          "end": 36
+        },
+        {
+          "start": 38,
+          "end": 51
+        }
+      ]
+    },
+    {
+      "name": "table",
+      "file": "table.md",
+      "spans": [
+        {
+          "start": 0,
+          "end": 29
+        },
+        {
+          "start": 31,
+          "end": 40
+        }
+      ]
+    },
+    {
+      "name": "tabs",
+      "file": "tabs.md",
+      "spans": [
+        {
+          "start": 0,
+          "end": 19
+        },
+        {
+          "start": 21,
+          "end": 41
+        }
+      ]
+    },
+    {
+      "name": "empty-file",
+      "file": "empty-file.md",
+      "spans": []
+    },
+    {
+      "name": "only-whitespace",
+      "file": "only-whitespace.md",
+      "spans": []
+    },
+    {
+      "name": "everything-at-once",
+      "file": "everything-at-once.md",
+      "spans": [
+        {
+          "start": 0,
+          "end": 8
+        },
+        {
+          "start": 10,
+          "end": 46
+        },
+        {
+          "start": 50,
+          "end": 80
+        },
+        {
+          "start": 82,
+          "end": 118
+        },
+        {
+          "start": 120,
+          "end": 148
+        },
+        {
+          "start": 150,
+          "end": 161
+        }
+      ]
+    }
+  ]
+}

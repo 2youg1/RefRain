@@ -9,28 +9,17 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 env:
   BUN_VERSION: 1.3.14
   RUST_VERSION: "1.97.1"
 
 jobs:
-  build:
-    name: ${{ matrix.target }}
-    permissions:
-      contents: read
-    runs-on: ${{ matrix.os }}
+  windows:
+    runs-on: windows-latest
     timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: windows-x64
-            os: windows-latest
-            node_platform: win32
-            arch: x64
-            builder_args: --win --x64
-            assets: apps/desktop/release/*.exe
-
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -38,225 +27,88 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-07-27
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          workspaces: packages/fs
 
       - run: bun install --frozen-lockfile
+      - run: bun run gate
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace --all-targets
 
-      # A release rebuilds and tests the native layer on the platform that will
-      # load it. A binary copied from another job would only prove that bytes
-      # travelled, not that this runner can execute them.
-      - name: Test the native file layer
-        working-directory: packages/fs
-        run: cargo test --all-targets
+      - name: Generated bindings are current
+        run: |
+          bun run generate
+          git diff --exit-code -- apps/desktop/src/generated
 
-      - name: Build the platform binary
-        run: bun run native
+      - name: Match the tag to the package version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $metadata = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
+          $package = $metadata.packages | Where-Object name -eq "refrain-desktop"
+          if ("v$($package.version)" -ne "$env:GITHUB_REF_NAME") {
+            throw "Tag $env:GITHUB_REF_NAME does not match v$($package.version)"
+          }
 
-      - name: Require the binary under Node's platform name
-        shell: bash
-        run: test -s "packages/fs/refrain-fs.${{ matrix.node_platform }}-${{ matrix.arch }}.node"
-
-      # The TypeScript contracts also run on every release platform. This is
-      # where path and process assumptions that Linux permits are refused.
-      - run: bun run fmt:check
-      - run: bun run check
-
-      # The command-adapter suite drives a real child process, and the harness
-      # it drives is `sh` — the point is that RefRain launches whatever the
-      # author configured, so a fake would test the fake. Windows runners carry
-      # Git's `sh` but not on PATH; adding it keeps the suite testing the
-      # adapter rather than the platform's shell inventory.
-      - name: put Git's sh on PATH for the harness tests
-        shell: bash
-        run: echo "C:/Program Files/Git/usr/bin" >> "$GITHUB_PATH"
-
-      - run: bun test
-
-      # The invariants are checked on the platform being shipped, not only on
-      # the Linux gate. Source fidelity is the one that most needs it: CRLF is
-      # a Windows fact, and a line-ending rule that holds on Linux proves
-      # nothing about the machine this installer is built for.
-      - name: File URLs become paths the way Windows needs
-        run: bun run verify:paths
-
-      - name: Unix-only constructs stay off the Windows target
-        run: bun run verify:unix-guards
-
-      - name: durable writes hold a writable descriptor
-        run: bun run verify:durable-writes
-
-      - name: Bytes the author did not edit come back unchanged
-        run: bun run verify:roundtrip
-
-      - name: Saving a long manuscript costs what the change costs
-        run: bun run verify:scale
-
-      - name: Delete goes to the trash, everywhere
-        run: bun run verify:trash-only
-
-      - name: Every gate has a path that runs it
-        run: bun run verify:gates-run
-
-      # And every gate must still be able to fail. A release built by a
-      # typecheck that has quietly become a no-op — a widened `lib`, a stale
-      # `types` list — carries none of the evidence the green ticks imply, and
-      # this is the platform where the runtime boundaries actually differ.
-      - name: Every type configuration rejects ill-typed code
-        run: bun run verify:gate
-
-      # make.sh verifies the Node branch of the SQLite adapter, which bun test
-      # cannot reach. Declare the runtime rather than relying on the runner
-      # image shipping one — a release must not depend on that accident.
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 22
-
-      - name: Build renderer, main, and preload
+      - name: Build the NSIS installer
         working-directory: apps/desktop
-        run: bun scripts/build-desktop.ts
+        run: bun x tauri build --bundles nsis
 
-      - name: Generated desktop bytes match the reviewed manifest
-        run: git diff --exit-code -- apps/desktop/build/desktop-manifest.json
-
-      - name: No outbound request reaches the built application
-        run: bun run verify:no-network
-
-      # A release must not ship a main process that names a Bun global: it is
-      # bundled for Node, so the reference is a crash on the user's machine
-      # that no test under Bun can reach.
-      - name: The main process names no Bun global
-        working-directory: apps/desktop
-        run: bun scripts/verify-no-bun.ts
-
-      - name: Build-shape checks
-        working-directory: apps/desktop
-        run: bun test test/smoke.test.ts
-
-      # The composition gate runs in `gate.yml` on Linux, where it passes and
-      # where injection proved it bites. It is deliberately NOT run here.
-      #
-      # Playwright speaks CDP over an extra file descriptor by default, and
-      # under Bun on Windows that descriptor never connects: the browser starts
-      # (`<launched> pid=…`) and the handshake waits until the timeout. Raising
-      # the timeout to 600 seconds only made the failure slower. Bun's Windows
-      # handling of child descriptors past stderr differs from Node's; the same
-      # script passes under Bun on Linux. That is a defect in the harness, not
-      # in RefRain, and it must not hold a release.
-      #
-      # The cost is stated rather than hidden: the composition fix is verified
-      # against a Linux-built bundle, not the Windows one being shipped. Closing
-      # that gap needs either these scripts ported off Bun's APIs so Node can
-      # run them, or the Windows IME gate — which is the real evidence anyway,
-      # since it types through Microsoft Pinyin.
-
-      # Windows is the first supported desktop and the only hosted runner on
-      # which this project has a real window launch check. The IME workflow is
-      # separate because it seizes a desktop and types through MS Pinyin.
-      - name: Launch the app and require a loaded window
-        if: matrix.target == 'windows-x64'
-        working-directory: apps/desktop
-        timeout-minutes: 4
-        run: node scripts/launch-check.mjs
-
-      - name: Require a fresh package output root
-        working-directory: apps/desktop
-        run: bun scripts/verify-package-assets.ts empty
-
-      - name: Package ${{ matrix.target }}
-        working-directory: apps/desktop
-        shell: bash
-        run: bun x electron-builder ${{ matrix.builder_args }} --publish never
-
-      - name: Require one authoritative package artifact
-        working-directory: apps/desktop
-        run: bun scripts/verify-package-assets.ts ${{ matrix.target }}
-
-      # The SBOM describes what electron-builder left for publication. Creating
-      # it from the source tree before packaging would inventory dependencies
-      # that did not ship and could omit material introduced by packaging.
-      - name: Describe the packaged software
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-        with:
-          path: apps/desktop/release
-          format: spdx-json
-          output-file: apps/desktop/release/refrain-${{ matrix.target }}.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
+      - name: Select one installer
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem "target/release/bundle/nsis/*.exe" -File)
+          if ($files.Count -ne 1) { throw "Expected one NSIS installer, found $($files.Count)" }
+          New-Item -ItemType Directory -Force "release-assets" | Out-Null
+          Copy-Item $files[0].FullName "release-assets/refrain-windows-x64-setup.exe"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: refrain-${{ matrix.target }}
-          path: |
-            ${{ matrix.assets }}
-            apps/desktop/release/refrain-${{ matrix.target }}.spdx.json
+          name: refrain-windows-x64
+          path: release-assets/refrain-windows-x64-setup.exe
           if-no-files-found: error
           retention-days: 30
 
   publish:
-    name: publish
     if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    needs: windows
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      # The notes are generated from ROADMAP.md, so this job needs the
-      # repository and a Bun to run the generator with — it previously needed
-      # neither, because the notes were a literal in this file.
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          pattern: refrain-*
+          name: refrain-windows-x64
           path: release-assets
-          merge-multiple: true
 
-      - name: List the files that will be published
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          assets = sorted(p for p in Path("release-assets").iterdir() if p.is_file())
-          installers = [p for p in assets if p.suffix == ".exe"]
-          sboms = [p for p in assets if p.name.endswith(".spdx.json")]
-          if len(installers) != 1 or len(sboms) != 1:
-              raise SystemExit(
-                  f"expected 1 installer and 1 SBOM, found {len(installers)} and {len(sboms)}"
-              )
-          for path in assets:
-              print(f"{path.name}  {path.stat().st_size} bytes")
-          PY
+      - name: Build the release SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: release-assets
+          format: spdx-json
+          output-file: release-assets/refrain-windows-x64.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
 
-      - name: Hash and read back every public release asset
+      - name: Hash and read back every asset
         working-directory: release-assets
         run: |
-          sha256sum -- *.exe *.spdx.json > SHA256SUMS
+          sha256sum -- *.exe *.json > SHA256SUMS
           sha256sum --check SHA256SUMS
 
-      # The notes come from ROADMAP.md, not from a literal in this file. Two
-      # copies of the same paragraphs meant two places to update and one of
-      # them lost: this workflow announced "RefRain 0.1.5" while 0.1.6 was
-      # being tagged. The generator refuses a tag ROADMAP does not describe.
-      - name: build the release notes from ROADMAP
-        working-directory: apps/desktop
-        run: bun scripts/release-notes.ts "${{ github.ref_name }}" > "$RUNNER_TEMP/notes.md"
-
-      # One job owns the Release. The build job uploads one verified Windows
-      # installer; this job alone turns it into a public release asset.
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        with:
-          files: |
-            release-assets/*.exe
-            release-assets/*.spdx.json
+      - name: Publish the verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            release-assets/*.exe \
+            release-assets/*.json \
             release-assets/SHA256SUMS
-          generate_release_notes: true
-          body_path: ${{ runner.temp }}/notes.md

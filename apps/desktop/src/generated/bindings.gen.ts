@@ -9,9 +9,504 @@ import { invoke as __TAURI_INVOKE } from "@tauri-apps/api/core";
 export const commands = {
 	/**  Proves the whole chain: a Rust type, a generated binding, a real window. */
 	health: (echo: string) => __TAURI_INVOKE<HealthReport>("health", { echo }),
+	/**  Adopt an existing folder or single file as a Root (SPEC 9.5). */
+	adoptRoot: (path: string, kind: RootKind) => typedError<ProjectOpenedDto, RefrainError>(__TAURI_INVOKE("adopt_root", { path, kind })),
+	/**
+	 *  Create a project: the author picks a parent directory and names the
+	 *  project; Rust creates the subdirectory and adopts it (SPEC 9.5).
+	 */
+	createProject: (parent: string, name: string) => typedError<ProjectOpenedDto, RefrainError>(__TAURI_INVOKE("create_project", { parent, name })),
+	/**
+	 *  Open a document: bytes from disk, blocks from the byte-authoritative
+	 *  layout, the persisted revision chain resumed, and any journaled actions
+	 *  replayed through the same validation (SPEC 7.2).
+	 */
+	openDocument: (rootId: string, path: string) => typedError<OpenDocumentDto_Serialize, RefrainError>(__TAURI_INVOKE("open_document", { rootId, path })),
+	/**  Create a document in the Root and open it (SPEC 9.5). */
+	createDocument: (rootId: string, title: string, role: DocumentRole) => typedError<OpenDocumentDto_Serialize, RefrainError>(__TAURI_INVOKE("create_document", { rootId, title, role })),
+	currentDocument: (rootId: string, path: string) => typedError<SessionDocumentDto, RefrainError>(__TAURI_INVOKE("current_document", { rootId, path })),
+	/**
+	 *  The one manuscript write path (INV-2): journaled first, executed through
+	 *  the domain, cleared on confirmation. A kill between journal and execute
+	 *  replays on the next open.
+	 */
+	applyEditorAction: (rootId: string, path: string, action: EditorActionDto) => typedError<TextTransitionDto, RefrainError>(__TAURI_INVOKE("apply_editor_action", { rootId, path, action })),
+	persistRevision: (rootId: string, path: string, expected: {
+	modifiedMs: string,
+	bytes: string,
+	digest: string,
+} | null) => typedError<SaveOutcomeDto_Serialize, RefrainError>(__TAURI_INVOKE("persist_revision", { rootId, path, expected })),
+	/**
+	 *  One KARA event in, one transition out (SPEC 9.3). The machine is the only
+	 *  state owner; the renderer projects the transition it gets back.
+	 */
+	karaEvent: (event: KaraEvent) => typedError<KaraTransition, RefrainError>(__TAURI_INVOKE("kara_event", { event })),
+	/**  The current machine, for surfaces that mount mid-session. */
+	karaState: () => typedError<KaraMachine, RefrainError>(__TAURI_INVOKE("kara_state")),
+	/**  The effective Config, or the refusal the Settings surface must show. */
+	readConfig: () => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("read_config")),
+	updatePreferences: (change: PreferencesChangeDto) => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("update_preferences", { change })),
+	/**  The generated theme list, for the Settings picker. */
+	listThemes: () => __TAURI_INVOKE<ThemeInfoDto[]>("list_themes"),
+	/**
+	 *  Pick an icon for the Universal Button. The pipeline judges by content
+	 *  (SPEC 9.8); the digest is all the Config ever stores.
+	 */
+	setUniversalIcon: (bytes: number[]) => typedError<string, RefrainError>(__TAURI_INVOKE("set_universal_icon", { bytes })),
+	/**
+	 *  The stored icon, for the data-URL projection. Absent is a value, not an
+	 *  empty string (INV-3's discipline).
+	 */
+	universalIcon: () => __TAURI_INVOKE<number[] | null>("universal_icon"),
+	/**
+	 *  Inject fixture candidates (debug builds only). The candidates freeze
+	 *  against the document's current head, exactly like a real Run's output
+	 *  will in C10.
+	 */
+	injectFixtureProposal: (rootId: string, path: string, replacements: FixtureReplacementDto[]) => typedError<ProposalDto[], RefrainError>(__TAURI_INVOKE("inject_fixture_proposal", { rootId, path, replacements })),
+	/**  Every candidate for a document, newest last, for the review surface. */
+	listProposals: (rootId: string, path: string) => typedError<ProposalDto[], RefrainError>(__TAURI_INVOKE("list_proposals", { rootId, path })),
+	/**
+	 *  Record one judgment. It lands in the ledger the moment it is made (SPEC
+	 *  9.7: 判即写穿 staging).
+	 */
+	recordVerdict: (rootId: string, proposalId: string, sliceId: string, kind: string, reason: string | null, finalText: string | null) => typedError<VerdictRecord_Serialize, RefrainError>(__TAURI_INVOKE("record_verdict", { rootId, proposalId, sliceId, kind, reason, finalText })),
+	/**
+	 *  Stage the batch and the cursor (SPEC 9.7: cursor and batch persist with
+	 *  every change, not at commit time).
+	 */
+	setReviewBatch: (rootId: string, path: string, cursor: number, batch: string[]) => typedError<null, RefrainError>(__TAURI_INVOKE("set_review_batch", { rootId, path, cursor, batch })),
+	/**  The recovered review session: candidates, judgments so far, cursor, batch. */
+	reviewState: (rootId: string, path: string) => typedError<ReviewStateDto_Serialize, RefrainError>(__TAURI_INVOKE("review_state", { rootId, path })),
+	/**
+	 *  The one commit path: staged judgments become one Text Action (SPEC 7.4).
+	 *  The batch and cursor clear; candidates stay for the audit.
+	 */
+	commitDecisionBatch: (rootId: string, path: string) => typedError<TextTransitionDto, RefrainError>(__TAURI_INVOKE("commit_decision_batch", { rootId, path })),
+	/**  Draft the collaboration: prompt, document, and the head it pins (Q27). */
+	draftReviewTask: (rootId: string, path: string, prompt: string) => typedError<TaskDto, RefrainError>(__TAURI_INVOKE("draft_review_task", { rootId, path, prompt })),
+	/**  The manifest the author reads before the click (SPEC 9.6: 逐块字节清单). */
+	previewDispatch: (rootId: string, path: string, blockIds: string[], materialPaths: string[], prompt: string, agentId: string, carry: CarryMode) => typedError<DispatchPreviewDto, RefrainError>(__TAURI_INVOKE("preview_dispatch", { rootId, path, blockIds, materialPaths, prompt, agentId, carry })),
+	/**  The built-in agent the ticket always offers (SPEC 8.3a's first row). */
+	l0FileChannelAgent: () => __TAURI_INVOKE<string>("l0_file_channel_agent"),
+	/**
+	 *  Every harness the app can dispatch to right now: detection only, no model
+	 *  call (SPEC: 测试连接只跑版本/能力探针）. Config-declared kimi connections
+	 *  win over PATH detection — the author's declaration is the authority.
+	 */
+	listHarnesses: () => __TAURI_INVOKE<HarnessDto[]>("list_harnesses"),
+	authorizeDispatch: (request: AuthorizeDispatchRequest) => typedError<RunDto[], RefrainError>(__TAURI_INVOKE("authorize_dispatch", { request })),
+	/**
+	 *  Launch one authorized run. L0's dispatch is the file becoming visible;
+	 *  the receipt says so. Real adapters take this seam over in C11.
+	 */
+	launchRun: (rootId: string, runId: string) => typedError<RunDto, RefrainError>(__TAURI_INVOKE("launch_run", { rootId, runId })),
+	/**
+	 *  The command form for the UI's harness dispatch (launch_run branches here
+	 *  for harness agents; this stays a command for the e2e seam).
+	 */
+	harnessDispatch: (rootId: string, runId: string) => typedError<RunDto, RefrainError>(__TAURI_INVOKE("harness_dispatch", { rootId, runId })),
+	/**  The orchestration world as the surface renders it. */
+	hostState: (rootId: string) => typedError<HostStateDto, RefrainError>(__TAURI_INVOKE("host_state", { rootId })),
+	/**  Cancel a run that has not reached a terminal state. */
+	cancelRun: (rootId: string, runId: string) => typedError<RunDto, RefrainError>(__TAURI_INVOKE("cancel_run", { rootId, runId })),
+	/**
+	 *  Retry is a new Run, queued, pointing at the old one (§8.4b). Its
+	 *  authorization is a fresh click through `authorize_dispatch`.
+	 */
+	retryRun: (rootId: string, runId: string) => typedError<RunDto, RefrainError>(__TAURI_INVOKE("retry_run", { rootId, runId })),
+	/**
+	 *  Collect a dispatched run's result: validate against the frozen contract,
+	 *  complete the run, and freeze the proposals the artifact carries.
+	 */
+	collectAttempt: (rootId: string, runId: string) => typedError<CollectOutcomeDto, RefrainError>(__TAURI_INVOKE("collect_attempt", { rootId, runId })),
+	/**  Every unresolved material draft, for the ticket's materials panel. */
+	listMaterialDrafts: (rootId: string) => typedError<MaterialDraftRow_Serialize[], RefrainError>(__TAURI_INVOKE("list_material_drafts", { rootId })),
+	/**
+	 *  The only way a draft becomes a Material (SPEC 8.7: a Human Material
+	 *  Action). Save writes the body through the same text path as the editor —
+	 *  create, insert, confirm — never a direct file write. Dismiss keeps the
+	 *  artifact on disk in the run workspace and removes only the draft row.
+	 */
+	commitMaterialAction: (rootId: string, draftId: string, editedBody: string | null, dismiss: boolean) => typedError<{
+	id: Id,
+	/**  Portable identity inside the Root: the relative path, `/`-joined. */
+	path: string,
+	role: DocumentRole,
+	digest: string | null,
+	/**
+	 *  The confirmed revision id and the lineage it pairs with (SPEC 7.2
+	 *  crash recovery). Present after the first save or a continuity-safe open.
+	 */
+	currentHead: string | null,
+	headBlockIds: string | null,
+} | null, RefrainError>(__TAURI_INVOKE("commit_material_action", { rootId, draftId, editedBody, dismiss })),
+	agentReadingLedger: (rootId: string) => typedError<AgentReadingDto_Serialize[], RefrainError>(__TAURI_INVOKE("agent_reading_ledger", { rootId })),
+	/**
+	 *  Register a harness connection in the one Config (SPEC 6.5). The exact
+	 *  executable answers `--version` before it is stored — a connection that
+	 *  cannot be probed is not registered. The C12 surface registers kimi only;
+	 *  other adapter kinds land with their adapters.
+	 */
+	upsertHarnessConnection: (executable: string) => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("upsert_harness_connection", { executable })),
+	/**
+	 *  Remove a connection by id (SPEC 6.5). Trust evidence in app.db is not the
+	 *  author's parameter and is not touched here (Q24).
+	 */
+	removeHarnessConnection: (id: string) => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("remove_harness_connection", { id })),
+	/**
+	 *  The Connections page's probe: argv-exact `--version`, nothing else (SPEC:
+	 *  测试连接只跑版本/能力探针，不调模型）.
+	 */
+	probeConnection: (executable: string) => typedError<string, RefrainError>(__TAURI_INVOKE("probe_connection", { executable })),
+	/**
+	 *  Import one source file (PDF / EPUB / HTML / DOCX / PPTX / XLSX) as a
+	 *  Material (Plan C12.3). Extraction is local — no cloud conversion; the
+	 *  material opens with a provenance header pinning the source bytes, then
+	 *  the projected text. The manuscript editor stays Markdown-only.
+	 */
+	importMaterial: (rootId: string, sourcePath: string) => typedError<DocumentRow, RefrainError>(__TAURI_INVOKE("import_material", { rootId, sourcePath })),
+	/**
+	 *  Import one dropped text file (.md / .markdown / .txt) as a manuscript
+	 *  chapter. The source is only read — it never moves (KL9: 源文件永远不动);
+	 *  the chapter's own bytes are what the project edits from now on.
+	 */
+	importManuscript: (rootId: string, sourcePath: string) => typedError<DocumentRow, RefrainError>(__TAURI_INVOKE("import_manuscript", { rootId, sourcePath })),
+	listAgents: () => __TAURI_INVOKE<AgentDto[]>("list_agents"),
+	/**
+	 *  Create or update one Agent (SPEC 6.5: typed changes only). A connection
+	 *  reference must name an existing connection; `None` is the L0 channel.
+	 */
+	upsertAgent: (name: string, connectionId: string | null, persona: string | null) => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("upsert_agent", { name, connectionId, persona })),
+	removeAgent: (id: string) => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("remove_agent", { id })),
 };
 
 /* Types */
+/**
+ *  What the author is doing when KARA engages: where it must be able to
+ *  return to.
+ */
+export type Activity = "writing" | "reviewing";
+
+/**
+ *  The harness kinds with a defined adapter (SPEC 8.3a). `L0` is the file
+ *  channel any producer — including a human pasting into a web chat — can serve.
+ */
+export type AdapterKind = "l0" | "codex" | "claude-code" | "pi" | "kimi-code" | "hermes";
+
+/**  One Agent as the surface lists it: the profile plus its channel's facts. */
+export type AgentDto = {
+	id: string,
+	name: string,
+	connectionId: string | null,
+	hasPersona: boolean,
+	channel: string,
+	version: string,
+};
+
+/**
+ *  One Agent the author works with (KL9 2026-07-29): a name, the channel it
+ *  runs on (`None` = the L0 file channel), and an optional persona — one
+ *  Markdown identity injected right after the contract on every round.
+ */
+export type AgentProfile = {
+	id: Id,
+	name: string,
+	/**  The connection this agent runs on; `None` is the L0 file channel. */
+	connection_id?: Id | null,
+	/**  The identity text, injected into the request after the contract. */
+	persona?: string | null,
+};
+
+/**
+ *  One agent's reading of one document: rounds read, the baseline it last
+ *  stood on, and whether the current head has left that baseline behind.
+ *  A lag count needs the pinned-revision chain (SPEC 10.1), which does not
+ *  exist yet — the honest shape today is a stale flag, not a number.
+ */
+export type AgentReadingDto = AgentReadingDto_Serialize | AgentReadingDto_Deserialize;
+
+/**
+ *  One agent's reading of one document: rounds read, the baseline it last
+ *  stood on, and whether the current head has left that baseline behind.
+ *  A lag count needs the pinned-revision chain (SPEC 10.1), which does not
+ *  exist yet — the honest shape today is a stale flag, not a number.
+ */
+export type AgentReadingDto_Deserialize = {
+	agentId: string,
+	document: string,
+	rounds: number,
+	lastBaseline: string,
+	lastAt: string,
+	currentHead: string | null,
+	stale: boolean,
+};
+
+/**
+ *  One agent's reading of one document: rounds read, the baseline it last
+ *  stood on, and whether the current head has left that baseline behind.
+ *  A lag count needs the pinned-revision chain (SPEC 10.1), which does not
+ *  exist yet — the honest shape today is a stale flag, not a number.
+ */
+export type AgentReadingDto_Serialize = {
+	agentId: string,
+	document: string,
+	rounds: number,
+	lastBaseline: string,
+	lastAt: string,
+	currentHead: string | null,
+	stale: boolean,
+};
+
+/**
+ *  What the author sees (SPEC 9.8). Values extend the same schema; nothing
+ *  here may become a second authority for behaviour.
+ */
+export type AppearanceConfig = {
+	/**
+	 *  One of the themes the generator emitted; validated on apply, not on
+	 *  load, because the theme list is generated, not a hand copy.
+	 */
+	theme: string,
+	fonts?: FontConfig,
+	/**  The manuscript sheet's edge: none / hairline / paper. */
+	paper?: PaperMode,
+	/**  Manuscript text size in px (SPEC 9.8: 排版可调,默认 17). */
+	text_size?: number,
+	/**  Manuscript line height in percent (默认 190 = 1.9). */
+	line_height?: number,
+	/**
+	 *  The Universal Button icon, by content digest (SPEC 9.8). The asset
+	 *  named by this digest lives in the application data assets directory;
+	 *  the Config never stores the image itself.
+	 */
+	icon_digest?: string | null,
+};
+
+/**
+ *  The click. Re-compiles from the same inputs; INV-14 refuses a drifted
+ *  digest before any Run exists. One command, two shapes: the first
+ *  authorization mints the runs; a retry's authorization names queued runs.
+ */
+export type AuthorizeDispatchRequest = {
+	rootId: string,
+	taskId: string,
+	path: string,
+	blockIds: string[],
+	materialPaths: string[],
+	prompt: string,
+	clickedDigest: string,
+	newAgents: string[],
+	retryRunIds: string[],
+	/**
+	 *  The ticket's picked agent, for the contract tier. Retry mints no new
+	 *  agents, so this cannot be derived from `new_agents`.
+	 */
+	agentId: string,
+	carry: CarryMode,
+};
+
+/**
+ *  What the Source Backup attempt produced, in the author's terms. `Failed`
+ *  is a degradation the interface reports and offers to retry — the Root
+ *  stays editable (Q23).
+ */
+export type BackupStatus = { kind: "taken"; value: {
+	files: number,
+} } | { kind: "alreadyPresent" } | { kind: "nothingToCopy" } | { kind: "failed"; value: {
+	reason: string,
+} };
+
+export type BlockDto = {
+	id: string,
+	text: string,
+};
+
+/**
+ *  The carry tier the author picks on the ticket (KL9's context tiers):
+ *  what rides besides the scope and the prompt. Materials always travel
+ *  separately and are never part of a tier.
+ */
+export type CarryMode = 
+/**
+ *  The verdict stream; a round with no history falls back to the whole
+ *  text, or the agent has nothing to stand on (KL9: never trade output
+ *  quality for tokens).
+ */
+"diff" | 
+/**  The verdict stream plus the whole manuscript, every round. */
+"full" | 
+/**  Neither verdicts nor manuscript — scope and prompt only. */
+"none";
+
+export type CollectOutcomeDto = 
+/**  No result yet; nothing moved. */
+{ kind: "waiting" } | { kind: "completed"; value: {
+	proposals: number,
+	memos: number,
+	drafts: number,
+} } | { kind: "failed"; value: {
+	code: string,
+	detail: string,
+} };
+
+/**
+ *  The complete effective Config. This is the only shape Settings and
+ *  Connections pages ever read.
+ */
+export type Config = {
+	version: number,
+	kara: KaraConfig,
+	appearance?: AppearanceConfig,
+	harness_connections?: HarnessConnection[],
+	/**  The author's Agents: a name, a channel, an optional persona. */
+	agents?: AgentProfile[],
+};
+
+/**
+ *  The effective Config plus anything the author must be told about the load
+ *  or write itself.
+ */
+export type ConfigSnapshot = {
+	config: Config,
+	/**
+	 *  A divergent interrupted write preserved before this load or save
+	 *  proceeded (SPEC 11: evidence, not silence).
+	 */
+	recoveryEvidence: string | null,
+};
+
+export type DispatchPreviewDto = {
+	manifest: ManifestEntry[],
+	digest: string,
+	requestMd: string,
+};
+
+/**  What a Markdown file is to the work. */
+export type DocumentRole = 
+/**  A standalone work opened on its own (single-file Root). */
+"document" | 
+/**  Part of a Project's manuscript sequence. */
+"chapter" | 
+/**
+ *  Reference material: enters the Context picker, never the manuscript
+ *  order.
+ */
+"material";
+
+/**  A document row as the project database knows it. */
+export type DocumentRow = {
+	id: Id,
+	/**  Portable identity inside the Root: the relative path, `/`-joined. */
+	path: string,
+	role: DocumentRole,
+	digest: string | null,
+	/**
+	 *  The confirmed revision id and the lineage it pairs with (SPEC 7.2
+	 *  crash recovery). Present after the first save or a continuity-safe open.
+	 */
+	currentHead: string | null,
+	headBlockIds: string | null,
+};
+
+/**  The editor's settled input, as it crosses the bridge. */
+export type EditorActionDto = {
+	base: string,
+	changes: EditorChangeDto[],
+};
+
+export type EditorChangeDto = { kind: "replace"; value: {
+	blocks: string[],
+	text: string | null,
+} } | { kind: "insert"; value: {
+	before: string | null,
+	texts: string[],
+} };
+
+/**
+ *  The single authority for error kinds. `verify:docs-current` enumerates this
+ *  type and fails when a document explains fewer codes than it declares.
+ */
+export type ErrorCode = "permission-denied" | "illegal-name" | "occupied" | "outside-root" | "source-backup" | "not-a-directory" | "unsupported-format" | "state-unavailable" | "io";
+
+/**  What a file looked like when this application last agreed with it. */
+export type FileStamp = FileStamp_Serialize | FileStamp_Deserialize;
+
+/**  What a file looked like when this application last agreed with it. */
+export type FileStamp_Deserialize = {
+	modifiedMs: string,
+	bytes: string,
+	digest: string,
+};
+
+/**  What a file looked like when this application last agreed with it. */
+export type FileStamp_Serialize = {
+	modifiedMs: string,
+	bytes: string,
+	digest: string,
+};
+
+/**
+ *  One fixture replacement (debug builds only; SPEC R3: the fixture command
+ *  is excluded from release).
+ */
+export type FixtureReplacementDto = {
+	blocks: string[],
+	after: string | null,
+};
+
+/**
+ *  The face per slot and the order the browser walks them. Order is the
+ *  whole mechanism: the first face carrying a glyph wins it, so priority
+ *  decides which tradition draws shared Han.
+ */
+export type FontConfig = {
+	latin: string,
+	chinese: string,
+	japanese: string,
+	priority: [FontSlot, FontSlot, FontSlot],
+};
+
+/**
+ *  The three face slots (SPEC 9.8). One CJK slot cannot serve both
+ *  traditions: 直, 骨 and 令 are drawn differently in each.
+ */
+export type FontSlot = "latin" | "chinese" | "japanese";
+
+/**
+ *  A machine-level execution channel (SPEC 2.3). Capability probes and trust
+ *  evidence are machine facts and live in `app.db` — never here.
+ */
+export type HarnessConnection = {
+	id: Id,
+	adapter: AdapterKind,
+	/**  The exact executable; started with argv, never through a shell. */
+	executable: string,
+	argv?: string[],
+	/**
+	 *  Names of environment variables the child may inherit. Credentials live
+	 *  in the author's own environment; RefRain stores no API keys.
+	 */
+	env_allow?: string[],
+};
+
+/**  One dispatchable harness as the ticket offers it. */
+export type HarnessDto = {
+	agentId: string,
+	label: string,
+	version: string,
+	tier: string,
+	probe: HarnessProbe,
+};
+
+/**  A detected harness binary: path and version, nothing more. */
+export type HarnessProbe = {
+	id: string,
+	program: string,
+	version: string,
+	tier: Tier,
+};
+
 /**  What the application can say about itself without touching anything. */
 export type HealthReport = {
 	/**  The workspace version, from Cargo at compile time. */
@@ -27,4 +522,467 @@ export type HealthReport = {
 	 */
 	echo: string,
 };
+
+export type HostStateDto = {
+	tasks: TaskDto[],
+	runs: RunDto[],
+	recoveryRequired: string[],
+	awaitingLaunch: string[],
+};
+
+/**
+ *  An opaque, time-ordered identifier for a persistent entity.
+ * 
+ *  The type parameter is absent on purpose: a phantom-typed id would multiply
+ *  generated TypeScript types without preventing a single real confusion, since
+ *  every id crosses the bridge as a string anyway.
+ */
+export type Id = string;
+
+export type InterruptEvent = "save-failed" | "disk-unwritable" | "root-identity-changed" | "external-conflict";
+
+/**
+ *  The one automatic entry a Project work session gets (D18). It belongs to
+ *  the session, never persists to the next one.
+ */
+export type KaraAutoEntry = "pending" | "consumed";
+
+export type KaraConfig = {
+	/**
+	 *  D18: consume the one automatic entry of a Project work session on the
+	 *  first manuscript document opened. `false` leaves KARA fully manual.
+	 */
+	auto_enter_on_first_manuscript: boolean,
+};
+
+/**
+ *  A named effect the composition layer must perform. The machine decides
+ *  *what*, never *how* (INV-15: the words are projected from these).
+ */
+export type KaraEffect = { kind: "engage"; value: {
+	activity: Activity,
+} } | { kind: "disengage"; value: {
+	to: ReturnPoint,
+} } | { kind: "consumeAutoEntry" } | { kind: "markAway"; value: {
+	point: ReturnPoint,
+} } | { kind: "showReturnCard"; value: {
+	point: ReturnPoint,
+} } | { kind: "queueForDebrief"; value: QuietEvent } | { kind: "interruptNow"; value: InterruptEvent } | { kind: "showDebrief"; value: {
+	queued: QuietEvent[],
+} };
+
+/**  Everything that can move the machine. */
+export type KaraEvent = 
+/**
+ *  A manuscript (`document | chapter`) opened. The event carries whether
+ *  this is the first manuscript of the current Project work session;
+ *  the composition layer owns work-session boundaries, the machine owns
+ *  what an entry costs.
+ */
+{ kind: "firstManuscriptOpened"; value: KaraAutoEntry } | 
+/**
+ *  A Project, a Material, the welcome screen, or a management page
+ *  opened: explicitly *not* a manuscript.
+ */
+{ kind: "nonManuscriptOpened" } | 
+/**
+ *  `Ctrl+Enter`: the only toggle (D10). During an IME composition the
+ *  composition layer registers the request and fires this at
+ *  `compositionend`; the machine does not model compositions.
+ */
+{ kind: "manualToggle" } | 
+/**  Entering finished its transition. */
+{ kind: "entered" } | 
+/**  The author stepped into Review while in KARA. */
+{ kind: "enterReview" } | 
+/**  Review ended, back to the text. */
+{ kind: "exitReview" } | 
+/**  Focus lost for 8s, sleep, or minimize. */
+{ kind: "goneAway" } | 
+/**  The author is back. */
+{ kind: "returned" } | 
+/**  Leaving's debrief finished (12s or any input). */
+{ kind: "leaveFinished" } | 
+/**
+ *  The composition layer reports where the author's caret is, so Away can
+ *  mark it and Returning can show it. Facts in; decisions out.
+ */
+{ kind: "setReturnPoint"; value: ReturnPoint } | 
+/**  A quiet event: queued for the leaving debrief, never an interruption. */
+{ kind: "quiet"; value: QuietEvent } | 
+/**  An interrupting event: surfaces immediately. */
+{ kind: "interrupt"; value: InterruptEvent };
+
+/**
+ *  The full machine state: the six-state union, the auto-entry token, and
+ *  the quiet queue. All three travel together; a forgotten queue is how a
+ *  debrief silently loses events.
+ */
+export type KaraMachine = {
+	state: KaraState,
+	autoEntry: KaraAutoEntry,
+	queued: QuietEvent[],
+};
+
+/**
+ *  An open KARA session. It holds the return point and nothing else — no
+ *  timestamps for statistics, because there are no statistics (Q17).
+ */
+export type KaraSession = {
+	activity: Activity,
+	returnPoint: ReturnPoint,
+};
+
+/**  The six states. */
+export type KaraState = { kind: "off" } | { kind: "entering"; value: {
+	activity: Activity,
+	return_point: ReturnPoint,
+} } | { kind: "writing"; value: {
+	session: KaraSession,
+} } | { kind: "reviewing"; value: {
+	session: KaraSession,
+} } | { kind: "away"; value: {
+	session: KaraSession,
+} } | { kind: "leaving"; value: {
+	session: KaraSession,
+} };
+
+/**  What one step produced. */
+export type KaraTransition = {
+	machine: KaraMachine,
+	effects: KaraEffect[],
+};
+
+/**  One manifest row: a section, its source, its digest, its size. */
+export type ManifestEntry = {
+	section: string,
+	source: string,
+	digest: string,
+	bytes: number,
+	tokens: Tokens,
+};
+
+export type MaterialDraftRow = MaterialDraftRow_Serialize | MaterialDraftRow_Deserialize;
+
+export type MaterialDraftRow_Deserialize = {
+	id: string,
+	runId: string,
+	/**  The dispatch's document: the draft's context of origin. */
+	document: string,
+	kind: string,
+	title: string,
+	/**  JSON array of `DOCUMENT@REVISION` references. */
+	basis: string,
+	body: string,
+	createdAt: string,
+};
+
+export type MaterialDraftRow_Serialize = {
+	id: string,
+	runId: string,
+	/**  The dispatch's document: the draft's context of origin. */
+	document: string,
+	kind: string,
+	title: string,
+	/**  JSON array of `DOCUMENT@REVISION` references. */
+	basis: string,
+	body: string,
+	createdAt: string,
+};
+
+/**
+ *  A document ready for the editor: blocks with stable ids, the revision the
+ *  editor's actions will be based on, and the stamp a later save needs.
+ */
+export type OpenDocumentDto = OpenDocumentDto_Serialize | OpenDocumentDto_Deserialize;
+
+/**
+ *  A document ready for the editor: blocks with stable ids, the revision the
+ *  editor's actions will be based on, and the stamp a later save needs.
+ */
+export type OpenDocumentDto_Deserialize = {
+	document: DocumentRow,
+	revision: string,
+	blocks: BlockDto[],
+	stamp: FileStamp_Deserialize,
+	/**  Journaled actions replayed on open (crash survivors), for the status line. */
+	replayed: number,
+	/**  Journaled actions that could not be validated on open: Safety content. */
+	staleJournal: string[],
+	/**  The KARA transition this open caused, if any (D18). */
+	kara: KaraTransition | null,
+};
+
+/**
+ *  A document ready for the editor: blocks with stable ids, the revision the
+ *  editor's actions will be based on, and the stamp a later save needs.
+ */
+export type OpenDocumentDto_Serialize = {
+	document: DocumentRow,
+	revision: string,
+	blocks: BlockDto[],
+	stamp: FileStamp_Serialize,
+	/**  Journaled actions replayed on open (crash survivors), for the status line. */
+	replayed: number,
+	/**  Journaled actions that could not be validated on open: Safety content. */
+	staleJournal: string[],
+	/**  The KARA transition this open caused, if any (D18). */
+	kara: KaraTransition | null,
+};
+
+/**
+ *  The manuscript sheet's edge (SPEC 9.8): an edgeless Web-like column, a
+ *  hairline boundary, or a full sheet of paper for authors coming from Word.
+ */
+export type PaperMode = "none" | "hairline" | "paper";
+
+/**
+ *  The preferences the Settings surface may change (SPEC 6.5). Connection
+ *  management is its own command pair; this is the author's choices.
+ */
+export type PreferencesChangeDto = { kind: "karaAutoEnter"; value: boolean } | { kind: "setTheme"; value: string } | { kind: "setPaper"; value: PaperMode } | { kind: "setTextSize"; value: number } | { kind: "setLineHeight"; value: number } | { kind: "setFontFamily"; value: {
+	slot: FontSlot,
+	family: string,
+} } | { kind: "setFontPriority"; value: [FontSlot, FontSlot, FontSlot] };
+
+/**  A Root as the interface names it. */
+export type ProjectOpenedDto = {
+	rootId: string,
+	backup: BackupStatus,
+	documents: DocumentRow[],
+};
+
+/**  A frozen candidate for the surface. */
+export type ProposalDto = {
+	id: string,
+	run: string,
+	baseline: string,
+	before: string,
+	after: string | null,
+	changeClass: string,
+	slices: ReviewSliceDto[],
+};
+
+export type QuietEvent = "save-succeeded" | "agent-completed" | "proposal-arrived" | "index-refreshed";
+
+/**
+ *  One thing the author can do about a failure. A step is a domain fact, not a
+ *  sentence: the interface renders it, so changing wording never touches here.
+ */
+export type RecoveryStep = "retry" | "choose-another-location" | "choose-another-name" | "grant-permission" | "open-settings" | "report-defect";
+
+/**  A failure crossing the bridge. */
+export type RefrainError = {
+	code: ErrorCode,
+	/**  The use case that failed, e.g. `create_project`. */
+	action: string,
+	/**  What it failed on: an opaque id, or a name the author supplied. */
+	subject: string,
+	/**  Operator-facing specifics. Never shown as the primary message. */
+	detail: string | null,
+	recovery: RecoveryStep[],
+};
+
+/**
+ *  The spot KARA must give back when it ends: a block and a caret offset,
+ *  plus the end of the sentence before it (Q: "你停在这里").
+ */
+export type ReturnPoint = {
+	blockId: string,
+	offset: number,
+	sentenceTail: string,
+};
+
+/**  One sentence for the surface. */
+export type ReviewSliceDto = {
+	/**  "<proposal>:<ordinal>" — the exact key the commit path parses back. */
+	id: string,
+	kind: string,
+	text: string,
+	lead: string,
+	trail: string,
+};
+
+/**
+ *  The recovered review session (SPEC 9.7's five things: cursor, verdicts,
+ *  reasons, final texts, batch — all here).
+ */
+export type ReviewStateDto = ReviewStateDto_Serialize | ReviewStateDto_Deserialize;
+
+/**
+ *  The recovered review session (SPEC 9.7's five things: cursor, verdicts,
+ *  reasons, final texts, batch — all here).
+ */
+export type ReviewStateDto_Deserialize = {
+	proposals: ProposalDto[],
+	verdicts: VerdictRecord_Deserialize[],
+	cursor: number,
+	batch: string[],
+};
+
+/**
+ *  The recovered review session (SPEC 9.7's five things: cursor, verdicts,
+ *  reasons, final texts, batch — all here).
+ */
+export type ReviewStateDto_Serialize = {
+	proposals: ProposalDto[],
+	verdicts: VerdictRecord_Serialize[],
+	cursor: number,
+	batch: string[],
+};
+
+/**
+ *  What a Root is: a folder whose Markdown was adopted, or a single file
+ *  opened on its own.
+ */
+export type RootKind = "folder" | "file";
+
+export type RunDto = {
+	id: string,
+	taskId: string,
+	agentId: string,
+	workspace: string,
+	progress: string,
+	failure: string | null,
+	retryOf: string | null,
+};
+
+/**  What a save became. `ChangedUnderneath` is a Safety surface, not an error. */
+export type SaveOutcomeDto = SaveOutcomeDto_Serialize | SaveOutcomeDto_Deserialize;
+
+/**  What a save became. `ChangedUnderneath` is a Safety surface, not an error. */
+export type SaveOutcomeDto_Deserialize = { kind: "saved"; value: {
+	stamp: FileStamp_Deserialize,
+	recoveryEvidence: string | null,
+} } | { kind: "changedUnderneath"; value: {
+	onDisk: string,
+	stamp: FileStamp_Deserialize,
+} };
+
+/**  What a save became. `ChangedUnderneath` is a Safety surface, not an error. */
+export type SaveOutcomeDto_Serialize = { kind: "saved"; value: {
+	stamp: FileStamp_Serialize,
+	recoveryEvidence: string | null,
+} } | { kind: "changedUnderneath"; value: {
+	onDisk: string,
+	stamp: FileStamp_Serialize,
+} };
+
+/**
+ *  The session's current view of an open document: the confirmed head, no
+ *  disk read, no journal replay. The editor re-syncs its projection from
+ *  here after a structural change, where the domain minted new block ids.
+ *  No stamp: the CAS a save needs comes only from disk truth (SPEC 7.2).
+ */
+export type SessionDocumentDto = {
+	revision: string,
+	blocks: BlockDto[],
+};
+
+export type TaskDto = {
+	id: string,
+	baseline: string,
+	document: string,
+	prompt: string,
+	progress: string,
+};
+
+/**  The confirmed outcome of one applied action. */
+export type TextTransitionDto = {
+	revision: string,
+	actionId: string,
+	touchedBlocks: string[],
+};
+
+/**  One theme as the picker shows it. */
+export type ThemeInfoDto = {
+	slug: string,
+	cn: string,
+	mode: string,
+};
+
+/**
+ *  Adapter capability tier (SPEC 8.3).
+ * 
+ *  Declared in R0 because the boundary it names is the one thing the host owes
+ *  the rest of the workspace before its state machine exists.
+ */
+export type Tier = 
+/**  A file channel: write a request, wait for a result. No launch, no cancel. */
+"l0" | 
+/**  An argv launch with completion and cancellation. */
+"l1" | 
+/**  Honest usage, effective model, compaction events. */
+"l2";
+
+/**
+ *  A token count, three-stated (SPEC 2.3). `Unknown` is a first-class value
+ *  and never serialised as zero (INV-3).
+ */
+export type Tokens = { kind: "actual"; value: number } | { kind: "estimated"; value: number } | { kind: "unknown" };
+
+/**
+ *  The persisted shape of one judgment. `AcceptModified` carries its final
+ *  text in `final_text`; the kind column alone never tells that story.
+ */
+export type VerdictKindName = "accept" | "accept-modified" | "reject" | "comment-only";
+
+/**
+ *  One row of the ledger. Ids stay strings here: legacy rows arrive with
+ *  legacy ids during migration (INV-9), and the ledger must hold both
+ *  without rewriting either.
+ */
+export type VerdictRecord = VerdictRecord_Serialize | VerdictRecord_Deserialize;
+
+/**
+ *  One row of the ledger. Ids stay strings here: legacy rows arrive with
+ *  legacy ids during migration (INV-9), and the ledger must hold both
+ *  without rewriting either.
+ */
+export type VerdictRecord_Deserialize = {
+	id: string,
+	proposalId: string,
+	sliceId: string,
+	kind: VerdictKindName,
+	finalText: string | null,
+	reason: string | null,
+	/**
+	 *  Milliseconds since the Unix epoch (string on the bridge: Specta
+	 *  forbids BigInt-style exports).
+	 */
+	decidedAt: string,
+	/**  The baseline spelling a legacy row arrived with, kept byte-for-byte. */
+	legacyBaseline: string | null,
+};
+
+/**
+ *  One row of the ledger. Ids stay strings here: legacy rows arrive with
+ *  legacy ids during migration (INV-9), and the ledger must hold both
+ *  without rewriting either.
+ */
+export type VerdictRecord_Serialize = {
+	id: string,
+	proposalId: string,
+	sliceId: string,
+	kind: VerdictKindName,
+	finalText: string | null,
+	reason: string | null,
+	/**
+	 *  Milliseconds since the Unix epoch (string on the bridge: Specta
+	 *  forbids BigInt-style exports).
+	 */
+	decidedAt: string,
+	/**  The baseline spelling a legacy row arrived with, kept byte-for-byte. */
+	legacyBaseline: string | null,
+};
+
+/* Tauri Specta runtime */
+async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; data: T } | { status: "error"; error: E }> {
+    try {
+        return { status: "ok", data: await result };
+    } catch (e) {
+        if (e instanceof Error) throw e;
+        return { status: "error", error: e as any };
+    }
+}
 

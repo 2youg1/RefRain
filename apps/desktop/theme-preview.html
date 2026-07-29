@@ -1,0 +1,182 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RefRain · 七套主题</title><style>
+/* biome-ignore-all lint/style/noDescendingSpecificity: signed-off review surface, not product CSS. */
+/* biome-ignore-all lint/complexity/noImportantStyles: the Lc pass/fail cells are deliberately terminal. */
+/* 由 scripts/generate-themes.ts 生成，勿手改。 */
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#dedede;color:#242424;font-family:"Segoe UI Variable Text","Segoe UI",system-ui,"Yu Gothic UI","Microsoft YaHei UI",sans-serif;padding:38px 30px 84px;-webkit-font-smoothing:antialiased}
+.w{max-width:1180px;margin:0 auto}
+h1{font-size:27px;font-weight:500;letter-spacing:.08em}
+.sb{color:#6b6b6b;font-size:13px;line-height:1.95;margin-top:8px}
+.rl{font-size:12.5px;color:#5c5c5c;margin:17px 0 13px;padding:14px 18px;border:1px solid #c4c4c4;background:#f0f0f0;line-height:2.05}
+.rl b{color:#242424;font-weight:600}
+.nv{display:flex;flex-wrap:wrap;gap:8px;margin:13px 0 26px;align-items:center}
+.nv a{text-decoration:none;color:#4f4f4f;font-size:13px;padding:5px 13px;border:1px solid #c4c4c4;background:#f0f0f0}
+.nv a:hover{background:#242424;color:#f0f0f0}
+.nv s{text-decoration:none;font-size:11.5px;padding:3px 9px}
+.d-tag{background:#e3e9eb} .n-tag{background:#2a2f38;color:#dfe4ea}
+.card{border:1px solid #c4c4c4;background:#f0f0f0;padding:17px 19px 19px;margin-bottom:24px;scroll-margin-top:14px}
+.card.night{background:#242424;border-color:#3a3a3a;color:#d8d8d8}
+.card.night .prose{color:#a8a8a8} .card.night .src{color:#8a8a8a}
+.card.night .lc th,.card.night .lc td{border-color:#3a3a3a;color:#a8a8a8}
+header{display:flex;align-items:baseline;justify-content:space-between;padding-bottom:8px}
+.nm b{font-size:25px;font-weight:600;letter-spacing:.1em}
+.nm i{font-style:normal;font-size:11px;opacity:.55;margin-left:9px;letter-spacing:.16em;text-transform:uppercase}
+.nm u{text-decoration:none;font-size:11px;margin-left:9px;padding:2px 8px;background:#242424;color:#f0f0f0}
+.card.night .nm u{background:#d8d8d8;color:#242424}
+.tags{display:flex;gap:8px;align-items:center}
+.mode{font-size:11.5px;padding:3px 10px} .mode.d{background:#e3e9eb;color:#3b4a52} .mode.n{background:#1c2029;color:#c8d2dc}
+.lin{font-size:11.5px;opacity:.65}
+.prose{font-size:12.5px;line-height:1.95;padding-bottom:13px;color:#5c5c5c}
+.win{border:1px solid var(--rule-strong);border-radius:5px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.09),0 10px 26px rgba(0,0,0,.11)}
+.tb{display:flex;align-items:center;gap:8px;background:var(--rail);color:var(--rail-ink);padding:7px 11px;font-size:11px}
+.dot{width:11px;height:11px;border-radius:2.5px;background:var(--seal);flex:none}
+.tt{flex:1;letter-spacing:.03em} .tx{letter-spacing:.2em;opacity:.7}
+.bd{display:flex;height:260px;background:var(--paper)}
+.rail{width:150px;flex:none;background:var(--rail);color:var(--rail-ink);display:flex;flex-direction:column;padding:11px 0 8px;border-right:1px solid var(--rail-rule)}
+.rt{display:flex;align-items:center;gap:7px;padding:0 12px 12px}
+.lg{width:16px;height:16px;border-radius:3.5px;background:var(--seal);flex:none}
+.wm{font-size:13px;letter-spacing:.05em}
+.rg{font-size:9.5px;letter-spacing:.2em;color:var(--rail-faint);padding:0 12px 5px}
+.rail ul{list-style:none;flex:1}
+.rail li{font-size:11px;padding:5px 12px;color:var(--rail-faint)}
+.rail li.on{color:var(--rail-ink);background:var(--paper);border-left:2px solid var(--seal);padding-left:10px}
+.rail li.dm{opacity:.62}
+.rf{font-size:10.5px;color:var(--rail-faint);padding:8px 12px 0;border-top:1px solid var(--rail-rule)}
+.st{flex:1;display:flex;flex-direction:column;background:var(--paper);padding:15px 15px 0;min-width:0}
+.sh{flex:1;background:var(--sheet);border:1px solid var(--rule);border-radius:3px;padding:14px 16px 6px;overflow:hidden}
+.p{color:var(--ink);font-size:11px;line-height:2.05;text-indent:1em;margin-bottom:7px;font-family:"Yu Mincho","Hiragino Mincho ProN","Songti SC",serif}
+.p.zh{color:var(--ink-soft)}
+.pd{position:relative} .pd::before{content:"";position:absolute;left:-9px;top:3px;bottom:3px;width:2px;background:var(--pending);opacity:.75}
+.bar{display:flex;gap:6px;align-items:center;padding:9px 1px;font-size:10px}
+.gr{flex:1} .c{padding:2px 8px;border-radius:2px;white-space:nowrap}
+.ac{color:var(--accepted);background:var(--accepted-wash);border:1px solid color-mix(in oklab,var(--accepted) 38%,transparent)}
+.rf2{color:var(--refused);background:var(--refused-wash);border:1px solid color-mix(in oklab,var(--refused) 38%,transparent)}
+.ag{color:var(--agent);background:var(--agent-wash);border:1px solid color-mix(in oklab,var(--agent) 38%,transparent)}
+.sc{color:var(--source);background:var(--source-wash);border:1px solid color-mix(in oklab,var(--source) 38%,transparent)}
+.sl{color:var(--paper);background:var(--seal);font-weight:600}
+.sw{display:flex;margin-top:9px} .sw i{flex:1;height:16px;display:block}
+.foot{display:flex;gap:20px;align-items:flex-start;margin-top:10px;flex-wrap:wrap}
+.lc{border-collapse:collapse;font-family:"Cascadia Mono",Consolas,monospace;font-size:10px}
+.lc th,.lc td{border:1px solid #d4d4d4;padding:2px 8px;text-align:right;color:#8a8a8a}
+.lc th{text-align:center} .lc td:first-child{text-align:left}
+.ok{color:#3d7a4a!important} .bad{color:#b33!important;font-weight:700}
+.src{font-size:10.5px;color:#9a9a9a;flex:1;min-width:14rem;line-height:1.8}
+</style><div class="w">
+<h1>RefRain · 7 套主题</h1>
+<p class="sb">日间5套（濤・霞・砂・桦・侘）与夜间2套（墨・韶）各自成立；昼夜互不反相。本页与 themes.css 同一份数据生成——签的就是实测值。</p>
+<div class="rl"><b>D12 裁撤映射（八套 → 七套）</b>：枯→砂（枯山水）、瓷→侘（青瓷）、林→桦（桦木）、時雨→韶（Blade Runner；第二强调洋红→绯红，无黄无紫）、幽裁撤。霞重锚为新海诚式波子汽水：高调冷白、樱印、瓶身蓝副强调。濤（北斎）与墨（行灯）不动。</div>
+<div class="nv"><s class="d-tag">日间</s><a href="#tou">濤</a><a href="#kasumi">霞</a><a href="#suna">砂</a><a href="#hua">桦</a><a href="#wabi">侘</a><s class="n-tag">夜间</s><a href="#sumi">墨</a><a href="#shao">韶</a></div>
+<section class="card day" id="tou">
+ <header><div class="nm"><b>濤</b><i>tou</i> <u>默认</u></div>
+ <div class="tags"><span class="mode d">日间</span><span class="lin">北斎《神奈川沖浪裏》</span></div></header>
+ <p class="prose">工件实测。暖纸配群青墨，冷暖对撞；金取自浪尖的落款印泥，作第二强调。八套里唯一敢把深蓝当正文墨色的一套。</p>
+ <div class="win" style="--paper:oklch(0.947 0.0197 87.5);--paper-raised:oklch(0.966 0.0177 87.5);--paper-sunk:oklch(0.921 0.0217 87.5);--sheet:oklch(0.961 0.0162 87.5);--rule:oklch(0.871 0.0256 87.5);--rule-strong:oklch(0.797 0.0295 87.5);--rail:oklch(0.352 0.0723 258.2);--rail-ink:oklch(0.902 0.026 258.2);--rail-faint:oklch(0.77 0.034 258.2);--rail-rule:oklch(0.432 0.0795 258.2);--ink:oklch(0.326 0.0786 258.2);--ink-soft:oklch(0.476 0.0802 258.2);--seal:oklch(0.583 0.168 38);--seal-wash:oklch(0.937 0.0504 38);--agent:oklch(0.59 0.132 88.4);--agent-wash:oklch(0.935 0.03 88.4);--accepted:oklch(0.478 0.096 152);--accepted-wash:oklch(0.935 0.026 152);--refused:oklch(0.478 0.128 24);--refused-wash:oklch(0.935 0.028 24);--source:oklch(0.476 0.078 232);--source-wash:oklch(0.935 0.024 232);--pending:oklch(0.583 0.168 38)">
+  <div class="tb"><span class="dot"></span><span class="tt">RefRain — 第一章　川の湾</span><span class="tx">－ ▢ ✕</span></div>
+  <div class="bd"><aside class="rail">
+    <div class="rt"><span class="lg"></span><span class="wm">RefRain</span></div><div class="rg">原稿</div>
+    <ul><li class="on">第一章　川の湾</li><li>第二章　帳面</li><li>第三章　寸法</li><li class="dm">附録　覚書</li></ul>
+    <div class="rf">＋ フォルダを開く</div></aside>
+   <main class="st"><div class="sh"><p class="p">霧が下流から這い上がって、川の湾を一枚ずつ畳んでいく。彼は振り返らず、手の帳面をもう一方の手へ移した。</p><p class="p pd">遠くで誰かが何かを打っている。とても遅く、間を置いて一度ずつ。</p><p class="p zh">雾从下游漫上来，把河湾一层层收走。他没有回头，只是把手里的册子换到另一只手。</p></div>
+    <div class="bar"><span class="c ac">受理 12</span><span class="c rf2">差戻 3</span><span class="c ag">kimi</span><span class="c sc">引用 4</span><span class="gr"></span><span class="c sl">裁決待ち 2</span></div>
+   </main></div></div>
+ <div class="sw"><i style="background:oklch(0.947 0.0197 87.5)" title="--paper"></i><i style="background:oklch(0.961 0.0162 87.5)" title="--sheet"></i><i style="background:oklch(0.871 0.0256 87.5)" title="--rule"></i><i style="background:oklch(0.352 0.0723 258.2)" title="--rail"></i><i style="background:oklch(0.902 0.026 258.2)" title="--rail-ink"></i><i style="background:oklch(0.326 0.0786 258.2)" title="--ink"></i><i style="background:oklch(0.476 0.0802 258.2)" title="--ink-soft"></i><i style="background:oklch(0.583 0.168 38)" title="--seal"></i><i style="background:oklch(0.59 0.132 88.4)" title="--agent"></i><i style="background:oklch(0.478 0.096 152)" title="--accepted"></i><i style="background:oklch(0.478 0.128 24)" title="--refused"></i><i style="background:oklch(0.476 0.078 232)" title="--source"></i></div>
+ <div class="foot"><table class="lc"><tr><th>APCA</th><th>Lc</th><th>门槛</th></tr><tr><td>正文墨/纸</td><td class="ok">87.6</td><td>|75|</td></tr><tr><td>侧栏文/侧</td><td class="ok">-78.9</td><td>|75|</td></tr><tr><td>侧栏次/侧</td><td class="ok">-53.4</td><td>|45|</td></tr><tr><td>印色/纸</td><td class="ok">60.3</td><td>|45|</td></tr><tr><td>接受/纸</td><td class="ok">70.7</td><td>|45|</td></tr><tr><td>退回/纸</td><td class="ok">73.2</td><td>|45|</td></tr><tr><td>代理/纸</td><td class="ok">57.8</td><td>|45|</td></tr><tr><td>引用/纸</td><td class="ok">71.6</td><td>|45|</td></tr></table><p class="src">纸 #f3eddf／墨 #19345c／印 #ca4d23／副 #c39d32，自 2026-07-25 的工件像素采样</p></div>
+</section>
+<section class="card day" id="kasumi">
+ <header><div class="nm"><b>霞</b><i>kasumi</i></div>
+ <div class="tags"><span class="mode d">日间</span><span class="lin">新海誠・波子汽水</span></div></header>
+ <p class="prose">新海诚式的高透明感：纸是夏日正午被光照透的云，墨是积雨云底那层深蓝。印仍是樱色——停在 L .700，再推白就跌破 Lc 45；副强调取波子汽水的瓶身蓝。侧栏留在明度上半区：高调题材的深侧栏是全屏对比最强的一块，会把「清晨」拽回「专业工具」。</p>
+ <div class="win" style="--paper:oklch(0.955 0.023 208);--paper-raised:oklch(0.966 0.0207 208);--paper-sunk:oklch(0.929 0.0253 208);--sheet:oklch(0.969 0.0189 208);--rule:oklch(0.879 0.0299 208);--rule-strong:oklch(0.805 0.0345 208);--rail:oklch(0.883 0.0345 208);--rail-ink:oklch(0.29 0.06 242);--rail-faint:oklch(0.466 0.048 242);--rail-rule:oklch(0.821 0.038 208);--ink:oklch(0.298 0.06 242);--ink-soft:oklch(0.448 0.0612 242);--seal:oklch(0.7 0.152 8);--seal-wash:oklch(0.945 0.0456 8);--agent:oklch(0.61 0.17 228);--agent-wash:oklch(0.943 0.03 228);--accepted:oklch(0.478 0.096 152);--accepted-wash:oklch(0.943 0.026 152);--refused:oklch(0.478 0.128 24);--refused-wash:oklch(0.943 0.028 24);--source:oklch(0.476 0.078 232);--source-wash:oklch(0.943 0.024 232);--pending:oklch(0.7 0.152 8)">
+  <div class="tb"><span class="dot"></span><span class="tt">RefRain — 第一章　川の湾</span><span class="tx">－ ▢ ✕</span></div>
+  <div class="bd"><aside class="rail">
+    <div class="rt"><span class="lg"></span><span class="wm">RefRain</span></div><div class="rg">原稿</div>
+    <ul><li class="on">第一章　川の湾</li><li>第二章　帳面</li><li>第三章　寸法</li><li class="dm">附録　覚書</li></ul>
+    <div class="rf">＋ フォルダを開く</div></aside>
+   <main class="st"><div class="sh"><p class="p">霧が下流から這い上がって、川の湾を一枚ずつ畳んでいく。彼は振り返らず、手の帳面をもう一方の手へ移した。</p><p class="p pd">遠くで誰かが何かを打っている。とても遅く、間を置いて一度ずつ。</p><p class="p zh">雾从下游漫上来，把河湾一层层收走。他没有回头，只是把手里的册子换到另一只手。</p></div>
+    <div class="bar"><span class="c ac">受理 12</span><span class="c rf2">差戻 3</span><span class="c ag">kimi</span><span class="c sc">引用 4</span><span class="gr"></span><span class="c sl">裁決待ち 2</span></div>
+   </main></div></div>
+ <div class="sw"><i style="background:oklch(0.955 0.023 208)" title="--paper"></i><i style="background:oklch(0.969 0.0189 208)" title="--sheet"></i><i style="background:oklch(0.879 0.0299 208)" title="--rule"></i><i style="background:oklch(0.883 0.0345 208)" title="--rail"></i><i style="background:oklch(0.29 0.06 242)" title="--rail-ink"></i><i style="background:oklch(0.298 0.06 242)" title="--ink"></i><i style="background:oklch(0.448 0.0612 242)" title="--ink-soft"></i><i style="background:oklch(0.7 0.152 8)" title="--seal"></i><i style="background:oklch(0.61 0.17 228)" title="--agent"></i><i style="background:oklch(0.478 0.096 152)" title="--accepted"></i><i style="background:oklch(0.478 0.128 24)" title="--refused"></i><i style="background:oklch(0.476 0.078 232)" title="--source"></i></div>
+ <div class="foot"><table class="lc"><tr><th>APCA</th><th>Lc</th><th>门槛</th></tr><tr><td>正文墨/纸</td><td class="ok">91.6</td><td>|75|</td></tr><tr><td>侧栏文/侧</td><td class="ok">78.4</td><td>|75|</td></tr><tr><td>侧栏次/侧</td><td class="ok">61.7</td><td>|45|</td></tr><tr><td>印色/纸</td><td class="ok">45.9</td><td>|45|</td></tr><tr><td>接受/纸</td><td class="ok">72.7</td><td>|45|</td></tr><tr><td>退回/纸</td><td class="ok">75.3</td><td>|45|</td></tr><tr><td>代理/纸</td><td class="ok">52.8</td><td>|45|</td></tr><tr><td>引用/纸</td><td class="ok">73.6</td><td>|45|</td></tr></table><p class="src">云のむこう・波子汽水。高调冷白 + 樱印 + 瓶身蓝</p></div>
+</section>
+<section class="card day" id="suna">
+ <header><div class="nm"><b>砂</b><i>suna</i></div>
+ <div class="tags"><span class="mode d">日间</span><span class="lin">枯山水</span></div></header>
+ <p class="prose">砂は白、苔は緑、石は影。纸取耙过的白砂，墨取苔绿——这是工件实测值，也正是枯山水的关系：白砂之上唯一的活物是苔。印取石影的青灰蓝。</p>
+ <div class="win" style="--paper:oklch(0.959 0.0057 84.6);--paper-raised:oklch(0.966 0.0051 84.6);--paper-sunk:oklch(0.933 0.0063 84.6);--sheet:oklch(0.972 0.0047 84.6);--rule:oklch(0.883 0.0074 84.6);--rule-strong:oklch(0.809 0.0086 84.6);--rail:oklch(0.352 0.03 147.4);--rail-ink:oklch(0.902 0.012 147.4);--rail-faint:oklch(0.77 0.018 147.4);--rail-rule:oklch(0.432 0.033 147.4);--ink:oklch(0.402 0.0238 147.4);--ink-soft:oklch(0.552 0.0243 147.4);--seal:oklch(0.52 0.132 262);--seal-wash:oklch(0.949 0.0396 262);--agent:oklch(0.56 0.062 196);--agent-wash:oklch(0.947 0.0174 196);--accepted:oklch(0.478 0.096 152);--accepted-wash:oklch(0.947 0.026 152);--refused:oklch(0.478 0.128 24);--refused-wash:oklch(0.947 0.028 24);--source:oklch(0.476 0.078 232);--source-wash:oklch(0.947 0.024 232);--pending:oklch(0.52 0.132 262)">
+  <div class="tb"><span class="dot"></span><span class="tt">RefRain — 第一章　川の湾</span><span class="tx">－ ▢ ✕</span></div>
+  <div class="bd"><aside class="rail">
+    <div class="rt"><span class="lg"></span><span class="wm">RefRain</span></div><div class="rg">原稿</div>
+    <ul><li class="on">第一章　川の湾</li><li>第二章　帳面</li><li>第三章　寸法</li><li class="dm">附録　覚書</li></ul>
+    <div class="rf">＋ フォルダを開く</div></aside>
+   <main class="st"><div class="sh"><p class="p">霧が下流から這い上がって、川の湾を一枚ずつ畳んでいく。彼は振り返らず、手の帳面をもう一方の手へ移した。</p><p class="p pd">遠くで誰かが何かを打っている。とても遅く、間を置いて一度ずつ。</p><p class="p zh">雾从下游漫上来，把河湾一层层收走。他没有回头，只是把手里的册子换到另一只手。</p></div>
+    <div class="bar"><span class="c ac">受理 12</span><span class="c rf2">差戻 3</span><span class="c ag">kimi</span><span class="c sc">引用 4</span><span class="gr"></span><span class="c sl">裁決待ち 2</span></div>
+   </main></div></div>
+ <div class="sw"><i style="background:oklch(0.959 0.0057 84.6)" title="--paper"></i><i style="background:oklch(0.972 0.0047 84.6)" title="--sheet"></i><i style="background:oklch(0.883 0.0074 84.6)" title="--rule"></i><i style="background:oklch(0.352 0.03 147.4)" title="--rail"></i><i style="background:oklch(0.902 0.012 147.4)" title="--rail-ink"></i><i style="background:oklch(0.402 0.0238 147.4)" title="--ink"></i><i style="background:oklch(0.552 0.0243 147.4)" title="--ink-soft"></i><i style="background:oklch(0.52 0.132 262)" title="--seal"></i><i style="background:oklch(0.56 0.062 196)" title="--agent"></i><i style="background:oklch(0.478 0.096 152)" title="--accepted"></i><i style="background:oklch(0.478 0.128 24)" title="--refused"></i><i style="background:oklch(0.476 0.078 232)" title="--source"></i></div>
+ <div class="foot"><table class="lc"><tr><th>APCA</th><th>Lc</th><th>门槛</th></tr><tr><td>正文墨/纸</td><td class="ok">82.5</td><td>|75|</td></tr><tr><td>侧栏文/侧</td><td class="ok">-78.9</td><td>|75|</td></tr><tr><td>侧栏次/侧</td><td class="ok">-54</td><td>|45|</td></tr><tr><td>印色/纸</td><td class="ok">69.4</td><td>|45|</td></tr><tr><td>接受/纸</td><td class="ok">73</td><td>|45|</td></tr><tr><td>退回/纸</td><td class="ok">75.5</td><td>|45|</td></tr><tr><td>代理/纸</td><td class="ok">63</td><td>|45|</td></tr><tr><td>引用/纸</td><td class="ok">73.8</td><td>|45|</td></tr></table><p class="src">墨 #404c41 工件实测；纸与印按枯山水三素重构</p></div>
+</section>
+<section class="card day" id="hua">
+ <header><div class="nm"><b>桦</b><i>hua</i></div>
+ <div class="tags"><span class="mode d">日间</span><span class="lin">桦木・木漏れ日</span></div></header>
+ <p class="prose">桦皮的暖白纸，杉肌的红褐墨，印取木漏れ日的橙黄。土色留在墨里，但整套不再是单温——那束漏下的光就是它的温差。</p>
+ <div class="win" style="--paper:oklch(0.948 0.0097 72.7);--paper-raised:oklch(0.966 0.0087 72.7);--paper-sunk:oklch(0.922 0.0107 72.7);--sheet:oklch(0.962 0.008 72.7);--rule:oklch(0.872 0.0126 72.7);--rule-strong:oklch(0.798 0.0146 72.7);--rail:oklch(0.352 0.03 74.1);--rail-ink:oklch(0.902 0.012 74.1);--rail-faint:oklch(0.77 0.018 74.1);--rail-rule:oklch(0.432 0.033 74.1);--ink:oklch(0.353 0.018 74.1);--ink-soft:oklch(0.503 0.0184 74.1);--seal:oklch(0.596 0.146 76);--seal-wash:oklch(0.938 0.0438 76);--agent:oklch(0.52 0.088 152);--agent-wash:oklch(0.936 0.0246 152);--accepted:oklch(0.478 0.096 152);--accepted-wash:oklch(0.936 0.026 152);--refused:oklch(0.478 0.128 24);--refused-wash:oklch(0.936 0.028 24);--source:oklch(0.476 0.078 232);--source-wash:oklch(0.936 0.024 232);--pending:oklch(0.596 0.146 76)">
+  <div class="tb"><span class="dot"></span><span class="tt">RefRain — 第一章　川の湾</span><span class="tx">－ ▢ ✕</span></div>
+  <div class="bd"><aside class="rail">
+    <div class="rt"><span class="lg"></span><span class="wm">RefRain</span></div><div class="rg">原稿</div>
+    <ul><li class="on">第一章　川の湾</li><li>第二章　帳面</li><li>第三章　寸法</li><li class="dm">附録　覚書</li></ul>
+    <div class="rf">＋ フォルダを開く</div></aside>
+   <main class="st"><div class="sh"><p class="p">霧が下流から這い上がって、川の湾を一枚ずつ畳んでいく。彼は振り返らず、手の帳面をもう一方の手へ移した。</p><p class="p pd">遠くで誰かが何かを打っている。とても遅く、間を置いて一度ずつ。</p><p class="p zh">雾从下游漫上来，把河湾一层层收走。他没有回头，只是把手里的册子换到另一只手。</p></div>
+    <div class="bar"><span class="c ac">受理 12</span><span class="c rf2">差戻 3</span><span class="c ag">kimi</span><span class="c sc">引用 4</span><span class="gr"></span><span class="c sl">裁決待ち 2</span></div>
+   </main></div></div>
+ <div class="sw"><i style="background:oklch(0.948 0.0097 72.7)" title="--paper"></i><i style="background:oklch(0.962 0.008 72.7)" title="--sheet"></i><i style="background:oklch(0.872 0.0126 72.7)" title="--rule"></i><i style="background:oklch(0.352 0.03 74.1)" title="--rail"></i><i style="background:oklch(0.902 0.012 74.1)" title="--rail-ink"></i><i style="background:oklch(0.353 0.018 74.1)" title="--ink"></i><i style="background:oklch(0.503 0.0184 74.1)" title="--ink-soft"></i><i style="background:oklch(0.596 0.146 76)" title="--seal"></i><i style="background:oklch(0.52 0.088 152)" title="--agent"></i><i style="background:oklch(0.478 0.096 152)" title="--accepted"></i><i style="background:oklch(0.478 0.128 24)" title="--refused"></i><i style="background:oklch(0.476 0.078 232)" title="--source"></i></div>
+ <div class="foot"><table class="lc"><tr><th>APCA</th><th>Lc</th><th>门槛</th></tr><tr><td>正文墨/纸</td><td class="ok">85.6</td><td>|75|</td></tr><tr><td>侧栏文/侧</td><td class="ok">-78.9</td><td>|75|</td></tr><tr><td>侧栏次/侧</td><td class="ok">-53.6</td><td>|45|</td></tr><tr><td>印色/纸</td><td class="ok">57.4</td><td>|45|</td></tr><tr><td>接受/纸</td><td class="ok">70.9</td><td>|45|</td></tr><tr><td>退回/纸</td><td class="ok">73.4</td><td>|45|</td></tr><tr><td>代理/纸</td><td class="ok">66</td><td>|45|</td></tr><tr><td>引用/纸</td><td class="ok">71.8</td><td>|45|</td></tr></table><p class="src">墨 #413a31 工件实测；印取黄丹 ōni</p></div>
+</section>
+<section class="card day" id="wabi">
+ <header><div class="nm"><b>侘</b><i>wabi</i></div>
+ <div class="tags"><span class="mode d">日间</span><span class="lin">青瓷・侘び</span></div></header>
+ <p class="prose">秘色的纸，釉里的青作墨。印取常磐——不是红，是瓷器窑变里那点更深的绿。貫入的细线是分隔线的形状依据。</p>
+ <div class="win" style="--paper:oklch(0.953 0.0105 155);--paper-raised:oklch(0.966 0.0095 155);--paper-sunk:oklch(0.927 0.0116 155);--sheet:oklch(0.967 0.0086 155);--rule:oklch(0.877 0.0137 155);--rule-strong:oklch(0.803 0.0158 155);--rail:oklch(0.352 0.03 196);--rail-ink:oklch(0.902 0.012 196);--rail-faint:oklch(0.77 0.018 196);--rail-rule:oklch(0.432 0.033 196);--ink:oklch(0.3 0.03 196);--ink-soft:oklch(0.45 0.0306 196);--seal:oklch(0.5 0.15 152);--seal-wash:oklch(0.943 0.045 152);--agent:oklch(0.556 0.07 262);--agent-wash:oklch(0.941 0.0196 262);--accepted:oklch(0.478 0.096 152);--accepted-wash:oklch(0.941 0.026 152);--refused:oklch(0.478 0.128 24);--refused-wash:oklch(0.941 0.028 24);--source:oklch(0.476 0.078 232);--source-wash:oklch(0.941 0.024 232);--pending:oklch(0.5 0.15 152)">
+  <div class="tb"><span class="dot"></span><span class="tt">RefRain — 第一章　川の湾</span><span class="tx">－ ▢ ✕</span></div>
+  <div class="bd"><aside class="rail">
+    <div class="rt"><span class="lg"></span><span class="wm">RefRain</span></div><div class="rg">原稿</div>
+    <ul><li class="on">第一章　川の湾</li><li>第二章　帳面</li><li>第三章　寸法</li><li class="dm">附録　覚書</li></ul>
+    <div class="rf">＋ フォルダを開く</div></aside>
+   <main class="st"><div class="sh"><p class="p">霧が下流から這い上がって、川の湾を一枚ずつ畳んでいく。彼は振り返らず、手の帳面をもう一方の手へ移した。</p><p class="p pd">遠くで誰かが何かを打っている。とても遅く、間を置いて一度ずつ。</p><p class="p zh">雾从下游漫上来，把河湾一层层收走。他没有回头，只是把手里的册子换到另一只手。</p></div>
+    <div class="bar"><span class="c ac">受理 12</span><span class="c rf2">差戻 3</span><span class="c ag">kimi</span><span class="c sc">引用 4</span><span class="gr"></span><span class="c sl">裁決待ち 2</span></div>
+   </main></div></div>
+ <div class="sw"><i style="background:oklch(0.953 0.0105 155)" title="--paper"></i><i style="background:oklch(0.967 0.0086 155)" title="--sheet"></i><i style="background:oklch(0.877 0.0137 155)" title="--rule"></i><i style="background:oklch(0.352 0.03 196)" title="--rail"></i><i style="background:oklch(0.902 0.012 196)" title="--rail-ink"></i><i style="background:oklch(0.3 0.03 196)" title="--ink"></i><i style="background:oklch(0.45 0.0306 196)" title="--ink-soft"></i><i style="background:oklch(0.5 0.15 152)" title="--seal"></i><i style="background:oklch(0.556 0.07 262)" title="--agent"></i><i style="background:oklch(0.478 0.096 152)" title="--accepted"></i><i style="background:oklch(0.478 0.128 24)" title="--refused"></i><i style="background:oklch(0.476 0.078 232)" title="--source"></i></div>
+ <div class="foot"><table class="lc"><tr><th>APCA</th><th>Lc</th><th>门槛</th></tr><tr><td>正文墨/纸</td><td class="ok">90.8</td><td>|75|</td></tr><tr><td>侧栏文/侧</td><td class="ok">-78.6</td><td>|75|</td></tr><tr><td>侧栏次/侧</td><td class="ok">-53.7</td><td>|45|</td></tr><tr><td>印色/纸</td><td class="ok">67.7</td><td>|45|</td></tr><tr><td>接受/纸</td><td class="ok">72.2</td><td>|45|</td></tr><tr><td>退回/纸</td><td class="ok">74.7</td><td>|45|</td></tr><tr><td>代理/纸</td><td class="ok">63.7</td><td>|45|</td></tr><tr><td>引用/纸</td><td class="ok">73.1</td><td>|45|</td></tr></table><p class="src">秘色青瓷；印取常磐 tokiwa</p></div>
+</section>
+<section class="card night" id="sumi">
+ <header><div class="nm"><b>墨</b><i>sumi</i></div>
+ <div class="tags"><span class="mode n">夜间</span><span class="lin">AI 业黑白・人文の朱</span></div></header>
+ <p class="prose">夜间。当代 AI 前端的黑白骨架配人文的暖：纸是近黑的中性暖灰，墨是带纸温的白；全套只有两处有颜色——印泥的朱（人的裁决）与象牙的暖灰（机器痕迹），其余都是明度。</p>
+ <div class="win" style="--paper:oklch(0.215 0.008 75);--paper-raised:oklch(0.245 0.0072 75);--paper-sunk:oklch(0.189 0.0088 75);--sheet:oklch(0.231 0.0066 75);--rule:oklch(0.291 0.0104 75);--rule-strong:oklch(0.365 0.012 75);--rail:oklch(0.152 0.016 75);--rail-ink:oklch(0.884 0.0064 90);--rail-faint:oklch(0.752 0.0096 90);--rail-rule:oklch(0.242 0.0176 75);--ink:oklch(0.925 0.008 90);--ink-soft:oklch(0.781 0.0082 90);--seal:oklch(0.72 0.16 40);--seal-wash:oklch(0.225 0.048 40);--agent:oklch(0.72 0.03 80);--agent-wash:oklch(0.227 0.0084 80);--accepted:oklch(0.712 0.096 152);--accepted-wash:oklch(0.227 0.026 152);--refused:oklch(0.716 0.128 24);--refused-wash:oklch(0.227 0.028 24);--source:oklch(0.712 0.078 232);--source-wash:oklch(0.227 0.024 232);--pending:oklch(0.82 0.16 40)">
+  <div class="tb"><span class="dot"></span><span class="tt">RefRain — 第一章　川の湾</span><span class="tx">－ ▢ ✕</span></div>
+  <div class="bd"><aside class="rail">
+    <div class="rt"><span class="lg"></span><span class="wm">RefRain</span></div><div class="rg">原稿</div>
+    <ul><li class="on">第一章　川の湾</li><li>第二章　帳面</li><li>第三章　寸法</li><li class="dm">附録　覚書</li></ul>
+    <div class="rf">＋ フォルダを開く</div></aside>
+   <main class="st"><div class="sh"><p class="p">霧が下流から這い上がって、川の湾を一枚ずつ畳んでいく。彼は振り返らず、手の帳面をもう一方の手へ移した。</p><p class="p pd">遠くで誰かが何かを打っている。とても遅く、間を置いて一度ずつ。</p><p class="p zh">雾从下游漫上来，把河湾一层层收走。他没有回头，只是把手里的册子换到另一只手。</p></div>
+    <div class="bar"><span class="c ac">受理 12</span><span class="c rf2">差戻 3</span><span class="c ag">kimi</span><span class="c sc">引用 4</span><span class="gr"></span><span class="c sl">裁決待ち 2</span></div>
+   </main></div></div>
+ <div class="sw"><i style="background:oklch(0.215 0.008 75)" title="--paper"></i><i style="background:oklch(0.231 0.0066 75)" title="--sheet"></i><i style="background:oklch(0.291 0.0104 75)" title="--rule"></i><i style="background:oklch(0.152 0.016 75)" title="--rail"></i><i style="background:oklch(0.884 0.0064 90)" title="--rail-ink"></i><i style="background:oklch(0.925 0.008 90)" title="--ink"></i><i style="background:oklch(0.781 0.0082 90)" title="--ink-soft"></i><i style="background:oklch(0.72 0.16 40)" title="--seal"></i><i style="background:oklch(0.72 0.03 80)" title="--agent"></i><i style="background:oklch(0.712 0.096 152)" title="--accepted"></i><i style="background:oklch(0.716 0.128 24)" title="--refused"></i><i style="background:oklch(0.712 0.078 232)" title="--source"></i></div>
+ <div class="foot"><table class="lc"><tr><th>APCA</th><th>Lc</th><th>门槛</th></tr><tr><td>正文墨/纸</td><td class="ok">-90.4</td><td>|75|</td></tr><tr><td>侧栏文/侧</td><td class="ok">-83.2</td><td>|75|</td></tr><tr><td>侧栏次/侧</td><td class="ok">-58.3</td><td>|45|</td></tr><tr><td>印色/纸</td><td class="ok">-49.8</td><td>|45|</td></tr><tr><td>接受/纸</td><td class="ok">-52.7</td><td>|45|</td></tr><tr><td>退回/纸</td><td class="ok">-49.2</td><td>|45|</td></tr><tr><td>代理/纸</td><td class="ok">-51.9</td><td>|45|</td></tr><tr><td>引用/纸</td><td class="ok">-51.4</td><td>|45|</td></tr></table><p class="src">AI 业黑白主流 + 印泥朱一点</p></div>
+</section>
+<section class="card night" id="shao">
+ <header><div class="nm"><b>韶</b><i>shao</i></div>
+ <div class="tags"><span class="mode n">夜间</span><span class="lin">Blade Runner の雨夜・Edgerunners</span></div></header>
+ <p class="prose">夜间。赛博但克制：底色是雨夜的深蓝黑，不用纯黑。霓虹只在远处——青与绯红各占一个语义位，绝不同屏出现；无黄无紫（KL9 裁决，原洋红近紫已裁）。正文墨仍是可长读的冷白，不是荧光。</p>
+ <div class="win" style="--paper:oklch(0.216 0.028 262);--paper-raised:oklch(0.246 0.0252 262);--paper-sunk:oklch(0.19 0.0308 262);--sheet:oklch(0.232 0.023 262);--rule:oklch(0.292 0.0364 262);--rule-strong:oklch(0.366 0.042 262);--rail:oklch(0.152 0.056 262);--rail-ink:oklch(0.884 0.0224 232);--rail-faint:oklch(0.752 0.0336 232);--rail-rule:oklch(0.242 0.0616 262);--ink:oklch(0.905 0.015 232);--ink-soft:oklch(0.761 0.0153 232);--seal:oklch(0.76 0.132 192);--seal-wash:oklch(0.226 0.0396 192);--agent:oklch(0.72 0.19 25);--agent-wash:oklch(0.228 0.03 25);--accepted:oklch(0.712 0.096 152);--accepted-wash:oklch(0.228 0.026 152);--refused:oklch(0.716 0.128 24);--refused-wash:oklch(0.228 0.028 24);--source:oklch(0.712 0.078 232);--source-wash:oklch(0.228 0.024 232);--pending:oklch(0.86 0.132 192)">
+  <div class="tb"><span class="dot"></span><span class="tt">RefRain — 第一章　川の湾</span><span class="tx">－ ▢ ✕</span></div>
+  <div class="bd"><aside class="rail">
+    <div class="rt"><span class="lg"></span><span class="wm">RefRain</span></div><div class="rg">原稿</div>
+    <ul><li class="on">第一章　川の湾</li><li>第二章　帳面</li><li>第三章　寸法</li><li class="dm">附録　覚書</li></ul>
+    <div class="rf">＋ フォルダを開く</div></aside>
+   <main class="st"><div class="sh"><p class="p">霧が下流から這い上がって、川の湾を一枚ずつ畳んでいく。彼は振り返らず、手の帳面をもう一方の手へ移した。</p><p class="p pd">遠くで誰かが何かを打っている。とても遅く、間を置いて一度ずつ。</p><p class="p zh">雾从下游漫上来，把河湾一层层收走。他没有回头，只是把手里的册子换到另一只手。</p></div>
+    <div class="bar"><span class="c ac">受理 12</span><span class="c rf2">差戻 3</span><span class="c ag">kimi</span><span class="c sc">引用 4</span><span class="gr"></span><span class="c sl">裁決待ち 2</span></div>
+   </main></div></div>
+ <div class="sw"><i style="background:oklch(0.216 0.028 262)" title="--paper"></i><i style="background:oklch(0.232 0.023 262)" title="--sheet"></i><i style="background:oklch(0.292 0.0364 262)" title="--rule"></i><i style="background:oklch(0.152 0.056 262)" title="--rail"></i><i style="background:oklch(0.884 0.0224 232)" title="--rail-ink"></i><i style="background:oklch(0.905 0.015 232)" title="--ink"></i><i style="background:oklch(0.761 0.0153 232)" title="--ink-soft"></i><i style="background:oklch(0.76 0.132 192)" title="--seal"></i><i style="background:oklch(0.72 0.19 25)" title="--agent"></i><i style="background:oklch(0.712 0.096 152)" title="--accepted"></i><i style="background:oklch(0.716 0.128 24)" title="--refused"></i><i style="background:oklch(0.712 0.078 232)" title="--source"></i></div>
+ <div class="foot"><table class="lc"><tr><th>APCA</th><th>Lc</th><th>门槛</th></tr><tr><td>正文墨/纸</td><td class="ok">-86.5</td><td>|75|</td></tr><tr><td>侧栏文/侧</td><td class="ok">-83.4</td><td>|75|</td></tr><tr><td>侧栏次/侧</td><td class="ok">-58.8</td><td>|45|</td></tr><tr><td>印色/纸</td><td class="ok">-62.4</td><td>|45|</td></tr><tr><td>接受/纸</td><td class="ok">-52.7</td><td>|45|</td></tr><tr><td>退回/纸</td><td class="ok">-49.2</td><td>|45|</td></tr><tr><td>代理/纸</td><td class="ok">-47.4</td><td>|45|</td></tr><tr><td>引用/纸</td><td class="ok">-51.4</td><td>|45|</td></tr></table><p class="src">夜间独立设计。霓虹作强调而非底色；绯红取代洋红</p></div>
+</section>
+</div></html>

@@ -79,10 +79,49 @@ const INJECTIONS: readonly Injection[] = [
     expect: "ideographic-indent.md",
   },
   {
+    gate: "verify:manuscript-scale",
+    file: "crates/refrain-core/src/manuscript/align.rs",
+    anchor: "const ANCHOR: usize = 8;",
+    replacement: "const ANCHOR: usize = usize::MAX;",
+    expect: "review.rs",
+  },
+  {
+    gate: "verify:editor-kernel",
+    file: "packages/editor/src/injected-prosemirror.ts",
+    content: 'import "prosemirror-state";\n',
+    expect: "injected-prosemirror.ts",
+  },
+  {
     gate: "verify:no-js",
     file: "scripts/injected-helper.js",
     content: "export const helper = () => 1;\n",
     expect: "injected-helper.js",
+  },
+  {
+    gate: "verify:workflows",
+    file: ".github/workflows/gate.yml",
+    anchor: "      - run: bun run gate",
+    replacement: "      - run: bun run electron",
+    expect: "gate.yml",
+  },
+  {
+    gate: "verify:workflows",
+    file: "package.json",
+    anchor: '"packageManager": "bun@1.3.14"',
+    replacement: '"packageManager": "bun@1.3.13"',
+    expect: "package.json",
+  },
+  {
+    gate: "verify:legacy-parity",
+    file: "legacy/injected.test.ts",
+    content: "// A legacy behavior with no owner.\n",
+    expect: "legacy/injected.test.ts",
+  },
+  {
+    gate: "verify:text-surface",
+    file: "AI-NOTES.md",
+    content: "# Unapproved repository prose\n",
+    expect: "AI-NOTES.md",
   },
   {
     gate: "verify:gates-run",
@@ -93,6 +132,10 @@ const INJECTIONS: readonly Injection[] = [
 ];
 
 const script = (gate: string) => `scripts/${gate.replace("verify:", "verify-")}.ts`;
+const injectionPaths = [...new Set(INJECTIONS.map((injection) => injection.file))];
+const statusBefore = spawnSync("git", ["status", "--porcelain", "--", ...injectionPaths], {
+  encoding: "utf8",
+}).stdout;
 
 let proved = 0;
 const problems: string[] = [];
@@ -146,17 +189,15 @@ for (const injection of INJECTIONS) {
   }
 }
 
-const restored = spawnSync(
-  "git",
-  ["status", "--porcelain", "--", ...INJECTIONS.map((i) => i.file)],
-  {
-    encoding: "utf8",
-  },
-);
-if (restored.stdout.trim() !== "") {
-  problems.push(`the tree was left dirty:\n${restored.stdout.trim()}`);
+const statusAfter = spawnSync("git", ["status", "--porcelain", "--", ...injectionPaths], {
+  encoding: "utf8",
+}).stdout;
+if (statusAfter !== statusBefore) {
+  problems.push(`injection paths changed state:
+before:
+${statusBefore}after:
+${statusAfter}`);
 }
-
 console.log(`\nproved ${proved}/${INJECTIONS.length} gates bite`);
 
 if (problems.length > 0) {
