@@ -473,7 +473,11 @@ mod tests {
     #[test]
     fn contract_tiers_are_presentation_frequencies_not_a_fork() {
         let short = compile(&input());
-        assert!(short.request_md.contains("One <replacement> per scope at most"));
+        assert!(
+            short
+                .request_md
+                .contains("One <replacement> per scope at most")
+        );
 
         let mut full_input = input();
         full_input.contract_mode = ContractMode::Full;
@@ -491,7 +495,11 @@ mod tests {
             .nth(1)
             .expect("reply format");
         assert_eq!(body.lines().next(), Some("按 RefRain 兼容格式输出。"));
-        assert!(!pointer.request_md.contains("One <replacement> per scope at most"));
+        assert!(
+            !pointer
+                .request_md
+                .contains("One <replacement> per scope at most")
+        );
 
         // Same input, different tier: the digest must move (INV-14).
         assert_ne!(short.digest, full.digest);

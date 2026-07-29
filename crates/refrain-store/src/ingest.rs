@@ -123,7 +123,9 @@ pub(crate) fn decode_entities(text: &str) -> String {
             "apos" | "#39" => Some('\''),
             "nbsp" => Some(' '),
             _ if entity.starts_with("#x") || entity.starts_with("#X") => {
-                u32::from_str_radix(&entity[2..], 16).ok().and_then(char::from_u32)
+                u32::from_str_radix(&entity[2..], 16)
+                    .ok()
+                    .and_then(char::from_u32)
             }
             _ if entity.starts_with('#') => {
                 entity[1..].parse::<u32>().ok().and_then(char::from_u32)

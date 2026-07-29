@@ -1700,13 +1700,11 @@ fn contract_mode(store: &mut ProjectStore, agent_id: &str) -> Result<ContractMod
     }
     let agent = parse_id(agent_id, "agent")?;
     let host = open_host(store)?;
-    Ok(
-        if host.runs().iter().any(|run| run.agent_id == agent) {
-            ContractMode::Pointer
-        } else {
-            ContractMode::Full
-        },
-    )
+    Ok(if host.runs().iter().any(|run| run.agent_id == agent) {
+        ContractMode::Pointer
+    } else {
+        ContractMode::Full
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2639,7 +2637,11 @@ fn upsert_harness_connection(
         )
     })?;
     let store = state.config.as_ref().ok_or_else(|| {
-        RefrainError::new(ErrorCode::StateUnavailable, "write a damaged Config", "connections")
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "write a damaged Config",
+            "connections",
+        )
     })?;
     let snapshot = store
         .apply(
@@ -2671,7 +2673,11 @@ fn remove_harness_connection(
 ) -> Result<refrain_store::config::ConfigSnapshot, RefrainError> {
     let id = parse_id(&id, "connection")?;
     let store = state.config.as_ref().ok_or_else(|| {
-        RefrainError::new(ErrorCode::StateUnavailable, "write a damaged Config", "connections")
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "write a damaged Config",
+            "connections",
+        )
     })?;
     let snapshot = store
         .apply(refrain_store::config::ConfigChange::RemoveHarnessConnection(id))
@@ -3129,9 +3135,14 @@ fn import_material(
             .clone_material_source(&ingested.source_path, &ingested.source_digest)
             .map_err(into_domain)?;
         let clone_display = clone
-            .strip_prefix(entry.store.layout().source_backup_dir.parent().unwrap_or(
-                std::path::Path::new(""),
-            ))
+            .strip_prefix(
+                entry
+                    .store
+                    .layout()
+                    .source_backup_dir
+                    .parent()
+                    .unwrap_or(std::path::Path::new("")),
+            )
             .unwrap_or(&clone)
             .display();
         let header = format!(
