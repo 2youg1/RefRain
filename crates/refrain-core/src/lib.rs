@@ -7,6 +7,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod agent_protocol;
+pub mod context_compiler;
 pub mod error;
 pub mod health;
 pub mod id;
@@ -15,6 +17,15 @@ pub mod manuscript;
 pub mod role;
 pub mod source_layout;
 
+pub use agent_protocol::{
+    AgentComment, AgentMemo, AgentReplacement, ArtifactContract, ArtifactError, ArtifactErrorCode,
+    MaterialDraft, VerifiedArtifact,
+};
+pub use context_compiler::{
+    BeforeScope, ChangeEntry, ChangeKind, DispatchInput, DispatchPackage, ManifestEntry, Narration,
+    Tokens, compile, narrate_artifact, narrate_changes, narrate_manifest, serialize_changes,
+    short_contract,
+};
 pub use error::{ErrorCode, RecoveryStep, RefrainError};
 pub use health::{HealthReport, health};
 pub use id::Id;

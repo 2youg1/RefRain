@@ -10,7 +10,6 @@
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -226,7 +225,7 @@ const run = async (): Promise<void> => {
       rootId: ${JSON.stringify(rootId)},
       path: "长章.md",
       replacements: [
-        { blocks: ${JSON.stringify(allBlocks)}, after: ${JSON.stringify(sentences.map((x) => x + "（改写）").join("\n\n"))} },
+        { blocks: ${JSON.stringify(allBlocks)}, after: ${JSON.stringify(sentences.map((x) => `${x}（改写）`).join("\n\n"))} },
       ],
     }).then(
       (rows) => rows,

@@ -295,8 +295,8 @@
       "legacy": "legacy/packages/agent/test/contract.test.ts",
       "owner": "agent-protocol",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C9"
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/src/agent_protocol.rs"]
       }
     },
     {
@@ -351,8 +351,11 @@
       "legacy": "legacy/packages/agent/test/skill-examples.test.ts",
       "owner": "agent-protocol",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C9"
+        "kind": "owned-by",
+        "tests": [
+          "crates/refrain-core/src/agent_protocol.rs",
+          "crates/refrain-core/src/context_compiler.rs"
+        ]
       }
     },
     {
@@ -367,8 +370,8 @@
       "legacy": "legacy/packages/core/test/artifact.test.ts",
       "owner": "agent-protocol",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C9"
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/src/agent_protocol.rs"]
       }
     },
     {
@@ -463,16 +466,16 @@
       "legacy": "legacy/packages/core/test/memo.test.ts",
       "owner": "agent-protocol",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C9"
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/src/context_compiler.rs"]
       }
     },
     {
       "legacy": "legacy/packages/core/test/reply.test.ts",
       "owner": "agent-protocol",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C9"
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/src/context_compiler.rs"]
       }
     },
     {
@@ -503,8 +506,8 @@
       "legacy": "legacy/packages/core/test/round-input.test.ts",
       "owner": "agent-protocol",
       "disposition": {
-        "kind": "blocked",
-        "checkpoint": "C9"
+        "kind": "owned-by",
+        "tests": ["crates/refrain-core/src/context_compiler.rs"]
       }
     },
     {

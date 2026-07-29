@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// biome-ignore-all lint/correctness/noUnusedVariables: `pick` and `chosen` are used in the template.
 // The Universal Button's icon picker (SPEC 9.8): the pipeline judges by
 // content, the Config stores only the digest, and the button shows the
 // normalised asset through a data URL (CSP img-src 'self' data:).
