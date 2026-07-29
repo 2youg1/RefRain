@@ -38,7 +38,7 @@ const text = computed(() => {
   bottom: 0;
   left: 0;
   right: 0;
-  height: 26px;
+  height: var(--status-height, 26px);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -47,7 +47,7 @@ const text = computed(() => {
   color: var(--ink-faint);
   background: var(--paper);
   border-top: 1px solid var(--rule);
-  z-index: 8;
+  z-index: 70;
   visibility: visible;
   transition:
     opacity 240ms var(--ease),

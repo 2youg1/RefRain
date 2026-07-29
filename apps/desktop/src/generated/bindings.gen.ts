@@ -7,6 +7,7 @@ import { invoke as __TAURI_INVOKE } from "@tauri-apps/api/core";
 
 /** Commands */
 export const commands = {
+	displayProfile: () => __TAURI_INVOKE<DisplayProfile>("display_profile"),
 	/**  Proves the whole chain: a Rust type, a generated binding, a real window. */
 	health: (echo: string) => __TAURI_INVOKE<HealthReport>("health", { echo }),
 	/**  Adopt an existing folder or single file as a Root (SPEC 9.5). */
@@ -380,6 +381,17 @@ export type DispatchPreviewDto = {
 	manifest: ManifestEntry[],
 	digest: string,
 	requestMd: string,
+};
+
+export type DisplayProfile = {
+	monitor: string | null,
+	physicalWidth: number,
+	physicalHeight: number,
+	scaleFactor: number | null,
+	refreshHz: number | null,
+	refreshMeasured: boolean,
+	frameBudgetMs: number | null,
+	hairlineCssPx: number | null,
 };
 
 /**  What a Markdown file is to the work. */

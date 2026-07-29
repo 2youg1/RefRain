@@ -5,6 +5,8 @@
 //! The session map holds live handles — open stores and manuscripts — which
 //! are runtime objects, not a second copy of business state.
 
+mod display;
+
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -24,6 +26,8 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::Manager;
 use tauri_specta::{Builder, collect_commands};
+
+use display::display_profile;
 
 /// The commit this build was made from. Set by CI; absent in a local build,
 /// and absent is reported as absent rather than as an empty string (INV-3's
@@ -944,6 +948,7 @@ fn now_millis() -> u64 {
 /// so a command cannot exist in one and be missing from the other.
 pub fn builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new().commands(collect_commands![
+        display_profile,
         health,
         adopt_root,
         create_project,
