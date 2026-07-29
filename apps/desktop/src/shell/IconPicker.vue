@@ -4,14 +4,16 @@
 // content, the Config stores only the digest, and the button shows the
 // normalised asset through a data URL (CSP img-src 'self' data:).
 
-import { listen } from "@tauri-apps/api/event";
-import { onMounted, ref } from "vue";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import { describe, unwrap } from "../bridge";
 import { commands } from "../generated/bindings.gen";
 
 const iconUrl = ref<string | null>(null);
 const error = ref<string | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
+let disposed = false;
+let stopConfig: UnlistenFn | null = null;
 
 const toDataUrl = (bytes: number[]): string => {
   let binary = "";
@@ -22,6 +24,14 @@ const toDataUrl = (bytes: number[]): string => {
 const refresh = async (): Promise<void> => {
   const bytes = await commands.universalIcon();
   iconUrl.value = bytes === null ? null : toDataUrl(bytes);
+};
+
+const refreshSafely = async (): Promise<void> => {
+  try {
+    await refresh();
+  } catch (cause) {
+    if (!disposed) error.value = describe(cause);
+  }
 };
 
 const pick = (): void => {
@@ -45,15 +55,29 @@ const chosen = async (event: Event): Promise<void> => {
 };
 
 onMounted(async () => {
-  await listen("config-changed", () => void refresh());
-  await refresh();
+  try {
+    const unlisten = await listen("config-changed", () => void refreshSafely());
+    if (disposed) {
+      unlisten();
+      return;
+    }
+    stopConfig = unlisten;
+    await refreshSafely();
+  } catch (cause) {
+    if (!disposed) error.value = describe(cause);
+  }
+});
+
+onBeforeUnmount(() => {
+  disposed = true;
+  stopConfig?.();
 });
 </script>
 
 <template>
   <div class="icon-picker">
-    <button type="button" class="icon-button" title="Universal Button 图标" @click="pick">
-      <img v-if="iconUrl" :src="iconUrl" alt="Universal Button 图标" />
+    <button type="button" class="icon-button" title="写作入口图标" @click="pick">
+      <img v-if="iconUrl" :src="iconUrl" alt="写作入口图标" />
       <span v-else>◇</span>
     </button>
     <input
