@@ -1465,7 +1465,8 @@ fn commit_decision_batch(
 
 use refrain_core::agent_protocol::{self, ArtifactContract};
 use refrain_core::context_compiler::{
-    self, BeforeScope, ChangeEntry, ChangeKind, DispatchInput, DispatchPackage, ManifestEntry,
+    self, BeforeScope, ChangeEntry, ChangeKind, ContractMode, DispatchInput, DispatchPackage,
+    ManifestEntry,
 };
 use refrain_host::host::{
     AgentHost, DispatchAuthorization, HostCommand, HostJournal, HostRefusal, HostState, ReviewTask,
@@ -1669,6 +1670,42 @@ fn doc_slug(path: &str) -> String {
 /// judgments, capped so the stream stays a summary, not a database dump.
 const CHANGES_WINDOW: usize = 20;
 
+/// The carry tier the author picks on the ticket (KL9's context tiers):
+/// what rides besides the scope and the prompt. Materials always travel
+/// separately and are never part of a tier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum CarryMode {
+    /// The verdict stream; a round with no history falls back to the whole
+    /// text, or the agent has nothing to stand on (KL9: never trade output
+    /// quality for tokens).
+    Diff,
+    /// The verdict stream plus the whole manuscript, every round.
+    Full,
+    /// Neither verdicts nor manuscript — scope and prompt only.
+    None,
+}
+
+/// The contract tier for this dispatch (KL9's contract injection): L0's
+/// channel has no session, so the short contract rides every request; a
+/// harness gets the full protocol document on its first round in this
+/// project and a pointer line afterwards.
+fn contract_mode(store: &mut ProjectStore, agent_id: &str) -> Result<ContractMode, RefrainError> {
+    if agent_id == l0_file_channel_agent() {
+        return Ok(ContractMode::Short);
+    }
+    let agent = parse_id(agent_id, "agent")?;
+    let host = open_host(store)?;
+    Ok(
+        if host.runs().iter().any(|run| run.agent_id == agent) {
+            ContractMode::Pointer
+        } else {
+            ContractMode::Full
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 fn compile_package(
     store: &mut ProjectStore,
     manuscript: &Manuscript,
@@ -1676,6 +1713,8 @@ fn compile_package(
     block_ids: &[Id],
     material_paths: &[String],
     prompt: &str,
+    carry: CarryMode,
+    contract: ContractMode,
 ) -> Result<DispatchPackage, RefrainError> {
     let blocks = manuscript.head().blocks();
     let mut selected: Vec<(usize, &str)> = Vec::with_capacity(block_ids.len());
@@ -1713,13 +1752,22 @@ fn compile_package(
         .collect::<Vec<_>>()
         .join("\n\n");
     // The `<changes>` stream (SPEC 8.5): this document's recent verdicts,
-    // capped at the window. Diff is the default tier — and the first round,
-    // with no history to differ against, carries the whole text or the agent
-    // has nothing to stand on (KL9: never trade output quality for tokens).
+    // capped at the window. The carry tier decides what rides (KL9): Diff is
+    // the default — verdicts, plus the whole text when no history exists;
+    // Full adds the manuscript every round; None carries neither.
     let verdicts = store.ledger().for_document(path).map_err(|error| {
         RefrainError::new(ErrorCode::StateUnavailable, "read the verdict ledger", path)
             .with_detail(error.to_string())
     })?;
+    let full_text = |manuscript: &Manuscript| {
+        manuscript
+            .head()
+            .blocks()
+            .iter()
+            .map(|block| block.text())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    };
     let changes: Vec<ChangeEntry> = verdicts
         .iter()
         .rev()
@@ -1737,18 +1785,17 @@ fn compile_package(
             final_text: verdict.final_text.clone(),
         })
         .collect();
-    let manuscript_text = if verdicts.is_empty() {
-        Some(
-            manuscript
-                .head()
-                .blocks()
-                .iter()
-                .map(|block| block.text())
-                .collect::<Vec<_>>()
-                .join("\n\n"),
-        )
-    } else {
-        None
+    let (manuscript_text, changes) = match carry {
+        CarryMode::None => (None, Vec::new()),
+        CarryMode::Full => (Some(full_text(manuscript)), changes),
+        CarryMode::Diff => (
+            if verdicts.is_empty() {
+                Some(full_text(manuscript))
+            } else {
+                None
+            },
+            changes,
+        ),
     };
     // Ticked materials ride as context sections, read from disk truth at
     // compile time (SPEC 8.5: the manifest shows each one's bytes).
@@ -1770,6 +1817,7 @@ fn compile_package(
             refrain_host::host::RUN_ID_PLACEHOLDER
         ),
         max_bytes: ARTIFACT_MAX_BYTES,
+        contract_mode: contract,
     };
     Ok(context_compiler::compile(&input))
 }
@@ -1945,6 +1993,7 @@ fn draft_review_task(
 /// The manifest the author reads before the click (SPEC 9.6: 逐块字节清单).
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 fn preview_dispatch(
     state: tauri::State<'_, AppState>,
     root_id: String,
@@ -1952,6 +2001,8 @@ fn preview_dispatch(
     block_ids: Vec<String>,
     material_paths: Vec<String>,
     prompt: String,
+    agent_id: String,
+    carry: CarryMode,
 ) -> Result<DispatchPreviewDto, RefrainError> {
     state.with_project(&root_id, |_state, entry| {
         let manuscript = entry.manuscripts.get(&path).ok_or_else(|| {
@@ -1961,6 +2012,7 @@ fn preview_dispatch(
                 path.clone(),
             )
         })?;
+        let mode = contract_mode(&mut entry.store, &agent_id)?;
         let package = compile_package(
             &mut entry.store,
             manuscript,
@@ -1968,6 +2020,8 @@ fn preview_dispatch(
             &parse_ids(&block_ids, "scope block")?,
             &material_paths,
             &prompt,
+            carry,
+            mode,
         )?;
         Ok(DispatchPreviewDto {
             manifest: package.manifest.clone(),
@@ -1992,6 +2046,10 @@ pub struct AuthorizeDispatchRequest {
     pub clicked_digest: String,
     pub new_agents: Vec<String>,
     pub retry_run_ids: Vec<String>,
+    /// The ticket's picked agent, for the contract tier. Retry mints no new
+    /// agents, so this cannot be derived from `new_agents`.
+    pub agent_id: String,
+    pub carry: CarryMode,
 }
 
 /// The built-in agent the ticket always offers (SPEC 8.3a's first row).
@@ -2017,6 +2075,8 @@ fn authorize_dispatch(
         clicked_digest,
         new_agents,
         retry_run_ids,
+        agent_id,
+        carry,
     } = request;
     state.with_project(&root_id, |_state, entry| {
         let manuscript = entry.manuscripts.get(&path).ok_or_else(|| {
@@ -2026,6 +2086,7 @@ fn authorize_dispatch(
                 path.clone(),
             )
         })?;
+        let mode = contract_mode(&mut entry.store, &agent_id)?;
         let package = compile_package(
             &mut entry.store,
             manuscript,
@@ -2033,6 +2094,8 @@ fn authorize_dispatch(
             &parse_ids(&block_ids, "scope block")?,
             &material_paths,
             &prompt,
+            carry,
+            mode,
         )?;
         let task_id = parse_id(&task_id, "task")?;
         let mut host = open_host(&mut entry.store)?;
