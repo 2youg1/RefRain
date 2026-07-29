@@ -10,8 +10,16 @@
  * Run: `bun apps/desktop/e2e/dispatch-loop.ts <path-to-refrain.exe>`.
  */
 
-import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -24,7 +32,15 @@ if (!exe) {
 const DRIVER_PORT = 4444;
 const fixture = mkdtempSync(join(tmpdir(), "refrain-dispatch-"));
 const dataDir = mkdtempSync(join(tmpdir(), "refrain-dispatch-data-"));
+const fixtureBin = mkdtempSync(join(tmpdir(), "refrain-dispatch-bin-"));
 const chapterPath = join(fixture, "长章.md");
+
+// A fake `kimi` first on PATH: the harness channel runs a real argv round
+// trip offline. cargo builds examples for tests; build it explicitly here.
+spawnSync("cargo", ["build", "-p", "refrain-host", "--example", "fake_kimi"], {
+  stdio: "inherit",
+});
+copyFileSync(join("target", "debug", "examples", "fake_kimi.exe"), join(fixtureBin, "kimi.exe"));
 
 const sentences = Array.from({ length: 6 }, (_, i) => `第${i + 1}段原来如此。`);
 writeFileSync(chapterPath, `${sentences.join("\n\n")}\n`);
@@ -125,7 +141,13 @@ const caps = () => ({
         // browser process dies before it opens its devtools port.
         args: ["--disable-gpu", "--no-first-run", "--disable-extensions"],
       },
-      "tauri:options": { application: exe.replaceAll("/", "\\") },
+      "tauri:options": {
+        application: exe.replaceAll("/", "\\"),
+        // CI runners cannot write the default WebView2 user-data folder; a
+        // dead profile kills the browser before its devtools port exists
+        // (tauri-apps/tauri#10670).
+        webviewOptions: { userDataFolder: join(dataDir, "webview") },
+      },
     },
   },
 });
@@ -138,7 +160,11 @@ const start = async (): Promise<void> => {
     ["--native-driver", process.env.REFRAIN_MSEDGEDRIVER ?? "msedgedriver"],
     {
       stdio: ["ignore", "ignore", "pipe"],
-      env: { ...process.env, REFRAIN_DATA_DIR: dataDir },
+      env: {
+        ...process.env,
+        REFRAIN_DATA_DIR: dataDir,
+        PATH: `${fixtureBin};${process.env.PATH ?? ""}`,
+      },
     },
   );
   driver.stderr?.on("data", (chunk: Buffer) => process.stderr.write(`[tauri-driver] ${chunk}`));
@@ -151,6 +177,9 @@ const start = async (): Promise<void> => {
     }
   });
   session = ((await call("POST", "/session", caps())) as { sessionId?: string }).sessionId ?? "";
+  await waitFor("tauri internals", async () =>
+    Boolean(await execute(`return typeof __TAURI_INTERNALS__ !== "undefined"`)),
+  );
   await execute(`window["refrain.e2e.pick"] = ${JSON.stringify(fixture)}; "planted"`);
 };
 
@@ -516,6 +545,62 @@ const run = async (): Promise<void> => {
     proposalsAfter.length === 2,
     proposalsAfter.length,
   );
+
+  // ── The harness channel: the fake kimi does a real argv round trip. ──
+  const harnesses = (await invoke("list_harnesses", {})) as { agentId: string }[];
+  check("the fake harness is detected", harnesses.length === 1, harnesses.length);
+  const kimiAgent = harnesses[0]?.agentId ?? "";
+  await clickButton("新 Task");
+  await waitFor("the agent dropdown", async () =>
+    Boolean(await execute(`return document.querySelector(".dispatch-agent") !== null`)),
+  );
+  await execute(
+    `const s = document.querySelector(".dispatch-agent");
+     s.value = ${JSON.stringify(kimiAgent)};
+     s.dispatchEvent(new Event("change", { bubbles: true }));`,
+    [],
+  );
+  await tickBlock(6);
+  await setPrompt("改写第六段。");
+  await clickButton("送出");
+  await waitFor("the harness manifest", async () =>
+    Boolean(await execute(`return document.querySelector(".manifest") !== null`)),
+  );
+  await clickButton("确认授权");
+  await waitFor("the harness run to dispatch", async () => {
+    const s = await hostState(rootId);
+    return s.runs.some((r) => r.progress === "dispatched" && r.agentId === kimiAgent);
+  });
+  state = await hostState(rootId);
+  const harnessRun = state.runs.find((r) => r.agentId === kimiAgent && r.progress === "dispatched");
+  if (harnessRun === undefined) throw new Error("no dispatched harness run");
+  // The fake settles in milliseconds; the background observer lands the file.
+  await waitFor(
+    "the harness result to land",
+    async () =>
+      existsSync(
+        join(fixture, ".refrain", harnessRun.workspace, "attempts", harnessRun.id, "result.md"),
+      ),
+    30_000,
+  );
+  await clickButton("收取");
+  await waitFor("the harness run to complete", async () => {
+    const s = await hostState(rootId);
+    return s.runs.find((r) => r.id === harnessRun.id)?.progress === "completed";
+  });
+  const proposalsFinal = (await invoke("list_proposals", { rootId, path: "长章.md" })) as {
+    after: string | null;
+  }[];
+  check(
+    "the harness artifact froze into a proposal",
+    proposalsFinal.some((p) => (p.after ?? "").includes("伪 Agent 改写")),
+    proposalsFinal.length,
+  );
+  const landed = readFileSync(
+    join(fixture, ".refrain", harnessRun.workspace, "attempts", harnessRun.id, "result.md"),
+    "utf8",
+  );
+  check("the landed result carries the agent-result", landed.includes("<agent-result"));
 
   await stop();
   if (failures.length > 0) {
