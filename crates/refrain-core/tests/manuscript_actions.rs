@@ -21,6 +21,45 @@ fn duplicate_lineage_ids_are_rejected_before_a_head_exists() {
 }
 
 #[test]
+fn unreadable_bytes_are_reported_before_a_duplicate_id() {
+    // `open_at` reads every block before it checks the lineage for repeats,
+    // so when a manuscript has both faults the unreadable bytes are what the
+    // author hears about. That is the useful order: bad bytes are a property
+    // of the file the author chose to open, while a repeated id comes from
+    // stored lineage the author never sees. Reporting the file first names
+    // something they can act on.
+    //
+    // This test exists to make that order a decision rather than an accident:
+    // reordering the two passes flips the error, and the flip should not
+    // happen silently.
+    //
+    // Bytes 4..6 are the first two bytes of a three-byte character, so the
+    // second block is not valid UTF-8; the ids repeat from the first block.
+    let mut bytes = b"ab\n\n".to_vec();
+    bytes.extend_from_slice(&"序".as_bytes()[..2]);
+    let source = SourceSnapshot::read(bytes);
+    let repeated = refrain_core::Id::new();
+
+    assert!(matches!(
+        Manuscript::open(source, Lineage::from_ids(vec![repeated, repeated])),
+        Err(TextRefusal::InvalidUtf8 { block: 1 })
+    ));
+}
+
+#[test]
+fn a_duplicate_id_is_reported_when_every_block_reads() {
+    // The other side of the order above: with nothing wrong in the bytes, the
+    // duplicate is found and named.
+    let source = SourceSnapshot::read(b"one\n\ntwo".to_vec());
+    let repeated = refrain_core::Id::new();
+
+    assert!(matches!(
+        Manuscript::open(source, Lineage::from_ids(vec![repeated, repeated])),
+        Err(TextRefusal::DuplicateLineage { block }) if block == repeated
+    ));
+}
+
+#[test]
 fn insertion_members_must_each_be_one_rust_source_block() {
     for (text, blocks) in [("", 0), (" \n\t", 0), ("one\n\ntwo", 2)] {
         assert!(matches!(

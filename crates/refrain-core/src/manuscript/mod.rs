@@ -2,6 +2,7 @@ mod action;
 mod align;
 mod block_offsets;
 mod block_sequence;
+mod block_text;
 mod byte_sequence;
 mod decision;
 mod materialize;
@@ -9,6 +10,7 @@ mod review;
 mod undo;
 
 pub use block_sequence::BlockSequence;
+pub use block_text::BlockText;
 pub use decision::{DecisionBatch, Verdict, VerdictKind};
 pub use review::{
     ChangeClass, EditScope, Proposal, ReviewSlice, ReviewSliceId, SliceKind, classify_change,
@@ -64,7 +66,7 @@ impl Lineage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Block {
     id: Id,
-    text: String,
+    text: BlockText,
 }
 
 impl Block {
@@ -75,7 +77,7 @@ impl Block {
 
     #[must_use]
     pub fn text(&self) -> &str {
-        &self.text
+        self.text.as_str()
     }
 }
 
@@ -336,8 +338,8 @@ fn edits_from_regions(regions: &[AppliedRegion]) -> Box<[Edit]> {
                     id: Id::new(),
                     kind: EditKind::Replace,
                     block: after.id,
-                    before: Some(before.text.clone()),
-                    after: Some(after.text.clone()),
+                    before: Some(before.text.to_string()),
+                    after: Some(after.text.to_string()),
                 });
             }
         }
@@ -346,7 +348,7 @@ fn edits_from_regions(regions: &[AppliedRegion]) -> Box<[Edit]> {
                 id: Id::new(),
                 kind: EditKind::Remove,
                 block: before.id,
-                before: Some(before.text.clone()),
+                before: Some(before.text.to_string()),
                 after: None,
             });
         }
@@ -356,7 +358,7 @@ fn edits_from_regions(regions: &[AppliedRegion]) -> Box<[Edit]> {
                 kind: EditKind::Insert,
                 block: after.id,
                 before: None,
-                after: Some(after.text.clone()),
+                after: Some(after.text.to_string()),
             });
         }
     }
@@ -543,11 +545,16 @@ impl Manuscript {
                 actual: lineage.0.len(),
             });
         }
-        let mut seen = HashSet::with_capacity(lineage.0.len());
-        if let Some(block) = lineage.0.iter().find(|block| !seen.insert(**block)) {
-            return Err(TextRefusal::DuplicateLineage { block: *block });
-        }
-
+        // Build the blocks, then the id index, then check for duplicates by
+        // comparing the two lengths: a repeated id collapses into one map
+        // entry, so a shorter map is exactly the duplicate case. The earlier
+        // `HashSet` pass hashed every id a second time to learn this.
+        //
+        // The two loops stay separate on purpose. Fusing them — inserting into
+        // the map inside the block loop — writes two large structures in
+        // alternation and costs about twice as much: on a 1 GiB manuscript
+        // (7.2 million blocks) fused ran 1,055-1,460 ms against 497-563 ms
+        // split. Each loop alone walks its own memory in order.
         let mut blocks = Vec::with_capacity(expected);
         for (index, (span, id)) in source
             .layout
@@ -556,18 +563,28 @@ impl Manuscript {
             .zip(lineage.0.iter())
             .enumerate()
         {
-            let text = std::str::from_utf8(&source.bytes[span.start..span.end])
+            // Borrow the snapshot's bytes rather than copying them. This is
+            // the whole reason `BlockText` exists; see its module comment for
+            // the measurement that motivated it.
+            let text = BlockText::shared(Arc::clone(&source.bytes), span.start, span.end)
                 .map_err(|_| TextRefusal::InvalidUtf8 { block: index })?;
-            blocks.push(Block {
-                id: *id,
-                text: text.to_owned(),
-            });
+            blocks.push(Block { id: *id, text });
         }
-        let block_at = blocks
+        let block_at: HashMap<Id, usize> = blocks
             .iter()
             .enumerate()
             .map(|(index, block)| (block.id, index))
             .collect();
+        if block_at.len() != blocks.len() {
+            let mut seen = HashSet::with_capacity(block_at.len());
+            let repeated = lineage
+                .0
+                .iter()
+                .find(|block| !seen.insert(**block))
+                .copied()
+                .expect("a shorter index than block list means some id repeats");
+            return Err(TextRefusal::DuplicateLineage { block: repeated });
+        }
         let materialized = ByteSequence::from_arc(source.bytes.clone());
         let offsets = BlockOffsets::from_spans(source.layout.blocks().to_vec());
         Ok(Self {
