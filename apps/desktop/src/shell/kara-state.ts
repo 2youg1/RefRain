@@ -36,6 +36,25 @@ const QUIET_TEXT: Record<string, string> = {
 
 const debriefText = derived(() => (debrief.value ?? []).map((event) => QUIET_TEXT[event] ?? event));
 
+/**
+ * 回来时那张卡片上写什么。
+ *
+ * 作者离开前正在写的那半句话，是他重新落座时唯一需要的线索——比块号和偏移量
+ * 都管用。取末尾 18 个字：够认出是哪句，又不至于把卡片撑成一段正文。
+ *
+ * 这个数字属于 KARA，不属于调用者。外壳只知道光标在哪、那一块的字是什么。
+ */
+const RETURN_TAIL_CHARS = 18;
+
+const returnPointAt = (
+  caret: { blockId: string; offset: number },
+  blockText: string,
+): ReturnPoint => ({
+  blockId: caret.blockId,
+  offset: caret.offset,
+  sentenceTail: blockText.slice(0, caret.offset).slice(-RETURN_TAIL_CHARS),
+});
+
 const perform = (effects: KaraEffect[]): void => {
   for (const effect of effects) {
     switch (effect.kind) {
@@ -132,6 +151,17 @@ export function useKara() {
     apply,
     toggle: () => send({ kind: "manualToggle" }),
     setReturnPoint: (point: ReturnPoint) => send({ kind: "setReturnPoint", value: point }),
+    /**
+     * 记下作者此刻写到哪里。KARA 没engage 时什么也不做——返回卡片只在离开
+     * 之后才有意义，让调用者去判断这件事等于把 KARA 的状态机漏出去。
+     */
+    markPosition: (
+      caret: { blockId: string; offset: number } | null | undefined,
+      blockText: string,
+    ) => {
+      if (!engaged.value || caret === null || caret === undefined) return;
+      void send({ kind: "setReturnPoint", value: returnPointAt(caret, blockText) });
+    },
     leaveFinished: () => send({ kind: "leaveFinished" }),
     quiet: (event: QuietEvent) => send({ kind: "quiet", value: event }),
     interrupt: (

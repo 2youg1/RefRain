@@ -49,9 +49,12 @@ type SettingsSurfaceProps = {
   onThemePicked?: (slug: string) => void;
 };
 
+// 排版排在第一位：作者最常回到设置页的理由是调排版（外观选一次就定了），
+// 而默认落点已经是排版。分类顺序若仍把外观排在前面，作者进来就看到高亮落在
+// 第二个 Tab 上——顺序与默认值必须说同一件事。
 const SECTIONS = [
-  { id: "appearance", label: "外观", detail: "主题、纸面与入口图标" },
   { id: "typography", label: "排版", detail: "字体、版心、段落与预设" },
+  { id: "appearance", label: "外观", detail: "主题、纸面与入口图标" },
   { id: "shortcuts", label: "快捷键", detail: "当前可用的键盘操作" },
 ] as const satisfies readonly { id: Section; label: string; detail: string }[];
 

@@ -1401,6 +1401,44 @@ kbd {
   text-align: right;
 }
 
+/* 排版预览段：设置页盖住手稿时，作者仍然看得见自己的字。
+   这里只读 applyTypography 写在 documentElement 上的那批变量，不新增任何排版值。 */
+.type-specimen {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 2px 0 14px;
+  background: var(--paper);
+}
+
+.specimen-page {
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 20px 24px;
+  background: color-mix(in oklab, var(--paper) 94%, var(--ink));
+  max-height: 34vh;
+  overflow: hidden;
+  font-family: var(--manuscript-family, var(--serif));
+  font-size: var(--manuscript-size, 17px);
+  font-weight: var(--manuscript-weight, 400);
+  line-height: var(--manuscript-leading, 1.9);
+  letter-spacing: var(--manuscript-tracking, 0.01em);
+  word-spacing: var(--manuscript-word-spacing, 0);
+  text-align: var(--manuscript-align, left);
+}
+
+.specimen-line {
+  margin: 0 0 var(--paragraph-gap, 0.6em);
+  text-indent: var(--manuscript-indent, 0);
+}
+
+.specimen-quote {
+  margin: 0;
+  padding-left: 1em;
+  border-left: 2px solid color-mix(in oklab, var(--seal) 55%, transparent);
+  color: var(--ink-faint);
+}
+
 .type-section {
   border-top: 1px solid var(--rule);
   padding-top: 20px;

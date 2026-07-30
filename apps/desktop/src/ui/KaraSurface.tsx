@@ -47,5 +47,3 @@ export function KaraSurface(): JSX.Element {
     </div>
   );
 }
-
-export default KaraSurface;

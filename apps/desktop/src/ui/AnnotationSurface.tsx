@@ -100,5 +100,3 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): JSX.Element {
     </aside>
   );
 }
-
-export default AnnotationSurface;

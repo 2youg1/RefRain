@@ -168,5 +168,3 @@ export function EditorContextMenu(props: EditorContextMenuProps): JSX.Element {
     </Portal>
   );
 }
-
-export default EditorContextMenu;

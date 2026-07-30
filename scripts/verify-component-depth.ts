@@ -19,8 +19,15 @@ const BODY_DEBT: Readonly<Record<string, number>> = {
   // `selection-readout.ts`，命令映射收进模块顶层的 BLOCK_PREFIX_OF；留在组件里的
   // 是「读投影、发意图」本身。曾试过把它们搬去别处，两次都净增行数（619 / 622）——
   // 棘轮的意义是让每次上调都写下理由，不是让人跟它较劲。
-  "Workbench.tsx": 624,
-  "TypographyPanel.tsx": 482,
+  // 587：交互逻辑重做。命令面板的焦点归还搬进 `command-focus.ts`（含「热区会把
+  // 作者关进开合循环」那条只有它知道的规矩）；右键落点、批注锚点、派发种子三段
+  // 搬进 `edit-intents.ts`；「从光标算出返回卡片」搬回 `kara-state.ts`——18 个字
+  // 那个数字属于 KARA，不属于外壳。三处都配了此前根本无法编写的测试（要开真窗口）。
+  "Workbench.tsx": 584,
+  // 483：排版预览段（U-9）。设置页独占 Stage 时手稿被完全盖住，而字距、词距、
+  // 共享汉字优先级不看真实字形无法判断。预览只读 applyTypography 已经写好的那批
+  // CSS 变量，不重算任何排版值——另写一份映射会立刻产生第二个排版权威。
+  "TypographyPanel.tsx": 483,
   "DispatchSurface.tsx": 349,
   "ConnectionsSurface.tsx": 241,
   "ReviewSurface.tsx": 251,
