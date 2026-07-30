@@ -29,6 +29,10 @@ const allowed = (file: string): boolean =>
   /^tests\/corpora\/[^/]+\.md$/.test(file) ||
   /^probe-results\/[^/]+\.md$/.test(file) ||
   /(?:^|\/)(LICENSES|ATTRIBUTIONS)\.md$/.test(file) ||
+  // 生成的机器资产，与 themes.css 同一份数据、同一个脚本产出。它取代了一份
+  // 34KB 的 HTML 预览页——要回答的问题只有「每个变量什么颜色、对比够不够」，
+  // 那是一张表，不需要一个自带 CSS 的仿制窗口。
+  file === "apps/desktop/theme-colours.md" ||
   (file === "SPEC.md" && localSpecIsIgnored);
 const forbidden = [...files].filter((file) => !allowed(file)).sort();
 

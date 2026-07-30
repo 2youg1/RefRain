@@ -97,6 +97,46 @@
     0 14px 36px color-mix(in oklab, var(--ink) 9%, transparent);
 }
 
+/*
+ * 夜间灯（KL9 2026-07-30 裁定）。
+ *
+ * 夜间主题的立意是「一盏灯照着纸」，但只靠深底浅字读不出光的来处——那样是
+ * 字自己在发光。缺的是纸的四周有一圈泛光，`--lamp` 每套主题都定义了，
+ * 此前无人使用，它正是这个光源。
+ *
+ * 只在开了灯时生效，且只作用于有边界的两档版面：纯 web 模式没有纸的轮廓，
+ * 给它加光晕会让光悬在半空。
+ */
+:root[data-lamp="on"] .editor-host {
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--lamp) 26%, transparent),
+    0 0 22px color-mix(in oklab, var(--lamp) 20%, transparent),
+    0 0 90px color-mix(in oklab, var(--lamp) 12%, transparent);
+}
+
+:root[data-lamp="on"][data-paper="paper"] .editor-host {
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--lamp) 30%, transparent),
+    0 0 26px color-mix(in oklab, var(--lamp) 24%, transparent),
+    0 0 110px color-mix(in oklab, var(--lamp) 14%, transparent),
+    0 14px 36px color-mix(in oklab, var(--shade) 40%, transparent);
+}
+
+/* 光有来处：纸面本身也被照亮一点，靠上多一些。 */
+:root[data-lamp="on"] .editor-host {
+  background-image: linear-gradient(
+    to bottom,
+    color-mix(in oklab, var(--lamp) 7%, transparent),
+    transparent 42%
+  );
+}
+
+/* 纯 web 模式没有纸，光只落在字上——把泛光收回去，不要一圈悬空的光晕。 */
+:root[data-lamp="on"][data-paper="none"] .editor-host {
+  box-shadow: none;
+  background-image: none;
+}
+
 .editor-host::highlight(refrain-highlight) {
   background: color-mix(in oklab, var(--seal) 22%, transparent);
 }
@@ -2273,22 +2313,110 @@ kbd {
   min-height: calc(100vh - var(--chrome-height) - var(--status-height));
 }
 
-/* 写作中的临时工作面：右侧滑入，不挤压版心。Settings 单独拥有整个 Stage。 */
-.stage-row > :is(.dispatch, .connections, .annotations) {
+/*
+ * 面板栈（KL9 2026-07-30 裁定）。
+ *
+ * 界面是一棵树，打开的是从根到叶的一条路径；屏幕上并排的就是这条路径。
+ * 栈只向一侧生长，所以「另一边不出现任何面板」不是靠纪律守住的，
+ * 是这个结构本身不允许。
+ *
+ * 方向、时长、缓动三个值都来自 shell/panel-motion.ts，由那里写进这三个变量。
+ * 关掉动画是把 --panel-motion 压到 1ms，不是换一条没有过渡的路径。
+ */
+.stage-row > :is(.dispatch, .connections, .annotations, .panel-layer) {
   position: absolute;
-  right: 0;
+  inset-inline-start: var(--panel-offset, 0);
   top: 0;
   bottom: 0;
   z-index: 10;
   width: 400px;
   max-width: 48vw;
-  box-shadow: -20px 0 44px color-mix(in oklab, var(--ink) 10%, transparent);
-  animation: panel-in 240ms var(--ease);
+  box-shadow: 20px 0 44px color-mix(in oklab, var(--ink) 10%, transparent);
+  animation: panel-in var(--panel-motion, 300ms) var(--panel-easing, ease-out);
+
+  /* 材质三档。数字来自 shell/panel-material.ts；这里只负责画。
+     颜色一律 color-mix 到主题变量上，所以七套主题下都成立，不需要各写一遍。 */
+  background: color-mix(
+    in oklab,
+    var(--paper-raised) calc(var(--panel-opacity, 1) * 100%),
+    transparent
+  );
+  backdrop-filter: blur(var(--panel-blur, 0)) saturate(var(--panel-saturate, 1));
+  -webkit-backdrop-filter: blur(var(--panel-blur, 0)) saturate(var(--panel-saturate, 1));
+}
+
+/*
+ * 液态玻璃的厚度感：一条内高光沿着受光的那条边，一条暗边在对侧。
+ * 只有这两条线在区分「一块玻璃」与「一片模糊」——模糊人人会做，
+ * 边缘才让它有体积。rim 为 0 时（实心）整条规则自动失效，不必另写选择器。
+ */
+.stage-row > :is(.dispatch, .connections, .annotations, .panel-layer)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-inline-start: 1px solid
+    color-mix(in oklab, var(--lamp) calc(var(--panel-rim, 0) * 100%), transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, var(--lamp) calc(var(--panel-rim, 0) * 62%), transparent),
+    inset 0 -1px 0 color-mix(in oklab, var(--shade) calc(var(--panel-rim, 0) * 40%), transparent);
+}
+
+/*
+ * 书脊。
+ *
+ * 前一层不消失也不被盖住，压成一条竖脊立在旁边：标题竖排，点一下回到那一层。
+ * 走了多深一眼可见——脊就一条条排在那里，树形文件图与图书馆书架在这里是同一件事。
+ */
+.panel-spine {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: var(--spine-offset, 0);
+  z-index: 9;
+  width: var(--spine-width, 34px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-inline-end: 1px solid var(--rule);
+  border-radius: 0;
+  background: var(--paper-sunk);
+  color: var(--ink-faint);
+  cursor: pointer;
+  /* 竖排标题：书脊上的字本来就是竖着读的。 */
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  font-family: var(--serif);
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  white-space: nowrap;
+  overflow: hidden;
+  /* 一层层立起来：错开的延迟由内联变量给，本身就是一条进度。 */
+  animation: spine-rise var(--panel-motion, 300ms) var(--panel-easing, ease-out) backwards;
+  animation-delay: var(--spine-delay, 0ms);
+  transition:
+    color 140ms var(--ease),
+    background 140ms var(--ease);
+}
+
+.panel-spine:hover {
+  background: var(--paper-raised);
+  color: var(--ink);
+}
+
+/* 立起来：从压扁的状态展开，而不是滑进来——它是「退化」的逆过程。 */
+@keyframes spine-rise {
+  from {
+    transform: scaleX(0.2);
+    transform-origin: var(--spine-origin, left) center;
+    opacity: 0;
+  }
 }
 
 @keyframes panel-in {
   from {
-    transform: translateX(32px);
+    transform: translateX(var(--panel-enter-from, -100%));
     opacity: 0;
   }
 }

@@ -290,6 +290,10 @@ fn settings_reset_each_page_without_touching_the_other_and_can_restore_the_entry
         typography_presets: Vec::new(),
         paper: PaperMode::Paper,
         icon_digest: Some("original-icon".to_string()),
+        // This test is about reset and restore, not about every appearance
+        // field. Spreading the defaults keeps it that way: a new field does
+        // not drag an unrelated test into its change.
+        ..AppearanceConfig::default()
     };
     store
         .apply(ConfigChange::RestoreAppearance(entered.clone()))

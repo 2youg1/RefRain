@@ -44,7 +44,9 @@ const DEBT: Readonly<Record<string, { readonly lines: number; readonly errors: n
   upsert_agent: { lines: 62, errors: 5 },
   authorize_dispatch: { lines: 61, errors: 1 },
   agent_reading_ledger: { lines: 57, errors: 0 },
-  update_preferences: { lines: 55, errors: 3 },
+  // 24：DTO→领域的翻译搬进 `PreferencesChangeDto::into_change`。它本来就是
+  // DTO 自己的事，留在命令体里只是让「加一个偏好」看起来像在动装配层。
+  update_preferences: { lines: 24, errors: 2 },
   list_agents: { lines: 55, errors: 0 },
   apply_editor_action: { lines: 53, errors: 3 },
   upsert_harness_connection: { lines: 45, errors: 4 },

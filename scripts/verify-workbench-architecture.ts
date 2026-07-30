@@ -4,6 +4,7 @@ export {};
 
 const workbench = await Bun.file("apps/desktop/src/shell/Workbench.tsx").text();
 const reducer = await Bun.file("apps/desktop/src/shell/workbench-state.ts").text();
+const panels = await Bun.file("apps/desktop/src/shell/panel-stack.ts").text();
 const settings = await Bun.file("apps/desktop/src/ui/SettingsSurface.tsx").text();
 const iconPicker = await Bun.file("apps/desktop/src/ui/IconPicker.tsx").text();
 const storeConfig = await Bun.file("crates/refrain-store/src/config.rs").text();
@@ -69,7 +70,10 @@ for (const [source, fact, message] of [
   ],
   [reducer, 'case "documentSelected":', "document selection does not restore writing"],
   [reducer, 'case "raiseSafety":', "external conflict is not owned by the state reducer"],
-  [reducer, 'case "openReference":', "Reference return context has no transition owner"],
+  // 「打开到哪一层」已从 reducer 移入 PanelStack：栈顶即屏幕，不再有第二处记录。
+  // 断言那条规矩现在住的地方——点栈内层是回到它，而不是压一个副本。
+  [panels, "findIndex", "the panel stack cannot return to a layer already open"],
+  [panels, "slice(0, -1)", "the panel stack cannot step back one layer"],
   // Vue interpolation `{{ props.returnLabel }}` → JSX expression container.
   [settings, "返回 {props.returnLabel", "Settings has no explicit return destination"],
   [settings, "恢复本页默认", "Settings has no page-level default action"],
@@ -86,7 +90,8 @@ for (const [source, fact, message] of [
   [storeConfig, "RestoreAppearance", "Config cannot restore the entry snapshot"],
   [
     bridge,
-    "PreferencesChangeDto::RestoreAppearance",
+    // 翻译已搬进 `impl PreferencesChangeDto`，那里的变体写作 Self::。
+    "Self::RestoreAppearance",
     "the Tauri bridge drops snapshot restoration",
   ],
   [

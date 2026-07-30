@@ -1020,12 +1020,54 @@ pub enum PreferencesChangeDto {
     KaraAutoEnter(bool),
     SetTheme(String),
     SetPaper(refrain_store::config::PaperMode),
+    SetPanelSide(refrain_store::config::PanelSide),
+    SetPanelMaterial(refrain_store::config::PanelMaterial),
+    SetNightLamp(bool),
+    SetCodeTheme(Option<String>),
+    SetPanelAnimation(bool),
     SetTypography(refrain_store::config::TypographyConfig),
     SaveTypographyPreset(String),
     RemoveTypographyPreset(Id),
     ResetVisual,
     ResetTypography,
     RestoreAppearance(refrain_store::config::AppearanceConfig),
+}
+
+impl PreferencesChangeDto {
+    /// Translate one interface intent into one domain change.
+    ///
+    /// This is the whole of the mapping, so it lives with the DTO rather than
+    /// inside the command: a new preference is one arm here, and the command
+    /// body stays the three steps that are actually its own — find the store,
+    /// apply, broadcast.
+    fn into_change(self) -> Result<refrain_store::config::ConfigChange, RefrainError> {
+        use refrain_store::config::ConfigChange;
+        Ok(match self {
+            Self::KaraAutoEnter(value) => ConfigChange::KaraAutoEnter(value),
+            Self::SetTheme(theme) => {
+                if !theme_slugs().contains(&theme) {
+                    return Err(RefrainError::new(
+                        ErrorCode::IllegalName,
+                        "choose a theme",
+                        theme,
+                    ));
+                }
+                ConfigChange::SetTheme(theme)
+            }
+            Self::SetPaper(mode) => ConfigChange::SetPaper(mode),
+            Self::SetPanelSide(side) => ConfigChange::SetPanelSide(side),
+            Self::SetPanelMaterial(material) => ConfigChange::SetPanelMaterial(material),
+            Self::SetNightLamp(on) => ConfigChange::SetNightLamp(on),
+            Self::SetCodeTheme(theme) => ConfigChange::SetCodeTheme(theme),
+            Self::SetPanelAnimation(animated) => ConfigChange::SetPanelAnimation(animated),
+            Self::SetTypography(typography) => ConfigChange::SetTypography(typography),
+            Self::SaveTypographyPreset(name) => ConfigChange::SaveTypographyPreset(name),
+            Self::RemoveTypographyPreset(id) => ConfigChange::RemoveTypographyPreset(id),
+            Self::ResetVisual => ConfigChange::ResetVisual,
+            Self::ResetTypography => ConfigChange::ResetTypography,
+            Self::RestoreAppearance(appearance) => ConfigChange::RestoreAppearance(appearance),
+        })
+    }
 }
 
 #[tauri::command]
@@ -1035,38 +1077,7 @@ fn update_preferences(
     state: tauri::State<'_, AppState>,
     change: PreferencesChangeDto,
 ) -> Result<refrain_store::config::ConfigSnapshot, RefrainError> {
-    let change = match change {
-        PreferencesChangeDto::KaraAutoEnter(value) => {
-            refrain_store::config::ConfigChange::KaraAutoEnter(value)
-        }
-        PreferencesChangeDto::SetTheme(theme) => {
-            if !theme_slugs().contains(&theme) {
-                return Err(RefrainError::new(
-                    ErrorCode::IllegalName,
-                    "choose a theme",
-                    theme,
-                ));
-            }
-            refrain_store::config::ConfigChange::SetTheme(theme)
-        }
-        PreferencesChangeDto::SetPaper(mode) => refrain_store::config::ConfigChange::SetPaper(mode),
-        PreferencesChangeDto::SetTypography(typography) => {
-            refrain_store::config::ConfigChange::SetTypography(typography)
-        }
-        PreferencesChangeDto::SaveTypographyPreset(name) => {
-            refrain_store::config::ConfigChange::SaveTypographyPreset(name)
-        }
-        PreferencesChangeDto::RemoveTypographyPreset(id) => {
-            refrain_store::config::ConfigChange::RemoveTypographyPreset(id)
-        }
-        PreferencesChangeDto::ResetVisual => refrain_store::config::ConfigChange::ResetVisual,
-        PreferencesChangeDto::ResetTypography => {
-            refrain_store::config::ConfigChange::ResetTypography
-        }
-        PreferencesChangeDto::RestoreAppearance(appearance) => {
-            refrain_store::config::ConfigChange::RestoreAppearance(appearance)
-        }
-    };
+    let change = change.into_change()?;
     let store = state.config.as_ref().ok_or_else(|| {
         let notice = state.config_notice.lock().ok().and_then(|n| n.clone());
         RefrainError::new(

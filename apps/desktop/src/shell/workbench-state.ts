@@ -5,59 +5,43 @@ export type WorkbenchReference =
   | { readonly kind: "settings"; readonly section: SettingsSection }
   | { readonly kind: "annotations" };
 
+/**
+ * 工作台的两条轴。
+ *
+ * 「打开到哪一层面板」不在这里——那是 `PanelStack` 的事。它一度也住在这个 state 里，
+ * 于是同一件事有两份记录：栈压了一层，reducer 也存了一个 reference，谁对看调用次序。
+ * 现在这里只留下栈无法回答的两件事：作者在哪个场景（写作/Review/派发），
+ * 以及有没有一个必须先处理掉的安全事件。
+ */
 export interface WorkbenchState<Safety> {
   readonly hasDocument: boolean;
   readonly stage: WorkbenchStage;
-  readonly reference: WorkbenchReference | null;
   readonly safety: { readonly kind: "external-conflict"; readonly value: Safety } | null;
 }
 
 export type WorkbenchEvent<Safety> =
   | { readonly kind: "documentSelected" }
   | { readonly kind: "openStage"; readonly stage: WorkbenchStage }
-  | { readonly kind: "openReference"; readonly reference: WorkbenchReference }
-  | { readonly kind: "closeReference" }
   | { readonly kind: "raiseSafety"; readonly value: Safety }
   | { readonly kind: "resolveSafety" };
 
 export const initialWorkbenchState = <Safety>(): WorkbenchState<Safety> => ({
   hasDocument: false,
   stage: "writing",
-  reference: null,
   safety: null,
 });
 
-const sameReference = (left: WorkbenchReference, right: WorkbenchReference): boolean =>
-  left.kind === right.kind &&
-  (left.kind !== "settings" || (right.kind === "settings" && left.section === right.section));
-
-/** Own the three independent axes already present in the workbench. */
+/** Own the two axes the panel stack cannot answer. */
 export function reduceWorkbench<Safety>(
   state: WorkbenchState<Safety>,
   event: WorkbenchEvent<Safety>,
 ): WorkbenchState<Safety> {
   switch (event.kind) {
     case "documentSelected":
-      return {
-        hasDocument: true,
-        stage: "writing",
-        reference: null,
-        safety: null,
-      };
+      return { hasDocument: true, stage: "writing", safety: null };
     case "openStage":
       if (event.stage !== "writing" && !state.hasDocument) return state;
-      return { ...state, stage: event.stage, reference: null };
-    case "openReference":
-      if (event.reference.kind === "annotations" && !state.hasDocument) return state;
-      return {
-        ...state,
-        reference:
-          state.reference !== null && sameReference(state.reference, event.reference)
-            ? null
-            : event.reference,
-      };
-    case "closeReference":
-      return { ...state, reference: null };
+      return { ...state, stage: event.stage };
     case "raiseSafety":
       return { ...state, safety: { kind: "external-conflict", value: event.value } };
     case "resolveSafety":

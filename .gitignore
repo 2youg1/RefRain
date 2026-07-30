@@ -6,6 +6,10 @@ dist/
 # Local design authority. `verify:no-spec-upload` enforces this boundary.
 /SPEC.md
 
+# 本地评审工件：版面对比页由 scripts/generate-layout-preview.ts 重建。
+# 脚本进仓库，产物不进——它是给人看一眼做裁决用的，不是发布内容。
+/docs/layout-preview.html
+
 # Rust and Tauri generated output.
 target/
 apps/desktop/src-tauri/gen/

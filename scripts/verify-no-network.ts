@@ -8,7 +8,15 @@
  * this promise (SPEC 5.1).
  *
  * Injection proof that this gate bites: add `fetch("https://example.com")` to
- * any Vue component or Rust crate and this exits 1 naming the file and line.
+ * any component or Rust crate and this exits 1 naming the file and line.
+ *
+ * Shiki is the one dependency that can break this promise without writing a
+ * single `fetch`. Its convenience entry (`import { codeToHtml } from "shiki"`)
+ * loads languages and themes on demand: the bundler emits a dynamic chunk and,
+ * worst case, the grammar is fetched from a CDN. The precise entry
+ * (`shiki/core` plus one static import per language) resolves everything at
+ * build time. That difference is invisible in the rendered output and shows up
+ * only as a request in production, so it is asserted here rather than trusted.
  */
 
 import { report, scan } from "./gate-lib.ts";
@@ -30,5 +38,34 @@ const result = await scan(
     ignoreLine: (line) => /^\s*(\/\/|\/\*|\*|#)/.test(line),
   },
 );
+
+// Shiki must be reached through the precise entry only.
+const SHIKI_SOURCES = ["apps/desktop/src/**/*.{ts,tsx}", "packages/**/src/**/*.ts"];
+const convenience = await scan(SHIKI_SOURCES, /from\s+["']shiki["']/, {
+  ignoreLine: (line) => /^\s*(\/\/|\/\*|\*|#)/.test(line),
+});
+if (convenience.findings.length > 0) {
+  console.error(
+    "FAIL  verify:no-network: the shiki convenience entry can fetch grammars at runtime",
+  );
+  for (const finding of convenience.findings) {
+    console.error(
+      `      ${finding.file}:${finding.line}  use \`shiki/core\` with one static import per language`,
+    );
+  }
+  process.exit(1);
+}
+
+// And every language must arrive as a static import, never `await import(...)`.
+const lazyLang = await scan(SHIKI_SOURCES, /import\s*\(\s*["']@shikijs\//, {
+  ignoreLine: (line) => /^\s*(\/\/|\/\*|\*|#)/.test(line),
+});
+if (lazyLang.findings.length > 0) {
+  console.error("FAIL  verify:no-network: a shiki language is imported dynamically");
+  for (const finding of lazyLang.findings) {
+    console.error(`      ${finding.file}:${finding.line}  make it a top-level static import`);
+  }
+  process.exit(1);
+}
 
 report("verify:no-network", result, "an outbound request appears in the application process");
