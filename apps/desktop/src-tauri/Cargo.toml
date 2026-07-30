@@ -16,6 +16,7 @@ tauri-build = { version = "=2.6.3", features = [] }
 
 [dependencies]
 refrain-core = { workspace = true }
+refrain-app = { workspace = true }
 refrain-host = { workspace = true }
 refrain-store = { workspace = true }
 fontdb = "=0.23.0"

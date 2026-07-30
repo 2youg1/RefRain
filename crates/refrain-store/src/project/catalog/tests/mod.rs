@@ -27,6 +27,25 @@ fn catalog_identity_ignores_scan_order_and_generated_ids() {
 /// A real membership change must alter the identity; otherwise the previous
 /// test would also pass for a constant function.
 #[test]
+fn duplicate_paths_would_cancel_out_so_the_scan_must_not_produce_them() {
+    // 这条不是在测 fingerprint_of 的正确性，而是钉住它依赖的那个前提。
+    //
+    // 指纹用异或合并各条目的哈希，好处是与扫描顺序无关（目录遍历次序由文件系统
+    // 决定，不能依赖），代价是它对成对出现的相同条目不敏感——两次会互相抵消。
+    // 因此如果哪天扫描开始吐重复路径，指纹会把「多了一对重复」看成「什么都没变」。
+    //
+    // 前提成立的依据：reconcile_documents 把扫描结果灌进 refreshed_documents，
+    // 那张表以 path 作 PRIMARY KEY，重复路径根本进不去；documents 表同样以 path
+    // 为唯一键。这条测试把「一对重复会抵消」这个事实写在明处，使前提一旦被打破
+    // 就有人看得见，而不是留一句注释里的断言。
+    let doubled = [
+        ["id-1".into(), "甲.md".into(), "chapter".into()],
+        ["id-2".into(), "甲.md".into(), "chapter".into()],
+    ];
+    assert_eq!(super::fingerprint_of(&doubled), [0u8; 32]);
+}
+
+#[test]
 fn catalog_identity_follows_every_real_change() {
     let base = [
         ["id-1".into(), "甲.md".into(), "chapter".into()],

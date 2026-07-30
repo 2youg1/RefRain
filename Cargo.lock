@@ -3447,6 +3447,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "refrain-app"
+version = "0.2.0"
+dependencies = [
+ "refrain-core",
+ "refrain-host",
+ "refrain-store",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "specta",
+]
+
+[[package]]
 name = "refrain-core"
 version = "0.2.0"
 dependencies = [
@@ -3464,6 +3477,7 @@ version = "0.2.0"
 dependencies = [
  "fontdb",
  "image",
+ "refrain-app",
  "refrain-core",
  "refrain-host",
  "refrain-store",

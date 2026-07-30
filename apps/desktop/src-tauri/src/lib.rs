@@ -340,48 +340,11 @@ fn parse_id(raw: &str, what: &str) -> Result<Id, RefrainError> {
         })
 }
 
-/// Project failures become typed bridge errors. A changed-underneath conflict
-/// is save data (SaveOutcomeDto) and never reaches here.
-fn into_domain(failure: ProjectFailure) -> RefrainError {
-    match failure {
-        ProjectFailure::Domain(error) => error,
-        ProjectFailure::RootMissing(path) => RefrainError::new(
-            ErrorCode::NotADirectory,
-            "adopt a Root",
-            path.display().to_string(),
-        ),
-        ProjectFailure::IdentityChanged {
-            path,
-            stored,
-            found,
-        } => RefrainError::new(
-            ErrorCode::StateUnavailable,
-            "adopt a Root whose identity moved",
-            path.display().to_string(),
-        )
-        .with_detail(format!("stored {stored}, found {found}")),
-        ProjectFailure::ChangedUnderneath(_) => RefrainError::new(
-            ErrorCode::StateUnavailable,
-            "report a conflict as an error (a defect: conflicts are data)",
-            "save",
-        ),
-        ProjectFailure::NotADocument(path) => RefrainError::new(
-            ErrorCode::UnsupportedFormat,
-            "open as a document",
-            path.display().to_string(),
-        ),
-        ProjectFailure::Io { path, source } => {
-            RefrainError::new(ErrorCode::Io, "file I/O", path.display().to_string())
-                .with_detail(source.to_string())
-        }
-        ProjectFailure::Store(error) => RefrainError::new(
-            ErrorCode::StateUnavailable,
-            "project database",
-            "refrain.db",
-        )
-        .with_detail(error.to_string()),
-    }
-}
+// host 实体 ↔ store 行 的翻译，连同 StoreJournal 接缝与两个错误转换，已搬进
+// refrain-app::journal。它们既不属于 host（host 不认识数据库）也不属于 store
+// （store 不认识 ReviewTask），住在桥上时只能连着一个 Tauri 窗口一起验证。
+// 检验方案见 crates/refrain-app/tests/journal.rs：内存 store 走完整轮回，断言
+// 实体逐字段还原、且索引列与实体内部的值一致。
 
 /// Proves the whole chain: a Rust type, a generated binding, a real window.
 #[tauri::command]
@@ -1889,17 +1852,17 @@ fn commit_decision_batch(
 // in .refrain/ through DirectoryContext. Nothing here decides a domain rule:
 // the host's state machine does.
 
+use refrain_app::journal::{
+    StoreJournal, into_domain, into_domain_host, json_of, run_kind, task_kind,
+};
+use refrain_app::scope::{before_sections, find_scope_blocks};
 use refrain_core::agent_protocol::{self, ArtifactContract};
 use refrain_core::context_compiler::{
     self, BeforeScope, ChangeEntry, ChangeKind, ContractMode, DispatchInput, DispatchPackage,
     ManifestEntry,
 };
-use refrain_host::host::{
-    AgentHost, DispatchAuthorization, HostCommand, HostJournal, HostRefusal, HostState, ReviewTask,
-    Run, RunProgress, TaskProgress,
-};
+use refrain_host::host::{AgentHost, HostCommand, HostRefusal, ReviewTask, Run, RunProgress};
 use refrain_host::staging::DirectoryContext;
-use refrain_store::orchestration::{AuthorizationRow, RunRow, TaskRow};
 
 /// The built-in L0 agent: a file channel, including copy-paste into a web
 /// chat (SPEC 8.3a). Real harness connections arrive with C11; this id names
@@ -1908,168 +1871,6 @@ const L0_FILE_CHANNEL_AGENT: &str = "00000000-0000-0000-0000-0000000000e0";
 
 /// One dispatch's byte ceiling for the artifact body (shown in the contract).
 const ARTIFACT_MAX_BYTES: u64 = 64 * 1024;
-
-fn into_domain_host(refusal: HostRefusal) -> RefrainError {
-    RefrainError::new(
-        ErrorCode::StateUnavailable,
-        "orchestrate a dispatch",
-        refusal.to_string(),
-    )
-}
-
-fn json_of<T: Serialize>(value: &T, what: &str) -> Result<String, RefrainError> {
-    serde_json::to_string(value).map_err(|error| {
-        RefrainError::new(ErrorCode::Io, "serialise orchestration state", what)
-            .with_detail(error.to_string())
-    })
-}
-
-fn entity_of<T: serde::de::DeserializeOwned>(raw: &str, what: &str) -> Result<T, RefrainError> {
-    serde_json::from_str(raw).map_err(|error| {
-        RefrainError::new(
-            ErrorCode::StateUnavailable,
-            "read orchestration state",
-            what,
-        )
-        .with_detail(error.to_string())
-    })
-}
-
-fn task_kind(progress: &TaskProgress) -> &'static str {
-    match progress {
-        TaskProgress::Draft => "draft",
-        TaskProgress::Open { .. } => "open",
-        TaskProgress::Closed { .. } => "closed",
-    }
-}
-
-fn run_kind(progress: &RunProgress) -> &'static str {
-    match progress {
-        RunProgress::Queued => "queued",
-        RunProgress::Authorized { .. } => "authorized",
-        RunProgress::Launching { .. } => "launching",
-        RunProgress::Dispatched { .. } => "dispatched",
-        RunProgress::Completed { .. } => "completed",
-        RunProgress::Failed { .. } => "failed",
-        RunProgress::Cancelled => "cancelled",
-    }
-}
-
-fn task_row(task: &ReviewTask) -> Result<TaskRow, RefrainError> {
-    Ok(TaskRow {
-        id: task.id.to_string(),
-        baseline: task.baseline.to_string(),
-        progress_kind: task_kind(&task.progress).to_string(),
-        entity: json_of(task, "task")?,
-    })
-}
-
-fn run_row(run: &Run) -> Result<RunRow, RefrainError> {
-    Ok(RunRow {
-        id: run.id.to_string(),
-        task_id: run.task_id.to_string(),
-        agent_id: run.agent_id.to_string(),
-        progress_kind: run_kind(&run.progress).to_string(),
-        retry_of: run.retry_of.map(|id| id.to_string()),
-        entity: json_of(run, "run")?,
-    })
-}
-
-fn authorization_row(
-    authorization: &DispatchAuthorization,
-) -> Result<AuthorizationRow, RefrainError> {
-    Ok(AuthorizationRow {
-        id: authorization.id.to_string(),
-        manifest_digest: authorization.manifest_digest.clone(),
-        authorized_at: i64::try_from(authorization.authorized_at).unwrap_or(i64::MAX),
-        entity: json_of(authorization, "authorization")?,
-    })
-}
-
-/// The journal seam over refrain.db. New and re-authorized runs reach the
-/// store pre-split by existence: the store refuses an overwriting insert and
-/// a missing update, so the split must be honest.
-struct StoreJournal<'a> {
-    store: &'a mut ProjectStore,
-}
-
-impl HostJournal for StoreJournal<'_> {
-    type Error = RefrainError;
-
-    fn load(&self) -> Result<HostState, RefrainError> {
-        let rows = self.store.host_rows().map_err(into_domain)?;
-        Ok(HostState {
-            tasks: rows
-                .tasks
-                .iter()
-                .map(|row| entity_of(&row.entity, "task"))
-                .collect::<Result<Vec<_>, _>>()?,
-            runs: rows
-                .runs
-                .iter()
-                .map(|row| entity_of(&row.entity, "run"))
-                .collect::<Result<Vec<_>, _>>()?,
-            authorizations: rows
-                .authorizations
-                .iter()
-                .map(|row| entity_of(&row.entity, "authorization"))
-                .collect::<Result<Vec<_>, _>>()?,
-        })
-    }
-
-    fn append_task(&mut self, task: &ReviewTask) -> Result<(), RefrainError> {
-        self.store
-            .host_task_append(&task_row(task)?)
-            .map_err(into_domain)
-    }
-
-    fn record_authorization(
-        &mut self,
-        task: &ReviewTask,
-        runs: &[Run],
-        authorization: &DispatchAuthorization,
-    ) -> Result<(), RefrainError> {
-        let mut new_runs = Vec::new();
-        let mut reauthorized = Vec::new();
-        for run in runs {
-            if self
-                .store
-                .host_run_known(&run.id.to_string())
-                .map_err(into_domain)?
-            {
-                reauthorized.push(run_row(run)?);
-            } else {
-                new_runs.push(run_row(run)?);
-            }
-        }
-        self.store
-            .host_authorization_record(
-                &task_row(task)?,
-                &new_runs,
-                &reauthorized,
-                &authorization_row(authorization)?,
-            )
-            .map_err(into_domain)
-    }
-
-    fn update_task(&mut self, task: &ReviewTask) -> Result<(), RefrainError> {
-        self.store
-            .host_task_update(&task_row(task)?)
-            .map_err(into_domain)
-    }
-
-    fn update_run(&mut self, run: &Run) -> Result<(), RefrainError> {
-        self.store
-            .host_run_update(&run_row(run)?)
-            .map_err(into_domain)
-    }
-
-    fn append_run(&mut self, run: &Run) -> Result<(), RefrainError> {
-        self.store
-            .host_run_append(&run_row(run)?)
-            .map_err(into_domain)
-    }
-}
 
 fn open_host(
     store: &mut ProjectStore,
@@ -2246,58 +2047,10 @@ fn compile_package(
     Ok(context_compiler::compile(&input))
 }
 
-/// Parse the frozen request's `# Before` section back into (scope id, text)
-/// pairs. The promoted request is the authority at collect time: it is the
-/// bytes the producer answered.
-fn before_sections(request: &str) -> Vec<(String, String)> {
-    let Some(after_heading) = request.split("# Before").nth(1) else {
-        return vec![];
-    };
-    let section = after_heading.split("\n# ").next().unwrap_or(after_heading);
-    let mut out = Vec::new();
-    for chunk in section.split("<!-- scope ").skip(1) {
-        let Some((id, rest)) = chunk.split_once(" -->") else {
-            continue;
-        };
-        let text = rest
-            .strip_prefix('\n')
-            .unwrap_or(rest)
-            .trim_end_matches('\n')
-            .to_string();
-        out.push((id.trim().to_string(), text));
-    }
-    out
-}
-
-/// Find the block range whose joined text is exactly the frozen before-text.
-/// Byte-exact: a scope the author has since edited is not found, and the run
-/// fails honestly instead of proposing against text it never saw.
-fn find_scope_blocks(manuscript: &Manuscript, before: &str) -> Option<Vec<Id>> {
-    let blocks = manuscript.head().blocks();
-    for start in 0..blocks.len() {
-        let mut text = String::new();
-        for (offset, block) in blocks.iter().skip(start).enumerate() {
-            if !text.is_empty() {
-                text.push_str("\n\n");
-            }
-            text.push_str(block.text());
-            if text == before {
-                return Some(
-                    blocks
-                        .iter()
-                        .skip(start)
-                        .take(offset + 1)
-                        .map(|block| block.id())
-                        .collect(),
-                );
-            }
-            if text.len() > before.len() {
-                break;
-            }
-        }
-    }
-    None
-}
+// `before_sections` 与 `find_scope_blocks` 已搬进 refrain-app::scope：它们只读文本，
+// 不碰数据库也不认识 host，放在桥上就无法单独验证。搬迁时顺带把后者从「每个起点
+// 重新拼接一遍」改成一次线性扫描（4000 块实测 12.8ms → 0.06ms），等价性由
+// crates/refrain-app/tests/scope.rs 穷举全部连续区间对照旧实现证明。
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]

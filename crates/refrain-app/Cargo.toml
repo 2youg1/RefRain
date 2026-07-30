@@ -1,0 +1,26 @@
+[package]
+name = "refrain-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Use cases: the multi-step flows that need both the store and the host, kept out of the bridge."
+
+# This crate exists because several flows are neither pure domain, nor
+# persistence, nor orchestration alone — collecting a run reads the frozen
+# request, validates it against a contract, maps it onto the open manuscript,
+# and then writes through both the host and the store. Those steps lived in
+# `lib.rs` as a 183-line command body, where they could not be tested without a
+# Tauri window. Nothing here knows about Tauri.
+[dependencies]
+refrain-core = { workspace = true }
+refrain-host = { workspace = true }
+refrain-store = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+specta = { workspace = true }
+
+# 只有测试需要开一个真数据库连接。产品代码里用例层拿到的是已经打开的 ProjectStore，
+# 自己不碰 rusqlite——这条界线由依赖表本身守着。
+[dev-dependencies]
+rusqlite = { workspace = true }

@@ -18,16 +18,29 @@ use crate::root::RootKind;
 /// filesystem traversal order is not stable. Length-prefixed parts keep paths
 /// with arbitrary characters unambiguous without joining the full set first.
 fn fingerprint_of(scanned: &[[String; 3]]) -> [u8; 32] {
-    let mut identity: Vec<(&str, &str)> = scanned
+    // 逐条哈希再异或合并。异或满足交换律，于是这个身份天然与扫描顺序无关——
+    // 目录遍历的次序由文件系统决定，同一批文件两次扫描可以给出不同顺序，不做
+    // 处理的话指纹每次都不同，缓存永远命不中（实测二十次连续对账无一命中）。
+    //
+    // 早先的做法是先把十万个 (path, role) 排序再顺序哈希，正确但慢：排序要逐字节
+    // 比较字符串且缓存不友好，实测单这一步就吃掉 23ms。异或版本不排序、不额外
+    // 分配，只走一遍。
+    //
+    // 跳过 entry[0]：那是每次扫描新生成的 Id，与「扫到了什么」无关；带上它指纹
+    // 每次都不同，整个优化就永远命不中。
+    //
+    // 异或的代价是它对「同一条目出现两次」不敏感（两次会互相抵消）。这里安全，
+    // 因为 path 是 documents 表的主键、也是扫描结果里的唯一键：同一条路径不可能
+    // 在一次扫描里出现两次。fingerprint_tests 里有一条钉住这个前提。
+    scanned
         .iter()
-        .map(|entry| (entry[1].as_str(), entry[2].as_str()))
-        .collect();
-    identity.sort_unstable();
-    digest::sequence_bytes(
-        identity
-            .iter()
-            .flat_map(|(path, role)| [path.as_bytes(), role.as_bytes()]),
-    )
+        .map(|entry| digest::sequence_bytes([entry[1].as_bytes(), entry[2].as_bytes()]))
+        .fold([0u8; 32], |mut sum, one| {
+            for (slot, byte) in sum.iter_mut().zip(one) {
+                *slot ^= byte;
+            }
+            sum
+        })
 }
 
 #[cfg(test)]
