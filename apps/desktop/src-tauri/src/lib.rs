@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use refrain_core::{
     DocumentRole, EditorAction, EditorChange, ErrorCode, Id, Insertion, KaraAutoEntry, KaraEvent,
     KaraMachine, KaraPolicy, KaraTransition, Lineage, Manuscript, RecoveryStep, RefrainError,
-    Replacement, SourceSnapshot, TextCommand, digest::content_hex,
+    Replacement, SourceSnapshot, TextCommand,
 };
 use refrain_store::project::{
     BackupStatus, DocumentCommit, DocumentPage, DocumentPageQuery, DocumentRow, FileStamp,
@@ -1852,11 +1852,7 @@ fn commit_decision_batch(
 // in .refrain/ through DirectoryContext. Nothing here decides a domain rule:
 // the host's state machine does.
 
-use refrain_app::journal::{
-    StoreJournal, into_domain, into_domain_host, json_of, run_kind, task_kind,
-};
-use refrain_app::scope::{before_sections, find_scope_blocks};
-use refrain_core::agent_protocol::{self, ArtifactContract};
+use refrain_app::journal::{StoreJournal, into_domain, into_domain_host, run_kind, task_kind};
 use refrain_core::context_compiler::{
     self, BeforeScope, ChangeEntry, ChangeKind, ContractMode, DispatchInput, DispatchPackage,
     ManifestEntry,
@@ -2599,178 +2595,25 @@ fn collect_attempt(
 ) -> Result<CollectOutcomeDto, RefrainError> {
     state.with_project(&root_id, |_state, entry| {
         let run_id = parse_id(&run_id, "run")?;
-        let context = DirectoryContext::new(entry.store.layout().state_dir.clone());
-        // Basis evidence for the contract is gathered before the host opens:
-        // the journal holds the store for the rest of the closure.
-        let basis: Vec<String> = entry
-            .store
-            .documents()?
-            .iter()
-            .filter_map(|row| {
-                row.current_head
-                    .as_ref()
-                    .map(|head| format!("{}@{}", row.path, head))
-            })
-            .collect();
-        let mut host = open_host(&mut entry.store)?;
-        let index = host
-            .runs()
-            .iter()
-            .position(|run| run.id == run_id)
-            .ok_or_else(|| into_domain_host(HostRefusal::UnknownRun(run_id)))?;
-        let run = host.runs()[index].clone();
-
-        let Some(bytes) = context
-            .read_result(&run.workspace, run_id)
-            .map_err(|error| {
-                RefrainError::new(
-                    ErrorCode::Io,
-                    "read the run's result",
-                    run.workspace.clone(),
-                )
-                .with_detail(error.to_string())
-            })?
-        else {
-            return Ok(CollectOutcomeDto::Waiting);
-        };
-        let request = context
-            .read_workspace_request(&run.workspace)
-            .map_err(|error| {
-                RefrainError::new(
-                    ErrorCode::Io,
-                    "read the frozen request",
-                    run.workspace.clone(),
-                )
-                .with_detail(error.to_string())
-            })?
-            .ok_or_else(|| {
-                RefrainError::new(
-                    ErrorCode::StateUnavailable,
-                    "read the frozen request",
-                    "the promoted request is missing",
-                )
-            })?;
-
-        // The contract comes from the frozen bytes the producer answered,
-        // never from the artifact's own claims (SPEC 8.4).
-        let scopes = before_sections(&request);
-        let scope_ids: Vec<String> = scopes.iter().map(|(id, _)| id.clone()).collect();
-        let contract = ArtifactContract {
-            scopes: &scope_ids,
-            basis: &basis,
-        };
-
-        let fail = |host: &mut AgentHost<StoreJournal<'_>, DirectoryContext>,
-                    code: &str,
-                    detail: &str|
-         -> Result<CollectOutcomeDto, RefrainError> {
-            host.execute(HostCommand::FailRun {
-                run_id,
-                failure: code.to_string(),
-                at: now_millis(),
-            })
-            .map_err(into_domain_host)?;
-            Ok(CollectOutcomeDto::Failed {
-                code: code.to_string(),
-                detail: detail.to_string(),
-            })
-        };
-
-        let artifact = match agent_protocol::parse(&bytes, &contract) {
-            Ok(artifact) => artifact,
-            Err(error) => return fail(&mut host, error.code.as_str(), &error.detail),
-        };
-
-        let task = host
-            .tasks()
-            .iter()
-            .find(|task| task.id == run.task_id)
-            .ok_or_else(|| into_domain_host(HostRefusal::UnknownTask(run.task_id)))?
-            .clone();
-        let manuscript = entry.manuscripts.get(&task.document).ok_or_else(|| {
-            RefrainError::new(
-                ErrorCode::StateUnavailable,
-                "collect into a document that is not open",
-                task.document.clone(),
-            )
-        })?;
-
-        let before_by_scope: HashMap<String, String> = scopes.into_iter().collect();
-        let mut proposals: Vec<(Proposal, Vec<Id>)> = Vec::new();
-        for replacement in &artifact.replacements {
-            let Some(before) = before_by_scope.get(&replacement.scope) else {
-                return fail(&mut host, "unknown-scope", &replacement.scope);
-            };
-            let Some(blocks) = find_scope_blocks(manuscript, before) else {
-                // The author edited the scope under the dispatch. The artifact
-                // stays on disk; the run fails with the reason, not a guess.
-                return fail(&mut host, "scope-text-moved", &replacement.scope);
-            };
-            let scope = EditScope::new(blocks.clone()).map_err(|error| {
-                RefrainError::new(
-                    ErrorCode::Io,
-                    "build a proposal scope",
-                    task.document.clone(),
-                )
-                .with_detail(error.to_string())
-            })?;
-            proposals.push((
-                Proposal::new(
-                    run_id,
-                    task.baseline,
-                    scope,
-                    before.clone(),
-                    replacement.text.clone(),
-                ),
-                blocks,
-            ));
-        }
-
-        // §8.4b: validated first, Completed second, proposals frozen third.
-        let artifact_digest = content_hex(&bytes);
-        host.execute(HostCommand::CollectAttempt {
-            run_id,
-            artifact_digest,
-            at: now_millis(),
-        })
-        .map_err(into_domain_host)?;
-        let count = proposals.len() as u32;
-        for (proposal, blocks) in &proposals {
-            entry
-                .store
-                .proposal_insert(&refrain_store::project::ProposalRow {
-                    id: proposal.id().to_string(),
-                    run: run_id.to_string(),
-                    baseline: proposal.baseline().to_string(),
-                    document_path: task.document.clone(),
-                    scope: json_of(blocks, "proposal scope")?,
-                    before_text: proposal.before().to_string(),
-                    after_text: proposal.after().map(str::to_string),
-                    created_at: now_millis(),
-                })
-                .map_err(into_domain)?;
-        }
-        // Material drafts join the world as drafts and nothing more (SPEC
-        // 8.7): only a Human Material Action makes one a Material.
-        for draft in &artifact.material_drafts {
-            entry
-                .store
-                .material_draft_insert(&refrain_store::materials::MaterialDraftRow {
-                    id: Id::new().to_string(),
-                    run_id: run_id.to_string(),
-                    document: task.document.clone(),
-                    kind: draft.kind.clone(),
-                    title: draft.title.clone(),
-                    basis: json_of(&draft.basis, "material basis")?,
-                    body: draft.body.clone(),
-                    created_at: now_millis(),
-                })
-                .map_err(into_domain)?;
-        }
-        Ok(CollectOutcomeDto::Completed {
-            proposals: count,
-            memos: artifact.memos.len() as u32,
-            drafts: artifact.material_drafts.len() as u32,
+        // 分别借用两个字段：收取要改 store，同时要读打开着的稿子。
+        let ProjectEntry {
+            store, manuscripts, ..
+        } = entry;
+        let collected = refrain_app::collect_attempt(store, manuscripts, run_id, now_millis())?;
+        Ok(match collected {
+            refrain_app::Collected::Waiting => CollectOutcomeDto::Waiting,
+            refrain_app::Collected::Completed {
+                proposals,
+                memos,
+                drafts,
+            } => CollectOutcomeDto::Completed {
+                proposals,
+                memos,
+                drafts,
+            },
+            refrain_app::Collected::Failed { code, detail } => {
+                CollectOutcomeDto::Failed { code, detail }
+            }
         })
     })
 }

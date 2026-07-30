@@ -19,8 +19,23 @@ const result = await scan(["crates/refrain-core/src/**/*.rs"], FORBIDDEN, {
   ignoreLine: (line) => /^\s*(\/\/|\/\*|\*)/.test(line),
 });
 
+// refrain-app holds the multi-step flows, so it may reach the store and the
+// filesystem — but not Tauri. That is the whole reason it exists: collecting a
+// dispatch was a 182-line command body that no test could reach without a
+// window. Its Cargo.toml says "Nothing here knows about Tauri"; this is the
+// sentence's gate.
+//
+// Injection proof: add `use tauri::State;` to any module under
+// crates/refrain-app/src and this exits 1 naming the file and line.
+const appResult = await scan(["crates/refrain-app/src/**/*.rs"], /^\s*use\s+tauri\b/, {
+  ignoreLine: (line) => /^\s*(\/\/|\/\*|\*)/.test(line),
+});
+
 report(
   "verify:core-purity",
-  result,
-  "refrain-core reaches a dependency the domain must not know about",
+  {
+    scanned: result.scanned + appResult.scanned,
+    findings: [...result.findings, ...appResult.findings],
+  },
+  "a crate reaches a dependency its layer must not know about",
 );

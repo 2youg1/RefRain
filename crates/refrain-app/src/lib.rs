@@ -7,9 +7,11 @@
 //!
 //! 这里不认识 Tauri。
 
+pub mod collect;
 pub mod journal;
 pub mod scope;
 
+pub use collect::{Collected, collect_attempt};
 pub use journal::{
     StoreJournal, entity_of, into_domain, into_domain_host, json_of, run_kind, run_row, task_kind,
     task_row,
