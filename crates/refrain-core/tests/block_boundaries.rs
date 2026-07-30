@@ -51,5 +51,8 @@ fn a_blank_line_inside_a_fence_does_not_end_a_block() {
 
 #[test]
 fn text_without_any_blank_line_is_one_block() {
-    assert_eq!(blocks("第一行\n第二行\n第三行"), vec!["第一行\n第二行\n第三行"]);
+    assert_eq!(
+        blocks("第一行\n第二行\n第三行"),
+        vec!["第一行\n第二行\n第三行"]
+    );
 }

@@ -74,10 +74,11 @@ fn block_spans(source: &[u8]) -> Vec<ByteSpan> {
     let mut cursor = 0;
 
     loop {
-        let newline = source[cursor..]
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .map(|offset| cursor + offset);
+        // Finding the next newline is the one part of this scan that is both
+        // proportional to file size and entirely mechanical, so it runs on a
+        // SIMD kernel. Everything the loop then decides — fence state, whether
+        // the line is all ASCII whitespace, the `\r\n` ending — is unchanged.
+        let newline = memchr::memchr(b'\n', &source[cursor..]).map(|offset| cursor + offset);
         let line_end = newline.unwrap_or(source.len());
         let content_end = if line_end > cursor && source[line_end - 1] == b'\r' {
             line_end - 1

@@ -11,6 +11,7 @@ description = "Pure domain: text, Revision, Proposal, Verdict, Decision Batch, A
 [dependencies]
 serde = { workspace = true }
 blake3 = { workspace = true }
+memchr = { workspace = true }
 specta = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }

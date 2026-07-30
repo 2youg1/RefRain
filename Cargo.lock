@@ -3465,6 +3465,7 @@ name = "refrain-core"
 version = "0.2.0"
 dependencies = [
  "blake3",
+ "memchr",
  "serde",
  "serde_json",
  "specta",
