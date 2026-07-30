@@ -30,7 +30,8 @@ describe("typography projection", () => {
 
     expect(projection.dataset).toEqual({ baselineGrid: "on" });
     expect(projection.properties).toEqual({
-      "--manuscript-family": '"Murecho", "Noto Sans SC", "Jost", serif',
+      // 栈末尾总有随包兜底（fonts.ts）：作者选的字体缺字或不存在时仍画得出汉字与假名。
+      "--manuscript-family": '"Murecho", "Noto Sans SC", "Jost", "Zen Kaku Gothic New", serif',
       "--manuscript-size": "24.725px",
       "--manuscript-weight": "520",
       "--manuscript-leading": "2.25",

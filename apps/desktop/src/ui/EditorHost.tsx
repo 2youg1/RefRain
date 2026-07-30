@@ -4,6 +4,7 @@
 // bounded pending-action queue of SPEC 7.2-5.
 
 import {
+  type BlockPrefix,
   type EditorAction,
   type EditorAnnotationProjection,
   type EditorContext,
@@ -12,6 +13,7 @@ import {
   type EditorHandle,
   mountEditor,
   type PunctuationFinding,
+  type SelectionMeasure,
 } from "@refrain/editor";
 import { createEffect, on, onCleanup, onMount } from "solid-js";
 import { describe, unwrap } from "../bridge";
@@ -37,10 +39,14 @@ export interface EditorHostHandle {
   formatSelection(kind: EditorFormat): boolean;
   deleteEmptyBlock(): boolean;
   applyPunctuation(finding: PunctuationFinding): boolean;
+  /** Toggle a block-level Markdown prefix on the block holding the caret. */
+  applyBlockPrefix(prefix: BlockPrefix): boolean;
   /** Resolve once no composition is in flight — an event, never a timer. */
   whenSettled(): Promise<void>;
   /** Resolve after the pending-action queue fully drains. */
   settled(): Promise<void>;
+  /** Observe how much text is selected, for the status line's readout. */
+  onSelectionMeasured(listener: (measure: SelectionMeasure | null) => void): () => void;
 }
 
 export interface EditorHostProps {
@@ -154,6 +160,7 @@ export function EditorHost(props: EditorHostProps) {
       formatSelection: (kind) => editor?.formatSelection(kind) ?? false,
       deleteEmptyBlock: () => editor?.deleteEmptyBlock() ?? false,
       applyPunctuation: (finding) => editor?.applyPunctuation(finding) ?? false,
+      applyBlockPrefix: (prefix) => editor?.applyBlockPrefix(prefix) ?? false,
       whenSettled: async () => {
         await editor?.whenSettled();
       },
@@ -161,6 +168,7 @@ export function EditorHost(props: EditorHostProps) {
         await editor?.whenSettled();
         await actions.settled();
       },
+      onSelectionMeasured: (listener) => editor?.onSelectionMeasured(listener) ?? (() => {}),
     });
   };
 

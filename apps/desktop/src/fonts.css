@@ -1,15 +1,19 @@
 /*
- * The eight shipped faces (SPEC 9.8: 八张字面不变). Family names are the
- * contract — the pixel gate proves the binary behind each name, and the
- * font-priority order decides which tradition draws shared Han.
+ * The faces RefRain ships.
+ *
+ * Han is drawn by the author's own machine: every desktop platform ships a
+ * competent CJK face, and an author writing Chinese or Japanese usually
+ * prefers the one they already read in. RefRain bundles two fallbacks so a
+ * machine without any of them still renders text rather than tofu — Noto Sans
+ * SC covers 20,976 Han and both kana, Zen Kaku Gothic New covers Japanese
+ * with kana-native shaping. `fonts.ts` always appends them to the stack.
+ *
+ * This replaced five bundled CJK faces (16.3MB of assets, 98.8% of the front
+ * end) with two (4.3MB). Family names remain the contract: the pixel gate
+ * proves the binary behind each name, and the font-priority order decides
+ * which tradition draws shared Han.
  * No unicode-range: the stack order, not a range, is the mechanism.
  */
-
-@font-face {
-  font-family: "Chiron Sung HK";
-  src: url("./fonts/ChironSungHK.woff2") format("woff2");
-  font-display: swap;
-}
 
 @font-face {
   font-family: "Noto Sans SC";
@@ -18,20 +22,8 @@
 }
 
 @font-face {
-  font-family: "Shippori Mincho";
-  src: url("./fonts/ShipporiMincho-Regular.woff2") format("woff2");
-  font-display: swap;
-}
-
-@font-face {
   font-family: "Zen Kaku Gothic New";
   src: url("./fonts/ZenKakuGothicNew-Regular.woff2") format("woff2");
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "Murecho";
-  src: url("./fonts/Murecho.woff2") format("woff2");
   font-display: swap;
 }
 

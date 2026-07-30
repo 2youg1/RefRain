@@ -7,11 +7,8 @@ import { type FontConfig, manuscriptStack } from "../apps/desktop/src/fonts";
 const sourceRoot = "apps/desktop/src/fonts";
 const distRoot = "apps/desktop/dist";
 const sources = [
-  "ChironSungHK.woff2",
   "NotoSansSC-Regular.woff2",
-  "ShipporiMincho-Regular.woff2",
   "ZenKakuGothicNew-Regular.woff2",
-  "Murecho.woff2",
   "AnticDidone.woff2",
   "Jost.woff2",
   "CourierPrime.woff2",
@@ -61,8 +58,8 @@ if (byteFailures.length > 0) {
 
 const families: FontConfig = {
   latin: "Antic Didone",
-  chinese: "Chiron Sung HK",
-  japanese: "Shippori Mincho",
+  chinese: "Noto Sans SC",
+  japanese: "Zen Kaku Gothic New",
   priority: ["latin", "chinese", "japanese"],
 };
 const chineseFirst = manuscriptStack({
@@ -76,8 +73,8 @@ const japaneseFirst = manuscriptStack({
 const html = `<!doctype html>
 <meta charset="utf-8">
 <style>
-@font-face { font-family: "Chiron Sung HK"; src: url("/fonts/ChironSungHK.woff2") format("woff2"); }
-@font-face { font-family: "Shippori Mincho"; src: url("/fonts/ShipporiMincho-Regular.woff2") format("woff2"); }
+@font-face { font-family: "Noto Sans SC"; src: url("/fonts/NotoSansSC-Regular.woff2") format("woff2"); }
+@font-face { font-family: "Zen Kaku Gothic New"; src: url("/fonts/ZenKakuGothicNew-Regular.woff2") format("woff2"); }
 html, body { margin: 0; background: white; }
 #sentinel { display: inline-block; padding: 8px; color: black; font-size: 72px; line-height: 1.2; }
 </style>
@@ -103,8 +100,8 @@ try {
   await page.goto("http://refrain.test/");
   await page.evaluate(async () => {
     await Promise.all([
-      document.fonts.load('72px "Chiron Sung HK"', "直骨令"),
-      document.fonts.load('72px "Shippori Mincho"', "直骨令"),
+      document.fonts.load('72px "Noto Sans SC"', "直骨令"),
+      document.fonts.load('72px "Zen Kaku Gothic New"', "直骨令"),
     ]);
     await document.fonts.ready;
   });
@@ -116,9 +113,9 @@ try {
     return sha256(await sentinel.screenshot({ animations: "disabled" }));
   };
 
-  const chineseDirect = await render('"Chiron Sung HK"');
+  const chineseDirect = await render('"Noto Sans SC"');
   const chineseStack = await render(chineseFirst);
-  const japaneseDirect = await render('"Shippori Mincho"');
+  const japaneseDirect = await render('"Zen Kaku Gothic New"');
   const japaneseStack = await render(japaneseFirst);
   const pixelFailures: string[] = [];
   if (chineseStack !== chineseDirect)

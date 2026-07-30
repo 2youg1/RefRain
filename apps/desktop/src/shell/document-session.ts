@@ -20,6 +20,7 @@ import type {
   DocumentRow,
   FileStamp_Serialize,
   OpenDocumentDto_Serialize,
+  RecoveryStep,
   SessionDocumentDto,
 } from "../generated/bindings.gen";
 import { commands } from "../generated/bindings.gen";
@@ -29,7 +30,11 @@ export type SaveState =
   | { readonly kind: "clean" }
   | { readonly kind: "dirty" }
   | { readonly kind: "saving" }
-  | { readonly kind: "failed"; readonly reason: string; readonly recovery: readonly string[] };
+  | {
+      readonly kind: "failed";
+      readonly reason: string;
+      readonly recovery: readonly RecoveryStep[];
+    };
 
 export interface Conflict {
   readonly mine: string;
@@ -117,14 +122,40 @@ export const browserGateway: DocumentGateway = {
   },
 };
 
-/** Recovery steps a typed error carries, when it carries any. */
-function recoveryOf(error: unknown): readonly string[] {
+/**
+ * Recovery steps a typed error carries, when it carries any.
+ *
+ * The step stays typed. Widening it to `string[]` here would throw away the
+ * fact that this is a closed set of six, and the interface could then only
+ * print it back at the author — which is what it did. Keeping the union lets
+ * the surface answer each one with a sentence in the author's language, and
+ * lets a compiler point at the gap when a seventh is added.
+ */
+function recoveryOf(error: unknown): readonly RecoveryStep[] {
   if (typeof error !== "object" || error === null) return [];
   const recovery = (error as { recovery?: unknown }).recovery;
-  return Array.isArray(recovery)
-    ? recovery.filter((step): step is string => typeof step === "string")
-    : [];
+  if (!Array.isArray(recovery)) return [];
+  return recovery.filter((step): step is RecoveryStep =>
+    RECOVERY_STEPS.includes(step as RecoveryStep),
+  );
 }
+
+/**
+ * Every RecoveryStep the bridge can send.
+ *
+ * Listed here so the filter above rejects anything unknown rather than passing
+ * it through as a step nobody can render. `satisfies` makes the compiler check
+ * this against the generated union instead of trusting that it was kept in
+ * step by hand.
+ */
+const RECOVERY_STEPS = [
+  "retry",
+  "choose-another-location",
+  "choose-another-name",
+  "grant-permission",
+  "open-settings",
+  "report-defect",
+] as const satisfies readonly RecoveryStep[];
 
 export class DocumentSession extends Session {
   #document: OpenDocumentDto_Serialize | null = null;

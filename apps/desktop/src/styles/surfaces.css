@@ -1270,6 +1270,29 @@ kbd {
     visibility 0s 240ms;
 }
 
+/* 保存失败时才出现，紧跟在状态之后；`margin-right: auto` 让它与状态同处左侧，
+   路径仍然靠右——两端布局不因多出一个元素而错位。 */
+.status-line .recovery {
+  display: flex;
+  gap: 10px;
+  margin-right: auto;
+  padding-left: 12px;
+  color: var(--ink);
+}
+
+.status-line .recovery-step::before {
+  content: "→ ";
+  color: var(--ink-faint);
+}
+
+/* 选中反馈：与状态同处左侧，路径仍靠右。 */
+.status-line .selection {
+  margin-right: auto;
+  padding-left: 12px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
 .status-line .state {
   display: flex;
   align-items: center;

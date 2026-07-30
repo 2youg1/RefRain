@@ -240,8 +240,15 @@ impl Default for FontConfig {
     fn default() -> Self {
         Self {
             latin: "Antic Didone".to_string(),
-            chinese: "Chiron Sung HK".to_string(),
-            japanese: "Shippori Mincho".to_string(),
+            // The bundled faces, so the first launch looks the way RefRain was
+            // designed to look on every platform rather than inheriting
+            // whatever the machine happens to have. The author can name any
+            // face they have installed — `list_fonts` enumerates the machine's
+            // library and the stack honours the choice — and the bundled pair
+            // stays at the end of the stack as the fallback, so a face that is
+            // missing or carries no Han still cannot produce tofu.
+            chinese: "Noto Sans SC".to_string(),
+            japanese: "Zen Kaku Gothic New".to_string(),
             priority: FontSlot::ALL,
         }
     }

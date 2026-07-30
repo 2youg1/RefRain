@@ -1,4 +1,5 @@
 import { BlockHeightIndex } from "./block-height-index";
+import { applyBlockPrefix, type BlockPrefix } from "./block-prefix";
 import { applyInlineMark } from "./inline-mark";
 import type {
   Block,
@@ -7,6 +8,7 @@ import type {
   EditorContext,
   EditorFormat,
   PunctuationFinding,
+  SelectionMeasure,
 } from "./model";
 import { applyLocally, projectionIndex } from "./projection";
 import { applyPunctuationFinding, findPunctuation } from "./punctuation";
@@ -201,6 +203,7 @@ export class VirtualManuscriptView {
   #heightIndex: BlockHeightIndex;
   #contextBlock: { readonly blockId: string; readonly sourceText: string } | null = null;
   #settledWaiters: (() => void)[] = [];
+  #selectionListeners: ((measure: SelectionMeasure | null) => void)[] = [];
   #contextSelection: ContextSelection | null = null;
   #interaction: InteractionState = { kind: "idle" };
   #bottomPinned = false;
@@ -255,6 +258,8 @@ export class VirtualManuscriptView {
     element.addEventListener("compositionstart", this.#onCompositionStart);
     element.addEventListener("compositionend", this.#onCompositionEnd);
     this.#scrollHost.addEventListener("scroll", this.#onScroll, { passive: true });
+    // selectionchange 只在 document 上派发，不在元素上。
+    element.ownerDocument.addEventListener("selectionchange", this.#onSelectionChange);
 
     this.#render();
     this.#layoutKey = this.#currentLayoutKey();
@@ -301,6 +306,40 @@ export class VirtualManuscriptView {
     // it into view would undo the scroll position just computed above.
     this.#element.focus({ preventScroll: true });
     placeCaret(target, offset ?? (target.textContent ?? "").length);
+  }
+
+  /**
+   * Toggle a block-level prefix on the block holding the caret.
+   *
+   * Unlike `formatSelection` this needs no selection: a heading or a quote is a
+   * property of the block, and asking the author to select the line first would
+   * be asking them to do the machine's work.
+   */
+  applyBlockPrefix(prefix: BlockPrefix): boolean {
+    if (this.#interaction.kind === "composing") return false;
+    const paragraph = this.#paragraphAtCaret() ?? this.#contextParagraph();
+    const id = paragraph?.dataset.blockId;
+    if (id === undefined) return false;
+    const block = this.#known(id);
+    if (block === undefined) return false;
+    const next = applyBlockPrefix(block.text, prefix);
+    if (next === null || next === block.text) return false;
+    this.#contextBlock = null;
+    this.#contextSelection = null;
+    this.#submit([{ kind: "replace", blocks: [block.id], text: next }]);
+    const mounted = this.#byId.get(block.id);
+    if (mounted !== undefined) {
+      mounted.textContent = next;
+      this.#element.focus({ preventScroll: true });
+      placeCaret(mounted, next.length);
+    }
+    return true;
+  }
+
+  /** The block a right-click captured, when the caret is elsewhere. */
+  #contextParagraph(): HTMLElement | null {
+    const id = this.#contextBlock?.blockId;
+    return id === undefined ? null : (this.#byId.get(id) ?? null);
   }
 
   caret(): { blockId: string; offset: number } | null {
@@ -452,6 +491,8 @@ export class VirtualManuscriptView {
     this.#element.removeEventListener("compositionstart", this.#onCompositionStart);
     this.#element.removeEventListener("compositionend", this.#onCompositionEnd);
     this.#scrollHost.removeEventListener("scroll", this.#onScroll);
+    this.#element.ownerDocument.removeEventListener("selectionchange", this.#onSelectionChange);
+    this.#selectionListeners = [];
     this.#element.ownerDocument.fonts?.removeEventListener("loadingdone", this.#onFontsLoaded);
     this.#resizeObserver?.disconnect();
     this.#rootObserver?.disconnect();
@@ -504,6 +545,44 @@ export class VirtualManuscriptView {
       `${BLOCK_TAG}[data-block-id]`,
     ) as HTMLElement | null;
   }
+
+  /**
+   * Observe how much text is selected.
+   *
+   * The measure is over the whole selection, not the block it started in:
+   * selecting a passage that spans paragraphs is an ordinary thing to do, and
+   * a count that stopped at the first block would be wrong exactly when the
+   * author most wants it.
+   */
+  onSelectionMeasured(listener: (measure: SelectionMeasure | null) => void): () => void {
+    this.#selectionListeners.push(listener);
+    listener(this.#measureSelection());
+    return () => {
+      this.#selectionListeners = this.#selectionListeners.filter((entry) => entry !== listener);
+    };
+  }
+
+  /** Null when nothing is selected, or when the selection is outside this host. */
+  #measureSelection(): SelectionMeasure | null {
+    const selection = this.#element.ownerDocument.getSelection();
+    if (selection === null || selection.isCollapsed || selection.rangeCount === 0) return null;
+    const range = selection.getRangeAt(0);
+    if (!this.#element.contains(range.commonAncestorContainer)) return null;
+    const text = range.toString();
+    if (text.length === 0) return null;
+    // Count code points, so one CJK glyph is one character rather than the two
+    // UTF-16 units a surrogate pair would report.
+    const characters = [...text].length;
+    const fragment = range.cloneContents();
+    const blocks = Math.max(1, fragment.querySelectorAll(`${BLOCK_TAG}[data-block-id]`).length);
+    return { characters, blocks };
+  }
+
+  readonly #onSelectionChange = (): void => {
+    if (this.#destroyed || this.#selectionListeners.length === 0) return;
+    const measure = this.#measureSelection();
+    for (const listener of this.#selectionListeners) listener(measure);
+  };
 
   /**
    * The paragraph the caret is in.
