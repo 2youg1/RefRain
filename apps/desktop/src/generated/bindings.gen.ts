@@ -331,6 +331,26 @@ export type AppearanceConfig = {
 	typography_presets?: TypographyPreset[],
 	/**  The manuscript sheet's edge: none / hairline / paper. */
 	paper?: PaperMode,
+	/**  What panels are made of. Solid by default: it costs nothing to draw. */
+	panel_material?: PanelMaterial,
+	/**
+	 *  The author's chosen code colouring, or None to follow the interface
+	 *  theme. None is not a missing value: it is "keep matching the theme",
+	 *  and it must survive a theme change, which a resolved default cannot.
+	 */
+	code_theme?: string | null,
+	/**
+	 *  The night lamp: a halo around the sheet, so the light has a source
+	 *  instead of the glyphs appearing to emit it themselves.
+	 */
+	night_lamp?: boolean,
+	/**  Which side panels open from. Left by default. */
+	panel_side?: PanelSide,
+	/**
+	 *  Whether panels animate open. Off shortens the motion to 1ms rather than
+	 *  taking a separate, untravelled code path.
+	 */
+	panel_animation?: boolean,
 	/**
 	 *  The writing-entry icon, by content digest. The asset named by this
 	 *  digest lives in the application data assets directory.
@@ -811,6 +831,23 @@ export type OpenDocumentDto_Serialize = {
 };
 
 /**
+ *  What a panel is made of: opaque, frosted, or glass with thickness.
+ * 
+ *  Three densities of one thing — how much light passes through — not three
+ *  skins. The numbers live in the renderer; this only records the choice.
+ */
+export type PanelMaterial = "solid" | "acrylic" | "liquid";
+
+/**
+ *  Which side the panel stack grows from.
+ * 
+ *  The stack is one-directional by construction: panels open outward from this
+ *  side and nothing ever appears opposite them. Flipping this mirrors the same
+ *  stack; it does not introduce a second layout.
+ */
+export type PanelSide = "left" | "right";
+
+/**
  *  The manuscript sheet's edge (SPEC 9.8): an edgeless Web-like column, a
  *  hairline boundary, or a full sheet of paper for authors coming from Word.
  */
@@ -820,7 +857,7 @@ export type PaperMode = "none" | "hairline" | "paper";
  *  The preferences the Settings surface may change (SPEC 6.5). Connection
  *  management is its own command pair; this is the author's choices.
  */
-export type PreferencesChangeDto = { kind: "karaAutoEnter"; value: boolean } | { kind: "setTheme"; value: string } | { kind: "setPaper"; value: PaperMode } | { kind: "setTypography"; value: TypographyConfig } | { kind: "saveTypographyPreset"; value: string } | { kind: "removeTypographyPreset"; value: Id } | { kind: "resetVisual" } | { kind: "resetTypography" } | { kind: "restoreAppearance"; value: AppearanceConfig };
+export type PreferencesChangeDto = { kind: "karaAutoEnter"; value: boolean } | { kind: "setTheme"; value: string } | { kind: "setPaper"; value: PaperMode } | { kind: "setPanelSide"; value: PanelSide } | { kind: "setPanelMaterial"; value: PanelMaterial } | { kind: "setNightLamp"; value: boolean } | { kind: "setCodeTheme"; value: string | null } | { kind: "setPanelAnimation"; value: boolean } | { kind: "setTypography"; value: TypographyConfig } | { kind: "saveTypographyPreset"; value: string } | { kind: "removeTypographyPreset"; value: Id } | { kind: "resetVisual" } | { kind: "resetTypography" } | { kind: "restoreAppearance"; value: AppearanceConfig };
 
 /**  A Root as the interface names it. */
 export type ProjectOpenedDto = {

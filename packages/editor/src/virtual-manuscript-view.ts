@@ -1140,7 +1140,7 @@ export class VirtualManuscriptView {
     this.#submit(changes);
   };
 
-  readonly #onInput = (event: Event): void => {
+  readonly #onInput = (_event: Event): void => {
     if (this.#interaction.kind === "composing") return;
     this.#contextBlock = null;
     this.#contextSelection = null;

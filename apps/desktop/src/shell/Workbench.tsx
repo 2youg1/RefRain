@@ -8,12 +8,7 @@ import type {
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { describe, unwrap } from "../bridge";
-import {
-  type AnnotationDto,
-  commands,
-  type DocumentRow,
-  type ProjectOpenedDto,
-} from "../generated/bindings.gen";
+import { type AnnotationDto, commands } from "../generated/bindings.gen";
 import { AnnotationSurface } from "../ui/AnnotationSurface";
 import { ConflictDialog } from "../ui/ConflictDialog";
 import { ConnectionsSurface } from "../ui/ConnectionsSurface";
@@ -33,14 +28,17 @@ import { CommandFocus } from "./command-focus";
 import { type DocumentGateway, DocumentSession } from "./document-session";
 import { EditIntents } from "./edit-intents";
 import { useKara } from "./kara-state";
+import { canOpen, panelKey, settingsSection } from "./panel-reference";
+import { PanelStack } from "./panel-stack";
 import { ProjectSession } from "./project-session";
 import { browserTimer, RailPresence } from "./rail-presence";
+import { railScroll } from "./rail-scroll";
 import { SelectionReadout } from "./selection-readout";
+import { handleShortcut } from "./shortcuts";
 import { commandCatalog, type WorkbenchCommandId } from "./workbench-commands";
 import {
   initialWorkbenchState,
   reduceWorkbench,
-  type SettingsSection,
   type WorkbenchReference,
   type WorkbenchState,
 } from "./workbench-state";
@@ -81,6 +79,8 @@ export function Workbench(props: WorkbenchProps) {
   const [projectTick, setProjectTick] = createSignal(0);
   const [documentTick, setDocumentTick] = createSignal(0);
   const [state, setState] = createSignal<WorkbenchState<never>>(initialWorkbenchState());
+  const [panelTick, setPanelTick] = createSignal(0);
+  const panels = new PanelStack<WorkbenchReference>(() => setPanelTick((value) => value + 1));
   const [intentTick, setIntentTick] = createSignal(0);
   // 右键落点、批注锚点、派发种子是同一条链上的三段，归 EditIntents。
   const intents = new EditIntents(() => setIntentTick((value) => value + 1));
@@ -155,12 +155,7 @@ export function Workbench(props: WorkbenchProps) {
 
   // 名录可以有十万条。侧栏只挂看得见的那几十行，其余用两个 spacer 撑住滚动条；
   // 视野逼近末尾时顺手取下一页——「继续加载」按钮不该存在，作者要的是往下滚。
-  const [railScroll, setRailScroll] = createSignal({ top: 0, height: 0 });
-  let railElement: HTMLElement | undefined;
-  const onRailScroll = (): void => {
-    if (railElement === undefined) return;
-    setRailScroll({ top: railElement.scrollTop, height: railElement.clientHeight });
-  };
+  const railView = railScroll();
   const editorAnnotations = createMemo<EditorAnnotationProjection[]>(() =>
     documentView().annotations.map((row) => ({
       id: row.id,
@@ -171,12 +166,12 @@ export function Workbench(props: WorkbenchProps) {
       anchorState: row.anchorState,
     })),
   );
-  const reference = createMemo(() => state().reference);
-  const annotationsOpen = createMemo(() => reference()?.kind === "annotations");
-  const settingsSection = createMemo<SettingsSection>(() => {
-    const current = reference();
-    return current?.kind === "settings" ? current.section : "appearance";
+  // 栈顶就是屏幕上那一层。没有第二处记录，所以不存在「谁对」的问题。
+  const reference = createMemo(() => {
+    panelTick();
+    return panels.top?.content ?? null;
   });
+  const annotationsOpen = createMemo(() => reference()?.kind === "annotations");
   const commandsForMenu = createMemo(() =>
     commandCatalog({ hasProject: project() !== null, hasDocument: active() !== null }),
   );
@@ -189,12 +184,15 @@ export function Workbench(props: WorkbenchProps) {
     setState((current) => reduceWorkbench(current, event));
   };
   const openStage = (stage: "writing" | "review" | "dispatch"): void => {
+    panels.clear();
     transition({ kind: "openStage", stage });
   };
   const openReference = (next: WorkbenchReference): void => {
-    transition({ kind: "openReference", reference: next });
+    if (!canOpen(next, active() !== null)) return;
+    const key = panelKey(next);
+    panels.open({ key, title: key, content: next });
   };
-  const closeReference = (): void => transition({ kind: "closeReference" });
+  const closeReference = (): void => panels.clear();
 
   // 取得项目的四条路都归 ProjectSession；这里只负责问作者要一个名字。
   const openProjectFolder = (): Promise<void> => projectSession.openFolder();
@@ -209,6 +207,8 @@ export function Workbench(props: WorkbenchProps) {
     const opened = await documentSession.open(path);
     if (opened === null) return;
     kara.apply(opened.kara);
+    // 换一份稿子是换场景：打开着的那条面板路径不再属于这里。
+    panels.clear();
     transition({ kind: "documentSelected" });
     if (opened.staleJournal.length > 0) {
       setNotice(`有 ${opened.staleJournal.length} 条未确认的行动无法恢复，已留作证据。`);
@@ -327,18 +327,15 @@ export function Workbench(props: WorkbenchProps) {
   };
 
   const onKeydown = (event: KeyboardEvent): void => {
-    if (event.isComposing || editor?.isComposing()) return;
-    const modifier = event.ctrlKey || event.metaKey;
-    if (modifier && event.key.toLowerCase() === "s") {
-      event.preventDefault();
-      save();
-    } else if (modifier && event.key.toLocaleLowerCase() === "k") {
-      event.preventDefault();
-      commandFocus.toggle();
-    } else if (event.key === "Escape" && menu() !== null) {
-      event.preventDefault();
-      intents.release();
-    }
+    handleShortcut(event, {
+      composing: () => editor?.isComposing() === true,
+      save,
+      toggleCommandMenu: () => commandFocus.toggle(),
+      menuOpen: () => menu() !== null,
+      closeMenu: () => intents.release(),
+      panelDepth: () => panels.depth,
+      closePanel: () => panels.back(),
+    });
   };
 
   const onPointerMove = (event: PointerEvent): void => rail.pointerMoved(event.clientX);
@@ -425,8 +422,8 @@ export function Workbench(props: WorkbenchProps) {
               class="rail"
               classList={{ receded: railReceded() || reference()?.kind === "settings" }}
               aria-label="文档"
-              ref={railElement}
-              onScroll={onRailScroll}
+              ref={railView.ref}
+              onScroll={railView.onScroll}
             >
               <button type="button" class="brand" onClick={() => setRailReceded((value) => !value)}>
                 <LogoMark size={28} label="RefRain" />
@@ -455,8 +452,8 @@ export function Workbench(props: WorkbenchProps) {
                 label="原稿"
                 shelf="manuscript"
                 rows={chapters()}
-                scrollTop={railScroll().top}
-                viewportHeight={railScroll().height}
+                scrollTop={railView.view().top}
+                viewportHeight={railView.view().height}
                 currentPath={active()?.document.path ?? null}
                 onSelect={(path) => void selectDocument(path)}
                 catalog={projectSession}
@@ -466,8 +463,8 @@ export function Workbench(props: WorkbenchProps) {
                   label="资料"
                   shelf="material"
                   rows={materials()}
-                  scrollTop={railScroll().top}
-                  viewportHeight={railScroll().height}
+                  scrollTop={railView.view().top}
+                  viewportHeight={railView.view().height}
                   currentPath={active()?.document.path ?? null}
                   onSelect={(path) => void selectDocument(path)}
                   catalog={projectSession}
@@ -518,7 +515,7 @@ export function Workbench(props: WorkbenchProps) {
               <Show when={notice()}>{(text) => <p class="notice">{text()}</p>}</Show>
               <Show when={reference()?.kind === "settings"}>
                 <SettingsSurface
-                  initialSection={settingsSection()}
+                  initialSection={settingsSection(reference())}
                   returnLabel={active()?.document.path ?? "工作台"}
                   onClosed={closeReference}
                   onThemePicked={(slug: string) => props.onThemeChanged?.(slug)}
@@ -578,7 +575,7 @@ export function Workbench(props: WorkbenchProps) {
                         onCollected={(count) =>
                           setNotice(`${count} 条提案已冻结，点 Review 逐句裁决。`)
                         }
-                        onMaterialSaved={(row: DocumentRow) => projectSession.add(row)}
+                        onMaterialSaved={(row) => projectSession.add(row)}
                         onClosed={() => openStage("writing")}
                       />
                     </Show>

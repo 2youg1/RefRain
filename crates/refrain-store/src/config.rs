@@ -72,6 +72,25 @@ pub struct AppearanceConfig {
     /// The manuscript sheet's edge: none / hairline / paper.
     #[serde(default)]
     pub paper: PaperMode,
+    /// What panels are made of. Solid by default: it costs nothing to draw.
+    #[serde(default)]
+    pub panel_material: PanelMaterial,
+    /// The author's chosen code colouring, or None to follow the interface
+    /// theme. None is not a missing value: it is "keep matching the theme",
+    /// and it must survive a theme change, which a resolved default cannot.
+    #[serde(default)]
+    pub code_theme: Option<String>,
+    /// The night lamp: a halo around the sheet, so the light has a source
+    /// instead of the glyphs appearing to emit it themselves.
+    #[serde(default)]
+    pub night_lamp: bool,
+    /// Which side panels open from. Left by default.
+    #[serde(default)]
+    pub panel_side: PanelSide,
+    /// Whether panels animate open. Off shortens the motion to 1ms rather than
+    /// taking a separate, untravelled code path.
+    #[serde(default = "yes")]
+    pub panel_animation: bool,
     /// The writing-entry icon, by content digest. The asset named by this
     /// digest lives in the application data assets directory.
     #[serde(default)]
@@ -85,6 +104,11 @@ impl Default for AppearanceConfig {
             typography: TypographyConfig::default(),
             typography_presets: Vec::new(),
             paper: PaperMode::default(),
+            panel_material: PanelMaterial::default(),
+            code_theme: None,
+            night_lamp: false,
+            panel_side: PanelSide::default(),
+            panel_animation: true,
             icon_digest: None,
         }
     }
@@ -208,6 +232,38 @@ pub enum PaperMode {
     #[default]
     Hairline,
     Paper,
+}
+
+/// What a panel is made of: opaque, frosted, or glass with thickness.
+///
+/// Three densities of one thing — how much light passes through — not three
+/// skins. The numbers live in the renderer; this only records the choice.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum PanelMaterial {
+    #[default]
+    Solid,
+    Acrylic,
+    Liquid,
+}
+
+/// `#[serde(default)]` on a bool yields false; panels animate unless the author
+/// turned that off, so the default needs saying out loud.
+fn yes() -> bool {
+    true
+}
+
+/// Which side the panel stack grows from.
+///
+/// The stack is one-directional by construction: panels open outward from this
+/// side and nothing ever appears opposite them. Flipping this mirrors the same
+/// stack; it does not introduce a second layout.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum PanelSide {
+    #[default]
+    Left,
+    Right,
 }
 
 /// The three face slots (SPEC 9.8). One CJK slot cannot serve both
@@ -424,6 +480,12 @@ pub enum ConfigChange {
     KaraAutoEnter(bool),
     SetTheme(String),
     SetPaper(PaperMode),
+    SetPanelSide(PanelSide),
+    SetPanelMaterial(PanelMaterial),
+    SetNightLamp(bool),
+    /// None restores "follow the interface theme".
+    SetCodeTheme(Option<String>),
+    SetPanelAnimation(bool),
     SetTypography(TypographyConfig),
     SaveTypographyPreset(String),
     RemoveTypographyPreset(Id),
@@ -504,6 +566,13 @@ impl ConfigV1 {
                 typography,
                 typography_presets: Vec::new(),
                 paper: self.appearance.paper,
+                // v1 没有面板栈，迁移过来的配置落在默认值上：左侧、有动画、
+                // 实心面板、不点灯。
+                panel_side: PanelSide::default(),
+                panel_animation: true,
+                panel_material: PanelMaterial::default(),
+                night_lamp: false,
+                code_theme: None,
                 icon_digest: self.appearance.icon_digest,
             },
             harness_connections: self.harness_connections,
@@ -654,6 +723,21 @@ impl ConfigStore {
             }
             ConfigChange::SetPaper(mode) => {
                 snapshot.config.appearance.paper = mode;
+            }
+            ConfigChange::SetPanelSide(side) => {
+                snapshot.config.appearance.panel_side = side;
+            }
+            ConfigChange::SetPanelMaterial(material) => {
+                snapshot.config.appearance.panel_material = material;
+            }
+            ConfigChange::SetNightLamp(on) => {
+                snapshot.config.appearance.night_lamp = on;
+            }
+            ConfigChange::SetCodeTheme(theme) => {
+                snapshot.config.appearance.code_theme = theme;
+            }
+            ConfigChange::SetPanelAnimation(animated) => {
+                snapshot.config.appearance.panel_animation = animated;
             }
             ConfigChange::SetTypography(typography) => {
                 snapshot.config.appearance.typography = typography;

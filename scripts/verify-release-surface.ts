@@ -5,7 +5,6 @@ import { spawnSync } from "node:child_process";
 const rust = await Bun.file("apps/desktop/src-tauri/src/lib.rs").text();
 const bindings = await Bun.file("apps/desktop/src/generated/bindings.gen.ts").text();
 const debugBridge = await Bun.file("apps/desktop/src/e2e/debug-bridge.ts").text();
-const workbench = await Bun.file("apps/desktop/src/shell/Workbench.tsx").text();
 // 「取得一个项目」搬进了 ProjectSession：选择器归 Rust 这条事实的权威随之移位。
 const projectSession = await Bun.file("apps/desktop/src/shell/project-session.ts").text();
 const failures: string[] = [];

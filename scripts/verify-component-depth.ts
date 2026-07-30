@@ -23,14 +23,17 @@ const BODY_DEBT: Readonly<Record<string, number>> = {
   // 作者关进开合循环」那条只有它知道的规矩）；右键落点、批注锚点、派发种子三段
   // 搬进 `edit-intents.ts`；「从光标算出返回卡片」搬回 `kara-state.ts`——18 个字
   // 那个数字属于 KARA，不属于外壳。三处都配了此前根本无法编写的测试（要开真窗口）。
-  "Workbench.tsx": 584,
+  // 583：面板栈接线净增的部分已各归其位——侧栏滚动位置归 rail-scroll，
+  // 面板的键与可开性归 panel-reference，快捷键次序归 shortcuts（三者都因此
+  // 第一次可测）。棘轮在这轮双向都咬过：先拦住 608 的上涨，又要求登记这次下降。
+  "Workbench.tsx": 583,
   // 483：排版预览段（U-9）。设置页独占 Stage 时手稿被完全盖住，而字距、词距、
   // 共享汉字优先级不看真实字形无法判断。预览只读 applyTypography 已经写好的那批
   // CSS 变量，不重算任何排版值——另写一份映射会立刻产生第二个排版权威。
   "TypographyPanel.tsx": 483,
-  "DispatchSurface.tsx": 349,
-  "ConnectionsSurface.tsx": 241,
-  "ReviewSurface.tsx": 251,
+  "DispatchSurface.tsx": 347,
+  "ConnectionsSurface.tsx": 239,
+  "ReviewSurface.tsx": 249,
   "SettingsSurface.tsx": 242,
 };
 
@@ -38,7 +41,8 @@ const BODY_DEBT: Readonly<Record<string, number>> = {
 const BRIDGE_DEBT: Readonly<Record<string, number>> = {
   "TypographyPanel.tsx": 0,
   "Workbench.tsx": 0,
-  "ThemePicker.tsx": 4,
+  // 3：六项外观选择共用一条 `apply` 写入路径，不再每项各抄一份读值/写值/记错误。
+  "ThemePicker.tsx": 3,
   "SettingsSurface.tsx": 3,
   "EditorHost.tsx": 2,
   "IconPicker.tsx": 2,

@@ -5,57 +5,39 @@ import {
   type WorkbenchState,
 } from "../src/shell/workbench-state";
 
+// 「打开到哪一层面板」已经归 PanelStack，那几条规矩在 panel-stack.test.ts。
+// 这里只问 reducer 现在真正拥有的两件事：作者在哪个场景，有没有待处理的安全事件。
+
 type Conflict = { mine: string; theirs: string };
 const selected = (): WorkbenchState<Conflict> =>
   reduceWorkbench(initialWorkbenchState<Conflict>(), { kind: "documentSelected" });
 
 describe("workbench state", () => {
-  test("document stages require a document", () => {
+  test("没有文档就进不了 Review 与派发", () => {
     const empty = initialWorkbenchState<Conflict>();
     expect(reduceWorkbench(empty, { kind: "openStage", stage: "review" })).toBe(empty);
     expect(reduceWorkbench(empty, { kind: "openStage", stage: "dispatch" })).toBe(empty);
   });
 
-  test("a reference preserves and restores the current stage", () => {
-    const review = reduceWorkbench(selected(), { kind: "openStage", stage: "review" });
-    const settings = reduceWorkbench(review, {
-      kind: "openReference",
-      reference: { kind: "settings", section: "typography" },
-    });
-    expect(settings.stage).toBe("review");
-    expect(reduceWorkbench(settings, { kind: "closeReference" })).toEqual(review);
+  test("写作现场任何时候都回得去", () => {
+    const empty = initialWorkbenchState<Conflict>();
+    expect(reduceWorkbench(empty, { kind: "openStage", stage: "writing" }).stage).toBe("writing");
   });
 
-  test("one reference replaces another without queueing it", () => {
-    const settings = reduceWorkbench(selected(), {
-      kind: "openReference",
-      reference: { kind: "settings", section: "appearance" },
-    });
-    const connections = reduceWorkbench(settings, {
-      kind: "openReference",
-      reference: { kind: "connections" },
-    });
-    expect(connections.reference).toEqual({ kind: "connections" });
-  });
-
-  test("safety preempts interaction without destroying stage or reference", () => {
+  test("安全事件盖住交互，但不毁掉作者所在的场景", () => {
     const dispatch = reduceWorkbench(selected(), { kind: "openStage", stage: "dispatch" });
-    const annotated = reduceWorkbench(dispatch, {
-      kind: "openReference",
-      reference: { kind: "annotations" },
-    });
     const conflict = { mine: "mine", theirs: "theirs" };
-    const raised = reduceWorkbench(annotated, { kind: "raiseSafety", value: conflict });
+    const raised = reduceWorkbench(dispatch, { kind: "raiseSafety", value: conflict });
     expect(raised.stage).toBe("dispatch");
-    expect(raised.reference).toEqual({ kind: "annotations" });
-    expect(reduceWorkbench(raised, { kind: "resolveSafety" })).toEqual(annotated);
+    expect(raised.safety?.value).toEqual(conflict);
+    // 处理完之后回到原处，而不是被弹去别的地方。
+    expect(reduceWorkbench(raised, { kind: "resolveSafety" })).toEqual(dispatch);
   });
 
-  test("document selection clears stale stage, reference, and safety", () => {
+  test("换一份稿子把过期的场景与安全事件一起清掉", () => {
     const old: WorkbenchState<Conflict> = {
       hasDocument: true,
       stage: "review",
-      reference: { kind: "connections" },
       safety: { kind: "external-conflict", value: { mine: "a", theirs: "b" } },
     };
     expect(reduceWorkbench(old, { kind: "documentSelected" })).toEqual(selected());

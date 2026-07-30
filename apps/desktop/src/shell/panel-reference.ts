@@ -1,0 +1,34 @@
+import type { SettingsSection, WorkbenchReference } from "./workbench-state";
+
+/**
+ * 一个参考面板在栈里怎么落位。
+ *
+ * 两件只与 reference 有关的事：它占哪一层（键），以及此刻能不能打开。
+ * 它们此前住在外壳里，读起来像外壳的编排，其实是 reference 自己的性质——
+ * 「批注要有一篇稿子才谈得上」不会因为换个调用方而改变。
+ */
+
+/**
+ * 面板的键。
+ *
+ * 设置的每一节各有自己的键：从排版切到外观是换一层，不是在同一层里换内容。
+ * 而连接、批注各自只有一层。
+ */
+export function panelKey(reference: WorkbenchReference): string {
+  return reference.kind === "settings" ? `settings/${reference.section}` : reference.kind;
+}
+
+/** 批注锚在正文上，没有打开的文档就没有可锚之处。 */
+export function canOpen(reference: WorkbenchReference, hasDocument: boolean): boolean {
+  return reference.kind !== "annotations" || hasDocument;
+}
+
+/**
+ * 设置面板此刻停在哪一节。
+ *
+ * 不在设置层时给「外观」——设置页要有一个起点，而这个起点是设置自己的默认值，
+ * 不是每个调用方各猜一次。
+ */
+export function settingsSection(reference: WorkbenchReference | null): SettingsSection {
+  return reference?.kind === "settings" ? reference.section : "appearance";
+}

@@ -610,9 +610,15 @@ const PREVIEW_TOKENS = [
   "pending",
 ] as const;
 
-const previewCard = (t: Theme): string => {
+/**
+ * 一套主题的色值表。
+ *
+ * 从前这里生成一份 34KB 的 HTML 预览页——一整个渲染过的窗口、七套各一份。
+ * 要回答的问题其实只有「这套主题的每个变量是什么颜色、对比度够不够」，
+ * 而那是一张表。真实观感在产品里看，不在一份需要自己维护 CSS 的仿制品里。
+ */
+const previewSection = (t: Theme): string => {
   const v = derive(t);
-  const vars = PREVIEW_TOKENS.map((name) => `--${name}:${lit(v[name] as Oklch)}`).join(";");
   const measured: [label: string, lc: number, floor: number][] = [
     ["正文墨/纸", apca(v.ink as Oklch, v.paper as Oklch), 75],
     ["侧栏文/侧", apca(v["rail-ink"] as Oklch, v.rail as Oklch), 75],
@@ -623,122 +629,43 @@ const previewCard = (t: Theme): string => {
     ["代理/纸", apca(v.agent as Oklch, v.paper as Oklch), 45],
     ["引用/纸", apca(v.source as Oklch, v.paper as Oklch), 45],
   ];
-  const lcRows = measured
+  const colours = PREVIEW_TOKENS.map(
+    (name) => `| \`--${name}\` | \`${lit(v[name] as Oklch)}\` | ${hex(v[name] as Oklch)} |`,
+  ).join("\n");
+  const contrast = measured
     .map(
       ([label, lc, floor]) =>
-        `<tr><td>${label}</td><td class="${Math.abs(lc) >= floor ? "ok" : "bad"}">${lc}</td><td>|${floor}|</td></tr>`,
+        `| ${label} | ${lc} | \\|${floor}\\| | ${Math.abs(lc) >= floor ? "✓" : "✗"} |`,
     )
-    .join("");
-  const swatches = [
-    "paper",
-    "sheet",
-    "rule",
-    "rail",
-    "rail-ink",
-    "ink",
-    "ink-soft",
-    "seal",
-    "agent",
-    "accepted",
-    "refused",
-    "source",
-  ]
-    .map((name) => `<i style="background:${lit(v[name] as Oklch)}" title="--${name}"></i>`)
-    .join("");
-  return `<section class="card ${t.mode}" id="${t.slug}">
- <header><div class="nm"><b>${t.cn}</b><i>${t.slug}</i>${t.isDefault ? " <u>默认</u>" : ""}</div>
- <div class="tags"><span class="mode ${t.mode === "day" ? "d" : "n"}">${t.mode === "day" ? "日间" : "夜间"}</span><span class="lin">${t.lineage}</span></div></header>
- <p class="prose">${t.why}</p>
- <div class="win" style="${vars}">
-  <div class="tb"><span class="dot"></span><span class="tt">RefRain — 第一章　川の湾</span><span class="tx">－ ▢ ✕</span></div>
-  <div class="bd"><aside class="rail">
-    <div class="rt"><span class="lg"></span><span class="wm">RefRain</span></div><div class="rg">原稿</div>
-    <ul><li class="on">第一章　川の湾</li><li>第二章　帳面</li><li>第三章　寸法</li><li class="dm">附録　覚書</li></ul>
-    <div class="rf">＋ フォルダを開く</div></aside>
-   <main class="st"><div class="sh"><p class="p">霧が下流から這い上がって、川の湾を一枚ずつ畳んでいく。彼は振り返らず、手の帳面をもう一方の手へ移した。</p><p class="p pd">遠くで誰かが何かを打っている。とても遅く、間を置いて一度ずつ。</p><p class="p zh">雾从下游漫上来，把河湾一层层收走。他没有回头，只是把手里的册子换到另一只手。</p></div>
-    <div class="bar"><span class="c ac">受理 12</span><span class="c rf2">差戻 3</span><span class="c ag">kimi</span><span class="c sc">引用 4</span><span class="gr"></span><span class="c sl">裁決待ち 2</span></div>
-   </main></div></div>
- <div class="sw">${swatches}</div>
- <div class="foot"><table class="lc"><tr><th>APCA</th><th>Lc</th><th>门槛</th></tr>${lcRows}</table><p class="src">${t.source}</p></div>
-</section>`;
+    .join("\n");
+  return `## ${t.cn} \`${t.slug}\`${t.isDefault ? " · 默认" : ""}
+
+${t.mode === "day" ? "日间" : "夜间"} · ${t.lineage}
+
+${t.why}
+
+| 变量 | OKLCH | Hex |
+|---|---|---|
+${colours}
+
+| APCA | Lc | 门槛 | |
+|---|--:|--:|:-:|
+${contrast}
+
+${t.source}`;
 };
 
-const preview = `<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RefRain · 七套主题</title><style>
-/* biome-ignore-all lint/style/noDescendingSpecificity: signed-off review surface, not product CSS. */
-/* biome-ignore-all lint/complexity/noImportantStyles: the Lc pass/fail cells are deliberately terminal. */
-/* 由 scripts/generate-themes.ts 生成，勿手改。 */
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:#dedede;color:#242424;font-family:"Segoe UI Variable Text","Segoe UI",system-ui,"Yu Gothic UI","Microsoft YaHei UI",sans-serif;padding:38px 30px 84px;-webkit-font-smoothing:antialiased}
-.w{max-width:1180px;margin:0 auto}
-h1{font-size:27px;font-weight:500;letter-spacing:.08em}
-.sb{color:#6b6b6b;font-size:13px;line-height:1.95;margin-top:8px}
-.rl{font-size:12.5px;color:#5c5c5c;margin:17px 0 13px;padding:14px 18px;border:1px solid #c4c4c4;background:#f0f0f0;line-height:2.05}
-.rl b{color:#242424;font-weight:600}
-.nv{display:flex;flex-wrap:wrap;gap:8px;margin:13px 0 26px;align-items:center}
-.nv a{text-decoration:none;color:#4f4f4f;font-size:13px;padding:5px 13px;border:1px solid #c4c4c4;background:#f0f0f0}
-.nv a:hover{background:#242424;color:#f0f0f0}
-.nv s{text-decoration:none;font-size:11.5px;padding:3px 9px}
-.d-tag{background:#e3e9eb} .n-tag{background:#2a2f38;color:#dfe4ea}
-.card{border:1px solid #c4c4c4;background:#f0f0f0;padding:17px 19px 19px;margin-bottom:24px;scroll-margin-top:14px}
-.card.night{background:#242424;border-color:#3a3a3a;color:#d8d8d8}
-.card.night .prose{color:#a8a8a8} .card.night .src{color:#8a8a8a}
-.card.night .lc th,.card.night .lc td{border-color:#3a3a3a;color:#a8a8a8}
-header{display:flex;align-items:baseline;justify-content:space-between;padding-bottom:8px}
-.nm b{font-size:25px;font-weight:600;letter-spacing:.1em}
-.nm i{font-style:normal;font-size:11px;opacity:.55;margin-left:9px;letter-spacing:.16em;text-transform:uppercase}
-.nm u{text-decoration:none;font-size:11px;margin-left:9px;padding:2px 8px;background:#242424;color:#f0f0f0}
-.card.night .nm u{background:#d8d8d8;color:#242424}
-.tags{display:flex;gap:8px;align-items:center}
-.mode{font-size:11.5px;padding:3px 10px} .mode.d{background:#e3e9eb;color:#3b4a52} .mode.n{background:#1c2029;color:#c8d2dc}
-.lin{font-size:11.5px;opacity:.65}
-.prose{font-size:12.5px;line-height:1.95;padding-bottom:13px;color:#5c5c5c}
-.win{border:1px solid var(--rule-strong);border-radius:5px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.09),0 10px 26px rgba(0,0,0,.11)}
-.tb{display:flex;align-items:center;gap:8px;background:var(--rail);color:var(--rail-ink);padding:7px 11px;font-size:11px}
-.dot{width:11px;height:11px;border-radius:2.5px;background:var(--seal);flex:none}
-.tt{flex:1;letter-spacing:.03em} .tx{letter-spacing:.2em;opacity:.7}
-.bd{display:flex;height:260px;background:var(--paper)}
-.rail{width:150px;flex:none;background:var(--rail);color:var(--rail-ink);display:flex;flex-direction:column;padding:11px 0 8px;border-right:1px solid var(--rail-rule)}
-.rt{display:flex;align-items:center;gap:7px;padding:0 12px 12px}
-.lg{width:16px;height:16px;border-radius:3.5px;background:var(--seal);flex:none}
-.wm{font-size:13px;letter-spacing:.05em}
-.rg{font-size:9.5px;letter-spacing:.2em;color:var(--rail-faint);padding:0 12px 5px}
-.rail ul{list-style:none;flex:1}
-.rail li{font-size:11px;padding:5px 12px;color:var(--rail-faint)}
-.rail li.on{color:var(--rail-ink);background:var(--paper);border-left:2px solid var(--seal);padding-left:10px}
-.rail li.dm{opacity:.62}
-.rf{font-size:10.5px;color:var(--rail-faint);padding:8px 12px 0;border-top:1px solid var(--rail-rule)}
-.st{flex:1;display:flex;flex-direction:column;background:var(--paper);padding:15px 15px 0;min-width:0}
-.sh{flex:1;background:var(--sheet);border:1px solid var(--rule);border-radius:3px;padding:14px 16px 6px;overflow:hidden}
-.p{color:var(--ink);font-size:11px;line-height:2.05;text-indent:1em;margin-bottom:7px;font-family:"Yu Mincho","Hiragino Mincho ProN","Songti SC",serif}
-.p.zh{color:var(--ink-soft)}
-.pd{position:relative} .pd::before{content:"";position:absolute;left:-9px;top:3px;bottom:3px;width:2px;background:var(--pending);opacity:.75}
-.bar{display:flex;gap:6px;align-items:center;padding:9px 1px;font-size:10px}
-.gr{flex:1} .c{padding:2px 8px;border-radius:2px;white-space:nowrap}
-.ac{color:var(--accepted);background:var(--accepted-wash);border:1px solid color-mix(in oklab,var(--accepted) 38%,transparent)}
-.rf2{color:var(--refused);background:var(--refused-wash);border:1px solid color-mix(in oklab,var(--refused) 38%,transparent)}
-.ag{color:var(--agent);background:var(--agent-wash);border:1px solid color-mix(in oklab,var(--agent) 38%,transparent)}
-.sc{color:var(--source);background:var(--source-wash);border:1px solid color-mix(in oklab,var(--source) 38%,transparent)}
-.sl{color:var(--paper);background:var(--seal);font-weight:600}
-.sw{display:flex;margin-top:9px} .sw i{flex:1;height:16px;display:block}
-.foot{display:flex;gap:20px;align-items:flex-start;margin-top:10px;flex-wrap:wrap}
-.lc{border-collapse:collapse;font-family:"Cascadia Mono",Consolas,monospace;font-size:10px}
-.lc th,.lc td{border:1px solid #d4d4d4;padding:2px 8px;text-align:right;color:#8a8a8a}
-.lc th{text-align:center} .lc td:first-child{text-align:left}
-.ok{color:#3d7a4a!important} .bad{color:#b33!important;font-weight:700}
-.src{font-size:10.5px;color:#9a9a9a;flex:1;min-width:14rem;line-height:1.8}
-</style><div class="w">
-<h1>RefRain · ${THEMES.length} 套主题</h1>
-<p class="sb">日间${THEMES.filter((t) => t.mode === "day").length}套（${named("day")}）与夜间${THEMES.filter((t) => t.mode === "night").length}套（${named("night")}）各自成立；昼夜互不反相。本页与 themes.css 同一份数据生成——签的就是实测值。</p>
-<div class="rl"><b>D12 裁撤映射（八套 → 七套）</b>：枯→砂（枯山水）、瓷→侘（青瓷）、林→桦（桦木）、時雨→韶（Blade Runner；第二强调洋红→绯红，无黄无紫）、幽裁撤。霞重锚为新海诚式波子汽水：高调冷白、樱印、瓶身蓝副强调。濤（北斎）与墨（行灯）不动。</div>
-<div class="nv"><s class="d-tag">日间</s>${THEMES.filter((t) => t.mode === "day")
-  .map((t) => `<a href="#${t.slug}">${t.cn}</a>`)
-  .join("")}<s class="n-tag">夜间</s>${THEMES.filter((t) => t.mode === "night")
-  .map((t) => `<a href="#${t.slug}">${t.cn}</a>`)
-  .join("")}</div>
-${THEMES.map(previewCard).join("\n")}
-</div></html>
+const preview = `# RefRain · ${THEMES.length} 套主题
+
+由 \`scripts/generate-themes.ts\` 生成，勿手改。改锚点后重跑该脚本。
+
+日间 ${THEMES.filter((t) => t.mode === "day").length} 套（${named("day")}）与夜间 ${THEMES.filter((t) => t.mode === "night").length} 套（${named("night")}）各自成立；昼夜互不反相。
+本表与 \`themes.css\` 同一份数据生成，Lc 是生成时实测值：正文门槛 |75|，界面与强调 |45|。
+
+每套主题只由四个锚点定义（纸・墨・印・副强调），其余全部推导。
+
+${THEMES.map(previewSection).join("\n\n---\n\n")}
 `;
 
-writeFileSync(join(here, "..", "apps", "desktop", "theme-preview.html"), preview, "utf8");
-console.log("PASS  preview → apps/desktop/theme-preview.html");
+writeFileSync(join(here, "..", "apps", "desktop", "theme-colours.md"), preview, "utf8");
+console.log("PASS  preview → apps/desktop/theme-colours.md");

@@ -8,6 +8,7 @@ const menu =
   (await Bun.file("apps/desktop/src/ui/UniversalMenu.tsx").text()) +
   (await Bun.file("apps/desktop/src/styles/surfaces.css").text());
 const catalog = await Bun.file("apps/desktop/src/shell/workbench-commands.ts").text();
+const shortcuts = await Bun.file("apps/desktop/src/shell/shortcuts.ts").text();
 const focus = await Bun.file("apps/desktop/src/shell/command-focus.ts").text();
 const icon = await Bun.file("apps/desktop/src/shell/universal-icon.ts").text();
 const picker = await Bun.file("apps/desktop/src/ui/IconPicker.tsx").text();
@@ -16,7 +17,8 @@ const failures: string[] = [];
 for (const [source, fact, failure] of [
   [workbench, "<UniversalButton", "Workbench does not mount the Universal Button"],
   [workbench, "<UniversalMenu", "Workbench does not mount the Universal Menu"],
-  [workbench, 'event.key.toLocaleLowerCase() === "k"', "Ctrl+K does not open the menu"],
+  // 快捷键的分发已归 shortcuts.ts：断言写在权威那一侧，不写在外壳的字面上。
+  [shortcuts, 'key === "k"', "Ctrl+K does not open the menu"],
   // The open shortcut lives in Workbench; the menu owns the matching close.
   [menu, 'event.key.toLocaleLowerCase() === "k"', "Ctrl+K does not close the menu"],
   [
@@ -24,7 +26,7 @@ for (const [source, fact, failure] of [
     'window.addEventListener("keydown", onKeydown)',
     "Workbench shortcuts disappear when focus falls back to the window",
   ],
-  [workbench, "event.isComposing", "Ctrl+K can intercept IME composition"],
+  [shortcuts, "isComposing", "Ctrl+K can intercept IME composition"],
   [workbench, "new CommandFocus(", "the menu does not route focus through CommandFocus"],
   // 焦点归还归 CommandFocus，并且它必须知道热区那条规矩：把焦点还给热区
   // 会让作者被关进开合循环。断言写在权威那一侧，不是外壳的变量名上。

@@ -7,6 +7,7 @@ const fonts = await Bun.file("apps/desktop/src-tauri/src/fonts.rs").text();
 const bridge = await Bun.file("apps/desktop/src-tauri/src/lib.rs").text();
 const bindings = await Bun.file("apps/desktop/src/generated/bindings.gen.ts").text();
 const app = await Bun.file("apps/desktop/src/App.tsx").text();
+const appearance = await Bun.file("apps/desktop/src/shell/appearance.ts").text();
 const projection = await Bun.file("apps/desktop/src/typography.ts").text();
 const panel = await Bun.file("apps/desktop/src/ui/TypographyPanel.tsx").text();
 // The panel became a projection: it renders a view and emits intents, while the
@@ -52,7 +53,10 @@ for (const [source, fact, failure] of [
     "generated bindings split typography writes",
   ],
   [app, 'scheduleFrame("appearance"', "App does not frame-batch appearance projection"],
-  [app, "applyTypography(document.documentElement", "App does not apply the complete projection"],
+  // 投影已收进 shell/appearance.ts：一份 Config 一次落地（版面、面板、灯、排版
+  // 必须一起写，否则作者会看见错位）。断言跟着权威走，不留在旧位置。
+  [app, "applyAppearance(document.documentElement", "App does not apply the complete projection"],
+  [appearance, "applyTypography(root", "the appearance projection drops typography"],
   [projection, '"--manuscript-measure"', "the projection drops manuscript measure"],
   [projection, '"--paragraph-gap"', "the projection drops paragraph spacing"],
   [projection, '"--grid-period"', "the projection drops the baseline period"],
