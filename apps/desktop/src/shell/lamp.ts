@@ -1,0 +1,90 @@
+/**
+ * 光源区。
+ *
+ * 灯挂在正文之上、四区之下（见 strata.ts）。这个位置是全部立意所在：光落在纸上，
+ * 而立在光里的东西会挡住它、会把影子投在纸上、会被照亮朝向灯的那一条边。
+ *
+ * 在此之前光是画在纸元素上的一圈 box-shadow。那个做法有一个改不动的上限：纸和
+ * 面板是兄弟节点，「面板挡住了光」无从表达，只能靠调阴影的偏移和模糊假装。KL9
+ * 连着两轮说两盏灯看不出区别——他是对的，那两盏灯画的是同一个东西上的同一圈影
+ * 子，换多少参数都还是同一圈影子。
+ *
+ * 所以这里描述的不是阴影，是**一盏灯在哪里**。位置定了，落在纸上的亮斑、投在纸
+ * 上的影、面板受光的边，全部从这一个位置推出来，不再各调各的。
+ */
+
+/** 灯的位置，单位是舞台的比例（0 = 左缘，1 = 右缘；纵向 0 = 顶，1 = 底）。 */
+export interface LampPlacement {
+  /** 横向。单侧灯贴着面板那一侧，全侧灯居中。 */
+  readonly x: number;
+  /** 纵向。单侧灯与视线齐平，全侧灯在头顶之上（负数表示在舞台之外）。 */
+  readonly y: number;
+  /** 光照到的范围，同样是舞台比例。超出这个范围就是灯照不到的地方。 */
+  readonly reach: number;
+  /** 灯的强度，0 到 1。它同时决定亮斑的浓度与影子的深度——一盏灯不会只亮不投影。 */
+  readonly power: number;
+}
+
+export type LampKind = "off" | "side" | "overhead";
+
+/** 面板开在哪一侧。单侧灯挂在面板那一侧，光横穿舞台。 */
+export type PanelSide = "left" | "right";
+
+/**
+ * 灯的位置。
+ *
+ * 单侧灯挂在面板那一侧，与视线齐平（y = 0.42，略高于正中——灯在桌上而不是地上）；
+ * 它的 reach 小于 1，因为一盏侧灯照不到对面的角落，而那个照不到的角落正是「光有
+ * 位置」这件事唯一能被眼睛读到的证据。
+ *
+ * 全侧灯在头顶之上（y = -0.15），横向居中，reach 大——顶灯照全场，只是越往下越暗。
+ */
+export function lampPlacement(kind: LampKind, side: PanelSide): LampPlacement | null {
+  if (kind === "off") return null;
+  if (kind === "overhead") {
+    return { x: 0.5, y: -0.15, reach: 1.15, power: 0.68 };
+  }
+  return { x: side === "left" ? -0.05 : 1.05, y: 0.42, reach: 0.82, power: 0.9 };
+}
+
+/**
+ * 光投在纸上的影子往哪边倒，以及倒多远。
+ *
+ * 影子背着灯走。侧灯几乎全是横向位移，顶灯几乎全是纵向——这个差别是两盏灯在
+ * 屏幕上最容易被读出来的东西，比亮斑还容易，因为影子有边界而光晕没有。
+ *
+ * 返回值单位是像素，按舞台宽度换算。
+ */
+export function shadowThrow(place: LampPlacement, stageWidth: number): { x: number; y: number } {
+  // 纸大致在舞台正中。灯离得越远，影子越长。
+  const dx = 0.5 - place.x;
+  const dy = 0.5 - place.y;
+  const distance = Math.hypot(dx, dy);
+  // 归一化后乘一个尺度：影子最长约为舞台宽度的十二分之一，再长就不像影子像污渍。
+  const scale = (stageWidth / 12) * place.power;
+  return {
+    x: Math.round((dx / distance) * scale),
+    y: Math.round((dy / distance) * scale),
+  };
+}
+
+/**
+ * 一块立在光里的东西，朝灯的那条边被照亮多少。
+ *
+ * `at` 是这块东西在舞台里的横向位置（0 到 1）。离灯越近越亮，这让多层书脊自动
+ * 呈现出前亮后暗的层次，而不必为每一层写一个值。
+ */
+export function rimIntensity(place: LampPlacement, at: number): number {
+  const distance = Math.abs(at - place.x);
+  if (distance >= place.reach) return 0;
+  const near = 1 - distance / place.reach;
+  // 平方衰减：贴着灯的那一层明显亮，后面几层迅速暗下去，符合一盏灯而非一片天光。
+  return Number((near * near * place.power).toFixed(3));
+}
+
+/** 灯朝向哪一边（-1 左，1 右，0 无侧向）。样式表用它翻转方向，不必写第二套规则。 */
+export function lampFacing(place: LampPlacement): number {
+  if (place.x < 0) return 1;
+  if (place.x > 1) return -1;
+  return 0;
+}

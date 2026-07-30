@@ -3,6 +3,7 @@
 export {};
 
 const workbench = await Bun.file("apps/desktop/src/shell/Workbench.tsx").text();
+const quarters = await Bun.file("apps/desktop/src/shell/quarters.ts").text();
 const reducer = await Bun.file("apps/desktop/src/shell/workbench-state.ts").text();
 const panels = await Bun.file("apps/desktop/src/shell/panel-stack.ts").text();
 const settings = await Bun.file("apps/desktop/src/ui/SettingsSurface.tsx").text();
@@ -47,12 +48,22 @@ for (const [source, fact, message] of [
   // Reference off the reducer's reference axis, not as its own stage.
   [workbench, 'when={reference()?.kind === "settings"}', "Settings is not a Reference"],
   [
+    quarters,
+    'scene.reference === "settings" || scene.stage === "review"',
+    "takesWholeStage no longer names the two scenes that take the whole stage",
+  ],
+  [
     workbench,
     // Vue hid the editor with `v-show`, which keeps the instance mounted.
     // Solid's `<Show>` unmounts, so the persistent editor is expressed the only
-    // way that preserves the instance: the row stays rendered and Settings /
-    // Review hide it with `display: none` rather than tearing it down.
-    'reference()?.kind === "settings" || state().stage === "review"',
+    // way that preserves the instance: the row stays rendered and the scenes
+    // that take the whole stage hide it with `display: none` rather than
+    // tearing it down.
+    //
+    // 判定本身已搬进 shell/quarters.ts 的 takesWholeStage——「谁占满舞台」是层的
+    // 语义，不是渲染代码的知识。门禁跟着搬：断言组件问的是那个函数，而函数里
+    // 那两个场景由下面一条单独钉住。
+    "takesWholeStage({",
     "Settings or Review destroys the mounted editor instead of hiding it",
   ],
   // Vue `@closed="returnToWriting"` → Solid `onClosed` props. Two return

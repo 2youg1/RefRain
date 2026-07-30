@@ -2,31 +2,16 @@
 // content, the Config stores only the digest, and the button shows the
 // normalised asset through a data URL (CSP img-src 'self' data:).
 
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import { describe, unwrap } from "../bridge";
 import { commands } from "../generated/bindings.gen";
-import { iconDataUrl } from "../shell/universal-icon";
+import { universalIcon } from "../shell/universal-icon";
 
 export function IconPicker() {
-  const [iconUrl, setIconUrl] = createSignal<string | null>(null);
-  const [error, setError] = createSignal<string | null>(null);
+  const icon = universalIcon();
+  const iconUrl = icon.url;
+  const error = icon.error;
   let fileInput: HTMLInputElement | undefined;
-  let disposed = false;
-  let stopConfig: UnlistenFn | null = null;
-
-  const refresh = async (): Promise<void> => {
-    const bytes = await commands.universalIcon();
-    setIconUrl(bytes === null ? null : iconDataUrl(bytes));
-  };
-
-  const refreshSafely = async (): Promise<void> => {
-    try {
-      await refresh();
-    } catch (cause) {
-      if (!disposed) setError(describe(cause));
-    }
-  };
 
   const pick = (): void => {
     fileInput?.click();
@@ -39,33 +24,13 @@ export function IconPicker() {
     try {
       const bytes = [...new Uint8Array(await file.arrayBuffer())];
       await unwrap(commands.setUniversalIcon(bytes));
-      setError(null);
-      await refresh();
+      await icon.refresh();
     } catch (cause) {
-      setError(describe(cause));
+      icon.fail(cause);
     } finally {
       input.value = "";
     }
   };
-
-  onMount(async () => {
-    try {
-      const unlisten = await listen("config-changed", () => void refreshSafely());
-      if (disposed) {
-        unlisten();
-        return;
-      }
-      stopConfig = unlisten;
-      await refreshSafely();
-    } catch (cause) {
-      if (!disposed) setError(describe(cause));
-    }
-  });
-
-  onCleanup(() => {
-    disposed = true;
-    stopConfig?.();
-  });
 
   return (
     <div class="icon-picker">

@@ -15,6 +15,8 @@
 import { spawnSync } from "node:child_process";
 
 const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
+  // 语料是 freeze-corpora.ts 的产物，不入仓库；Rust 编译期用 include_str! 读它，故第一个跑。
+  ["corpora", ["bun", "scripts/freeze-corpora.ts"]],
   ["fmt:check", ["bun", "run", "fmt:check"]],
   ["check", ["bun", "run", "check"]],
   ["test", ["bun", "run", "test"]],
@@ -27,6 +29,7 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["verify:component-depth", ["bun", "scripts/verify-component-depth.ts"]],
   ["verify:command-depth", ["bun", "scripts/verify-command-depth.ts"]],
   ["verify:typography", ["bun", "scripts/verify-typography.ts"]],
+  ["verify:strata", ["bun", "scripts/verify-strata.ts"]],
   ["verify:fonts", ["bun", "scripts/verify-fonts.ts"]],
   ["verify:universal-menu", ["bun", "scripts/verify-universal-menu.ts"]],
   ["verify:connections", ["bun", "scripts/verify-connections.ts"]],

@@ -7,8 +7,15 @@
  * against the same bytes, so the corpora become assets: one file per shape,
  * plus a manifest carrying each file's SHA-256.
  *
- * Run once. The output is committed and then frozen — a corpus that changes is
- * a corpus that stopped being evidence about the defect it was cut from.
+ * The output is NOT committed (KL9 2026-07-30: nothing but licences ships in the
+ * project folder). This file is the authority; the .md files on disk are its
+ * product, regenerated before every build and gate run. Rust reads
+ * layouts.json at compile time via include_str!, so generation must happen
+ * before cargo, not merely before the tests.
+ *
+ * A corpus that changes is a corpus that stopped being evidence about the
+ * defect it was cut from — so the manifest digests are asserted every run, and
+ * editing a string here without the digest moving is a gate failure.
  */
 
 import { createHash } from "node:crypto";

@@ -15,7 +15,7 @@
  * deliberate: the next agent to read it should not have to re-derive an APCA
  * score to know whether a colour is safe to touch.
  */
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -667,5 +667,14 @@ const preview = `# RefRain · ${THEMES.length} 套主题
 ${THEMES.map(previewSection).join("\n\n---\n\n")}
 `;
 
-writeFileSync(join(here, "..", "apps", "desktop", "theme-colours.md"), preview, "utf8");
-console.log("PASS  preview → apps/desktop/theme-colours.md");
+/*
+ * 色表写到仓库之外（KL9 2026-07-30：项目文件夹里除 LICENSE 外不放任何 md/html）。
+ *
+ * 它是给人看的审阅件，不是发布内容——留在仓库里就成了第二权威：色值的唯一来源是
+ * themes.css，而一份跟着漂的表只会让下一个人不知道该信哪份。
+ */
+const previewOut = process.env.REFRAIN_REVIEW_DIR ?? join(here, "..", "..", "review");
+mkdirSync(previewOut, { recursive: true });
+const previewPath = join(previewOut, "theme-colours.md");
+writeFileSync(previewPath, preview, "utf8");
+console.log(`PASS  preview → ${previewPath}`);

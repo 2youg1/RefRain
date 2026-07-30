@@ -32,10 +32,12 @@ import { canOpen, panelKey, settingsSection } from "./panel-reference";
 import { panelLayout } from "./panel-spine";
 import { PanelStack } from "./panel-stack";
 import { ProjectSession } from "./project-session";
+import { takesWholeStage } from "./quarters";
 import { browserTimer, RailPresence } from "./rail-presence";
 import { railScroll } from "./rail-scroll";
 import { SelectionReadout } from "./selection-readout";
 import { handleShortcut } from "./shortcuts";
+import { Welcome } from "./Welcome";
 import { commandCatalog, type WorkbenchCommandId } from "./workbench-commands";
 import {
   initialWorkbenchState,
@@ -177,7 +179,7 @@ export function Workbench(props: WorkbenchProps) {
     panelTick();
     return panelLayout(
       panels.depth,
-      reference()?.kind === "settings" || state().stage === "review",
+      takesWholeStage({ reference: reference()?.kind ?? null, stage: state().stage }),
     );
   });
   const annotationsOpen = createMemo(() => reference()?.kind === "annotations");
@@ -401,27 +403,12 @@ export function Workbench(props: WorkbenchProps) {
       <Show
         when={project()}
         fallback={
-          <section class="welcome">
-            <LogoMark size={64} label="RefRain" />
-            <h1 class="welcome-brand">RefRain</h1>
-            <p class="welcome-tag">一个本地写作工作台。你写的每一个字都在磁盘上。</p>
-            <button
-              class="primary welcome-open"
-              type="button"
-              onClick={() => void openProjectFolder()}
-            >
-              打开文件夹
-            </button>
-            <div class="secondary">
-              <button type="button" onClick={() => void createProject()}>
-                新建项目
-              </button>
-              <button type="button" onClick={() => void openSingleDocument()}>
-                打开文档
-              </button>
-            </div>
-            <Show when={notice()}>{(text) => <p class="notice">{text()}</p>}</Show>
-          </section>
+          <Welcome
+            notice={notice()}
+            onOpenFolder={() => void openProjectFolder()}
+            onCreateProject={() => void createProject()}
+            onOpenDocument={() => void openSingleDocument()}
+          />
         }
       >
         {(root) => (
@@ -544,6 +531,8 @@ export function Workbench(props: WorkbenchProps) {
                     attr:data-panels={layout()["data-panels"]}
                     style={layout().style}
                   >
+                    {/* 光源区。层级与理由见 shell/strata.ts。 */}
+                    <div class="lamp-layer" aria-hidden="true" />
                     <EditorHost
                       rootId={root().rootId}
                       path={openDocument().document.path}

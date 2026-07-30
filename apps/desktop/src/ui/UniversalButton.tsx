@@ -1,8 +1,7 @@
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import { describe } from "../bridge";
 import { commands } from "../generated/bindings.gen";
-import { iconDataUrl } from "../shell/universal-icon";
+import { universalIcon } from "../shell/universal-icon";
 
 type UniversalButtonProps = {
   onActivate?: () => void;
@@ -10,20 +9,10 @@ type UniversalButtonProps = {
 
 export function UniversalButton(props: UniversalButtonProps) {
   const [revealed, setRevealed] = createSignal(false);
-  const [iconUrl, setIconUrl] = createSignal<string | null>(null);
-  const [error, setError] = createSignal<string | null>(null);
-  let stopConfig: UnlistenFn | null = null;
+  const icon = universalIcon();
+  const iconUrl = icon.url;
+  const error = icon.error;
   let hideTimer: number | null = null;
-  let disposed = false;
-
-  const refresh = async (): Promise<void> => {
-    try {
-      const bytes = await commands.universalIcon();
-      if (!disposed) setIconUrl(bytes === null ? null : iconDataUrl(bytes));
-    } catch (cause) {
-      if (!disposed) setError(describe(cause));
-    }
-  };
 
   const reveal = (): void => {
     if (hideTimer !== null) window.clearTimeout(hideTimer);
@@ -44,20 +33,7 @@ export function UniversalButton(props: UniversalButtonProps) {
     props.onActivate?.();
   };
 
-  onMount(async () => {
-    try {
-      await refresh();
-      const stop = await listen("config-changed", () => void refresh());
-      if (disposed) stop();
-      else stopConfig = stop;
-    } catch (cause) {
-      if (!disposed) setError(describe(cause));
-    }
-  });
-
   onCleanup(() => {
-    disposed = true;
-    stopConfig?.();
     if (hideTimer !== null) window.clearTimeout(hideTimer);
   });
 

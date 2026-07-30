@@ -1,5 +1,33 @@
 /* Surface styles migrated from the retired Vue shell. */
 
+/*
+ * 工作台的层。数字的唯一权威是 shell/strata.ts，这里只是把它抄成 CSS 变量，
+ * 由 verify:strata 门禁保证两边一致。样式表里不再出现裸的 z-index 数字——
+ * 在此之前有十五个散在各处，每个单看都对，合起来没有一处说明谁在谁上面。
+ *
+ * 自下而上：正文区、光源区、四区（设置/编辑/文件/Agent）、书脊。
+ */
+:root {
+  --z-manuscript: 10;
+  --z-lamp: 20;
+  --z-quarter: 30;
+  --z-spine: 40;
+  --z-menu: 60;
+  --z-overlay: 80;
+  --z-modal: 100;
+
+  /*
+   * 灯泡的颜色。它是光，不是主题里的一个色块——这一条也是查出来的：主题的
+   * --lamp 在墨里只比纸亮 0.11，当颜料混进去差别不到 1%，怎么调都看不见。
+   */
+  --lamp-glow: oklch(0.96 0.02 85);
+  --lamp-x: 50%;
+  --lamp-y: 50%;
+  --lamp-reach: 100%;
+  --lamp-power: 0;
+  --lamp-facing: 0;
+}
+
 /* ── src/App.vue ─────────────────────────── */
 .shell {
   min-height: 100vh;
@@ -98,116 +126,55 @@
 }
 
 /*
- * 夜间灯：两盏，作者选一盏（KL9 2026-07-30 裁定）。
+ * 光源区——工作台的一层，不是画在纸上的一圈影子。
  *
- * 夜间主题的立意是「一盏灯照着纸」。这里改对过两次，两次都值得记下来：
+ * 层级见 shell/strata.ts：正文区 < 光源区 < 四区 < 书脊。光在正文之上，所以它照在
+ * 字上；在四区之下，所以立在光里的面板会挡住它。这个位置是全部立意所在。
  *
- * 其一，方向。第一版写成 `0 0 22px` 的四周泛光，KL9 看截图后说它「像是从功能区
- * 和正文的夹缝中间往两边射」——他是对的，**一盏灯有位置**，光从屏幕一边射向
- * 另一边，不是从物体自己身上散出来。
+ * 改到这一步之前，光是 .editor-host 上的一组 box-shadow。KL9 连着两轮说两盏灯看不
+ * 出区别——他是对的，而问题不在参数：纸和面板是兄弟节点，「面板挡住了光」根本无从
+ * 表达，两盏灯画的只能是同一个东西上的同一圈影子，改偏移改模糊都还是同一圈影子。
  *
- * 其二，强度。第二版有方向了，但仍然看不出差别：我把 `--lamp` 当颜料按 12% 混
- * 进纸里，而墨主题的 lamp 是 #3b3937、纸是 #1f1d1a，**灯只比纸亮 0.11**，
- * 混完差别不到 1%。光不是一层灰——它得比它照的东西亮得多。
- * 所以这里不再混 `--lamp` 的色，而是用它的**方向**加一道足够亮的白光：
- * 亮度由 color-dodge 之外最朴素的办法给出——直接叠一层低透明度的暖白。
- *
- *   · 单侧灯（side）挂在面板栈那一侧，光横穿舞台；面板正好立在光路上，
- *     它们的半透明因此有了来由——不是玻璃自己会亮，是它挡着光。
- *   · 全侧灯（overhead）挂头顶：自上而下一片柔光，没有侧向。
- *
- * `--lamp-x` 让单侧灯跟着面板方向换边，不必写第二套规则。
+ * 现在灯只有一个输入：它在哪儿（--lamp-x / --lamp-y，由 shell/lamp.ts 定）。亮斑、
+ * 影子的方向、面板受光的边，全部从那个位置推出来，不再各调各的。
  */
-:root[data-lamp="side"] {
-  --lamp-x: 1;
-  /* 灯泡本身的颜色：暖白。它是光，不是主题里的一个色块。 */
-  --lamp-glow: oklch(0.96 0.02 85);
-}
-
-:root[data-lamp="overhead"] {
-  --lamp-glow: oklch(0.96 0.02 85);
-}
-
-:root[data-lamp="side"][data-panel-side="right"] {
-  --lamp-x: -1;
-}
-
-/*
- * 两盏灯的差别必须在**光落在哪里**，不在强度。
- *
- * 第一次做完 KL9 说「没感觉有区别」。我先怀疑亮度，查下来不是：`--lamp` 在墨主题
- * 只比纸亮 0.11，混完确实几乎不可见，但换成暖白之后仍然像同一盏灯——因为两盏
- * 都只是纸边一条 1px 线加一层渐变，**几何是一样的**。
- *
- * 一盏灯照在纸上，眼睛读的是三件事：亮斑落在哪一侧、影子往哪边倒、以及纸的
- * 哪条边被照出高光。这三件事必须同时换边，光才换了位置。
- */
-
-/* 单侧灯：亮斑在受光的那一侧边缘，影子整个倒向另一侧。 */
-:root[data-lamp="side"] .editor-host {
-  box-shadow:
-/* 受光边一条实的亮线 */
-    calc(var(--lamp-x) * 2px) 0 0 color-mix(in oklab, var(--lamp-glow) 55%, transparent),
-    /* 影子只往背光那侧倒，且明显偏移——这是「光从旁边来」的读法 */
-    calc(var(--lamp-x) * -40px) 8px 60px -16px color-mix(in oklab, var(--shade) 88%, transparent),
-    calc(var(--lamp-x) * -90px) 20px 140px -30px color-mix(in oklab, var(--shade) 62%, transparent);
-  /* 亮斑贴着受光的那条边，横向衰减：一半纸面亮，另一半留给影。 */
-  background-image: linear-gradient(
-    calc(90deg - var(--lamp-x) * 90deg),
-    color-mix(in oklab, var(--lamp-glow) 30%, transparent),
-    color-mix(in oklab, var(--lamp-glow) 10%, transparent) 26%,
-    transparent 58%
-  );
-}
-
-/* 全侧灯：亮斑是横贯纸面上缘的一条，影子垂直落在下方，左右对称。 */
-:root[data-lamp="overhead"] .editor-host {
-  box-shadow:
-    0 -2px 0 color-mix(in oklab, var(--lamp-glow) 55%, transparent),
-    0 28px 60px -18px color-mix(in oklab, var(--shade) 88%, transparent),
-    0 64px 140px -34px color-mix(in oklab, var(--shade) 62%, transparent);
-  background-image: linear-gradient(
-    to bottom,
-    color-mix(in oklab, var(--lamp-glow) 26%, transparent),
-    color-mix(in oklab, var(--lamp-glow) 8%, transparent) 22%,
-    transparent 50%
-  );
-}
-
-/*
- * 光还落在舞台上，不只落在纸上——这是两盏灯读起来最不一样的地方。
- * 单侧灯在面板那一侧的桌面上留一道横向的亮，全侧灯在舞台顶端留一条横贯的亮。
- */
-:root[data-lamp="side"] .stage-row::before,
-:root[data-lamp="overhead"] .stage-row::before {
-  content: "";
+.lamp-layer {
   position: absolute;
   inset: 0;
-  z-index: 0;
+  z-index: var(--z-lamp);
   pointer-events: none;
-}
-
-:root[data-lamp="side"] .stage-row::before {
+  /* 灯照不到的地方就是暗的：radial-gradient 的半径就是 lamp.reach。 */
   background-image: radial-gradient(
-    120% 90% at calc(50% - var(--lamp-x, 1) * 50%) 42%,
-    color-mix(in oklab, var(--lamp-glow) 16%, transparent),
-    transparent 62%
+    var(--lamp-reach) var(--lamp-reach) at var(--lamp-x) var(--lamp-y),
+    color-mix(in oklab, var(--lamp-glow) calc(var(--lamp-power) * 34%), transparent),
+    color-mix(in oklab, var(--lamp-glow) calc(var(--lamp-power) * 9%), transparent) 42%,
+    transparent 78%
   );
+  transition: opacity var(--panel-motion) var(--panel-easing);
 }
 
-:root[data-lamp="overhead"] .stage-row::before {
-  background-image: radial-gradient(
-    130% 70% at 50% -6%,
-    color-mix(in oklab, var(--lamp-glow) 15%, transparent),
-    transparent 66%
-  );
+/* 不点灯就没有这一层可言。 */
+:root[data-lamp="off"] .lamp-layer,
+:root[data-paper="none"] .lamp-layer {
+  display: none;
 }
 
-/* 纯 web 模式没有纸，光没有可落之处——两盏灯都收回。 */
-:root[data-lamp="side"][data-paper="none"] .editor-host,
-:root[data-lamp="overhead"][data-paper="none"] .editor-host {
-  box-shadow: none;
-  background-image: none;
+/*
+ * 纸接住光。
+ *
+ * 亮斑贴着灯的那一侧，影子背着灯倒——两者都由 --lamp-facing 翻转，不写第二套规则。
+ * 侧灯的 facing 是 ±1，顶灯是 0，于是同一条规则下侧灯的影子横着倒、顶灯的竖着落。
+ */
+:root:not([data-lamp="off"]) .editor-host {
+  box-shadow:
+/* 受光的那条边 */
+    calc(var(--lamp-facing) * 2px) calc((1 - abs(var(--lamp-facing))) * -2px) 0
+    color-mix(in oklab, var(--lamp-glow) calc(var(--lamp-power) * 60%), transparent),
+    /* 影子背着灯走：横向由 facing 决定，纵向在 facing 为 0（顶灯）时最长 */
+    calc(var(--lamp-facing) * -44px) calc(24px + (1 - abs(var(--lamp-facing))) * 28px) 64px -18px
+    color-mix(in oklab, var(--shade) calc(var(--lamp-power) * 92%), transparent),
+    calc(var(--lamp-facing) * -96px) calc(40px + (1 - abs(var(--lamp-facing))) * 40px) 150px -32px
+    color-mix(in oklab, var(--shade) calc(var(--lamp-power) * 66%), transparent);
 }
 
 .editor-host::highlight(refrain-highlight) {
@@ -843,7 +810,8 @@ small {
 /* ── src/shell/EditorContextMenu.vue ─────────────────────────── */
 .context-menu {
   position: fixed;
-  z-index: 40;
+  /* 右键菜单盖得住书脊——脊只是退到后面的面板留下的痕迹。 */
+  z-index: var(--z-menu);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
@@ -874,7 +842,8 @@ small {
 
 .context-backdrop {
   position: fixed;
-  z-index: 39;
+  /* 菜单的背板紧贴在菜单之下，用 calc 减一，两者永不分家。 */
+  z-index: calc(var(--z-menu) - 1);
   inset: 0;
 }
 
@@ -942,7 +911,8 @@ dd {
   pointer-events: none;
   position: fixed;
   inset: 0;
-  z-index: 30;
+  /* KARA 是压在工作台之上的临时状态，不属于那四层。 */
+  z-index: var(--z-overlay);
 }
 
 .return-card {
@@ -1367,7 +1337,8 @@ kbd {
   color: var(--ink-faint);
   background: var(--paper);
   border-top: 1px solid var(--rule);
-  z-index: 70;
+  /* 状态行浮在工作台之上。 */
+  z-index: var(--z-overlay);
   visibility: visible;
   transition:
     opacity 240ms var(--ease),
@@ -1519,6 +1490,7 @@ kbd {
 .type-specimen {
   position: sticky;
   top: 0;
+  /* 元素内部的堆叠：sticky 的表头压住自己滚过去的行。不跨层，故不用层变量。 */
   z-index: 1;
   padding: 2px 0 14px;
   background: var(--paper);
@@ -1768,7 +1740,8 @@ kbd {
 /* ── src/shell/UniversalButton.vue ─────────────────────────── */
 .universal-hot-zone {
   position: fixed;
-  z-index: 91;
+  /* 万用键的感应区在按钮之上，先接到指针。 */
+  z-index: calc(var(--z-overlay) + 1);
   top: 0;
   left: 50%;
   width: 112px;
@@ -1778,7 +1751,8 @@ kbd {
 
 .universal-button-zone {
   position: fixed;
-  z-index: 90;
+  /* 万用键浮在一切工作台内容之上。 */
+  z-index: var(--z-overlay);
   top: 0;
   left: 50%;
   display: grid;
@@ -1843,7 +1817,8 @@ kbd {
 /* ── src/shell/UniversalMenu.vue ─────────────────────────── */
 .command-backdrop {
   position: fixed;
-  z-index: 100;
+  /* 命令面板是模态：它一出现，别的都不该能点。 */
+  z-index: var(--z-modal);
   inset: 0;
   display: grid;
   align-items: start;
@@ -1989,7 +1964,8 @@ kbd {
 /* ── src/shell/WindowChrome.vue ─────────────────────────── */
 .window-chrome {
   position: fixed;
-  z-index: 80;
+  /* 窗口边框在内容之上。 */
+  z-index: var(--z-overlay);
   inset: 0 0 auto;
   height: var(--chrome-height);
   display: flex;
@@ -2052,6 +2028,7 @@ kbd {
 }
 
 .window-actions button:focus-visible {
+  /* 元素内部的堆叠：焦点圈盖住相邻按钮的边框。不跨层，故不用层变量。 */
   z-index: 1;
   outline: 2px solid var(--seal);
   outline-offset: -2px;
@@ -2197,7 +2174,8 @@ kbd {
   left: 0;
   top: var(--chrome-height);
   bottom: var(--status-height);
-  z-index: 20;
+  /* 侧栏是四区之一（文件），与设置、编辑、Agent 同层。 */
+  z-index: var(--z-quarter);
   width: var(--rail-width, 248px);
   overflow-y: auto;
   display: flex;
@@ -2233,7 +2211,8 @@ kbd {
   bottom: var(--status-height);
   width: 6px;
   background: color-mix(in oklab, var(--rail) 55%, transparent);
-  z-index: 5;
+  /* 收起的侧栏退到正文层——它此时只是一条边。 */
+  z-index: var(--z-manuscript);
 }
 
 .brand {
@@ -2401,7 +2380,8 @@ kbd {
   inset-inline-start: var(--panel-offset, 0);
   top: 0;
   bottom: 0;
-  z-index: 10;
+  /* 面板就是四区，立在光里。 */
+  z-index: var(--z-quarter);
   width: var(--panel-width, 400px);
   max-width: 48vw;
   /* 三层影：外侧发丝边、贴边的近影、拉开距离的远影。
@@ -2489,7 +2469,8 @@ kbd {
   position: absolute;
   inset-block: 0;
   inset-inline-start: var(--spine-offset, 0);
-  z-index: 9;
+  /* 书脊在最上面。它曾经是 9、被面板的 10 压着，与「多层书脊在四区之上」相反。 */
+  z-index: var(--z-spine);
   width: var(--spine-width, 34px);
   display: flex;
   /* 竖排下主轴是纵向：align 管左右居中，justify 决定字从哪端起排。

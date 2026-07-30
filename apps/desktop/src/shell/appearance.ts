@@ -10,6 +10,7 @@
 
 import type { AppearanceConfig } from "../generated/bindings.gen";
 import { applyTypography } from "../typography";
+import { lampFacing, lampPlacement } from "./lamp";
 import { materialSpec, supportedMaterial } from "./panel-material";
 import { panelMotion, prefersReducedMotion } from "./panel-motion";
 import { panelWidthPx, railWidthPx } from "./surface-width";
@@ -36,9 +37,24 @@ export function applyAppearance(root: HTMLElement, appearance: AppearanceConfig)
   root.style.setProperty("--panel-opacity", String(material.opacity));
   root.style.setProperty("--panel-rim", String(material.rim));
 
-  // 夜间灯：单侧（挂在面板那边，光横穿舞台）或全侧（挂头顶，自上而下的柔光）。
-  // 光要有来处，否则读起来是字自己在发亮。
+  // 夜间灯：先定灯在哪儿，屏幕上的一切再从那个位置推出来。
+  //
+  // 这里曾经只写一个 data-lamp，让样式表自己去调阴影的偏移和模糊。那样两盏灯画的
+  // 是同一个东西上的同一圈影子，换多少参数都还是同一圈影子——KL9 连着两轮说看不出
+  // 区别。现在位置是唯一的输入：亮斑落在哪、影子往哪倒、面板哪条边受光，全部由它推出。
+  const lamp = lampPlacement(appearance.night_lamp ?? "off", motion.side);
   root.dataset.lamp = appearance.night_lamp ?? "off";
+  if (lamp) {
+    root.style.setProperty("--lamp-x", `${lamp.x * 100}%`);
+    root.style.setProperty("--lamp-y", `${lamp.y * 100}%`);
+    root.style.setProperty("--lamp-reach", `${lamp.reach * 100}%`);
+    root.style.setProperty("--lamp-power", String(lamp.power));
+    root.style.setProperty("--lamp-facing", String(lampFacing(lamp)));
+  } else {
+    for (const name of ["x", "y", "reach", "power", "facing"]) {
+      root.style.removeProperty(`--lamp-${name}`);
+    }
+  }
 
   // 宽度：面板与侧栏各自三档，铺满是其中一档而不是另一个模式。
   root.style.setProperty("--panel-width", `${panelWidthPx(appearance.panel_width ?? "regular")}px`);
