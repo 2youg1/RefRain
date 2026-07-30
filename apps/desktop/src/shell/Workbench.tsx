@@ -6,7 +6,7 @@ import type {
   SelectionMeasure,
 } from "@refrain/editor";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { describe, unwrap } from "../bridge";
 import { type AnnotationDto, commands } from "../generated/bindings.gen";
 import { AnnotationSurface } from "../ui/AnnotationSurface";
@@ -24,6 +24,7 @@ import { StatusLine } from "../ui/StatusLine";
 import { UniversalButton } from "../ui/UniversalButton";
 import { UniversalMenu } from "../ui/UniversalMenu";
 import { WindowChrome } from "../ui/WindowChrome";
+import { AnnotationSelection } from "./annotation-selection";
 import { CommandFocus } from "./command-focus";
 import { type DocumentGateway, DocumentSession } from "./document-session";
 import { EditIntents } from "./edit-intents";
@@ -84,6 +85,21 @@ export function Workbench(props: WorkbenchProps) {
   const [state, setState] = createSignal<WorkbenchState<never>>(initialWorkbenchState());
   const [panelTick, setPanelTick] = createSignal(0);
   const panels = new PanelStack<WorkbenchReference>(() => setPanelTick((value) => value + 1));
+  const [selectionTick, setSelectionTick] = createSignal(0);
+  // 作者勾了哪些批注要交给 Agent。归外壳而不是面板：面板一关组件就没了，
+  // 而他刚做的选择不该跟着没——那正是「重复按键」的来源。
+  const annotationSelection = new AnnotationSelection(() => setSelectionTick((value) => value + 1));
+  const selectedAnnotations = createMemo(() => {
+    selectionTick();
+    return annotationSelection.selected;
+  });
+  // 批注在别处被删掉时（作者删了那段正文，或另一处删了批注），选择要跟着放手：
+  // 否则派发会带上一个取不到引文的 id，而失败发生在派发那一刻，离作者做这个
+  // 选择已经很远。放在 effect 而不是上面那个 memo 里——在读取路径上做写入，
+  // 省下的四行不值得让「读一个值」变成可能改变状态的操作。
+  createEffect(() => {
+    annotationSelection.retain(documentView().annotations.map((row) => row.id));
+  });
   const [intentTick, setIntentTick] = createSignal(0);
   // 右键落点、批注锚点、派发种子是同一条链上的三段，归 EditIntents。
   const intents = new EditIntents(() => setIntentTick((value) => value + 1));
@@ -272,6 +288,8 @@ export function Workbench(props: WorkbenchProps) {
 
   const dispatchAnnotations = (blockIds: string[], prompt: string): void => {
     intents.dispatchAnnotations(blockIds, prompt);
+    // 意图已经交出去了，清空。只有这一刻该清——关面板、切层都不该。
+    annotationSelection.clear();
     openStage("dispatch");
   };
 
@@ -566,6 +584,8 @@ export function Workbench(props: WorkbenchProps) {
                     <Show when={annotationsOpen()}>
                       <AnnotationSurface
                         annotations={documentView().annotations}
+                        selected={selectedAnnotations()}
+                        onToggle={(id) => annotationSelection.toggle(id)}
                         onClose={closeReference}
                         onDelete={(id) => void documentSession.deleteAnnotation(id)}
                         onRelocate={beginRelocation}

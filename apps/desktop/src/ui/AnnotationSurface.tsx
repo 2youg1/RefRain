@@ -1,6 +1,6 @@
 // 高亮与批注面板：批注是作者的一手材料，不自动附着到相似文字。
 // 漂移（drifted）的批注只提示，绝不猜测新位置——迁移必须由作者重新选原文。
-import { createMemo, createSignal, For, type JSX, Show } from "solid-js";
+import { createMemo, For, type JSX, Show } from "solid-js";
 import type { AnnotationDto } from "../generated/bindings.gen";
 
 export type AnnotationSurfaceProps = {
@@ -9,21 +9,21 @@ export type AnnotationSurfaceProps = {
   onDelete: (id: string) => void;
   onRelocate: (annotation: AnnotationDto) => void;
   onDispatch: (blockIds: string[], prompt: string) => void;
+  /**
+   * 作者勾了哪些批注。
+   *
+   * 由外壳持有而不是这个组件自己记：面板一关组件就没了，而作者的选择不该
+   * 跟着没。他勾了十条、回正文核对一句、再打开面板——那十条必须还在。
+   */
+  selected: ReadonlySet<string>;
+  onToggle: (id: string) => void;
 };
 
 export function AnnotationSurface(props: AnnotationSurfaceProps): JSX.Element {
-  const [selected, setSelected] = createSignal<ReadonlySet<string>>(new Set());
   const comments = createMemo(() => props.annotations.filter((row) => row.kind === "comment"));
 
-  const toggle = (id: string): void => {
-    const next = new Set(selected());
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    setSelected(next);
-  };
-
   const dispatchSelected = (): void => {
-    const rows = comments().filter((row) => selected().has(row.id));
+    const rows = comments().filter((row) => props.selected.has(row.id));
     if (rows.length === 0) return;
     const blockIds = [...new Set(rows.map((row) => row.blockId))];
     const prompt = rows
@@ -59,8 +59,8 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): JSX.Element {
                   <label>
                     <input
                       type="checkbox"
-                      checked={selected().has(row.id)}
-                      onChange={() => toggle(row.id)}
+                      checked={props.selected.has(row.id)}
+                      onChange={() => props.onToggle(row.id)}
                     />
                     选入派发
                   </label>
