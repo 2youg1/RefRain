@@ -1,5 +1,6 @@
 use super::{
-    AppliedRegion, Block, EditorAction, EditorChange, Id, TextAction, TextHead, TextRefusal,
+    AppliedRegion, Block, BlockSequence, EditorAction, EditorChange, Id, TextAction, TextHead,
+    TextRefusal,
 };
 use crate::SourceLayout;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -15,6 +16,20 @@ pub(super) fn apply_editor(
     head: &TextHead,
     editor: &EditorAction,
 ) -> Result<(TextHead, TextAction), TextRefusal> {
+    let at = head
+        .blocks
+        .iter()
+        .enumerate()
+        .map(|(index, block)| (block.id, index))
+        .collect();
+    apply_editor_indexed(head, editor, &at)
+}
+
+pub(super) fn apply_editor_indexed(
+    head: &TextHead,
+    editor: &EditorAction,
+    at: &HashMap<Id, usize>,
+) -> Result<(TextHead, TextAction), TextRefusal> {
     if editor.base != head.id {
         return Err(TextRefusal::StaleBase {
             expected: head.id,
@@ -24,13 +39,10 @@ pub(super) fn apply_editor(
     if editor.changes.is_empty() {
         return Err(TextRefusal::NothingChanged);
     }
+    if let Some(result) = apply_single_block(head, editor, at) {
+        return result;
+    }
 
-    let at: HashMap<Id, usize> = head
-        .blocks
-        .iter()
-        .enumerate()
-        .map(|(index, block)| (block.id, index))
-        .collect();
     let mut covered = vec![false; head.blocks.len()];
     let mut ranges = BTreeMap::new();
 
@@ -85,7 +97,14 @@ pub(super) fn apply_editor(
             })
             .collect::<Vec<_>>()
             .into_boxed_slice();
-        let before = head.blocks[start..=end].to_vec().into_boxed_slice();
+        let before = head
+            .blocks
+            .iter()
+            .skip(start)
+            .take(end - start + 1)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
         if before == after {
             continue;
         }
@@ -169,7 +188,7 @@ pub(super) fn apply_editor(
     if let Some(inserted) = pending.get(&append_slot) {
         blocks.extend_from_slice(inserted);
     }
-    if blocks == head.blocks.as_ref() {
+    if blocks.iter().eq(head.blocks.iter()) {
         return Err(TextRefusal::NothingChanged);
     }
 
@@ -215,10 +234,61 @@ pub(super) fn apply_editor(
     };
     let head = TextHead {
         id: Id::new(),
-        blocks: blocks.into_boxed_slice(),
+        blocks: BlockSequence::from_vec(blocks),
         cause: editor.cause.clone(),
     };
     Ok((head, action))
+}
+
+fn apply_single_block(
+    head: &TextHead,
+    editor: &EditorAction,
+    at: &HashMap<Id, usize>,
+) -> Option<Result<(TextHead, TextAction), TextRefusal>> {
+    let [EditorChange::Replace(replacement)] = editor.changes.as_ref() else {
+        return None;
+    };
+    let [block_id] = replacement.blocks.as_ref() else {
+        return None;
+    };
+    let text = replacement.text.as_deref()?;
+    let texts = split_blocks(text);
+    let [text] = texts.as_slice() else {
+        return None;
+    };
+    let Some(index) = at.get(block_id).copied() else {
+        return Some(Err(TextRefusal::MissingBlock { block: *block_id }));
+    };
+    let before = head.blocks[index].clone();
+    let after = Block {
+        id: *block_id,
+        text: text.clone(),
+    };
+    if before == after {
+        return Some(Err(TextRefusal::NothingChanged));
+    }
+    let region = AppliedRegion {
+        before: vec![before].into_boxed_slice(),
+        after: vec![after.clone()].into_boxed_slice(),
+        left: index.checked_sub(1).map(|left| head.blocks[left].id),
+        right: head.blocks.get(index + 1).map(|right| right.id),
+    };
+    let action = TextAction {
+        id: Id::new(),
+        cause: editor.cause.clone(),
+        touched: vec![*block_id].into_boxed_slice(),
+        edits: super::edits_from_regions(std::slice::from_ref(&region)),
+        regions: vec![region].into_boxed_slice(),
+        verdicts: Box::default(),
+    };
+    Some(Ok((
+        TextHead {
+            id: Id::new(),
+            blocks: head.blocks.replace(index, after),
+            cause: editor.cause.clone(),
+        },
+        action,
+    )))
 }
 
 fn split_blocks(text: &str) -> Vec<String> {

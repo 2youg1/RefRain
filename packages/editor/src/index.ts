@@ -62,6 +62,34 @@ export interface EditorHandle {
 
 const BLOCK_TAG = "p";
 
+// The adapter owns this projection array for its whole lifetime. Index it by
+// identity so ordinary settled input never scans or copies a 100,000-block
+// document. Structural edits repair only the suffix whose positions moved.
+const projectionIndexes = new WeakMap<Block[], Map<string, number>>();
+const projectionPlaceholders = new WeakMap<Block[], number>();
+
+function projectionIndex(blocks: Block[]): Map<string, number> {
+  const current = projectionIndexes.get(blocks);
+  if (current !== undefined) return current;
+  const built = new Map(blocks.map((block, index) => [block.id, index]));
+  projectionIndexes.set(blocks, built);
+  return built;
+}
+
+function reindexProjection(blocks: Block[], from: number): void {
+  const at = projectionIndex(blocks);
+  for (let index = from; index < blocks.length; index += 1) {
+    const block = blocks[index];
+    if (block !== undefined) at.set(block.id, index);
+  }
+}
+
+function nextPlaceholder(blocks: Block[]): string {
+  const next = (projectionPlaceholders.get(blocks) ?? 0) + 1;
+  projectionPlaceholders.set(blocks, next);
+  return `pending-${next}`;
+}
+
 /**
  * The caret's character offset inside a block element, or null when the
  * selection is elsewhere. Measured through a Range so markup the browser
@@ -144,8 +172,11 @@ export function mountEditor(
     }
   };
 
-  const known = (id: string): Block | undefined => blocks.find((block) => block.id === id);
-  const indexOf = (id: string): number => blocks.findIndex((block) => block.id === id);
+  const indexOf = (id: string): number => projectionIndex(blocks).get(id) ?? -1;
+  const known = (id: string): Block | undefined => {
+    const index = indexOf(id);
+    return index === -1 ? undefined : blocks[index];
+  };
 
   const submit = (changes: readonly EditorChange[]): void => {
     if (destroyed || changes.length === 0) return;
@@ -336,31 +367,35 @@ export function mountEditor(
 
 /** Mirror the changes onto the local projection (ids for insertions are
  * placeholders until the domain's confirmed document arrives). */
-function applyLocally(blocks: readonly Block[], changes: readonly EditorChange[]): Block[] {
-  let next = [...blocks];
-  let placeholder = 0;
+export function applyLocally(blocks: Block[], changes: readonly EditorChange[]): Block[] {
+  const at = projectionIndex(blocks);
   for (const change of changes) {
     if (change.kind === "replace") {
-      const start = next.findIndex((block) => block.id === change.blocks[0]);
+      const first = change.blocks[0];
+      if (first === undefined) continue;
+      const start = at.get(first) ?? -1;
       if (start === -1) continue;
       const span = change.blocks.length;
-      const replacement =
-        change.text === null ? [] : [{ id: change.blocks[0] ?? "", text: change.text }];
-      next = [...next.slice(0, start), ...replacement, ...next.slice(start + span)];
+      if (span === 1 && change.text !== null) {
+        blocks[start] = { id: first, text: change.text };
+        continue;
+      }
+      for (const id of change.blocks) at.delete(id);
+      const replacement = change.text === null ? [] : [{ id: first, text: change.text }];
+      blocks.splice(start, span, ...replacement);
+      reindexProjection(blocks, start);
     } else {
-      const index =
-        change.before === null
-          ? next.length
-          : next.findIndex((block) => block.id === change.before);
-      const at = index === -1 ? next.length : index;
+      const index = change.before === null ? blocks.length : (at.get(change.before) ?? -1);
+      const insertAt = index === -1 ? blocks.length : index;
       const inserted = change.texts.map((text) => ({
-        id: `pending-${++placeholder}`,
+        id: nextPlaceholder(blocks),
         text,
       }));
-      next = [...next.slice(0, at), ...inserted, ...next.slice(at)];
+      blocks.splice(insertAt, 0, ...inserted);
+      reindexProjection(blocks, insertAt);
     }
   }
-  return next;
+  return blocks;
 }
 
 /** Preserves block identity across a replacement (SPEC 7.3). */

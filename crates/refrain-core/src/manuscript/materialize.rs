@@ -1,4 +1,4 @@
-use super::{Block, Id, SourceDrift, SourceSnapshot};
+use super::{BlockSequence, Id, SourceDrift, SourceSnapshot};
 use std::collections::HashMap;
 
 const DEFAULT_SEPARATOR: &[u8] = b"\n\n";
@@ -6,7 +6,7 @@ const DEFAULT_SEPARATOR: &[u8] = b"\n\n";
 pub(super) fn blocks(
     source: &SourceSnapshot,
     original_ids: &[Id],
-    current: &[Block],
+    current: &BlockSequence,
 ) -> Result<Vec<u8>, SourceDrift> {
     source.layout.reproduce(&source.bytes)?;
     let spans = source.layout.blocks();
@@ -19,7 +19,7 @@ pub(super) fn blocks(
     let mut source_cursor = 0;
     let mut original_cursor = 0;
 
-    for block in current {
+    for block in current.iter() {
         if let Some(found) = original_at.get(&block.id).copied() {
             debug_assert!(
                 found >= original_cursor,
