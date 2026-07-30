@@ -27,6 +27,7 @@ import {
   commands,
   type PreferencesChangeDto,
 } from "../generated/bindings.gen";
+import { divergedPaths, type Leaves, leavesOf, readLeaf, writeLeaf } from "../shell/config-leaves";
 import { IconPicker } from "./IconPicker";
 import { ShortcutsPanel } from "./ShortcutsPanel";
 import { ThemePicker } from "./ThemePicker";
@@ -63,72 +64,11 @@ const SECTIONS = [
 // 「叶子路径 -> JSON 值」，数组（如 typography_presets、fonts.priority）整体当
 // 一个叶子：它们对作者而言就是一次整体选择，没有再细分的意义。
 
-type Leaves = Map<string, string>;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const collectLeaves = (value: unknown, prefix: string, into: Leaves): void => {
-  if (isRecord(value)) {
-    for (const [key, child] of Object.entries(value)) {
-      collectLeaves(child, prefix === "" ? key : `${prefix}.${key}`, into);
-    }
-    return;
-  }
-  into.set(prefix, JSON.stringify(value ?? null));
-};
-
-const leavesOf = (appearance: AppearanceConfig): Leaves => {
-  const leaves: Leaves = new Map();
-  collectLeaves(appearance, "", leaves);
-  return leaves;
-};
-
 /** appearance 是纯数据；这两个转换只是换一个读写视角，没有放宽类型检查。 */
 const asTree = (appearance: AppearanceConfig): Record<string, unknown> =>
   appearance as unknown as Record<string, unknown>;
 const asAppearance = (tree: Record<string, unknown>): AppearanceConfig =>
   tree as unknown as AppearanceConfig;
-
-const readLeaf = (tree: Record<string, unknown>, path: string): unknown => {
-  let cursor: unknown = tree;
-  for (const key of path.split(".")) {
-    if (!isRecord(cursor)) return undefined;
-    cursor = cursor[key];
-  }
-  return cursor;
-};
-
-const writeLeaf = (tree: Record<string, unknown>, path: string, value: unknown): void => {
-  const keys = path.split(".");
-  const last = keys.pop();
-  if (last === undefined) return;
-  let cursor: Record<string, unknown> = tree;
-  for (const key of keys) {
-    const next = cursor[key];
-    if (isRecord(next)) {
-      cursor = next;
-      continue;
-    }
-    const created: Record<string, unknown> = {};
-    cursor[key] = created;
-    cursor = created;
-  }
-  if (value === undefined) {
-    delete cursor[last];
-    return;
-  }
-  cursor[last] = value;
-};
-
-/** mark 与 latest 之间所有取值不同的叶子路径。缺失也算不同（键的出现/消失）。 */
-const divergedPaths = (mark: Leaves, latest: Leaves): string[] => {
-  const paths: string[] = [];
-  for (const path of new Set([...mark.keys(), ...latest.keys()])) {
-    if (mark.get(path) !== latest.get(path)) paths.push(path);
-  }
-  return paths;
-};
 
 export function SettingsSurface(props: SettingsSurfaceProps) {
   const [section, setSection] = createSignal<Section>(props.initialSection ?? DEFAULT_SECTION);
