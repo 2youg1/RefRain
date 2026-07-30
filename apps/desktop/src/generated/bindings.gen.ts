@@ -375,6 +375,18 @@ export type BackupStatus = { kind: "taken"; value: {
 export type BlockDto = {
 	id: string,
 	text: string,
+	/**
+	 *  Display-width equivalents: CJK and full-width punctuation count two.
+	 *  Wrapping follows display width, not code point count, and in CJK prose
+	 *  the two differ by nearly a factor of two.
+	 */
+	widthUnits: number,
+	/**  Line breaks the author typed. A block occupies at least this many plus one. */
+	hardLines: number,
+	/**  The widest single line: a narrow block does not wrap just because it is long. */
+	maxLineUnits: number,
+	/**  A fence keeps the author's lines instead of wrapping. */
+	isFence: boolean,
 };
 
 export type BuiltinTypographyPreset = {

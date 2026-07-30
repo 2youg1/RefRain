@@ -53,7 +53,7 @@ const DEBT: Readonly<Record<string, { readonly lines: number; readonly errors: n
   commit_material_action: { lines: 39, errors: 1 },
   preview_dispatch: { lines: 37, errors: 1 },
   draft_review_task: { lines: 33, errors: 1 },
-  current_document: { lines: 27, errors: 1 },
+  current_document: { lines: 24, errors: 1 },
   choose_and_adopt_root: { lines: 25, errors: 1 },
   set_universal_icon: { lines: 24, errors: 2 },
   list_annotations: { lines: 24, errors: 1 },

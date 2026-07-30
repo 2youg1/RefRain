@@ -1,9 +1,25 @@
 /** Public editor contract. The Rust domain owns canonical bytes; these values are projections. */
 
-/** A block as the domain hands it over: an opaque id and its text. */
+/**
+ * A block as the domain hands it over: an opaque id, its text, and — when the
+ * bridge sends it — the byte shape the viewport uses to predict its height.
+ *
+ * The shape is optional because blocks are also created locally, ahead of the
+ * domain's confirmation, and those have no shape until it comes back. A block
+ * without one falls back to the flat estimate, which is what every block used
+ * before.
+ */
 export interface Block {
   readonly id: string;
   readonly text: string;
+  /** Display-width equivalents: CJK and full-width punctuation count two. */
+  readonly widthUnits?: number;
+  /** Line breaks the author typed. The block occupies at least this many plus one. */
+  readonly hardLines?: number;
+  /** The widest single line: a narrow block does not wrap just because it is long. */
+  readonly maxLineUnits?: number;
+  /** A fence keeps the author's lines instead of wrapping. */
+  readonly isFence?: boolean;
 }
 
 /** The document the adapter projects: a revision and its blocks. */
