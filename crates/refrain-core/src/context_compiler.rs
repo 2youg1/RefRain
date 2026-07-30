@@ -9,10 +9,10 @@
 //! Narration is the deterministic, fact-only translation of machine artifacts
 //! into the author's language. It never infers, never evaluates.
 
-use sha2::{Digest, Sha256};
-
 use serde::{Deserialize, Serialize};
 use specta::Type;
+
+use crate::digest::content_hex;
 
 /// A token count, three-stated (SPEC 2.3). `Unknown` is a first-class value
 /// and never serialised as zero (INV-3).
@@ -106,7 +106,7 @@ pub struct DispatchPackage {
 }
 
 fn digest_of(text: &str) -> String {
-    format!("{:x}", Sha256::digest(text.as_bytes()))
+    content_hex(text.as_bytes())
 }
 
 /// Rough token estimate for CJK-heavy prose. It is an estimate and says so;

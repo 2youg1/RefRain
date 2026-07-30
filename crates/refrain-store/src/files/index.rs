@@ -14,6 +14,7 @@
 //! read into the index (INV-4): showing it invites a click the guard would
 //! then have to refuse.
 
+use std::fmt;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
@@ -54,8 +55,10 @@ pub struct Entry {
 const MANUSCRIPT: &[&str] = &["md", "markdown", "mdown", "txt"];
 
 impl Entry {
-    fn from(path: PathBuf, depth: usize) -> Option<Self> {
-        let metadata = path.symlink_metadata().ok()?;
+    fn from(path: PathBuf, depth: usize) -> Result<Self, String> {
+        let metadata = path
+            .symlink_metadata()
+            .map_err(|error| format!("inspect {}: {error}", path.display()))?;
         let file_type = metadata.file_type();
 
         let kind = if file_type.is_symlink() {
@@ -66,7 +69,11 @@ impl Entry {
             Kind::File
         };
 
-        let name = path.file_name()?.to_string_lossy().into_owned();
+        let name = path
+            .file_name()
+            .ok_or_else(|| format!("name {}", path.display()))?
+            .to_string_lossy()
+            .into_owned();
         let name_folded = name.to_lowercase();
 
         let manuscript = matches!(kind, Kind::File)
@@ -85,7 +92,7 @@ impl Entry {
             .map(|since| since.as_millis() as i64)
             .unwrap_or(0);
 
-        Some(Self {
+        Ok(Self {
             path,
             name,
             name_folded,
@@ -97,6 +104,32 @@ impl Entry {
         })
     }
 }
+
+/// Why a database-authoritative walk cannot be used for reconciliation.
+///
+/// The ordinary file browser tolerates individual unreadable paths and shows
+/// the rest. A reconcile is different: treating an unreadable path as absent
+/// would erase its identity and confirmed-head metadata from the database.
+#[derive(Debug)]
+pub(crate) struct ScanFailure {
+    errors: Vec<String>,
+}
+
+impl fmt::Display for ScanFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let first = self
+            .errors
+            .first()
+            .map_or("unknown scan error", String::as_str);
+        write!(formatter, "filesystem scan was incomplete: {first}")?;
+        if self.errors.len() > 1 {
+            write!(formatter, " (and {} more errors)", self.errors.len() - 1)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for ScanFailure {}
 
 /// How the walk should behave. Defaults match what a writer expects on opening
 /// a folder: hidden files stay hidden, ignore rules apply, symlinks are listed
@@ -132,8 +165,29 @@ impl ScanOptions {
 /// The threads append into per-thread buffers and merge once, so the shared
 /// mutex is taken once per thread rather than once per entry.
 pub fn scan(roots: &[PathBuf], options: &ScanOptions) -> Vec<Entry> {
+    scan_all(roots, options).0
+}
+
+/// Walk every root and refuse a partial result.
+///
+/// Use this at reconciliation boundaries where omission means deletion. The
+/// interactive file index deliberately keeps using [`scan`] so one unreadable
+/// entry does not hide every healthy entry from the writer.
+pub(crate) fn scan_checked(
+    roots: &[PathBuf],
+    options: &ScanOptions,
+) -> Result<Vec<Entry>, ScanFailure> {
+    let (entries, errors) = scan_all(roots, options);
+    if errors.is_empty() {
+        Ok(entries)
+    } else {
+        Err(ScanFailure { errors })
+    }
+}
+
+fn scan_all(roots: &[PathBuf], options: &ScanOptions) -> (Vec<Entry>, Vec<String>) {
     let Some((first, rest)) = roots.split_first() else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
 
     let mut builder = WalkBuilder::new(first);
@@ -155,8 +209,10 @@ pub fn scan(roots: &[PathBuf], options: &ScanOptions) -> Vec<Entry> {
         .filter_entry(|entry| entry.file_name() != SOURCE_BACKUP_DIR);
 
     let collected = Mutex::new(Vec::<Entry>::new());
+    let errors = Mutex::new(Vec::<String>::new());
 
     builder.build_parallel().run(|| {
+        let errors = &errors;
         // Each thread fills a local buffer and merges once, through a guard
         // whose Drop runs when the walker retires the thread.
         let mut sink = Sink {
@@ -164,27 +220,49 @@ pub fn scan(roots: &[PathBuf], options: &ScanOptions) -> Vec<Entry> {
             shared: &collected,
         };
         Box::new(move |result| {
-            let Ok(entry) = result else {
-                return WalkState::Continue;
+            let entry = match result {
+                Ok(entry) => entry,
+                Err(error) => {
+                    errors
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .push(error.to_string());
+                    return WalkState::Continue;
+                }
             };
             let depth = entry.depth();
             if depth == 0 {
                 return WalkState::Continue;
             }
 
-            if let Some(item) = Entry::from(entry.into_path(), depth) {
-                let keep = !options.manuscripts_only
-                    || item.manuscript
-                    || matches!(item.kind, Kind::Directory);
-                if keep {
-                    sink.local.push(item);
+            match Entry::from(entry.into_path(), depth) {
+                Ok(item) => {
+                    let keep = !options.manuscripts_only
+                        || item.manuscript
+                        || matches!(item.kind, Kind::Directory);
+                    if keep {
+                        sink.local.push(item);
+                    }
+                }
+                Err(error) => {
+                    errors
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .push(error);
                 }
             }
             WalkState::Continue
         })
     });
 
-    collected.into_inner().unwrap_or_default()
+    (
+        collected
+            .into_inner()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        errors
+            .into_inner()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+    )
 }
 
 /// Merges a worker's buffer into the shared index exactly once.
@@ -198,8 +276,32 @@ impl Drop for Sink<'_> {
         if self.local.is_empty() {
             return;
         }
-        if let Ok(mut shared) = self.shared.lock() {
-            shared.append(&mut self.local);
-        }
+        self.shared
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .append(&mut self.local);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checked_scan_refuses_a_missing_root() {
+        let missing = std::env::temp_dir().join(format!(
+            "refrain-missing-scan-root-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_nanos())
+        ));
+
+        let failure = scan_checked(&[missing], &ScanOptions::default_for_open()).unwrap_err();
+        assert!(
+            failure
+                .to_string()
+                .contains("filesystem scan was incomplete")
+        );
     }
 }

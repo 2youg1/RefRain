@@ -9,7 +9,6 @@
 use rusqlite::params;
 
 use crate::project::{ProjectFailure, ProjectStore};
-use sha2::Digest as _;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -26,6 +25,39 @@ pub struct MaterialDraftRow {
     #[serde(with = "crate::project::u64_string")]
     #[specta(type = String)]
     pub created_at: u64,
+}
+
+pub struct PreparedMaterialSource {
+    pub material: crate::ingest::IngestedMaterial,
+    pub clone: std::path::PathBuf,
+}
+
+/// Read, identify, clone, and project one source without holding a project lock.
+/// The same bounded byte buffer supplies the digest, immutable clone, and parser.
+pub fn prepare_material_source(
+    source: &std::path::Path,
+    clone_dir: &std::path::Path,
+) -> Result<PreparedMaterialSource, ProjectFailure> {
+    let bytes = crate::ingest::read_source(source).map_err(ProjectFailure::Domain)?;
+    let material = crate::ingest::ingest_bytes(source, &bytes).map_err(ProjectFailure::Domain)?;
+    std::fs::create_dir_all(clone_dir).map_err(|source_error| ProjectFailure::Io {
+        path: clone_dir.to_path_buf(),
+        source: source_error,
+    })?;
+    let extension = source
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("bin");
+    let clone = clone_dir.join(format!("{}.{extension}", material.source_digest));
+    if !clone.exists() {
+        crate::atomic::replace_file_atomically(&clone, &bytes, |_| Ok(())).map_err(
+            |source_error| ProjectFailure::Io {
+                path: clone.clone(),
+                source: source_error,
+            },
+        )?;
+    }
+    Ok(PreparedMaterialSource { material, clone })
 }
 
 impl ProjectStore {
@@ -84,48 +116,6 @@ impl ProjectStore {
             .execute("DELETE FROM material_drafts WHERE id = ?1", params![id])?;
         Ok(row)
     }
-
-    /// Clone one material's source into the project's read-only zone (KL9:
-    /// the source never moves — backtracking forever needs the original
-    /// bytes inside the project, not just the projected text). The clone is
-    /// digest-named and write-once: an existing clone of the same bytes is
-    /// proof, not a collision, and nothing ever overwrites it. The expected
-    /// digest must match what was ingested; a source that moved between
-    /// ingest and clone is a typed refusal, not a quiet re-read.
-    pub fn clone_material_source(
-        &self,
-        source: &std::path::Path,
-        expected_digest: &str,
-    ) -> Result<std::path::PathBuf, ProjectFailure> {
-        let bytes = crate::ingest::read_source(source).map_err(ProjectFailure::Domain)?;
-        let digest = format!("{:x}", sha2::Sha256::digest(&bytes));
-        if digest != expected_digest {
-            return Err(ProjectFailure::Domain(refrain_core::RefrainError::new(
-                refrain_core::ErrorCode::StateUnavailable,
-                "clone a source that changed since ingest",
-                source.display().to_string(),
-            )));
-        }
-        let dir = self.layout().source_backup_dir.join("materials");
-        std::fs::create_dir_all(&dir).map_err(|source_error| ProjectFailure::Io {
-            path: dir.clone(),
-            source: source_error,
-        })?;
-        let extension = source
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("bin");
-        let target = dir.join(format!("{digest}.{extension}"));
-        if !target.exists() {
-            crate::atomic::replace_file_atomically(&target, &bytes, |_| Ok(())).map_err(
-                |source_error| ProjectFailure::Io {
-                    path: target.clone(),
-                    source: source_error,
-                },
-            )?;
-        }
-        Ok(target)
-    }
 }
 
 #[cfg(test)]
@@ -178,29 +168,36 @@ mod tests {
     }
 
     #[test]
-    fn a_source_clone_is_write_once_and_digest_verified() {
+    fn source_preparation_is_write_once_and_uses_one_buffer() {
         let store = scratch_store();
+        let clone_dir = store.layout().source_backup_dir.join("materials");
         let dir = std::env::temp_dir().join(format!("refrain-src-{}", refrain_core::Id::new()));
         std::fs::create_dir_all(&dir).unwrap();
         let source = dir.join("参考.html");
         std::fs::write(&source, "<p>原件。</p>").unwrap();
-        let digest = format!("{:x}", sha2::Sha256::digest("<p>原件。</p>".as_bytes()));
 
-        let clone = store.clone_material_source(&source, &digest).unwrap();
-        assert!(clone.exists(), "the clone landed");
-        assert_eq!(std::fs::read(&clone).unwrap(), "<p>原件。</p>".as_bytes());
-
-        // A second import of the same bytes writes nothing new.
-        let again = store.clone_material_source(&source, &digest).unwrap();
-        assert_eq!(clone, again);
-
-        // A stale digest is a typed refusal; a changed source cannot sneak in.
-        assert!(
-            store
-                .clone_material_source(&source, &"0".repeat(64))
-                .is_err()
+        let prepared = prepare_material_source(&source, &clone_dir).unwrap();
+        assert!(prepared.clone.exists(), "the clone landed");
+        assert_eq!(
+            prepared.material.source_digest,
+            refrain_core::digest::content_hex("<p>原件。</p>".as_bytes())
         );
+        assert_eq!(
+            std::fs::read(&prepared.clone).unwrap(),
+            "<p>原件。</p>".as_bytes()
+        );
+        assert_eq!(prepared.material.text, "原件。");
+
+        let again = prepare_material_source(&source, &clone_dir).unwrap();
+        assert_eq!(prepared.clone, again.clone);
+
         std::fs::write(&source, "<p>被换过。</p>").unwrap();
-        assert!(store.clone_material_source(&source, &digest).is_err());
+        let changed = prepare_material_source(&source, &clone_dir).unwrap();
+        assert_ne!(prepared.clone, changed.clone);
+        assert_eq!(
+            std::fs::read(&prepared.clone).unwrap(),
+            "<p>原件。</p>".as_bytes(),
+            "a later source cannot rewrite the original clone"
+        );
     }
 }

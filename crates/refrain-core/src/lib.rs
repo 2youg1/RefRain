@@ -9,6 +9,7 @@
 
 pub mod agent_protocol;
 pub mod context_compiler;
+pub mod digest;
 pub mod error;
 pub mod health;
 pub mod id;

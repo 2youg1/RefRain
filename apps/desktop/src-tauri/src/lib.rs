@@ -16,10 +16,11 @@ use std::sync::{Arc, Mutex};
 use refrain_core::{
     DocumentRole, EditorAction, EditorChange, ErrorCode, Id, Insertion, KaraAutoEntry, KaraEvent,
     KaraMachine, KaraPolicy, KaraTransition, Lineage, Manuscript, RecoveryStep, RefrainError,
-    Replacement, SourceSnapshot, TextCommand,
+    Replacement, SourceSnapshot, TextCommand, digest::content_hex,
 };
 use refrain_store::project::{
-    BackupStatus, DocumentCommit, DocumentRow, FileStamp, ProjectFailure, ProjectStore, RootLocator,
+    BackupStatus, DocumentCommit, DocumentPage, DocumentPageQuery, DocumentRow, FileStamp,
+    MAX_DOCUMENT_PAGE_SIZE, MAX_DOCUMENT_SEARCH_RESULTS, ProjectFailure, ProjectStore, RootLocator,
 };
 use refrain_store::root::RootKind;
 use refrain_store::schema::{AppDb, Database};
@@ -155,14 +156,19 @@ impl AppState {
     fn adopt(
         &self,
         locator: &RootLocator,
-    ) -> Result<(String, BackupStatus, Vec<DocumentRow>), RefrainError> {
+    ) -> Result<(String, BackupStatus, DocumentPage), RefrainError> {
         let mut app_db = self
             .app_db
             .lock()
             .map_err(|_| RefrainError::new(ErrorCode::StateUnavailable, "lock app.db", "adopt"))?;
         let (mut store, backup) = ProjectStore::adopt(&mut app_db, locator).map_err(into_domain)?;
         let root_id = store.permit().root_id.to_string();
-        let documents = store.refresh_documents().map_err(into_domain)?;
+        let page = store
+            .refresh_document_page(DocumentPageQuery {
+                after: None,
+                limit: MAX_DOCUMENT_PAGE_SIZE,
+            })
+            .map_err(into_domain)?;
         // A project becoming active starts a work session (D18): the one
         // automatic entry re-arms. It fires only when a manuscript opens.
         {
@@ -185,7 +191,7 @@ impl AppState {
                 RefrainError::new(ErrorCode::StateUnavailable, "lock the project map", "adopt")
             })?
             .insert(root_id.clone(), entry);
-        Ok((root_id, backup, documents))
+        Ok((root_id, backup, page))
     }
 }
 
@@ -196,6 +202,26 @@ pub struct ProjectOpenedDto {
     pub root_id: String,
     pub backup: BackupStatus,
     pub documents: Vec<DocumentRow>,
+    pub document_total: u32,
+    pub document_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentPageDto {
+    pub documents: Vec<DocumentRow>,
+    pub total: u32,
+    pub next: Option<String>,
+}
+
+impl From<DocumentPage> for DocumentPageDto {
+    fn from(page: DocumentPage) -> Self {
+        Self {
+            documents: page.documents,
+            total: page.total,
+            next: page.next,
+        }
+    }
 }
 
 /// A document ready for the editor: blocks with stable ids, the revision the
@@ -343,11 +369,13 @@ fn adopt_root_at(
     kind: RootKind,
 ) -> Result<ProjectOpenedDto, RefrainError> {
     let locator = RootLocator { path, kind };
-    let (root_id, backup, documents) = state.adopt(&locator)?;
+    let (root_id, backup, page) = state.adopt(&locator)?;
     Ok(ProjectOpenedDto {
         root_id,
         backup,
-        documents,
+        documents: page.documents,
+        document_total: page.total,
+        document_cursor: page.next,
     })
 }
 
@@ -443,6 +471,40 @@ async fn choose_and_create_project(
             create_project_at(state, parent, name)
         })
         .transpose()
+}
+
+/// Return one bounded page from an already reconciled project index.
+#[tauri::command]
+#[specta::specta]
+fn document_page(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    after: Option<String>,
+) -> Result<DocumentPageDto, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        entry
+            .store
+            .document_page(DocumentPageQuery {
+                after,
+                limit: MAX_DOCUMENT_PAGE_SIZE,
+            })
+            .map(DocumentPageDto::from)
+    })
+}
+
+/// Search the complete project index. Request ordering belongs to the caller.
+#[tauri::command]
+#[specta::specta]
+fn document_search(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    query: String,
+) -> Result<Vec<DocumentRow>, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        entry
+            .store
+            .search_documents(&query, MAX_DOCUMENT_SEARCH_RESULTS)
+    })
 }
 
 /// Open a document: bytes from disk, blocks from the byte-authoritative
@@ -1049,6 +1111,8 @@ macro_rules! refrain_commands {
         health,
         choose_and_adopt_root,
         choose_and_create_project,
+        document_page,
+        document_search,
         open_document,
         create_document,
         current_document,
@@ -1616,7 +1680,6 @@ use refrain_host::host::{
 };
 use refrain_host::staging::DirectoryContext;
 use refrain_store::orchestration::{AuthorizationRow, RunRow, TaskRow};
-use sha2::Digest;
 
 /// The built-in L0 agent: a file channel, including copy-paste into a web
 /// chat (SPEC 8.3a). Real harness connections arrive with C11; this id names
@@ -2691,7 +2754,7 @@ fn collect_attempt(
         }
 
         // §8.4b: validated first, Completed second, proposals frozen third.
-        let artifact_digest = format!("{:x}", sha2::Sha256::digest(&bytes));
+        let artifact_digest = content_hex(&bytes);
         host.execute(HostCommand::CollectAttempt {
             run_id,
             artifact_digest,
@@ -3666,58 +3729,69 @@ async fn choose_and_import_material(
     root_id: String,
 ) -> Result<Option<DocumentRow>, RefrainError> {
     use tauri_plugin_dialog::DialogExt as _;
-    app.dialog()
+    let selected = app
+        .dialog()
         .file()
         .set_title("选择资料")
         .add_filter(
             "Reference",
             &["pdf", "epub", "html", "htm", "docx", "pptx", "xlsx"],
         )
-        .blocking_pick_file()
-        .map(|selected| {
-            let path = selected.into_path().map_err(|error| {
-                RefrainError::new(ErrorCode::Io, "use a chosen source", error.to_string())
-            })?;
-            import_material_at(state, root_id, path)
-        })
-        .transpose()
+        .blocking_pick_file();
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let path = selected.into_path().map_err(|error| {
+        RefrainError::new(ErrorCode::Io, "use a chosen source", error.to_string())
+    })?;
+    import_material_at(state, root_id, path).await.map(Some)
 }
 
-/// Import one previously authorised source file as a Material.
-fn import_material_at(
+/// Import one previously authorised source file as a Material. Expensive source
+/// work runs without the project lock; only the final journaled creation enters
+/// the live session.
+async fn import_material_at(
     state: tauri::State<'_, AppState>,
     root_id: String,
     source_path: PathBuf,
 ) -> Result<DocumentRow, RefrainError> {
     let source_path = chosen_file(source_path)?;
+    let clone_dir = state.with_project(&root_id, |_state, entry| {
+        Ok(entry.store.layout().source_backup_dir.join("materials"))
+    })?;
+    let clone_base = clone_dir
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    let prepared = tauri::async_runtime::spawn_blocking(move || {
+        refrain_store::materials::prepare_material_source(&source_path, &clone_dir)
+    })
+    .await
+    .map_err(|error| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "prepare a material source",
+            "worker",
+        )
+        .with_detail(error.to_string())
+    })?
+    .map_err(into_domain)?;
+
+    let ingested = prepared.material;
+    let clone_display = prepared
+        .clone
+        .strip_prefix(&clone_base)
+        .unwrap_or(&prepared.clone)
+        .display();
+    let header = format!(
+        "> 来源：{}（{} · blake3 {}）；原件克隆：{}",
+        ingested.source_path.display(),
+        ingested.format.as_str(),
+        &ingested.source_digest[..12],
+        clone_display
+    );
+    let body = format!("{header}\n\n{}", ingested.text);
     state.with_project(&root_id, |state, entry| {
-        let ingested = refrain_store::ingest::ingest(&source_path)?;
-        // KL9: the source never moves. The original bytes join the project's
-        // read-only zone before the projected material exists — every later
-        // edit happens only on the project's own material document.
-        let clone = entry
-            .store
-            .clone_material_source(&ingested.source_path, &ingested.source_digest)
-            .map_err(into_domain)?;
-        let clone_display = clone
-            .strip_prefix(
-                entry
-                    .store
-                    .layout()
-                    .source_backup_dir
-                    .parent()
-                    .unwrap_or(std::path::Path::new("")),
-            )
-            .unwrap_or(&clone)
-            .display();
-        let header = format!(
-            "> 来源：{}（{} · sha256 {}）；原件克隆：{}",
-            ingested.source_path.display(),
-            ingested.format.as_str(),
-            &ingested.source_digest[..12],
-            clone_display
-        );
-        let body = format!("{header}\n\n{}", ingested.text);
         create_material_with_body(state, entry, &ingested.title, &body, DocumentRole::Material)
     })
 }
@@ -3725,32 +3799,43 @@ fn import_material_at(
 // ── C12.6: drag-drop import — text becomes a chapter, the rest a Material ──
 
 /// Import one previously authorised UTF-8 text file as a chapter.
-fn import_manuscript_at(
+async fn import_manuscript_at(
     state: tauri::State<'_, AppState>,
     root_id: String,
     source_path: PathBuf,
 ) -> Result<DocumentRow, RefrainError> {
     let source_path = chosen_file(source_path)?;
-    let path = source_path.as_path();
-    let bytes = refrain_store::ingest::read_source(path)?;
-    let text_bytes = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        &bytes[3..]
-    } else {
-        &bytes[..]
-    };
-    let text = String::from_utf8(text_bytes.to_vec()).map_err(|_| {
+    let (title, text) = tauri::async_runtime::spawn_blocking(move || {
+        let bytes = refrain_store::ingest::read_source(&source_path)?;
+        let text_bytes = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+            &bytes[3..]
+        } else {
+            &bytes[..]
+        };
+        let text = String::from_utf8(text_bytes.to_vec()).map_err(|_| {
+            RefrainError::new(
+                ErrorCode::UnsupportedFormat,
+                "read the dropped file",
+                "not UTF-8 text",
+            )
+        })?;
+        let title = source_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .filter(|stem| !stem.is_empty())
+            .unwrap_or("拖入")
+            .to_string();
+        Ok::<_, RefrainError>((title, text))
+    })
+    .await
+    .map_err(|error| {
         RefrainError::new(
-            ErrorCode::UnsupportedFormat,
-            "read the dropped file",
-            "not UTF-8 text",
+            ErrorCode::StateUnavailable,
+            "prepare a manuscript source",
+            "worker",
         )
-    })?;
-    let title = path
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .filter(|stem| !stem.is_empty())
-        .unwrap_or("拖入")
-        .to_string();
+        .with_detail(error.to_string())
+    })??;
     state.with_project(&root_id, |state, entry| {
         create_material_with_body(state, entry, &title, &text, DocumentRole::Chapter)
     })
@@ -3764,18 +3849,19 @@ async fn choose_and_import_manuscript(
     root_id: String,
 ) -> Result<Option<DocumentRow>, RefrainError> {
     use tauri_plugin_dialog::DialogExt as _;
-    app.dialog()
+    let selected = app
+        .dialog()
         .file()
         .set_title("选择手稿")
         .add_filter("Manuscript", &["md", "markdown", "mdown", "txt"])
-        .blocking_pick_file()
-        .map(|selected| {
-            let path = selected.into_path().map_err(|error| {
-                RefrainError::new(ErrorCode::Io, "use a chosen source", error.to_string())
-            })?;
-            import_manuscript_at(state, root_id, path)
-        })
-        .transpose()
+        .blocking_pick_file();
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let path = selected.into_path().map_err(|error| {
+        RefrainError::new(ErrorCode::Io, "use a chosen source", error.to_string())
+    })?;
+    import_manuscript_at(state, root_id, path).await.map(Some)
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
@@ -3811,8 +3897,8 @@ async fn confirm_and_import_dropped(
         return Ok(None);
     }
     match kind {
-        DroppedImportKind::Manuscript => import_manuscript_at(state, root_id, path).map(Some),
-        DroppedImportKind::Material => import_material_at(state, root_id, path).map(Some),
+        DroppedImportKind::Manuscript => import_manuscript_at(state, root_id, path).await.map(Some),
+        DroppedImportKind::Material => import_material_at(state, root_id, path).await.map(Some),
     }
 }
 
@@ -3841,21 +3927,21 @@ fn debug_create_project(
 #[cfg(all(debug_assertions, not(feature = "generate-bindings")))]
 #[tauri::command]
 #[specta::specta]
-fn debug_import_material(
+async fn debug_import_material(
     state: tauri::State<'_, AppState>,
     root_id: String,
     source_path: String,
 ) -> Result<DocumentRow, RefrainError> {
-    import_material_at(state, root_id, PathBuf::from(source_path))
+    import_material_at(state, root_id, PathBuf::from(source_path)).await
 }
 
 #[cfg(all(debug_assertions, not(feature = "generate-bindings")))]
 #[tauri::command]
 #[specta::specta]
-fn debug_import_manuscript(
+async fn debug_import_manuscript(
     state: tauri::State<'_, AppState>,
     root_id: String,
     source_path: String,
 ) -> Result<DocumentRow, RefrainError> {
-    import_manuscript_at(state, root_id, PathBuf::from(source_path))
+    import_manuscript_at(state, root_id, PathBuf::from(source_path)).await
 }

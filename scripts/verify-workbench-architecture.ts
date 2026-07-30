@@ -9,6 +9,9 @@ const iconPicker = await Bun.file("apps/desktop/src/shell/IconPicker.vue").text(
 const storeConfig = await Bun.file("crates/refrain-store/src/config.rs").text();
 const bridge = await Bun.file("apps/desktop/src-tauri/src/lib.rs").text();
 const bindings = await Bun.file("apps/desktop/src/generated/bindings.gen.ts").text();
+const projectSession = await Bun.file("apps/desktop/src/shell/project-session.ts").text();
+const projectStore = await Bun.file("crates/refrain-store/src/project.rs").text();
+const projectCatalog = await Bun.file("crates/refrain-store/src/project/catalog.rs").text();
 const failures: string[] = [];
 
 for (const [source, fact, message] of [
@@ -19,6 +22,11 @@ for (const [source, fact, message] of [
   ],
   [workbench, "surface.kind === 'settings'", "Settings does not recede the Rail"],
   [workbench, "v-if=\"surface.kind === 'settings'\"", "Settings is not a Stage-level surface"],
+  [
+    workbench,
+    "v-show=\"surface.kind !== 'settings' && surface.kind !== 'review'\"",
+    "Settings or Review destroys the mounted editor instead of hiding it",
+  ],
   [workbench, '@closed="returnToWriting"', "a surface can close without returning to writing"],
   [reducer, 'case "documentSelected":', "document selection does not restore writing"],
   [settings, "返回 {{ props.returnLabel }}", "Settings has no explicit return destination"],
@@ -53,6 +61,51 @@ for (const state of ["reviewing", "dispatching", "connecting", "settings"]) {
   }
 }
 
+for (const leakedCatalogFact of [
+  "commands.documentPage",
+  "commands.documentSearch",
+  "documentCursor",
+  "documentTotal",
+  "loadMoreDocuments",
+]) {
+  if (workbench.includes(leakedCatalogFact)) {
+    failures.push(`Workbench owns the catalog implementation fact: ${leakedCatalogFact}`);
+  }
+}
+if (!workbench.includes('from "./project-session"')) {
+  failures.push("Workbench does not depend on the project catalog session");
+}
+for (const command of ["commands.documentPage", "commands.documentSearch"]) {
+  if (!projectSession.includes(command)) failures.push(`ProjectSession does not own ${command}`);
+}
+if (/\bgeneration\s*(?::|[,)=])/.test(projectSession)) {
+  failures.push("ProjectSession exposes or stores a bridge request generation");
+}
+if (!projectStore.includes("mod catalog;") || !projectStore.includes("pub use catalog::")) {
+  failures.push("ProjectStore does not hide its catalog behind the project::catalog module");
+}
+for (const catalogSql of ["refreshed_documents", "WHERE path LIKE", "LIMIT ?2"]) {
+  if (projectStore.includes(catalogSql)) {
+    failures.push(`ProjectStore leaks catalog SQL: ${catalogSql}`);
+  }
+  if (!projectCatalog.includes(catalogSql)) {
+    failures.push(`DocumentCatalog does not own: ${catalogSql}`);
+  }
+}
+if (!projectCatalog.includes("limit.min(MAX_DOCUMENT_SEARCH_RESULTS)")) {
+  failures.push("DocumentCatalog does not hard-limit search before rows cross the bridge");
+}
+if (!/documentSearch: \(rootId: string, query: string\)/.test(bindings)) {
+  failures.push("the generated search interface exposes more than root and query");
+}
+for (const retired of [
+  "apps/desktop/src/shell/document-search-session.ts",
+  "apps/desktop/test/document-search-session.test.ts",
+]) {
+  if (await Bun.file(retired).exists())
+    failures.push(`retired catalog carrier still exists: ${retired}`);
+}
+
 const railFooter = workbench.match(/<div class="rail-foot">([\s\S]*?)<\/div>/)?.[1] ?? "";
 for (const label of ["Review", "派发", "连接", "设置"]) {
   if (!railFooter.includes(label))
@@ -79,5 +132,5 @@ if (failures.length > 0) {
 }
 
 console.log(
-  "PASS  verify:workbench-architecture  (7 files, one surface state, stable Rail, reversible Settings)",
+  "PASS  verify:workbench-architecture  (10 files, persistent editor, one bounded project catalog session)",
 );
