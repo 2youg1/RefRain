@@ -1,15 +1,13 @@
 import type {
   BlockPrefix,
   EditorAnnotationProjection,
-  EditorContext,
   EditorFormat,
   PunctuationFinding,
   SelectionMeasure,
 } from "@refrain/editor";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { describe, unwrap } from "../bridge";
-import { debugCommands } from "../e2e/debug-bridge";
 import {
   type AnnotationDto,
   commands,
@@ -24,15 +22,17 @@ import { EditorContextMenu } from "../ui/EditorContextMenu";
 import { EditorHost, type EditorHostHandle } from "../ui/EditorHost";
 import { KaraSurface } from "../ui/KaraSurface";
 import { LogoMark } from "../ui/LogoMark";
+import { RailShelf } from "../ui/RailShelf";
 import { ReviewSurface } from "../ui/ReviewSurface";
 import { SettingsSurface } from "../ui/SettingsSurface";
 import { StatusLine } from "../ui/StatusLine";
 import { UniversalButton } from "../ui/UniversalButton";
 import { UniversalMenu } from "../ui/UniversalMenu";
 import { WindowChrome } from "../ui/WindowChrome";
+import { CommandFocus } from "./command-focus";
 import { type DocumentGateway, DocumentSession } from "./document-session";
+import { EditIntents } from "./edit-intents";
 import { useKara } from "./kara-state";
-import { e2ePickedPath } from "./pick";
 import { ProjectSession } from "./project-session";
 import { browserTimer, RailPresence } from "./rail-presence";
 import { SelectionReadout } from "./selection-readout";
@@ -59,12 +59,6 @@ const gateway: DocumentGateway = {
   deleteAnnotation: async (rootId, id) => unwrap(commands.deleteAnnotation(rootId, id)),
 };
 
-type MenuState = {
-  context: EditorContext;
-  pointerX: number;
-  pointerY: number;
-};
-
 type WorkbenchProps = { onThemeChanged?: (slug: string) => void };
 
 /**
@@ -87,38 +81,26 @@ export function Workbench(props: WorkbenchProps) {
   const [projectTick, setProjectTick] = createSignal(0);
   const [documentTick, setDocumentTick] = createSignal(0);
   const [state, setState] = createSignal<WorkbenchState<never>>(initialWorkbenchState());
-  const [menu, setMenu] = createSignal<MenuState | null>(null);
+  const [intentTick, setIntentTick] = createSignal(0);
+  // 右键落点、批注锚点、派发种子是同一条链上的三段，归 EditIntents。
+  const intents = new EditIntents(() => setIntentTick((value) => value + 1));
+  const menu = createMemo(() => {
+    intentTick();
+    return intents.pointer;
+  });
+  const dispatchSeed = createMemo(() => {
+    intentTick();
+    return intents.seed;
+  });
   const [commandMenuOpen, setCommandMenuOpen] = createSignal(false);
-  // Opening the command menu takes focus away from wherever the author was.
-  // Closing it must give that focus back, or a keyboard user is dropped at the
-  // top of the document with no way back to the sentence they were writing.
-  // The entry point is remembered here because only the opener knows it.
-  let commandReturnFocus: HTMLElement | null = null;
-
-  const openCommandMenu = (): void => {
-    if (commandMenuOpen()) return;
-    commandReturnFocus =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setCommandMenuOpen(true);
-  };
-
-  const closeCommandMenu = (): void => {
-    if (!commandMenuOpen()) return;
-    setCommandMenuOpen(false);
-    const target = commandReturnFocus;
-    commandReturnFocus = null;
-    queueMicrotask(() => {
-      // The hot zone re-opens the menu on focus, so returning focus there would
-      // trap the author in a loop; fall through to the manuscript instead.
-      if (target?.isConnected && !target.closest(".universal-button-zone")) target.focus();
-      else editor?.focus();
-    });
-  };
+  // 面板拿走焦点、还回焦点这件事完整地归 CommandFocus——包括「热区会把作者
+  // 关进开合循环」那条只有它知道的规矩。这里只订它的广播。
+  const commandFocus = new CommandFocus(setCommandMenuOpen, () => editor?.focus());
+  const openCommandMenu = (): void => commandFocus.show();
+  const closeCommandMenu = (): void => commandFocus.hide();
 
   const [railReceded, setRailReceded] = createSignal(false);
   const rail = new RailPresence(browserTimer, setRailReceded);
-  const [dispatchSeed, setDispatchSeed] = createSignal<string[]>([]);
-  const [dispatchPrompt, setDispatchPrompt] = createSignal("");
   const kara = useKara();
   const [karaTick, setKaraTick] = createSignal(0);
   const stopKara = kara.subscribe(() => setKaraTick((value) => value + 1));
@@ -170,6 +152,15 @@ export function Workbench(props: WorkbenchProps) {
   });
   const chapters = createMemo(() => documents().filter((row) => row.role === "chapter"));
   const materials = createMemo(() => documents().filter((row) => row.role === "material"));
+
+  // 名录可以有十万条。侧栏只挂看得见的那几十行，其余用两个 spacer 撑住滚动条；
+  // 视野逼近末尾时顺手取下一页——「继续加载」按钮不该存在，作者要的是往下滚。
+  const [railScroll, setRailScroll] = createSignal({ top: 0, height: 0 });
+  let railElement: HTMLElement | undefined;
+  const onRailScroll = (): void => {
+    if (railElement === undefined) return;
+    setRailScroll({ top: railElement.scrollTop, height: railElement.clientHeight });
+  };
   const editorAnnotations = createMemo<EditorAnnotationProjection[]>(() =>
     documentView().annotations.map((row) => ({
       id: row.id,
@@ -239,40 +230,25 @@ export function Workbench(props: WorkbenchProps) {
   const save = (): void => void documentSession.save();
   const markDirty = (): void => {
     documentSession.markDirty();
-    if (!kara.engaged.value) return;
     const caret = editor?.caret();
-    const current = active();
-    if (caret === null || caret === undefined || current === null) return;
-    const block = current.blocks.find((candidate) => candidate.id === caret.blockId);
-    void kara.setReturnPoint({
-      blockId: caret.blockId,
-      offset: caret.offset,
-      sentenceTail: (block?.text ?? "").slice(0, caret.offset).slice(-18),
-    });
+    const blocks = active()?.blocks ?? [];
+    const text = blocks.find((candidate) => candidate.id === caret?.blockId)?.text ?? "";
+    kara.markPosition(caret, text);
   };
 
   const persistAnnotation = async (
     kind: "highlight" | "comment",
     existing: AnnotationDto | null = null,
   ): Promise<void> => {
-    const current = menu();
-    const selection = current?.context.selection;
-    if (current === null || selection === null || selection === undefined) return;
+    const target = intents.annotationTarget(existing);
+    if (target === null) return;
     const body =
       kind === "comment" && existing === null
         ? window.prompt("批注")?.trim() || null
         : (existing?.body ?? null);
     if (kind === "comment" && body === null) return;
-    const row = await documentSession.upsertAnnotation({
-      id: existing?.id ?? null,
-      blockId: current.context.blockId,
-      start: selection.start,
-      end: selection.end,
-      quote: selection.quote,
-      kind,
-      body,
-    });
-    setMenu(null);
+    const row = await documentSession.upsertAnnotation({ ...target, kind, body });
+    intents.release();
     if (row !== null) openReference({ kind: "annotations" });
   };
 
@@ -285,19 +261,12 @@ export function Workbench(props: WorkbenchProps) {
   };
 
   const dispatchAnnotations = (blockIds: string[], prompt: string): void => {
-    setDispatchSeed([...new Set(blockIds)]);
-    setDispatchPrompt(prompt);
+    intents.dispatchAnnotations(blockIds, prompt);
     openStage("dispatch");
   };
 
   const dispatchBlock = (accumulate: boolean): void => {
-    const current = menu();
-    if (current === null) return;
-    setDispatchSeed((seed) =>
-      accumulate ? [...seed, current.context.blockId] : [current.context.blockId],
-    );
-    openStage("dispatch");
-    setMenu(null);
+    if (intents.dispatchAimedBlock(accumulate)) openStage("dispatch");
   };
 
   const executeCommand = (id: WorkbenchCommandId): void => {
@@ -331,6 +300,21 @@ export function Workbench(props: WorkbenchProps) {
       case "save-document":
         save();
         break;
+      case "open-dispatch":
+        openStage("dispatch");
+        break;
+      case "open-connections":
+        openReference({ kind: "connections" });
+        break;
+      case "open-appearance":
+        openReference({ kind: "settings", section: "appearance" });
+        break;
+      case "open-typography":
+        openReference({ kind: "settings", section: "typography" });
+        break;
+      case "open-shortcuts":
+        openReference({ kind: "settings", section: "shortcuts" });
+        break;
       default: {
         // 块级格式化命令是一次查表，不是六条分支。表里没有的 id 落到这里
         // 什么也不做——这是刻意的：命令目录与执行分属两处，漏接一个不应当
@@ -339,25 +323,6 @@ export function Workbench(props: WorkbenchProps) {
         if (prefix !== undefined) editor?.applyBlockPrefix(prefix);
         break;
       }
-      case "open-dispatch":
-        openStage("dispatch");
-        break;
-      case "open-connections":
-        openReference({ kind: "connections" });
-        break;
-      case "open-appearance":
-      case "open-typography":
-      case "open-shortcuts":
-        openReference({
-          kind: "settings",
-          section:
-            id === "open-appearance"
-              ? "appearance"
-              : id === "open-typography"
-                ? "typography"
-                : "shortcuts",
-        });
-        break;
     }
   };
 
@@ -369,11 +334,10 @@ export function Workbench(props: WorkbenchProps) {
       save();
     } else if (modifier && event.key.toLocaleLowerCase() === "k") {
       event.preventDefault();
-      if (commandMenuOpen()) closeCommandMenu();
-      else openCommandMenu();
+      commandFocus.toggle();
     } else if (event.key === "Escape" && menu() !== null) {
       event.preventDefault();
-      setMenu(null);
+      intents.release();
     }
   };
 
@@ -461,6 +425,8 @@ export function Workbench(props: WorkbenchProps) {
               class="rail"
               classList={{ receded: railReceded() || reference()?.kind === "settings" }}
               aria-label="文档"
+              ref={railElement}
+              onScroll={onRailScroll}
             >
               <button type="button" class="brand" onClick={() => setRailReceded((value) => !value)}>
                 <LogoMark size={28} label="RefRain" />
@@ -485,39 +451,27 @@ export function Workbench(props: WorkbenchProps) {
                   onInput={(event) => projectSession.setQuery(event.currentTarget.value)}
                 />
               </div>
-              <div class="shelf" data-shelf="manuscript">
-                <div class="rail-group">原稿</div>
-                <ul>
-                  <For each={chapters()}>
-                    {(row) => (
-                      <li>
-                        <button
-                          type="button"
-                          classList={{ current: active()?.document.path === row.path }}
-                          onClick={() => void selectDocument(row.path)}
-                        >
-                          {row.path}
-                        </button>
-                      </li>
-                    )}
-                  </For>
-                </ul>
-              </div>
+              <RailShelf
+                label="原稿"
+                shelf="manuscript"
+                rows={chapters()}
+                scrollTop={railScroll().top}
+                viewportHeight={railScroll().height}
+                currentPath={active()?.document.path ?? null}
+                onSelect={(path) => void selectDocument(path)}
+                catalog={projectSession}
+              />
               <Show when={materials().length > 0}>
-                <div class="shelf" data-shelf="material">
-                  <div class="rail-group">资料</div>
-                  <ul>
-                    <For each={materials()}>
-                      {(row) => (
-                        <li>
-                          <button type="button" onClick={() => void selectDocument(row.path)}>
-                            {row.path}
-                          </button>
-                        </li>
-                      )}
-                    </For>
-                  </ul>
-                </div>
+                <RailShelf
+                  label="资料"
+                  shelf="material"
+                  rows={materials()}
+                  scrollTop={railScroll().top}
+                  viewportHeight={railScroll().height}
+                  currentPath={active()?.document.path ?? null}
+                  onSelect={(path) => void selectDocument(path)}
+                  catalog={projectSession}
+                />
               </Show>
               <div class="rail-foot">
                 <Show when={active()}>
@@ -601,7 +555,7 @@ export function Workbench(props: WorkbenchProps) {
                       onConfirmed={() => markDirty()}
                       onRejected={setNotice}
                       onContext={(context, pointerX, pointerY) =>
-                        setMenu({ context, pointerX, pointerY })
+                        intents.aim(context, pointerX, pointerY)
                       }
                     />
                     <Show when={annotationsOpen()}>
@@ -619,8 +573,8 @@ export function Workbench(props: WorkbenchProps) {
                         path={openDocument().document.path}
                         blocks={openDocument().blocks}
                         materials={materials().map((row) => ({ path: row.path, label: row.path }))}
-                        seed={dispatchSeed()}
-                        initialPrompt={dispatchPrompt()}
+                        seed={[...dispatchSeed().blockIds]}
+                        initialPrompt={dispatchSeed().prompt}
                         onCollected={(count) =>
                           setNotice(`${count} 条提案已冻结，点 Review 逐句裁决。`)
                         }
@@ -654,21 +608,21 @@ export function Workbench(props: WorkbenchProps) {
               {(current) => (
                 <EditorContextMenu
                   context={current().context}
-                  pointerX={current().pointerX}
-                  pointerY={current().pointerY}
+                  pointerX={current().x}
+                  pointerY={current().y}
                   kara={karaEngaged()}
                   relocating={documentView().relocating !== null}
                   onFormat={(kind: EditorFormat) => {
                     editor?.formatSelection(kind);
-                    setMenu(null);
+                    intents.release();
                   }}
                   onDeleteEmpty={() => {
                     editor?.deleteEmptyBlock();
-                    setMenu(null);
+                    intents.release();
                   }}
                   onPunctuation={(finding: PunctuationFinding) => {
                     editor?.applyPunctuation(finding);
-                    setMenu(null);
+                    intents.release();
                   }}
                   onHighlight={() => void persistAnnotation("highlight")}
                   onComment={() => void persistAnnotation("comment")}
@@ -678,7 +632,7 @@ export function Workbench(props: WorkbenchProps) {
                   }}
                   onDispatch={() => dispatchBlock(false)}
                   onAccumulate={() => dispatchBlock(true)}
-                  onClose={() => setMenu(null)}
+                  onClose={() => intents.release()}
                 />
               )}
             </Show>

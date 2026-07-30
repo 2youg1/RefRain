@@ -20,6 +20,7 @@ import {
   SLOT_NAME,
   TypographySession,
 } from "../shell/typography-session";
+import { TypographySpecimen } from "./TypographySpecimen";
 
 const SLOTS = ["latin", "chinese", "japanese"] as const satisfies readonly FontSlot[];
 const BUILTIN_COPY: Record<string, { name: string; detail: string }> = {
@@ -100,6 +101,7 @@ export function TypographyPanel() {
 
   return (
     <div class="typography-panel" aria-busy={busy()}>
+      <TypographySpecimen />
       <p class="panel-status" aria-live="polite">
         {status()}
       </p>

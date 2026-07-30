@@ -25,5 +25,3 @@ export function LogoMark(props: LogoMarkProps): JSX.Element {
     </svg>
   );
 }
-
-export default LogoMark;

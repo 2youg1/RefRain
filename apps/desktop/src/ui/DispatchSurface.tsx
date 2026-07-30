@@ -392,5 +392,3 @@ export function DispatchSurface(props: DispatchSurfaceProps): JSX.Element {
     </section>
   );
 }
-
-export default DispatchSurface;

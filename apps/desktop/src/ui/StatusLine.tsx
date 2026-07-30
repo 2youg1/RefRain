@@ -63,5 +63,3 @@ export function StatusLine(props: StatusLineProps): JSX.Element {
     </footer>
   );
 }
-
-export default StatusLine;

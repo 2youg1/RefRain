@@ -35,5 +35,3 @@ export function ConflictDialog(props: ConflictDialogProps): JSX.Element {
     </dialog>
   );
 }
-
-export default ConflictDialog;

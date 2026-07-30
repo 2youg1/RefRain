@@ -559,5 +559,3 @@ export function ReviewSurface(props: ReviewSurfaceProps): JSX.Element {
     </section>
   );
 }
-
-export default ReviewSurface;

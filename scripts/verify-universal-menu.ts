@@ -8,6 +8,7 @@ const menu =
   (await Bun.file("apps/desktop/src/ui/UniversalMenu.tsx").text()) +
   (await Bun.file("apps/desktop/src/styles/surfaces.css").text());
 const catalog = await Bun.file("apps/desktop/src/shell/workbench-commands.ts").text();
+const focus = await Bun.file("apps/desktop/src/shell/command-focus.ts").text();
 const icon = await Bun.file("apps/desktop/src/shell/universal-icon.ts").text();
 const picker = await Bun.file("apps/desktop/src/ui/IconPicker.tsx").text();
 const failures: string[] = [];
@@ -24,7 +25,11 @@ for (const [source, fact, failure] of [
     "Workbench shortcuts disappear when focus falls back to the window",
   ],
   [workbench, "event.isComposing", "Ctrl+K can intercept IME composition"],
-  [workbench, "commandReturnFocus", "closing the menu does not restore its entry focus"],
+  [workbench, "new CommandFocus(", "the menu does not route focus through CommandFocus"],
+  // 焦点归还归 CommandFocus，并且它必须知道热区那条规矩：把焦点还给热区
+  // 会让作者被关进开合循环。断言写在权威那一侧，不是外壳的变量名上。
+  [focus, "isConnected", "focus can be returned to a node that already left the DOM"],
+  [focus, "universal-button-zone", "returning focus to the hot zone can trap the author in a loop"],
   [workbench, "onChoose={executeCommand}", "the menu bypasses Workbench action ownership"],
   [button, "commands.universalIcon()", "the button does not consume the stored icon"],
   [button, "universal-hot-zone", "the button has no top-edge hot zone"],

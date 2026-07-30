@@ -49,5 +49,3 @@ export function ShortcutsPanel(): JSX.Element {
     </div>
   );
 }
-
-export default ShortcutsPanel;

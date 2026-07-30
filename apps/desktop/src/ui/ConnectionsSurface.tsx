@@ -253,5 +253,3 @@ export function ConnectionsSurface(props: ConnectionsSurfaceProps): JSX.Element 
     </section>
   );
 }
-
-export default ConnectionsSurface;
