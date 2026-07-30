@@ -6,6 +6,7 @@ const rustGlobs = [
   "crates/refrain-core/src/**/*.rs",
   "crates/refrain-host/src/**/*.rs",
   "crates/refrain-store/src/**/*.rs",
+  "crates/refrain-app/src/**/*.rs",
   "apps/desktop/src-tauri/src/**/*.rs",
 ] as const;
 const rustFiles = new Set<string>();
@@ -49,7 +50,8 @@ const requiredOwners = [
   ["crates/refrain-store/src/materials.rs", "content_hex"],
   ["crates/refrain-store/src/migrate.rs", "content_hex"],
   ["crates/refrain-host/src/staging.rs", "content_hex"],
-  ["apps/desktop/src-tauri/src/lib.rs", "content_hex"],
+  // 收取一次派发时算的 artifact 摘要，随用例一起搬出了装配层。
+  ["crates/refrain-app/src/collect.rs", "content_hex"],
 ] as const;
 for (const [file, primitive] of requiredOwners) {
   if (!readFileSync(file, "utf8").includes(primitive)) {

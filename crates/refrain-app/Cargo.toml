@@ -19,6 +19,7 @@ refrain-store = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 specta = { workspace = true }
+thiserror = { workspace = true }
 
 # 只有测试需要开一个真数据库连接。产品代码里用例层拿到的是已经打开的 ProjectStore，
 # 自己不碰 rusqlite——这条界线由依赖表本身守着。
