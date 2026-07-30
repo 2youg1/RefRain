@@ -22,10 +22,8 @@ import {
   type DispatchMaterial,
   DispatchSession,
   editingDraftId,
-  runStatusLabel,
-  terminal,
-  tokenLabel,
 } from "../shell/dispatch-session";
+import { runStatusLabel, terminal, tokenLabel } from "../shell/dispatch-wording";
 
 export type { DispatchMaterial } from "../shell/dispatch-session";
 

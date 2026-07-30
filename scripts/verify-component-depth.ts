@@ -53,8 +53,8 @@ const BRIDGE_DEBT: Readonly<Record<string, number>> = {
   "ThemePicker.tsx": 3,
   "SettingsSurface.tsx": 3,
   "EditorHost.tsx": 2,
-  "IconPicker.tsx": 2,
-  "UniversalButton.tsx": 1,
+  "IconPicker.tsx": 1,
+
   "WindowChrome.tsx": 1,
 };
 

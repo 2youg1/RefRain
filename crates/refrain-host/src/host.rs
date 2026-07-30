@@ -38,6 +38,25 @@ use refrain_core::Id;
 use refrain_core::context_compiler::DispatchPackage;
 use serde::{Deserialize, Serialize};
 
+/// Which Runs an authorization covers.
+///
+/// Minted Runs are new and open their Task; retried Runs already exist and
+/// their Task is already Open. Both halves stage, journal, and record an
+/// authorization identically — only the Run bookkeeping differs, and saying so
+/// as two variants keeps the two paths from drifting the way they had.
+enum Authorized {
+    Minted(Vec<Id>),
+    Retried(Vec<Id>),
+}
+
+impl Authorized {
+    fn ids(&self) -> &[Id] {
+        match self {
+            Self::Minted(ids) | Self::Retried(ids) => ids,
+        }
+    }
+}
+
 /// The token the compiler leaves where each Run's own id belongs (the result
 /// path inside the Reply-format section). Staging substitutes it, byte-exact,
 /// before the request is frozen.
@@ -355,6 +374,50 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
             .ok_or(HostRefusal::UnknownRun(id))
     }
 
+    /// Which Runs an authorization opens, and whether they are new.
+    ///
+    /// A Task in `Draft` mints one Run per agent and has nothing to retry. A
+    /// Task already `Open` mints nothing and may only re-authorize Runs that
+    /// are still `Queued`. A `Closed` Task authorizes nothing at all.
+    ///
+    /// This lived inline in `execute`, where the three-way decision was hard
+    /// to see through the staging and journalling around it. The refusals are
+    /// the point: each one names a state the author can reason about.
+    fn runs_to_authorize(
+        &self,
+        task_id: Id,
+        task_index: usize,
+        new_agents: &[Id],
+        retry_runs: &[Id],
+    ) -> Result<Authorized, HostRefusal> {
+        match self.tasks[task_index].progress {
+            TaskProgress::Draft => {
+                if !retry_runs.is_empty() || new_agents.is_empty() {
+                    return Err(HostRefusal::TaskDraftHasNoRuns(task_id));
+                }
+                Ok(Authorized::Minted(
+                    new_agents.iter().map(|_| Id::new()).collect(),
+                ))
+            }
+            TaskProgress::Open { .. } => {
+                if !new_agents.is_empty() {
+                    return Err(HostRefusal::TaskOpenRejectsNewAgents(task_id));
+                }
+                if retry_runs.is_empty() {
+                    return Err(HostRefusal::NothingToAuthorize(task_id));
+                }
+                for run_id in retry_runs {
+                    let run = &self.runs[self.run_index(*run_id)?];
+                    if run.task_id != task_id || !matches!(run.progress, RunProgress::Queued) {
+                        return Err(HostRefusal::RunNotQueued(*run_id));
+                    }
+                }
+                Ok(Authorized::Retried(retry_runs.to_vec()))
+            }
+            TaskProgress::Closed { .. } => Err(HostRefusal::TaskClosed(task_id)),
+        }
+    }
+
     /// A Task closes `RunsTerminal` once every Run is `Completed` or
     /// `Cancelled`. `Failed` is deliberately not terminal here: a failed Run
     /// holds its Task open for the author's retry-or-close judgment.
@@ -425,40 +488,14 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                     });
                 }
                 let task_index = self.task_index(task_id)?;
-                let mint: Option<Vec<Id>> = match self.tasks[task_index].progress {
-                    TaskProgress::Draft => {
-                        if !retry_runs.is_empty() || new_agents.is_empty() {
-                            return Err(HostRefusal::TaskDraftHasNoRuns(task_id));
-                        }
-                        Some(new_agents.iter().map(|_| Id::new()).collect())
-                    }
-                    TaskProgress::Open { .. } => {
-                        if !new_agents.is_empty() {
-                            return Err(HostRefusal::TaskOpenRejectsNewAgents(task_id));
-                        }
-                        if retry_runs.is_empty() {
-                            return Err(HostRefusal::NothingToAuthorize(task_id));
-                        }
-                        for run_id in &retry_runs {
-                            let run_index = self.run_index(*run_id)?;
-                            let run = &self.runs[run_index];
-                            if run.task_id != task_id
-                                || !matches!(run.progress, RunProgress::Queued)
-                            {
-                                return Err(HostRefusal::RunNotQueued(*run_id));
-                            }
-                        }
-                        None
-                    }
-                    TaskProgress::Closed { .. } => return Err(HostRefusal::TaskClosed(task_id)),
-                };
-                let initial = mint.is_some();
-                let run_ids: Vec<Id> = mint.unwrap_or_else(|| retry_runs.clone());
+                let authorized =
+                    self.runs_to_authorize(task_id, task_index, &new_agents, &retry_runs)?;
 
                 // §8.2-1: stage first — manifest snapshot and one frozen
                 // request per Run, producer-invisible. Each request carries
                 // its own Run id where the compiler left the placeholder.
-                let requests: Vec<(Id, String)> = run_ids
+                let requests: Vec<(Id, String)> = authorized
+                    .ids()
                     .iter()
                     .map(|run_id| {
                         (
@@ -484,61 +521,60 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                         })
                 };
 
-                if initial {
-                    let mut runs = Vec::with_capacity(new_agents.len());
-                    for (index, agent_id) in new_agents.iter().enumerate() {
-                        runs.push(Run {
-                            id: run_ids[index],
-                            task_id,
-                            agent_id: *agent_id,
-                            snapshot_digest: package.digest.clone(),
-                            workspace: String::new(),
-                            progress: RunProgress::Authorized {
-                                request_digest: digest_for(run_ids[index])?,
-                            },
-                            retry_of: None,
-                        });
-                    }
-                    self.tasks[task_index].progress = TaskProgress::Open {
-                        opened_at: authorized_at,
-                    };
-                    let authorization = DispatchAuthorization {
-                        id: Id::new(),
-                        run_ids,
-                        manifest_path: staged.manifest_path,
-                        manifest_digest: package.digest,
-                        authorized_at,
-                    };
-                    // §8.2-2: one transaction's worth of facts.
-                    self.journal
-                        .record_authorization(&self.tasks[task_index], &runs, &authorization)
-                        .map_err(|error| HostRefusal::Journal(error.to_string()))?;
-                    self.runs.extend(runs);
-                    self.authorizations.push(authorization);
-                } else {
-                    let mut runs = Vec::with_capacity(retry_runs.len());
-                    for run_id in &retry_runs {
-                        let run_index = self.run_index(*run_id)?;
-                        self.runs[run_index].progress = RunProgress::Authorized {
-                            request_digest: digest_for(*run_id)?,
+                // Minting builds Runs and opens the Task; retrying moves
+                // existing Runs back to Authorized. Everything after this —
+                // the authorization record and the single journal write — is
+                // the same for both, and is written once.
+                let runs: Vec<Run> = match &authorized {
+                    Authorized::Minted(run_ids) => {
+                        let mut minted = Vec::with_capacity(new_agents.len());
+                        for (run_id, agent_id) in run_ids.iter().zip(new_agents.iter()) {
+                            minted.push(Run {
+                                id: *run_id,
+                                task_id,
+                                agent_id: *agent_id,
+                                snapshot_digest: package.digest.clone(),
+                                workspace: String::new(),
+                                progress: RunProgress::Authorized {
+                                    request_digest: digest_for(*run_id)?,
+                                },
+                                retry_of: None,
+                            });
+                        }
+                        self.tasks[task_index].progress = TaskProgress::Open {
+                            opened_at: authorized_at,
                         };
-                        runs.push(self.runs[run_index].clone());
+                        minted
                     }
-                    let authorization = DispatchAuthorization {
-                        id: Id::new(),
-                        run_ids,
-                        manifest_path: staged.manifest_path,
-                        manifest_digest: package.digest,
-                        authorized_at,
-                    };
-                    // A retry's own new authorization (§8.4b), likewise
-                    // one transaction; the Task is already Open.
-                    let task = &self.tasks[task_index];
-                    self.journal
-                        .record_authorization(task, &runs, &authorization)
-                        .map_err(|error| HostRefusal::Journal(error.to_string()))?;
-                    self.authorizations.push(authorization);
+                    Authorized::Retried(run_ids) => {
+                        let mut revived = Vec::with_capacity(run_ids.len());
+                        for run_id in run_ids {
+                            let run_index = self.run_index(*run_id)?;
+                            self.runs[run_index].progress = RunProgress::Authorized {
+                                request_digest: digest_for(*run_id)?,
+                            };
+                            revived.push(self.runs[run_index].clone());
+                        }
+                        revived
+                    }
+                };
+
+                // §8.2-2 / §8.4b: one transaction's worth of facts, whether
+                // this is the Task's first authorization or a retry's own.
+                let authorization = DispatchAuthorization {
+                    id: Id::new(),
+                    run_ids: authorized.ids().to_vec(),
+                    manifest_path: staged.manifest_path,
+                    manifest_digest: package.digest,
+                    authorized_at,
+                };
+                self.journal
+                    .record_authorization(&self.tasks[task_index], &runs, &authorization)
+                    .map_err(|error| HostRefusal::Journal(error.to_string()))?;
+                if matches!(authorized, Authorized::Minted(_)) {
+                    self.runs.extend(runs);
                 }
+                self.authorizations.push(authorization);
             }
             HostCommand::LaunchRun { run_id, workspace } => {
                 let run_index = self.run_index(run_id)?;
@@ -1005,9 +1041,41 @@ mod tests {
             host.runs()[1].progress,
             RunProgress::Authorized { .. }
         ));
+        // The retry re-authorizes a Run that already exists. Counting matters:
+        // asserting only that runs()[1] is Authorized passes just as happily
+        // when the Run has been appended a second time, and the author would
+        // see one retry listed twice.
+        assert_eq!(host.runs().len(), 2);
         assert_eq!(host.authorizations().len(), 2);
         assert_eq!(host.authorizations()[1].run_ids, vec![retry.id]);
         assert_eq!(host.journal.authorization_calls, 2);
+    }
+
+    #[test]
+    fn a_closed_task_authorizes_nothing() {
+        let (mut host, _package, task_id) = host_with_draft();
+        authorize(&mut host, task_id, &[Id::new()]);
+        let run_id = host.runs()[0].id;
+        host.execute(HostCommand::CloseTask { task_id, at: 1_100 })
+            .unwrap();
+        assert!(matches!(
+            host.tasks()[0].progress,
+            TaskProgress::Closed { .. }
+        ));
+
+        // Closing is the author's decision that this Task is done. Authorizing
+        // into it would reopen work they had finished with.
+        let error = host
+            .execute(HostCommand::AuthorizeDispatch {
+                task_id,
+                new_agents: vec![],
+                retry_runs: vec![run_id],
+                clicked_digest: package().digest,
+                package: package(),
+                authorized_at: 1_200,
+            })
+            .unwrap_err();
+        assert!(matches!(error, HostRefusal::TaskClosed(_)));
     }
 
     #[test]
