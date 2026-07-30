@@ -115,18 +115,38 @@ fn refresh_documents_scales_in_release() {
         pages.push(page_started.elapsed());
         assert_eq!(page.documents.len(), MAX_DOCUMENT_PAGE_SIZE as usize);
     }
+    // Measure the product path: reconcile the catalog, then return one page.
+    // The complete internal view and a page without reconciliation measure
+    // different operations and cannot support an open-project latency claim.
+    let mut product = Vec::with_capacity(WARM_RUNS);
+    for _ in 0..WARM_RUNS {
+        let started = Instant::now();
+        let page = store
+            .refresh_document_page(DocumentPageQuery {
+                after: None,
+                limit: MAX_DOCUMENT_PAGE_SIZE,
+            })
+            .unwrap();
+        product.push(started.elapsed());
+        assert_eq!(page.documents.len(), MAX_DOCUMENT_PAGE_SIZE as usize);
+        assert_eq!(page.total, DOCUMENT_COUNT as u32);
+    }
+    product.sort_unstable();
+    let product_p95 = percentile(&product, 95);
+
     searches.sort_unstable();
     pages.sort_unstable();
     let search_p95 = percentile(&searches, 95);
     let page_p95 = percentile(&pages, 95);
 
     eprintln!(
-        "project_performance count={DOCUMENT_COUNT} first_us={} warm_runs={WARM_RUNS} warm_p50_us={} warm_p95_us={} search_p95_us={} page_p95_us={} refresh_elapsed_us={}",
+        "project_performance count={DOCUMENT_COUNT} first_us={} warm_runs={WARM_RUNS} warm_p50_us={} warm_p95_us={} search_p95_us={} page_p95_us={} product_p95_us={} refresh_elapsed_us={}",
         first_refresh.as_micros(),
         p50.as_micros(),
         p95.as_micros(),
         search_p95.as_micros(),
         page_p95.as_micros(),
+        product_p95.as_micros(),
         refresh_elapsed.as_micros(),
     );
 
@@ -145,6 +165,10 @@ fn refresh_documents_scales_in_release() {
     assert!(
         refresh_elapsed < Duration::from_secs(20),
         "all measured refreshes took {refresh_elapsed:?}"
+    );
+    assert!(
+        product_p95 < Duration::from_millis(500),
+        "the product path (reconcile + one page) missed its project-open budget: p95 {product_p95:?}"
     );
     assert!(
         search_p95 < Duration::from_millis(10),
