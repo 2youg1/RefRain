@@ -191,8 +191,17 @@ try {
             requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
           );
           const focusMs = performance.now() - focusedAt;
-          const focusedBlock = document.activeElement?.getAttribute("data-block-id") ?? null;
-          const focused = document.activeElement;
+          // The manuscript is one editing host, so activeElement is the host.
+          // What the author sees as "where I am" is the caret, so ask that.
+          const caretBlock = (): string | null => {
+            const anchor = document.getSelection()?.anchorNode ?? null;
+            if (anchor === null) return null;
+            const node =
+              anchor.nodeType === Node.ELEMENT_NODE ? (anchor as Element) : anchor.parentElement;
+            return node?.closest("[data-block-id]")?.getAttribute("data-block-id") ?? null;
+          };
+          const focusedBlock = caretBlock();
+          const focused = host.querySelector<HTMLElement>('[data-block-id="b:50000"]');
           if (!(focused instanceof HTMLElement)) throw new Error("focused editor block missing");
           focused.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
           viewport.scrollTop = viewport.scrollHeight;
@@ -200,15 +209,14 @@ try {
             requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
           );
           const compositionPinned =
-            document.activeElement?.getAttribute("data-block-id") === "b:50000" &&
-            host.querySelector('[data-block-id="b:99999"]') === null;
+            caretBlock() === "b:50000" && host.querySelector('[data-block-id="b:99999"]') === null;
           const scrollTopDuringComposition = viewport.scrollTop;
           const scrollHeightDuringComposition = viewport.scrollHeight;
           focused.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
           await new Promise<void>((resolve) =>
             requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
           );
-          const focusedAfterScroll = document.activeElement?.getAttribute("data-block-id") ?? null;
+          const focusedAfterScroll = caretBlock();
           const mountedAfterScroll = [...host.querySelectorAll<HTMLElement>("p[data-block-id]")];
           const tailMounted = host.querySelector('[data-block-id="b:99999"]') !== null;
           const paragraphsAfterScroll = mountedAfterScroll.length;

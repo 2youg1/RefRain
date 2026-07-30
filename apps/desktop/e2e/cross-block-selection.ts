@@ -1,7 +1,12 @@
-// 探针：跨段拖选在当前实现下是否成立。
+// 门禁：作者用鼠标从一段拖到另一段，选区必须成立。
 //
-// 设计文档 §2 断言「每段各自 contentEditable 使跨段选区在浏览器层面不成立」。
-// 这是关于浏览器行为的经验命题，不是读代码能定论的事——所以先量，再改。
+// 这是作者每天都做的动作。它此前不成立：每段各自 contentEditable，等于每段
+// 自成一个编辑宿主，浏览器会把离开宿主的拖拽收回去——实测选区塌回起始段，
+// 选中文本只剩第一段的尾巴。整篇改为单一编辑宿主后才成立。
+//
+// 必须是真实鼠标拖拽。程序化 `selection.setBaseAndExtent` 在旧结构下也能造出
+// 跨块 Range（既有 editor-context 门禁正是那样，所以它一直绿），造得出不等于
+// 拖得出——这条门禁问的是后者。
 
 import { type Browser, chromium } from "playwright";
 
@@ -90,12 +95,22 @@ try {
     };
   });
 
-  console.log(JSON.stringify(report, null, 2));
-  console.log(
-    report.anchorBlockId === "b1" && report.focusBlockId === "b3"
-      ? "CROSS-BLOCK SELECTION HOLDS"
-      : "CROSS-BLOCK SELECTION COLLAPSES",
-  );
+  const failures: string[] = [];
+  if (report.anchorBlockId !== "b1") {
+    failures.push(`the drag started outside the first block (anchor ${report.anchorBlockId})`);
+  }
+  if (report.focusBlockId !== "b3") {
+    failures.push(
+      `dragging to the third block left the selection in ${report.focusBlockId}: it collapsed at the block boundary`,
+    );
+  }
+  if (!report.text.includes("第二段") || !report.text.includes("第三段")) {
+    failures.push(
+      `the selection did not span the paragraphs it crossed: ${JSON.stringify(report.text)}`,
+    );
+  }
+  if (failures.length > 0) throw new Error(failures.join("; "));
+  console.log("PASS  a mouse drag selects across paragraph boundaries");
 } finally {
   await browser?.close();
   server.stop(true);

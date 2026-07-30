@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 pub mod agent_protocol;
+pub mod block_shape;
 pub mod context_compiler;
 pub mod digest;
 pub mod error;
