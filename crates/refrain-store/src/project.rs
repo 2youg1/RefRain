@@ -247,6 +247,20 @@ pub struct ProjectStore {
     pub(crate) db: Connection,
     /// The paths and roles from the last successful catalog reconciliation.
     pub(crate) reconciled: Option<[u8; 32]>,
+    /// Whether the search index reflects what is on disk right now.
+    ///
+    /// Kept apart from `reconciled` because the two answer different questions
+    /// at different costs. Reconciliation asks "which files are in this
+    /// project" and runs on every refresh; indexing asks "what do they say"
+    /// and reads every one of them. Sharing one trigger made a directory
+    /// refresh cost 2.1 million file reads on the 100,000-document fixture and
+    /// put 104ms of bigramming on the path that opens a 10 MiB manuscript.
+    ///
+    /// A boolean rather than a second fingerprint: freshness must be *claimed*
+    /// by a successful build. Comparing two `Option`s reported "current" when
+    /// neither existed, so a store that had never reconciled searched an empty
+    /// index and said the manuscript contained nothing.
+    pub(crate) index_is_fresh: bool,
 }
 
 impl ProjectStore {
@@ -283,6 +297,7 @@ impl ProjectStore {
             layout,
             db,
             reconciled: None,
+            index_is_fresh: false,
         };
         let backup = root::take_source_backup(&canonical, locator.kind, &store.layout).into();
         Ok((store, backup))
@@ -492,6 +507,13 @@ impl ProjectStore {
     /// Reads one document and registers (or refreshes) its row. The digest in
     /// the database follows the bytes on disk — restart recovery recomputes
     /// from canonical bytes rather than trusting a stored value.
+    ///
+    /// Opening does not index. The author is waiting to see their words, and
+    /// a 10 MiB manuscript costs 104ms to bigram and write — measured, and it
+    /// pushed open-to-bridge p95 from 117ms to 221ms, past the seven-frame
+    /// budget. Indexing is what a *search* needs, so the index is marked stale
+    /// here and rebuilt on the next read of it (`ensure_indexed`). An author
+    /// who opens twenty chapters and searches once pays once, at the search.
     pub fn open_document(&mut self, relative: &str) -> Result<OpenDocument, ProjectFailure> {
         let path = self.resolve(relative)?;
         if path.is_dir() {
@@ -500,7 +522,19 @@ impl ProjectStore {
         let bytes = fs::read(&path).map_err(ProjectFailure::io(&path))?;
         let stamp = FileStamp::of(&path, &bytes).map_err(ProjectFailure::io(&path))?;
         let row = self.register(relative, &stamp)?;
+        self.invalidate_index_if_stale(relative, &stamp.digest);
         Ok(OpenDocument { row, bytes, stamp })
+    }
+
+    /// Mark the index stale when this document's bytes are not what it holds.
+    ///
+    /// One cheap lookup, no bigramming and no writes. Opening an unchanged
+    /// chapter — the common case — leaves the index alone and costs one
+    /// indexed read.
+    fn invalidate_index_if_stale(&mut self, relative: &str, digest: &str) {
+        if !self.index_is_current(relative, digest) {
+            self.index_is_fresh = false;
+        }
     }
 
     /// Renderer-facing reads must name a row produced by Root indexing or by
@@ -585,6 +619,9 @@ impl ProjectStore {
         // crash between the two recomputes from canonical bytes on the next
         // open rather than trusting either side (SPEC: restart by digest).
         self.register(&commit.path, &stamp)?;
+        // Saving does not index either: the author is waiting for the save to
+        // land, not for search to be current. Same reasoning as open_document.
+        self.invalidate_index_if_stale(&commit.path, &stamp.digest);
 
         Ok(CommitOutcome {
             stamp,
@@ -615,6 +652,31 @@ impl ProjectStore {
                 .to_string_lossy()
                 .into_owned()),
         }
+    }
+
+    /// Whether the index already reflects these exact bytes.
+    fn index_is_current(&self, relative: &str, digest: &str) -> bool {
+        search::index_is_current(&self.db, relative, digest)
+    }
+
+    /// Query the inverted index directly, without the catalog join.
+    ///
+    /// `search_documents` answers what the author should see, and drops any
+    /// path the catalog no longer has a row for. That filter is right for a
+    /// reader and wrong for anyone asking whether the index itself is in
+    /// step — it hides a leaked entry rather than reporting one. This is the
+    /// view that shows the index as it actually is.
+    ///
+    /// Takes `&mut self` for the same reason `search_documents` does: the
+    /// first read after the catalog changed builds the index. A read-only
+    /// variant would answer "empty" on a freshly adopted project, which is
+    /// true of the index and false of the manuscript.
+    pub fn indexed_paths(&mut self, query: &str, limit: u32) -> Result<Vec<String>, RefrainError> {
+        self.ensure_indexed()?;
+        Ok(search::search(&self.db, query, limit)?
+            .into_iter()
+            .map(|hit| hit.path)
+            .collect())
     }
 
     /// Registers a seen document, keeping the role it already has when the

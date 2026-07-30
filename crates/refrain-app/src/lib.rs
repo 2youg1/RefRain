@@ -6,6 +6,12 @@
 //! 窗口以外没有别的办法验证它。
 //!
 //! 这里不认识 Tauri。
+//!
+//! 也不写 unsafe：这个 crate 全是流程编排与领域判断，没有 FFI、没有裸指针、
+//! 没有需要绕过借用检查的数据结构。`forbid` 让这句话由编译器执行，而不是
+//! 靠下一个人读到这段注释。产品里唯一一处 unsafe 在 `display.rs` 的 Win32
+//! 调用，那里没有安全封装可用；`verify:unsafe-surface` 守着它不扩散。
+#![forbid(unsafe_code)]
 
 pub mod cancel;
 pub mod collect;

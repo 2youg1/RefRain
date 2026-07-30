@@ -147,6 +147,15 @@ fn remove_entry(db: &Connection, entry: &Entry) -> Result<(), RefrainError> {
     Ok(())
 }
 
+/// Is the index already built from these exact bytes?
+///
+/// Lets a caller skip reading a file it would only hand back unchanged. The
+/// digest is the same one the catalog stores, so agreement here means the
+/// index and the file agree, not merely that an entry exists.
+pub fn index_is_current(db: &Connection, path: &str, digest: &str) -> bool {
+    matches!(entry_of(db, path), Ok(Some(entry)) if entry.digest == digest)
+}
+
 /// Drop a document from the index entirely.
 pub fn forget_document(db: &Connection, path: &str) -> Result<bool, RefrainError> {
     let Some(entry) = entry_of(db, path)? else {

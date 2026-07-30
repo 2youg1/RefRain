@@ -141,15 +141,26 @@ export function reflowsManuscript(width: "narrow" | "regular" | "full"): boolean
 }
 
 /**
- * 哪些场景要占满舞台。
+ * 哪些场景要占满舞台，正文此刻不在视野里。
  *
- * 设置与逐句裁决都不是「面板」——它们接管整个舞台，正文此时不在视野里。
+ * 设置与逐句裁决曾一起在这里，**那是错的**。四区规矩说设置是第 1 层、正文
+ * 在它之上，作者改字号时理应看得见自己的字；而它当时会把正文整行 `display: none`
+ * 掉。Memo「四区·边缘情况 5」把这条记为待修，本轮修。
+ *
  * 这个判断此前写在组件的 memo 参数里（`kind === "settings" || stage === "review"`），
  * 那是四区的知识落在了渲染代码里：谁占满舞台，取决于层的语义，不取决于谁在渲染。
  *
+ * 留下的只有裁决。它不是「一层面板」而是一个场景：作者逐句判断 Agent 的提案时
+ * 看不见原文是对的，那正是裁决要做的事——对照的是提案与被提案的那一句，
+ * 不是整篇稿子。
+ *
  * 注意它与「铺满」不同：铺满是作者选的一档宽度，而这里是场景自身的性质，
- * 作者选不了——裁决提案时看不见正文是对的，那正是裁决要做的事。
+ * 作者选不了。
+ *
+ * `reference` 仍在签名里：调用方问的是「这个场景」而不是「这个 stage」，
+ * 而下一个占满舞台的场景很可能由 reference 决定。去掉它会让调用点在那天
+ * 改签名，而签名变更要动每一个调用者。
  */
 export function takesWholeStage(scene: { reference: string | null; stage: string }): boolean {
-  return scene.reference === "settings" || scene.stage === "review";
+  return scene.stage === "review";
 }

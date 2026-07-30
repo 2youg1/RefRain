@@ -19,6 +19,7 @@ import {
   quarterForKey,
   reflowsManuscript,
   sideOf,
+  takesWholeStage,
 } from "../src/shell/quarters";
 
 const at = (...quarters: readonly (typeof QUARTERS)[number][]): OpenQuarter[] =>
@@ -160,5 +161,37 @@ describe("面板开合不该动正文的度量", () => {
 
   test("铺满是例外——那时正文本就不在视野里", () => {
     expect(reflowsManuscript("full")).toBe(true);
+  });
+});
+
+describe("谁占满舞台", () => {
+  // 这个函数决定正文还在不在屏幕上（占满时正文整行 display:none），
+  // 而它此前零测试覆盖。两个方向都要钉住：只测「裁决占满」的断言，
+  // 会被「一切都占满」的实现照样通过。
+
+  test("裁决占满：逐句判断提案时，对照的是那一句，不是整篇稿子", () => {
+    expect(takesWholeStage({ reference: null, stage: "review" })).toBe(true);
+  });
+
+  test("设置不占满：作者改字号时必须看得见自己的字", () => {
+    // 这是四区规矩的直接推论——设置是第 1 层，正文在它之上。
+    // 曾经它与裁决一起占满舞台，作者调排版时正文整个消失。
+    expect(takesWholeStage({ reference: "settings", stage: "writing" })).toBe(false);
+  });
+
+  test("写作与派发都不占满", () => {
+    expect(takesWholeStage({ reference: null, stage: "writing" })).toBe(false);
+    expect(takesWholeStage({ reference: null, stage: "dispatch" })).toBe(false);
+  });
+
+  test("连接与批注是面板，不是场景", () => {
+    expect(takesWholeStage({ reference: "connections", stage: "writing" })).toBe(false);
+    expect(takesWholeStage({ reference: "annotations", stage: "writing" })).toBe(false);
+  });
+
+  test("裁决期间开着设置，仍然占满——场景压过面板", () => {
+    // 两者同时成立时不能变成「谁后判谁说了算」。裁决是场景，
+    // 它的性质不因为作者顺手开了个面板而改变。
+    expect(takesWholeStage({ reference: "settings", stage: "review" })).toBe(true);
   });
 });
