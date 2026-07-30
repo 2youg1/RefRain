@@ -1402,7 +1402,12 @@ pub fn run() {
 // The review loop commands: fixture injection (debug only), proposal
 // listing, write-through verdicts, batch staging, and the one commit path.
 
-use refrain_core::{EditScope, Proposal};
+use refrain_core::Proposal;
+// Only the debug-only fixture command builds a scope, so the import carries the
+// same condition it does. Without this, a release build warns that it is unused
+// and a debug build fails to compile without it.
+#[cfg(all(debug_assertions, not(feature = "generate-bindings")))]
+use refrain_core::EditScope;
 use refrain_store::ledger::{VerdictKindName, VerdictRecord};
 
 /// One sentence for the surface.

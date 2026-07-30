@@ -21,7 +21,13 @@ export type WorkbenchCommandId =
   | "open-connections"
   | "open-appearance"
   | "open-typography"
-  | "open-shortcuts";
+  | "open-shortcuts"
+  | "format-heading-1"
+  | "format-heading-2"
+  | "format-heading-3"
+  | "format-quote"
+  | "format-bullet-list"
+  | "format-ordered-list";
 
 export interface WorkbenchCommand {
   id: WorkbenchCommandId;
@@ -63,6 +69,56 @@ export function commandCatalog(context: CommandContext): WorkbenchCommand[] {
       "continue",
       "继续 Review",
       ["review", "proposal", "裁决", "提案"],
+      context.hasDocument,
+      documentStep,
+    ),
+    // 常用 Markdown 结构。走命令面板而不是常驻工具栏：中日文长文里持续遮挡
+    // 正文是 SPEC:69「写作现场零滑杆」明确否决的形状。
+    command(
+      "format-heading-1",
+      "work",
+      "设为一级标题",
+      ["h1", "heading", "title", "标题", "一级"],
+      context.hasDocument,
+      documentStep,
+    ),
+    command(
+      "format-heading-2",
+      "work",
+      "设为二级标题",
+      ["h2", "heading", "小标题", "二级"],
+      context.hasDocument,
+      documentStep,
+    ),
+    command(
+      "format-heading-3",
+      "work",
+      "设为三级标题",
+      ["h3", "heading", "三级"],
+      context.hasDocument,
+      documentStep,
+    ),
+    command(
+      "format-quote",
+      "work",
+      "设为引用",
+      ["quote", "blockquote", "引用", "引文"],
+      context.hasDocument,
+      documentStep,
+    ),
+    command(
+      "format-bullet-list",
+      "work",
+      "设为无序列表",
+      ["list", "bullet", "列表", "项目符号"],
+      context.hasDocument,
+      documentStep,
+    ),
+    command(
+      "format-ordered-list",
+      "work",
+      "设为有序列表",
+      ["ordered", "numbered", "编号", "有序列表"],
       context.hasDocument,
       documentStep,
     ),

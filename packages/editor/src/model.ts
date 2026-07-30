@@ -45,7 +45,19 @@ export interface EditorPort {
   readonly submit: (action: EditorAction) => void;
 }
 
+/** How much the author has selected. Null when the selection is collapsed. */
+export interface SelectionMeasure {
+  /** Characters, counted by code point so a CJK glyph counts as one. */
+  readonly characters: number;
+  /** How many blocks the selection touches. One for an ordinary selection. */
+  readonly blocks: number;
+}
+
 export type EditorFormat = "strong" | "emphasis";
+
+export type { BlockPrefix } from "./block-prefix";
+
+import type { BlockPrefix } from "./block-prefix";
 
 export interface PunctuationFinding {
   readonly id: string;
@@ -97,10 +109,29 @@ export interface EditorHandle {
   context(target: EventTarget | null): EditorContext | null;
   /** Format the selection captured by the latest editor context request. */
   formatSelection(kind: EditorFormat): boolean;
+  /**
+   * Toggle a block-level Markdown prefix on the block holding the caret.
+   *
+   * Separate from `formatSelection` because the two are different syntaxes: an
+   * inline mark wraps a range, a prefix rewrites the start of every line. They
+   * also answer "is it already on?" differently.
+   */
+  applyBlockPrefix(prefix: BlockPrefix): boolean;
   /** Remove the captured empty block through the ordinary EditorAction path. */
   deleteEmptyBlock(): boolean;
   /** Confirm one still-current punctuation finding through one EditorAction. */
   applyPunctuation(finding: PunctuationFinding): boolean;
+  /**
+   * Observe how much text is selected, for a low-noise readout.
+   *
+   * Not `context()`: that answers for one right-click target and captures a
+   * selection for a later action. This is a running measure of what the author
+   * has highlighted, and it must survive a drag across paragraphs — the count
+   * is over the whole selection, not the block it started in.
+   *
+   * Returns a function that stops observing.
+   */
+  onSelectionMeasured(listener: (measure: SelectionMeasure | null) => void): () => void;
   /** Project persisted anchors without inserting markup into manuscript text. */
   setAnnotations(annotations: readonly EditorAnnotationProjection[]): void;
   /** During composition, candidate text is not settled manuscript text. */

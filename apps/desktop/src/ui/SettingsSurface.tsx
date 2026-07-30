@@ -34,6 +34,14 @@ import { TypographyPanel } from "./TypographyPanel";
 
 type Section = "appearance" | "typography" | "shortcuts";
 
+/**
+ * 打开设置先落在排版。
+ *
+ * 外观是选主题与图标——装一次就不再动；排版是字体、字号、行距、版心，
+ * 作者写一段就想调一次。默认值应当对着最常来的那件事。
+ */
+const DEFAULT_SECTION: Section = "typography";
+
 type SettingsSurfaceProps = {
   returnLabel?: string;
   initialSection?: Section;
@@ -120,7 +128,7 @@ const divergedPaths = (mark: Leaves, latest: Leaves): string[] => {
 };
 
 export function SettingsSurface(props: SettingsSurfaceProps) {
-  const [section, setSection] = createSignal<Section>(props.initialSection ?? "appearance");
+  const [section, setSection] = createSignal<Section>(props.initialSection ?? DEFAULT_SECTION);
   const [mark, setMark] = createSignal<AppearanceConfig | null>(null);
   const [latest, setLatest] = createSignal<AppearanceConfig | null>(null);
   // 只增不减的「本会话动过的字段」账本。撤销成功后整本清空。
@@ -132,7 +140,7 @@ export function SettingsSurface(props: SettingsSurfaceProps) {
   let stopConfig: UnlistenFn | null = null;
 
   createEffect(() => {
-    setSection(props.initialSection ?? "appearance");
+    setSection(props.initialSection ?? DEFAULT_SECTION);
   });
 
   const current = createMemo(() => SECTIONS.find((entry) => entry.id === section()) ?? SECTIONS[0]);

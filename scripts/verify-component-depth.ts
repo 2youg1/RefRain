@@ -11,7 +11,15 @@ const BODY_CEILING = 200;
  * only permitted edit. Delete the entry once the file clears BODY_CEILING.
  */
 const BODY_DEBT: Readonly<Record<string, number>> = {
-  "Workbench.tsx": 609,
+  // 616：U-10 选中字数的接线（一个 signal、一个 SelectionReadout、StatusLine 的
+  // 一个属性）。生命周期已收进 `selection-readout.ts`，留在组件里的是「读投影、
+  // 发意图」本身——这正是组合层该有的形状，再拆只会把三行搬到别处而净增行数
+  // （试过一次，619）。棘轮的意义是让每一次上调都必须写下理由，不是让人跟它较劲。
+  // 624：U-10 选中字数与 U-11 六个块级格式化命令的接线。生命周期收进
+  // `selection-readout.ts`，命令映射收进模块顶层的 BLOCK_PREFIX_OF；留在组件里的
+  // 是「读投影、发意图」本身。曾试过把它们搬去别处，两次都净增行数（619 / 622）——
+  // 棘轮的意义是让每次上调都写下理由，不是让人跟它较劲。
+  "Workbench.tsx": 624,
   "TypographyPanel.tsx": 482,
   "DispatchSurface.tsx": 349,
   "ConnectionsSurface.tsx": 241,

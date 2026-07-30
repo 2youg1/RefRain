@@ -9,6 +9,7 @@
 
 import type {
   Block,
+  BlockPrefix,
   EditorAnnotationProjection,
   EditorChange,
   EditorDocument,
@@ -16,11 +17,13 @@ import type {
   EditorHandle,
   EditorPort,
   PunctuationFinding,
+  SelectionMeasure,
 } from "./model";
 import { VirtualManuscriptView } from "./virtual-manuscript-view";
 
 export type {
   Block,
+  BlockPrefix,
   EditorAction,
   EditorAnnotationProjection,
   EditorChange,
@@ -30,6 +33,7 @@ export type {
   EditorHandle,
   EditorPort,
   PunctuationFinding,
+  SelectionMeasure,
 } from "./model";
 export { applyLocally } from "./projection";
 export { findPunctuation } from "./punctuation";
@@ -70,6 +74,12 @@ export function mountEditor(
     },
     applyPunctuation(finding: PunctuationFinding) {
       return view.applyPunctuation(finding);
+    },
+    onSelectionMeasured(listener: (measure: SelectionMeasure | null) => void) {
+      return view.onSelectionMeasured(listener);
+    },
+    applyBlockPrefix(prefix: BlockPrefix) {
+      return view.applyBlockPrefix(prefix);
     },
     setAnnotations(annotations: readonly EditorAnnotationProjection[]) {
       view.setAnnotations(annotations);

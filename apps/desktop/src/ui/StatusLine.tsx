@@ -1,15 +1,21 @@
 // The 28px status line (SPEC 9.9): save state left, path right. It renders a
 // compiled state; it infers nothing.
-import { createMemo, type JSX } from "solid-js";
+import { createMemo, For, type JSX, Show } from "solid-js";
+import type { RecoveryStep } from "../generated/bindings.gen";
+import { RECOVERY_TEXT } from "./recovery-text";
 
 export type SaveState = {
   kind: "clean" | "dirty" | "saving" | "failed";
   reason?: string;
+  /** What the author can do about it. Empty when the domain offered nothing. */
+  recovery?: readonly RecoveryStep[];
 };
 
 export type StatusLineProps = {
   state: SaveState;
   path: string | null;
+  /** How much is selected right now, or null when nothing is. */
+  selection?: { characters: number; blocks: number } | null;
 };
 
 export function StatusLine(props: StatusLineProps): JSX.Element {
@@ -32,6 +38,27 @@ export function StatusLine(props: StatusLineProps): JSX.Element {
         <span class="dot" aria-hidden="true" />
         {text()}
       </span>
+      {/* Only on failure, and only when the domain named a way out. A save
+          that failed with no recovery says so and stops there rather than
+          inventing advice. */}
+      <Show when={props.state.kind === "failed" && (props.state.recovery?.length ?? 0) > 0}>
+        <span class="recovery" role="status">
+          <For each={props.state.recovery}>
+            {(step) => <span class="recovery-step">{RECOVERY_TEXT[step]}</span>}
+          </For>
+        </span>
+      </Show>
+      {/* 选中反馈放在低干扰的位置：作者不必为了知道选了多少字而离开正文。
+          跨段选中时同时报块数——那是他真正在问的问题。 */}
+      <Show when={props.selection}>
+        {(measure) => (
+          <span class="selection" role="status">
+            {measure().blocks > 1
+              ? `选中 ${measure().characters} 字 · ${measure().blocks} 段`
+              : `选中 ${measure().characters} 字`}
+          </span>
+        )}
+      </Show>
       <span class="path">{props.path ?? ""}</span>
     </footer>
   );

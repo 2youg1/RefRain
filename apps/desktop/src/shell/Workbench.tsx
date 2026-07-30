@@ -1,8 +1,10 @@
 import type {
+  BlockPrefix,
   EditorAnnotationProjection,
   EditorContext,
   EditorFormat,
   PunctuationFinding,
+  SelectionMeasure,
 } from "@refrain/editor";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
@@ -33,6 +35,7 @@ import { useKara } from "./kara-state";
 import { e2ePickedPath } from "./pick";
 import { ProjectSession } from "./project-session";
 import { browserTimer, RailPresence } from "./rail-presence";
+import { SelectionReadout } from "./selection-readout";
 import { commandCatalog, type WorkbenchCommandId } from "./workbench-commands";
 import {
   initialWorkbenchState,
@@ -63,6 +66,21 @@ type MenuState = {
 };
 
 type WorkbenchProps = { onThemeChanged?: (slug: string) => void };
+
+/**
+ * 命令 id 到块级前缀的映射。
+ *
+ * Record 而非 switch 里的 default：加一个前缀命令却忘了接线，会在这里编译失败，
+ * 而不是在作者按下它时静默什么也不做。
+ */
+const BLOCK_PREFIX_OF: Partial<Record<WorkbenchCommandId, BlockPrefix>> = {
+  "format-heading-1": "heading-1",
+  "format-heading-2": "heading-2",
+  "format-heading-3": "heading-3",
+  "format-quote": "quote",
+  "format-bullet-list": "bullet-list",
+  "format-ordered-list": "ordered-list",
+};
 
 export function Workbench(props: WorkbenchProps) {
   const [notice, setNotice] = createSignal<string | null>(null);
@@ -105,6 +123,8 @@ export function Workbench(props: WorkbenchProps) {
   const [karaTick, setKaraTick] = createSignal(0);
   const stopKara = kara.subscribe(() => setKaraTick((value) => value + 1));
   let editor: EditorHostHandle | null = null;
+  const [selectionMeasure, setSelectionMeasure] = createSignal<SelectionMeasure | null>(null);
+  const selectionReadout = new SelectionReadout(setSelectionMeasure);
 
   const projectSession = new ProjectSession(
     undefined,
@@ -311,6 +331,14 @@ export function Workbench(props: WorkbenchProps) {
       case "save-document":
         save();
         break;
+      default: {
+        // 块级格式化命令是一次查表，不是六条分支。表里没有的 id 落到这里
+        // 什么也不做——这是刻意的：命令目录与执行分属两处，漏接一个不应当
+        // 让整条命令路径崩掉。
+        const prefix = BLOCK_PREFIX_OF[id];
+        if (prefix !== undefined) editor?.applyBlockPrefix(prefix);
+        break;
+      }
       case "open-dispatch":
         openStage("dispatch");
         break;
@@ -568,6 +596,7 @@ export function Workbench(props: WorkbenchProps) {
                       annotations={editorAnnotations()}
                       onReady={(handle) => {
                         editor = handle;
+                        selectionReadout.observe(handle);
                       }}
                       onConfirmed={() => markDirty()}
                       onRejected={setNotice}
@@ -653,7 +682,11 @@ export function Workbench(props: WorkbenchProps) {
                 />
               )}
             </Show>
-            <StatusLine state={documentView().save} path={active()?.document.path ?? null} />
+            <StatusLine
+              state={documentView().save}
+              path={active()?.document.path ?? null}
+              selection={selectionMeasure()}
+            />
             <Show when={karaEngaged()}>
               <KaraSurface />
             </Show>
