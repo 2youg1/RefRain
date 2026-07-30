@@ -33,6 +33,7 @@ import { canOpen, panelKey, settingsSection } from "./panel-reference";
 import { panelLayout } from "./panel-spine";
 import { PanelStack } from "./panel-stack";
 import { ProjectSession } from "./project-session";
+import { QuarterMemory, runQuarterKey } from "./quarter-navigation";
 import { takesWholeStage } from "./quarters";
 import { browserTimer, RailPresence } from "./rail-presence";
 import { railScroll } from "./rail-scroll";
@@ -206,15 +207,24 @@ export function Workbench(props: WorkbenchProps) {
     karaTick();
     return kara.engaged.value;
   });
+  // Agent 层记得上次停在哪一个面板（KL9 裁定）。不是信号——它只在按下
+  // Cmd+4 的那一刻被读一次，没有任何东西需要因它变化而重绘。
+  const quarterMemory = new QuarterMemory();
   const transition = (event: Parameters<typeof reduceWorkbench<never>>[1]): void => {
     setState((current) => reduceWorkbench(current, event));
   };
   const openStage = (stage: "writing" | "review" | "dispatch"): void => {
     panels.clear();
+    // 记在这里而不是每个按钮上：所有打开派发的路都经过这一处，
+    // 散到调用点则每加一个入口就要记得补一次，而没人会记得。
+    if (stage === "dispatch") quarterMemory.rememberAgent("dispatch");
     transition({ kind: "openStage", stage });
   };
   const openReference = (next: WorkbenchReference): void => {
     if (!canOpen(next, active() !== null)) return;
+    if (next.kind === "annotations" || next.kind === "connections") {
+      quarterMemory.rememberAgent({ reference: next });
+    }
     const key = panelKey(next);
     panels.open({ key, title: key, content: next });
   };
@@ -354,6 +364,21 @@ export function Workbench(props: WorkbenchProps) {
     }
   };
 
+  /** Cmd+1..4。返回 false 表示这一层此刻去不了，那一下不该被接管。 */
+  /** Cmd+1..4。返回 false 表示这一层此刻去不了，那一下不该被接管。 */
+  const goToQuarter = (key: string): boolean =>
+    runQuarterKey(key, quarterMemory, active() !== null, {
+      openSettings: () =>
+        openReference({ kind: "settings", section: settingsSection(reference()) }),
+      focusRail: () => railView.focus(),
+      returnToManuscript: () => {
+        panels.clear();
+        editor?.focus();
+      },
+      openDispatch: () => openStage("dispatch"),
+      openReference,
+    });
+
   const onKeydown = (event: KeyboardEvent): void => {
     handleShortcut(event, {
       composing: () => editor?.isComposing() === true,
@@ -363,6 +388,7 @@ export function Workbench(props: WorkbenchProps) {
       closeMenu: () => intents.release(),
       panelDepth: () => panels.depth,
       closePanel: () => panels.back(),
+      goToQuarter,
     });
   };
 

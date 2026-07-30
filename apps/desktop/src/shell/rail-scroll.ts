@@ -18,6 +18,15 @@ export function railScroll(): {
   readonly view: () => RailScroll;
   readonly ref: (element: HTMLElement) => void;
   readonly onScroll: () => void;
+  /**
+   * 把焦点交给侧栏（Cmd+2 走这里）。
+   *
+   * 落在**当前文档那一行**而不是容器上：作者按下去是想在章节之间走，
+   * 落在容器上他还得再按一次方向键才知道自己在哪。当前行找不到时退回
+   * 第一行，一行都没有时什么也不做——空侧栏上没有可去之处，静默比
+   * 把焦点扔进一个空容器诚实。
+   */
+  readonly focus: () => void;
 } {
   const [view, setView] = createSignal<RailScroll>({ top: 0, height: 0 });
   let element: HTMLElement | undefined;
@@ -31,6 +40,12 @@ export function railScroll(): {
     onScroll: () => {
       if (element === undefined) return;
       setView({ top: element.scrollTop, height: element.clientHeight });
+    },
+    focus: () => {
+      const target =
+        element?.querySelector<HTMLElement>("button.current") ??
+        element?.querySelector<HTMLElement>("button");
+      target?.focus();
     },
   };
 }
