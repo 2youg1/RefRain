@@ -1,9 +1,16 @@
 #!/usr/bin/env bun
 
 import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { chromium } from "playwright";
+import { type LampKind, lampFacing, lampPlacement } from "../apps/desktop/src/shell/lamp";
 
-const OUT = "docs/panel-preview";
+/*
+ * 审阅件写到仓库之外（KL9 2026-07-30：项目文件夹里除 LICENSE 外不放任何 md/html）。
+ * 它们是给人看的，不是发布内容；留在仓库里就成了跟着代码漂的第二权威。
+ */
+const REVIEW_DIR = process.env.REFRAIN_REVIEW_DIR ?? join(import.meta.dir, "..", "..", "review");
+const OUT = join(REVIEW_DIR, "panel-preview");
 const THEMES = ["tou", "sumi"] as const;
 const MATERIALS = ["solid", "acrylic", "liquid"] as const;
 /** 两盏灯：单侧（挂面板那边，光横穿舞台）与全侧（挂头顶，自上而下柔光）。 */
@@ -25,13 +32,32 @@ const LAYERS = [
   { key: "settings/typography/fonts", title: "字体" },
 ] as const;
 
+/*
+ * 灯的位置来自 shell/lamp.ts——预览必须问真模块，不能自己编一套。
+ *
+ * 这一条是查「两盏灯看不出区别」时挖出来的：预览页手写 data-lamp 和一串行内变量，
+ * 完全绕过 applyAppearance，于是无论产品里的灯怎么改，预览渲染出来的都是旧样子。
+ * 一张不走真代码路径的预览图，证明不了任何关于产品的事。
+ */
+const lampVars = (kind: string): string => {
+  const place = lampPlacement(kind as LampKind, "left");
+  if (!place) return "";
+  return [
+    `--lamp-x:${place.x * 100}%`,
+    `--lamp-y:${place.y * 100}%`,
+    `--lamp-reach:${place.reach * 100}%`,
+    `--lamp-power:${place.power}`,
+    `--lamp-facing:${lampFacing(place)}`,
+  ].join(";");
+};
+
 const page = (theme: string, material: keyof typeof SPEC, lamp: string) => {
   const spec = SPEC[material];
   const spines = LAYERS.slice(0, -1);
   const open = LAYERS.at(-1);
   return `<!doctype html>
 <html lang="zh-Hans" data-theme="${theme}" data-paper="paper" data-lamp="${lamp}" data-panel-side="left"
-      style="--panel-blur:${spec.blur}px;--panel-saturate:${spec.saturate};--panel-opacity:${spec.opacity};--panel-rim:${spec.rim};--panel-motion:300ms;--panel-easing:cubic-bezier(0.16,0.84,0.34,1);--panel-enter-from:-100%">
+      style="--panel-blur:${spec.blur}px;--panel-saturate:${spec.saturate};--panel-opacity:${spec.opacity};--panel-rim:${spec.rim};--panel-motion:300ms;--panel-easing:cubic-bezier(0.16,0.84,0.34,1);--panel-enter-from:-100%;${lampVars(lamp)}">
 <head>
 <meta charset="utf-8">
 <link rel="stylesheet" href="/fonts.css">
@@ -61,6 +87,7 @@ const page = (theme: string, material: keyof typeof SPEC, lamp: string) => {
 </head>
 <body>
 <div class="stage-row" data-panels="open" style="--panel-reserve:${spines.length * SPINE_WIDTH + 400}px">
+  <div class="lamp-layer" aria-hidden="true"></div>
   <div class="manuscript-mock">
     <article class="editor-host">
       <p>写作是把尚未成形的东西按住，让它在纸面上停留得够久，久到可以被看清。</p>

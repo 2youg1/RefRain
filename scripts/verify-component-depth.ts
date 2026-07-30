@@ -34,7 +34,7 @@ const BODY_DEBT: Readonly<Record<string, number>> = {
   // 期间试过抽一个 `fromSource` 收敛四处「订阅+读值」，撤回了：四处形态各异
   // （project 的回调兼做公告、kara 的取消在 onCleanup 手动调），抽象会掩盖
   // 差异而不是隐藏复杂性。少三行不值得多一个说不清的东西。
-  "Workbench.tsx": 586,
+  "Workbench.tsx": 573,
   // 483：排版预览段（U-9）。设置页独占 Stage 时手稿被完全盖住，而字距、词距、
   // 共享汉字优先级不看真实字形无法判断。预览只读 applyTypography 已经写好的那批
   // CSS 变量，不重算任何排版值——另写一份映射会立刻产生第二个排版权威。

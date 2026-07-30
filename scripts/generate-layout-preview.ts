@@ -10,12 +10,17 @@
  * 3. **进仓库再请人看。** 上一版九档主题预览页从未提交，选定的七套色值随工作区
  *    清理永久丢失。工件与生成它的脚本必须先落盘。
  *
- * 用法：bun scripts/generate-layout-preview.ts && 打开 docs/layout-preview.html
+ * 用法：bun scripts/generate-layout-preview.ts && 打开 ../review/layout-preview.html
  */
 
-export {};
+import { join } from "node:path";
 
-const OUT = "docs/layout-preview.html";
+/*
+ * 审阅件写到仓库之外（KL9 2026-07-30：项目文件夹里除 LICENSE 外不放任何 md/html）。
+ * 它们是给人看的，不是发布内容；留在仓库里就成了跟着代码漂的第二权威。
+ */
+const REVIEW_DIR = process.env.REFRAIN_REVIEW_DIR ?? join(import.meta.dir, "..", "..", "review");
+const OUT = join(REVIEW_DIR, "layout-preview.html");
 
 /** 四套候选。差别在「作者的视野被什么占据」，不在装饰。 */
 const LAYOUTS = [
