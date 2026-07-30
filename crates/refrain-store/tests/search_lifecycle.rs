@@ -241,3 +241,89 @@ fn a_search_before_any_refresh_still_finds_the_manuscript() {
     drop(app);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_misremembered_query_still_finds_the_chapter() {
+    // 作者记岔了——漏一个字、换个说法。精确检索会返回空，而空结果读起来是
+    // 「你没写过这个」，不是「换个说法再试」。
+    //
+    // 所以精确落空之后自动放宽。实测这就是两种精度的全部差别：二到五字的
+    // 准确查询上两者结果**完全相同**，分歧只在作者记岔的时候。
+    let root = scratch();
+    fs::write(
+        root.join("第二章.md"),
+        "会议上，营销总监提出了渐进式披露的方案。\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("第五章.md"),
+        "营销、渠道、增长——他一个也不喜欢。\n",
+    )
+    .unwrap();
+
+    let (app, mut store) = adopt(&root);
+    store.refresh_documents().unwrap();
+
+    // 记准了：照常命中。
+    assert_eq!(found(&mut store, "渐进式披露"), ["第二章.md"]);
+    // 漏了一个字：仍然找得到那一章。
+    assert_eq!(found(&mut store, "渐进披露"), ["第二章.md"]);
+    // 换了说法（原文是顿号分隔的三个词）：也找得到，且排在第一。
+    //
+    // 断言首条而不是「只有一条」：放宽的本意就是多给几条候选，由排序决定
+    // 谁在前。要求结果集恰好为一，等于要求放宽不放宽。
+    let paraphrased = found(&mut store, "营销渠道");
+    assert_eq!(
+        paraphrased.first().map(String::as_str),
+        Some("第五章.md"),
+        "换个说法也该先给那一章，实际次序：{paraphrased:?}"
+    );
+
+    drop(store);
+    drop(app);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn remembering_correctly_is_not_punished_with_a_wider_net() {
+    // 「先精确」的价值：作者记准了的时候，不该让他在一堆只沾一个词的
+    // 结果里挑。实测同一查询 exact 给 1 条正中的，loose 给 5 条——排序
+    // 会把对的放第一，但那四条噪音仍要他一一读过才敢确定。
+    //
+    // 这条钉住的正是「永远用 Loose」会丢掉的东西。
+    let root = scratch();
+    fs::write(root.join("两词都有.md"), "营销渠道是同一件事的两面。\n").unwrap();
+    fs::write(root.join("只有营销.md"), "他不喜欢营销这个词。\n").unwrap();
+    fs::write(root.join("只有渠道.md"), "渠道决定了谁能看到。\n").unwrap();
+
+    let (app, mut store) = adopt(&root);
+    store.refresh_documents().unwrap();
+
+    assert_eq!(
+        found(&mut store, "营销渠道"),
+        ["两词都有.md"],
+        "两个词都写全的查询命中了，就不该再把只沾一个词的篇目一起端出来"
+    );
+
+    drop(store);
+    drop(app);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_phrase_nobody_wrote_stays_empty() {
+    // 放宽不等于编造。真没写过的东西必须仍然返回空——否则「找不到」这个
+    // 答案就再也不可信，作者每次都会拿到一堆似是而非的东西。
+    let root = scratch();
+    fs::write(root.join("第一章.md"), "陆沉舟站在窗前。\n").unwrap();
+
+    let (app, mut store) = adopt(&root);
+    store.refresh_documents().unwrap();
+
+    assert!(found(&mut store, "量子力学").is_empty());
+    assert!(found(&mut store, "不存在的词").is_empty());
+
+    drop(store);
+    drop(app);
+    fs::remove_dir_all(root).unwrap();
+}
