@@ -18,4 +18,7 @@ export const RECOVERY_TEXT: Record<RecoveryStep, string> = {
   "grant-permission": "给这个文件夹写入权限",
   "open-settings": "到设置里检查",
   "report-defect": "这是软件的缺陷，请反馈",
+  // 提案过期时给作者的两条路。他是唯一知道该走哪条的人——那一段是他改的。
+  "compare-with-frozen-text": "看看 Agent 当时读到的是什么",
+  "send-again": "按现在的文字重新发一次",
 };

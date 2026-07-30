@@ -70,7 +70,14 @@ const BODY_DEBT: Readonly<Record<string, number>> = {
   "TypographyPanel.tsx": 483,
   "DispatchSurface.tsx": 347,
   "ConnectionsSurface.tsx": 239,
-  "ReviewSurface.tsx": 249,
+  // 259：提案过期的呈现。领域一直正确拒绝着（TextRefusal::StaleProposal），
+  // 而作者看到的是被压成 ErrorCode::Io 的一句英文技术文本——他其实是唯一
+  // 知道该怎么办的人，那一段是他自己改的。
+  //
+  // 判断归 `stale-proposal.ts`（7 项测试），摆放归 `StaleProposalPanel.tsx`；
+  // 留在这里的 10 行是接线：一个 memo、一个 Show、Failure 类型多一个可选字段。
+  // 抽出面板已把 277 降到 259，再搬就是把接线挪到别处（第六次印证）。
+  "ReviewSurface.tsx": 259,
   "SettingsSurface.tsx": 242,
 };
 

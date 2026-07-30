@@ -23,6 +23,14 @@ pub enum ErrorCode {
     UnsupportedFormat,
     StateUnavailable,
     Io,
+    /// The manuscript moved underneath a Proposal.
+    ///
+    /// The Agent froze the text it was reading; the author has since changed
+    /// it. Applying the proposal anyway would overwrite words the Agent never
+    /// saw, and discarding it silently would throw away the Agent's work —
+    /// neither is ours to decide, so this reaches the author as its own fact
+    /// rather than as a generic I/O failure.
+    StaleProposal,
 }
 
 impl ErrorCode {
@@ -38,6 +46,7 @@ impl ErrorCode {
         Self::UnsupportedFormat,
         Self::StateUnavailable,
         Self::Io,
+        Self::StaleProposal,
     ];
 
     /// The wire spelling, identical to what serde emits.
@@ -53,6 +62,7 @@ impl ErrorCode {
             Self::UnsupportedFormat => "unsupported-format",
             Self::StateUnavailable => "state-unavailable",
             Self::Io => "io",
+            Self::StaleProposal => "stale-proposal",
         }
     }
 }
@@ -74,6 +84,14 @@ pub enum RecoveryStep {
     GrantPermission,
     OpenSettings,
     ReportDefect,
+    /// Read what the Agent was looking at, then decide.
+    ///
+    /// The only honest step when a proposal has gone stale: the author is the
+    /// one who changed the text, and only they know whether the Agent's
+    /// suggestion still applies to what is there now.
+    CompareWithFrozenText,
+    /// Ask the Agent again, against the text as it stands.
+    SendAgain,
 }
 
 /// A failure crossing the bridge.
@@ -148,10 +166,11 @@ mod tests {
                 | ErrorCode::NotADirectory
                 | ErrorCode::UnsupportedFormat
                 | ErrorCode::StateUnavailable
-                | ErrorCode::Io => {}
+                | ErrorCode::Io
+                | ErrorCode::StaleProposal => {}
             }
         }
-        assert_eq!(ErrorCode::ALL.len(), 9);
+        assert_eq!(ErrorCode::ALL.len(), 10);
     }
 
     /// `as_str` is what documentation gates quote. Serde is what the bridge
