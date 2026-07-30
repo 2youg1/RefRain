@@ -12,6 +12,7 @@ import type { AppearanceConfig } from "../generated/bindings.gen";
 import { applyTypography } from "../typography";
 import { materialSpec, supportedMaterial } from "./panel-material";
 import { panelMotion, prefersReducedMotion } from "./panel-motion";
+import { panelWidthPx, railWidthPx } from "./surface-width";
 
 export function applyAppearance(root: HTMLElement, appearance: AppearanceConfig): void {
   root.dataset.paper = appearance.paper;
@@ -35,8 +36,16 @@ export function applyAppearance(root: HTMLElement, appearance: AppearanceConfig)
   root.style.setProperty("--panel-opacity", String(material.opacity));
   root.style.setProperty("--panel-rim", String(material.rim));
 
-  // 夜间灯：纸的四周有一圈泛光，光才有来处，而不是字自己在发亮。
-  root.dataset.lamp = appearance.night_lamp === true ? "on" : "off";
+  // 夜间灯：单侧（挂在面板那边，光横穿舞台）或全侧（挂头顶，自上而下的柔光）。
+  // 光要有来处，否则读起来是字自己在发亮。
+  root.dataset.lamp = appearance.night_lamp ?? "off";
+
+  // 宽度：面板与侧栏各自三档，铺满是其中一档而不是另一个模式。
+  root.style.setProperty("--panel-width", `${panelWidthPx(appearance.panel_width ?? "regular")}px`);
+  root.style.setProperty("--rail-width", `${railWidthPx(appearance.rail_width ?? "narrow")}px`);
+  // 铺满是一档宽度，不是另一个模式——但它要让 CSS 认得出来，因为铺满时
+  // 正文一点也不让，与另外两档的让位规则相反。
+  root.dataset.panelWidth = appearance.panel_width ?? "regular";
 
   applyTypography(root, appearance.typography);
 }

@@ -98,41 +98,114 @@
 }
 
 /*
- * 夜间灯（KL9 2026-07-30 裁定）。
+ * 夜间灯：两盏，作者选一盏（KL9 2026-07-30 裁定）。
  *
- * 夜间主题的立意是「一盏灯照着纸」，但只靠深底浅字读不出光的来处——那样是
- * 字自己在发光。缺的是纸的四周有一圈泛光，`--lamp` 每套主题都定义了，
- * 此前无人使用，它正是这个光源。
+ * 夜间主题的立意是「一盏灯照着纸」。这里改对过两次，两次都值得记下来：
  *
- * 只在开了灯时生效，且只作用于有边界的两档版面：纯 web 模式没有纸的轮廓，
- * 给它加光晕会让光悬在半空。
+ * 其一，方向。第一版写成 `0 0 22px` 的四周泛光，KL9 看截图后说它「像是从功能区
+ * 和正文的夹缝中间往两边射」——他是对的，**一盏灯有位置**，光从屏幕一边射向
+ * 另一边，不是从物体自己身上散出来。
+ *
+ * 其二，强度。第二版有方向了，但仍然看不出差别：我把 `--lamp` 当颜料按 12% 混
+ * 进纸里，而墨主题的 lamp 是 #3b3937、纸是 #1f1d1a，**灯只比纸亮 0.11**，
+ * 混完差别不到 1%。光不是一层灰——它得比它照的东西亮得多。
+ * 所以这里不再混 `--lamp` 的色，而是用它的**方向**加一道足够亮的白光：
+ * 亮度由 color-dodge 之外最朴素的办法给出——直接叠一层低透明度的暖白。
+ *
+ *   · 单侧灯（side）挂在面板栈那一侧，光横穿舞台；面板正好立在光路上，
+ *     它们的半透明因此有了来由——不是玻璃自己会亮，是它挡着光。
+ *   · 全侧灯（overhead）挂头顶：自上而下一片柔光，没有侧向。
+ *
+ * `--lamp-x` 让单侧灯跟着面板方向换边，不必写第二套规则。
  */
-:root[data-lamp="on"] .editor-host {
-  box-shadow:
-    0 0 0 1px color-mix(in oklab, var(--lamp) 26%, transparent),
-    0 0 22px color-mix(in oklab, var(--lamp) 20%, transparent),
-    0 0 90px color-mix(in oklab, var(--lamp) 12%, transparent);
+:root[data-lamp="side"] {
+  --lamp-x: 1;
+  /* 灯泡本身的颜色：暖白。它是光，不是主题里的一个色块。 */
+  --lamp-glow: oklch(0.96 0.02 85);
 }
 
-:root[data-lamp="on"][data-paper="paper"] .editor-host {
-  box-shadow:
-    0 0 0 1px color-mix(in oklab, var(--lamp) 30%, transparent),
-    0 0 26px color-mix(in oklab, var(--lamp) 24%, transparent),
-    0 0 110px color-mix(in oklab, var(--lamp) 14%, transparent),
-    0 14px 36px color-mix(in oklab, var(--shade) 40%, transparent);
+:root[data-lamp="overhead"] {
+  --lamp-glow: oklch(0.96 0.02 85);
 }
 
-/* 光有来处：纸面本身也被照亮一点，靠上多一些。 */
-:root[data-lamp="on"] .editor-host {
+:root[data-lamp="side"][data-panel-side="right"] {
+  --lamp-x: -1;
+}
+
+/*
+ * 两盏灯的差别必须在**光落在哪里**，不在强度。
+ *
+ * 第一次做完 KL9 说「没感觉有区别」。我先怀疑亮度，查下来不是：`--lamp` 在墨主题
+ * 只比纸亮 0.11，混完确实几乎不可见，但换成暖白之后仍然像同一盏灯——因为两盏
+ * 都只是纸边一条 1px 线加一层渐变，**几何是一样的**。
+ *
+ * 一盏灯照在纸上，眼睛读的是三件事：亮斑落在哪一侧、影子往哪边倒、以及纸的
+ * 哪条边被照出高光。这三件事必须同时换边，光才换了位置。
+ */
+
+/* 单侧灯：亮斑在受光的那一侧边缘，影子整个倒向另一侧。 */
+:root[data-lamp="side"] .editor-host {
+  box-shadow:
+/* 受光边一条实的亮线 */
+    calc(var(--lamp-x) * 2px) 0 0 color-mix(in oklab, var(--lamp-glow) 55%, transparent),
+    /* 影子只往背光那侧倒，且明显偏移——这是「光从旁边来」的读法 */
+    calc(var(--lamp-x) * -40px) 8px 60px -16px color-mix(in oklab, var(--shade) 88%, transparent),
+    calc(var(--lamp-x) * -90px) 20px 140px -30px color-mix(in oklab, var(--shade) 62%, transparent);
+  /* 亮斑贴着受光的那条边，横向衰减：一半纸面亮，另一半留给影。 */
   background-image: linear-gradient(
-    to bottom,
-    color-mix(in oklab, var(--lamp) 7%, transparent),
-    transparent 42%
+    calc(90deg - var(--lamp-x) * 90deg),
+    color-mix(in oklab, var(--lamp-glow) 30%, transparent),
+    color-mix(in oklab, var(--lamp-glow) 10%, transparent) 26%,
+    transparent 58%
   );
 }
 
-/* 纯 web 模式没有纸，光只落在字上——把泛光收回去，不要一圈悬空的光晕。 */
-:root[data-lamp="on"][data-paper="none"] .editor-host {
+/* 全侧灯：亮斑是横贯纸面上缘的一条，影子垂直落在下方，左右对称。 */
+:root[data-lamp="overhead"] .editor-host {
+  box-shadow:
+    0 -2px 0 color-mix(in oklab, var(--lamp-glow) 55%, transparent),
+    0 28px 60px -18px color-mix(in oklab, var(--shade) 88%, transparent),
+    0 64px 140px -34px color-mix(in oklab, var(--shade) 62%, transparent);
+  background-image: linear-gradient(
+    to bottom,
+    color-mix(in oklab, var(--lamp-glow) 26%, transparent),
+    color-mix(in oklab, var(--lamp-glow) 8%, transparent) 22%,
+    transparent 50%
+  );
+}
+
+/*
+ * 光还落在舞台上，不只落在纸上——这是两盏灯读起来最不一样的地方。
+ * 单侧灯在面板那一侧的桌面上留一道横向的亮，全侧灯在舞台顶端留一条横贯的亮。
+ */
+:root[data-lamp="side"] .stage-row::before,
+:root[data-lamp="overhead"] .stage-row::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+:root[data-lamp="side"] .stage-row::before {
+  background-image: radial-gradient(
+    120% 90% at calc(50% - var(--lamp-x, 1) * 50%) 42%,
+    color-mix(in oklab, var(--lamp-glow) 16%, transparent),
+    transparent 62%
+  );
+}
+
+:root[data-lamp="overhead"] .stage-row::before {
+  background-image: radial-gradient(
+    130% 70% at 50% -6%,
+    color-mix(in oklab, var(--lamp-glow) 15%, transparent),
+    transparent 66%
+  );
+}
+
+/* 纯 web 模式没有纸，光没有可落之处——两盏灯都收回。 */
+:root[data-lamp="side"][data-paper="none"] .editor-host,
+:root[data-lamp="overhead"][data-paper="none"] .editor-host {
   box-shadow: none;
   background-image: none;
 }
@@ -2125,7 +2198,7 @@ kbd {
   top: var(--chrome-height);
   bottom: var(--status-height);
   z-index: 20;
-  width: 264px;
+  width: var(--rail-width, 248px);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -2329,9 +2402,14 @@ kbd {
   top: 0;
   bottom: 0;
   z-index: 10;
-  width: 400px;
+  width: var(--panel-width, 400px);
   max-width: 48vw;
-  box-shadow: 20px 0 44px color-mix(in oklab, var(--ink) 10%, transparent);
+  /* 三层影：外侧发丝边、贴边的近影、拉开距离的远影。
+     厚度是靠边缘读出来的，不是靠更多模糊——模糊人人会做。 */
+  box-shadow:
+    1px 0 0 color-mix(in oklab, var(--ink) 8%, transparent),
+    14px 0 40px -8px color-mix(in oklab, var(--ink) 16%, transparent),
+    20px 0 64px color-mix(in oklab, var(--ink) 8%, transparent);
   animation: panel-in var(--panel-motion, 300ms) var(--panel-easing, ease-out);
 
   /* 材质三档。数字来自 shell/panel-material.ts；这里只负责画。
@@ -2355,11 +2433,50 @@ kbd {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  border-inline-start: 1px solid
-    color-mix(in oklab, var(--lamp) calc(var(--panel-rim, 0) * 100%), transparent);
+  /* 受光的外缘最亮，背光的内侧弱一半：一块有厚度的东西两条边不一样。 */
   box-shadow:
+    inset -1px 0 0 color-mix(in oklab, var(--lamp) calc(var(--panel-rim, 0) * 90%), transparent),
+    inset 1px 0 0 color-mix(in oklab, var(--lamp) calc(var(--panel-rim, 0) * 45%), transparent),
     inset 0 1px 0 color-mix(in oklab, var(--lamp) calc(var(--panel-rim, 0) * 62%), transparent),
     inset 0 -1px 0 color-mix(in oklab, var(--shade) calc(var(--panel-rim, 0) * 40%), transparent);
+}
+
+/*
+ * 面板打开时，正文让开。
+ *
+ * 这一条是**正确性**，不是观感：面板压在版心上会把每一行的行首切掉三五个字，
+ * 而中日文与西文都从行首读起——作者拿到的是一堆残句，`brown` 会被劈成 `wn`。
+ * 让位的宽度就是那条路径的宽度（脊 + 展开的那一层），所以它跟着栈变。
+ *
+ * 让的是版心的位置，不是它的宽度：行宽在开不开面板时必须一样，
+ * 否则每次打开设置，整篇稿子都要重新折行。
+ */
+:root:not([data-panel-width="full"]) .stage-row[data-panels="open"] .editor-host {
+  transform: translateX(calc(var(--panel-reserve, 0px) / 2));
+  transition: transform var(--panel-motion, 300ms) var(--panel-easing, ease-out);
+}
+
+/*
+ * 铺满。
+ *
+ * 找资料、给 Agent 写指令时，面板就是此刻的工作区，没有理由让它挤在四百像素里
+ * 陪着一篇看不见的稿子。铺满时正文一点也不让——舞台整个归了它，再为正文
+ * 保留位置只会让面板凭空少一块。
+ */
+:root[data-panel-width="full"]
+  .stage-row
+  > :is(.dispatch, .connections, .annotations, .panel-layer) {
+  inset-inline: 0;
+  width: auto;
+  max-width: none;
+}
+
+/* 窄窗口下再让就要出屏，此时只好把版心收窄——宽度是最后才动的。 */
+@media (width < 1200px) {
+  .stage-row[data-panels="open"] .editor-host {
+    transform: none;
+    margin-inline-start: calc(var(--panel-reserve, 0px) + 24px);
+  }
 }
 
 /*
@@ -2375,9 +2492,12 @@ kbd {
   z-index: 9;
   width: var(--spine-width, 34px);
   display: flex;
+  /* 竖排下主轴是纵向：align 管左右居中，justify 决定字从哪端起排。
+     从顶端起排，脊读起来才像书脊而不是一个居中的小标签。 */
   align-items: center;
-  justify-content: center;
-  padding: 0;
+  justify-content: flex-start;
+  /* 上下留白让字沿着脊背走，而不是贴顶；左右不留白，脊本来就窄。 */
+  padding: 22px 0;
   border: 0;
   border-inline-end: 1px solid var(--rule);
   border-radius: 0;
@@ -2388,8 +2508,9 @@ kbd {
   writing-mode: vertical-rl;
   text-orientation: upright;
   font-family: var(--serif);
-  font-size: 12px;
-  letter-spacing: 0.18em;
+  font-size: 12.5px;
+  /* 竖排时字与字会显得粘连，比横排需要更松的字距。 */
+  letter-spacing: 0.2em;
   white-space: nowrap;
   overflow: hidden;
   /* 一层层立起来：错开的延迟由内联变量给，本身就是一条进度。 */
@@ -2403,6 +2524,39 @@ kbd {
 .panel-spine:hover {
   background: var(--paper-raised);
   color: var(--ink);
+}
+
+/*
+ * 当前打开的那一层：它的脊与面板连成一片，读作「这一层是敞开的」。
+ * 没有这个区分时，两条一模一样的脊回答不了「现在开的是哪一层」。
+ */
+.panel-spine[aria-current="true"] {
+  background: color-mix(in oklab, var(--paper-raised) 92%, var(--seal));
+  color: var(--ink);
+  box-shadow: inset -2px 0 0 var(--seal);
+}
+
+/*
+ * 面板蹭上光。
+ *
+ * 单侧灯从面板这一侧来，所以光先经过面板才到正文——半透明的那两档因此有了
+ * 透光的来由：不是「玻璃自己会亮」，是它挡在光路上。全侧灯从头顶来，
+ * 面板的上缘蹭到光。实心档两种灯都不蹭，它本来就不透。
+ */
+:root[data-lamp="side"] .stage-row > :is(.dispatch, .connections, .annotations, .panel-layer) {
+  background-image: linear-gradient(
+    calc(90deg - var(--lamp-x, 1) * 55deg),
+    color-mix(in oklab, var(--lamp-glow) calc(var(--panel-rim, 0) * 70%), transparent),
+    transparent 64%
+  );
+}
+
+:root[data-lamp="overhead"] .stage-row > :is(.dispatch, .connections, .annotations, .panel-layer) {
+  background-image: linear-gradient(
+    to bottom,
+    color-mix(in oklab, var(--lamp-glow) calc(var(--panel-rim, 0) * 60%), transparent),
+    transparent 52%
+  );
 }
 
 /* 立起来：从压扁的状态展开，而不是滑进来——它是「退化」的逆过程。 */

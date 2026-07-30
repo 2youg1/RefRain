@@ -29,6 +29,7 @@ import { type DocumentGateway, DocumentSession } from "./document-session";
 import { EditIntents } from "./edit-intents";
 import { useKara } from "./kara-state";
 import { canOpen, panelKey, settingsSection } from "./panel-reference";
+import { panelLayout } from "./panel-spine";
 import { PanelStack } from "./panel-stack";
 import { ProjectSession } from "./project-session";
 import { browserTimer, RailPresence } from "./rail-presence";
@@ -171,15 +172,22 @@ export function Workbench(props: WorkbenchProps) {
     panelTick();
     return panels.top?.content ?? null;
   });
+  /** 这条路径此刻在屏幕上的样子：让开多宽、算不算开着。 */
+  const layout = createMemo(() => {
+    panelTick();
+    return panelLayout(
+      panels.depth,
+      reference()?.kind === "settings" || state().stage === "review",
+    );
+  });
   const annotationsOpen = createMemo(() => reference()?.kind === "annotations");
   const commandsForMenu = createMemo(() =>
     commandCatalog({ hasProject: project() !== null, hasDocument: active() !== null }),
   );
-  const karaEngaged = (): boolean => {
+  const karaEngaged = createMemo(() => {
     karaTick();
     return kara.engaged.value;
-  };
-
+  });
   const transition = (event: Parameters<typeof reduceWorkbench<never>>[1]): void => {
     setState((current) => reduceWorkbench(current, event));
   };
@@ -533,12 +541,8 @@ export function Workbench(props: WorkbenchProps) {
                 {(openDocument) => (
                   <div
                     class="stage-row"
-                    style={{
-                      display:
-                        reference()?.kind === "settings" || state().stage === "review"
-                          ? "none"
-                          : undefined,
-                    }}
+                    attr:data-panels={layout()["data-panels"]}
+                    style={layout().style}
                   >
                     <EditorHost
                       rootId={root().rootId}

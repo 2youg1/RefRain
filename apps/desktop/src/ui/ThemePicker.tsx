@@ -7,10 +7,13 @@ import { createMemo, createSignal, For, onMount, Show } from "solid-js";
 import { describe, unwrap } from "../bridge";
 import {
   commands,
+  type NightLamp,
   type PanelMaterial,
   type PanelSide,
+  type PanelWidth,
   type PaperMode,
   type PreferencesChangeDto,
+  type RailWidth,
   type ThemeInfoDto,
 } from "../generated/bindings.gen";
 import { ChoiceRow } from "./ChoiceRow";
@@ -43,6 +46,25 @@ const SWITCHES = [
 type Switch = (typeof SWITCHES)[number]["value"];
 const onOff = (value: boolean): Switch => (value ? "on" : "off");
 
+/** 夜间灯两盏：一盏挂在面板那边，一盏挂头顶。 */
+const LAMPS = [
+  { value: "off", label: "关", title: "不点灯" },
+  { value: "side", label: "单侧", title: "光从面板那一侧横穿过来，面板立在光路上" },
+  { value: "overhead", label: "全侧", title: "光自上而下，一片柔光" },
+] as const satisfies readonly { value: NightLamp; label: string; title: string }[];
+
+const PANEL_WIDTHS = [
+  { value: "narrow", label: "窄", title: "面板窄一些，正文多留一点" },
+  { value: "regular", label: "常规", title: "默认宽度" },
+  { value: "full", label: "铺满", title: "找资料或给 Agent 写指令时占满工作区" },
+] as const satisfies readonly { value: PanelWidth; label: string; title: string }[];
+
+const RAIL_WIDTHS = [
+  { value: "narrow", label: "窄", title: "默认" },
+  { value: "regular", label: "常规", title: "" },
+  { value: "wide", label: "宽", title: "长章节名一眼读完" },
+] as const satisfies readonly { value: RailWidth; label: string; title: string }[];
+
 /** 代码配色。「跟随主题」不是一个具体配色，而是「继续跟着界面走」这件事本身。 */
 const CODE_THEMES = [
   { value: "", label: "跟随主题", title: "代码配色随界面主题变化" },
@@ -62,7 +84,9 @@ export function ThemePicker(props: ThemePickerProps) {
   const [side, setSide] = createSignal<PanelSide>("left");
   const [material, setMaterial] = createSignal<PanelMaterial>("solid");
   const [animation, setAnimation] = createSignal<Switch>("on");
-  const [lamp, setLamp] = createSignal<Switch>("off");
+  const [lamp, setLamp] = createSignal<NightLamp>("off");
+  const [panelWidth, setPanelWidth] = createSignal<PanelWidth>("regular");
+  const [railWidth, setRailWidth] = createSignal<RailWidth>("narrow");
   const [codeTheme, setCodeTheme] = createSignal<CodeThemeChoice>("");
   const [error, setError] = createSignal<string | null>(null);
 
@@ -80,7 +104,9 @@ export function ThemePicker(props: ThemePickerProps) {
       setSide(appearance.panel_side ?? "left");
       setMaterial(appearance.panel_material ?? "solid");
       setAnimation(onOff(appearance.panel_animation ?? true));
-      setLamp(onOff(appearance.night_lamp === true));
+      setLamp(appearance.night_lamp ?? "off");
+      setPanelWidth(appearance.panel_width ?? "regular");
+      setRailWidth(appearance.rail_width ?? "narrow");
       setCodeTheme((appearance.code_theme ?? "") as CodeThemeChoice);
     } catch (cause) {
       setError(describe(cause));
@@ -159,11 +185,23 @@ export function ThemePicker(props: ThemePickerProps) {
       <ChoiceRow
         label="夜间灯"
         data="lamp"
-        options={SWITCHES}
+        options={LAMPS}
         current={lamp()}
-        onPick={(value) =>
-          void apply({ kind: "setNightLamp", value: value === "on" }, setLamp, value)
-        }
+        onPick={(value) => void apply({ kind: "setNightLamp", value }, setLamp, value)}
+      />
+      <ChoiceRow
+        label="面板宽度"
+        data="panel-width"
+        options={PANEL_WIDTHS}
+        current={panelWidth()}
+        onPick={(value) => void apply({ kind: "setPanelWidth", value }, setPanelWidth, value)}
+      />
+      <ChoiceRow
+        label="侧栏宽度"
+        data="rail-width"
+        options={RAIL_WIDTHS}
+        current={railWidth()}
+        onPick={(value) => void apply({ kind: "setRailWidth", value }, setRailWidth, value)}
       />
       <ChoiceRow
         label="面板方向"

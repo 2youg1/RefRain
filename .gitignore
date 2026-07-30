@@ -10,6 +10,10 @@ dist/
 # 脚本进仓库，产物不进——它是给人看一眼做裁决用的，不是发布内容。
 /docs/layout-preview.html
 
+# 同上：面板栈的渲染截图由 scripts/render-panel-preview.ts 重建。
+# 截图记录外观，不记录产生外观的值——所以脚本进仓库，图不进。
+/docs/panel-preview/
+
 # Rust and Tauri generated output.
 target/
 apps/desktop/src-tauri/gen/

@@ -340,10 +340,14 @@ export type AppearanceConfig = {
 	 */
 	code_theme?: string | null,
 	/**
-	 *  The night lamp: a halo around the sheet, so the light has a source
-	 *  instead of the glyphs appearing to emit it themselves.
+	 *  The night lamp, so the light has a source instead of the glyphs
+	 *  appearing to emit it themselves.
 	 */
-	night_lamp?: boolean,
+	night_lamp?: NightLamp,
+	/**  How wide a panel opens. */
+	panel_width?: PanelWidth,
+	/**  How wide the document rail sits. */
+	rail_width?: RailWidth,
 	/**  Which side panels open from. Left by default. */
 	panel_side?: PanelSide,
 	/**
@@ -791,6 +795,16 @@ export type MaterialDraftRow_Serialize = {
 };
 
 /**
+ *  Where the night lamp hangs.
+ * 
+ *  `Side` puts it beside the panels, so the light crosses the stage and the
+ *  panels themselves stand in its path — which is where their translucency
+ *  gets its reason. `Overhead` hangs it above: a soft wash falling from the
+ *  top, with no side to it. `Off` is no lamp at all.
+ */
+export type NightLamp = "off" | "side" | "overhead";
+
+/**
  *  A document ready for the editor: blocks with stable ids, the revision the
  *  editor's actions will be based on, and the stamp a later save needs.
  */
@@ -848,6 +862,13 @@ export type PanelMaterial = "solid" | "acrylic" | "liquid";
 export type PanelSide = "left" | "right";
 
 /**
+ *  How wide a panel opens. `Full` gives it the whole stage: finding material or
+ *  writing an instruction for an agent is the work at that moment, and there is
+ *  no reason to crowd it beside a manuscript nobody is reading.
+ */
+export type PanelWidth = "narrow" | "regular" | "full";
+
+/**
  *  The manuscript sheet's edge (SPEC 9.8): an edgeless Web-like column, a
  *  hairline boundary, or a full sheet of paper for authors coming from Word.
  */
@@ -857,7 +878,7 @@ export type PaperMode = "none" | "hairline" | "paper";
  *  The preferences the Settings surface may change (SPEC 6.5). Connection
  *  management is its own command pair; this is the author's choices.
  */
-export type PreferencesChangeDto = { kind: "karaAutoEnter"; value: boolean } | { kind: "setTheme"; value: string } | { kind: "setPaper"; value: PaperMode } | { kind: "setPanelSide"; value: PanelSide } | { kind: "setPanelMaterial"; value: PanelMaterial } | { kind: "setNightLamp"; value: boolean } | { kind: "setCodeTheme"; value: string | null } | { kind: "setPanelAnimation"; value: boolean } | { kind: "setTypography"; value: TypographyConfig } | { kind: "saveTypographyPreset"; value: string } | { kind: "removeTypographyPreset"; value: Id } | { kind: "resetVisual" } | { kind: "resetTypography" } | { kind: "restoreAppearance"; value: AppearanceConfig };
+export type PreferencesChangeDto = { kind: "karaAutoEnter"; value: boolean } | { kind: "setTheme"; value: string } | { kind: "setPaper"; value: PaperMode } | { kind: "setPanelSide"; value: PanelSide } | { kind: "setPanelMaterial"; value: PanelMaterial } | { kind: "setNightLamp"; value: NightLamp } | { kind: "setPanelWidth"; value: PanelWidth } | { kind: "setRailWidth"; value: RailWidth } | { kind: "setCodeTheme"; value: string | null } | { kind: "setPanelAnimation"; value: boolean } | { kind: "setTypography"; value: TypographyConfig } | { kind: "saveTypographyPreset"; value: string } | { kind: "removeTypographyPreset"; value: Id } | { kind: "resetVisual" } | { kind: "resetTypography" } | { kind: "restoreAppearance"; value: AppearanceConfig };
 
 /**  A Root as the interface names it. */
 export type ProjectOpenedDto = {
@@ -880,6 +901,12 @@ export type ProposalDto = {
 };
 
 export type QuietEvent = "save-succeeded" | "agent-completed" | "proposal-arrived" | "index-refreshed";
+
+/**
+ *  How wide the document rail sits. It carries file names, so it is narrower
+ *  than a panel.
+ */
+export type RailWidth = "narrow" | "regular" | "wide";
 
 /**
  *  One thing the author can do about a failure. A step is a domain fact, not a
