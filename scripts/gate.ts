@@ -25,6 +25,7 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["verify:window-chrome", ["bun", "scripts/verify-window-chrome.ts"]],
   ["verify:workbench-architecture", ["bun", "scripts/verify-workbench-architecture.ts"]],
   ["verify:component-depth", ["bun", "scripts/verify-component-depth.ts"]],
+  ["verify:command-depth", ["bun", "scripts/verify-command-depth.ts"]],
   ["verify:typography", ["bun", "scripts/verify-typography.ts"]],
   ["verify:fonts", ["bun", "scripts/verify-fonts.ts"]],
   ["verify:universal-menu", ["bun", "scripts/verify-universal-menu.ts"]],
