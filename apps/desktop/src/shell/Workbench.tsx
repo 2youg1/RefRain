@@ -551,7 +551,7 @@ export function Workbench(props: WorkbenchProps) {
                 />
               </Show>
               <Show when={active()}>
-                {(open) => (
+                {(openDocument) => (
                   <div
                     class="stage-row"
                     style={{
@@ -563,8 +563,8 @@ export function Workbench(props: WorkbenchProps) {
                   >
                     <EditorHost
                       rootId={root().rootId}
-                      path={open().document.path}
-                      document={open()}
+                      path={openDocument().document.path}
+                      document={openDocument()}
                       annotations={editorAnnotations()}
                       onReady={(handle) => {
                         editor = handle;
@@ -587,8 +587,8 @@ export function Workbench(props: WorkbenchProps) {
                     <Show when={state().stage === "dispatch" && !annotationsOpen()}>
                       <DispatchSurface
                         rootId={root().rootId}
-                        path={open().document.path}
-                        blocks={open().blocks}
+                        path={openDocument().document.path}
+                        blocks={openDocument().blocks}
                         materials={materials().map((row) => ({ path: row.path, label: row.path }))}
                         seed={dispatchSeed()}
                         initialPrompt={dispatchPrompt()}

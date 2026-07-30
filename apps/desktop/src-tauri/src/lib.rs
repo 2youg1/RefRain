@@ -1708,6 +1708,7 @@ fn commit_decision_batch(
 // in .refrain/ through DirectoryContext. Nothing here decides a domain rule:
 // the host's state machine does.
 
+use refrain_app::cancel::{cancel_and_read_back, progress_of, refuse_cancel_without_handle};
 use refrain_app::journal::{
     StoreJournal, into_domain, into_domain_host, into_domain_store, parse_id, run_kind, task_kind,
 };
@@ -2352,23 +2353,11 @@ fn cancel_run(
         })?;
         let dto = state.with_project(&root_id, |_state, entry| {
             let mut host = open_host(&mut entry.store)?;
-            host.execute(HostCommand::CancelRun {
+            Ok(run_dto(&cancel_and_read_back(
+                &mut host,
                 run_id,
-                at: now_millis(),
-            })
-            .map_err(into_domain_host)?;
-            let index = host
-                .runs()
-                .iter()
-                .position(|run| run.id == run_id)
-                .ok_or_else(|| {
-                    RefrainError::new(
-                        ErrorCode::StateUnavailable,
-                        "find a cancelled run",
-                        run_id.to_string(),
-                    )
-                })?;
-            Ok(run_dto(&host.runs()[index]))
+                now_millis(),
+            )?))
         })?;
         active.cancelled = true;
         drop(active);
@@ -2379,49 +2368,13 @@ fn cancel_run(
     }
 
     state.with_project(&root_id, |_state, entry| {
-        let host = open_host(&mut entry.store)?;
-        let run = host
-            .runs()
-            .iter()
-            .find(|run| run.id == run_id)
-            .ok_or_else(|| into_domain_host(HostRefusal::UnknownRun(run_id)))?;
-        match run.progress {
-            RunProgress::Launching { .. } => Err(RefrainError::new(
-                ErrorCode::StateUnavailable,
-                "cancel a Run while its producer is starting",
-                "try again after the launch settles",
-            )),
-            RunProgress::Dispatched { .. } => Err(RefrainError::new(
-                ErrorCode::StateUnavailable,
-                "cancel a Run without a live process handle",
-                "the app may have restarted; recovery is required",
-            )),
-            RunProgress::Queued
-            | RunProgress::Authorized { .. }
-            | RunProgress::Completed { .. }
-            | RunProgress::Failed { .. }
-            | RunProgress::Cancelled => Ok(()),
-        }
-    })?;
-    state.with_project(&root_id, |_state, entry| {
         let mut host = open_host(&mut entry.store)?;
-        host.execute(HostCommand::CancelRun {
+        refuse_cancel_without_handle(&progress_of(&host, run_id)?)?;
+        Ok(run_dto(&cancel_and_read_back(
+            &mut host,
             run_id,
-            at: now_millis(),
-        })
-        .map_err(into_domain_host)?;
-        let index = host
-            .runs()
-            .iter()
-            .position(|run| run.id == run_id)
-            .ok_or_else(|| {
-                RefrainError::new(
-                    ErrorCode::StateUnavailable,
-                    "find a cancelled run",
-                    run_id.to_string(),
-                )
-            })?;
-        Ok(run_dto(&host.runs()[index]))
+            now_millis(),
+        )?))
     })
 }
 

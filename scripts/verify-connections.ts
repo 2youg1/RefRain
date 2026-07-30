@@ -103,10 +103,19 @@ for (const guidedFact of [
   }
 }
 
+// Killing the producer must precede the journal write, or a Run reads Cancelled
+// while its process is still producing. The journal write now lives in the use
+// case (`refrain_app::cancel::cancel_and_read_back`), so name both sides
+// explicitly and refuse when either one is missing — an absent marker must not
+// pass as "ordered correctly".
 const cancelBody = rust.slice(rust.indexOf("fn cancel_run("), rust.indexOf("fn retry_run("));
-if (
-  cancelBody.indexOf("active.cancel.cancel_tree()") > cancelBody.indexOf("HostCommand::CancelRun")
-) {
+const killsTree = cancelBody.indexOf("active.cancel.cancel_tree()");
+const writesJournal = cancelBody.indexOf("cancel_and_read_back(");
+if (killsTree === -1 || writesJournal === -1) {
+  failures.push(
+    `cancel_run no longer shows both the producer kill (${killsTree}) and the journal write (${writesJournal}); the ordering guard cannot see what it guards`,
+  );
+} else if (killsTree > writesJournal) {
   failures.push("the journal claims Cancelled before the producer tree exits");
 }
 

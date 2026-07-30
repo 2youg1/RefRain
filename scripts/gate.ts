@@ -40,6 +40,7 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["verify:manuscript-scale", ["bun", "scripts/verify-manuscript-scale.ts"]],
   ["verify:editor-performance", ["bun", "apps/desktop/e2e/editor-performance.ts"]],
   ["verify:editor-context", ["bun", "apps/desktop/e2e/editor-context.ts"]],
+  ["verify:editor-host-identity", ["bun", "apps/desktop/e2e/editor-host-identity.ts"]],
   ["verify:e2e-coverage", ["bun", "scripts/verify-e2e-coverage.ts"]],
   [
     "verify:project-performance",

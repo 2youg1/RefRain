@@ -13,7 +13,7 @@ import {
   mountEditor,
   type PunctuationFinding,
 } from "@refrain/editor";
-import { createEffect, onCleanup, onMount } from "solid-js";
+import { createEffect, on, onCleanup, onMount } from "solid-js";
 import { describe, unwrap } from "../bridge";
 import { EditorActionQueue } from "../editor-host/editor-action-queue";
 import { cancelScheduledFrame, scheduleFrame } from "../frame-scheduler";
@@ -66,7 +66,9 @@ export function EditorHost(props: EditorHostProps) {
   let host: HTMLDivElement | undefined;
   let editor: EditorHandle | null = null;
   let confirmedRevision = props.document.revision;
-  const confirmationFrame = `editor-confirm:${props.rootId}:${props.path}`;
+  // One key per mounted host, not per document: the host outlives a document
+  // switch, and a stale pending frame must be cancellable after the switch.
+  const confirmationFrame = `editor-confirm:${crypto.randomUUID()}`;
 
   const apply = async (action: EditorAction): Promise<void> => {
     const structural = action.changes.some(
@@ -90,11 +92,19 @@ export function EditorHost(props: EditorHostProps) {
     props.onConfirmed(transition.revision);
   };
 
-  const actions = new EditorActionQueue(
-    apply,
-    (task) => scheduleFrame(confirmationFrame, task),
-    (error) => props.onRejected(describe(error)),
-  );
+  // The queue's lifetime is one document's editing session: the actions it
+  // holds are based on that document's revision and mean nothing after a
+  // switch. It is rebuilt with the editor rather than reset, so there is no
+  // "emptied but reusable" state for anyone to reason about.
+  let actions = newQueue();
+
+  function newQueue(): EditorActionQueue {
+    return new EditorActionQueue(
+      apply,
+      (task) => scheduleFrame(confirmationFrame, task),
+      (error) => props.onRejected(describe(error)),
+    );
+  }
 
   const onContextMenu = (event: MouseEvent): void => {
     // Candidate text is not settled manuscript text: refuse rather than act
@@ -109,8 +119,27 @@ export function EditorHost(props: EditorHostProps) {
     props.onContext(context, event.clientX, event.clientY);
   };
 
-  onMount(() => {
+  /**
+   * Mount the editor for whichever document is open now, tearing down the
+   * previous one first.
+   *
+   * A different manuscript is a different editor. Callers place this component
+   * under a `<Show>` that stays truthy across a switch, so Solid reuses the
+   * instance and `onMount` never runs a second time — the previous manuscript
+   * would stay on screen while `rootId`/`path` already point at the new one,
+   * and the next keystroke would be submitted against the previous document's
+   * revision, into the new document's path. Owning the remount here keeps that
+   * invariant true no matter how the caller writes its control flow.
+   */
+  const remount = (): void => {
     if (host === undefined) return;
+    // Drop work owed to the document being closed: its revision is gone.
+    actions.destroy();
+    cancelScheduledFrame(confirmationFrame);
+    editor?.destroy();
+    actions = newQueue();
+    // The host element is reused: only the editor's internal DOM is rebuilt.
+    confirmedRevision = props.document.revision;
     const document: EditorDocument = {
       revision: props.document.revision,
       blocks: props.document.blocks,
@@ -133,7 +162,19 @@ export function EditorHost(props: EditorHostProps) {
         await actions.settled();
       },
     });
-  });
+  };
+
+  onMount(remount);
+
+  // Identity, not the DTO: the same document re-read produces a new object, and
+  // rebuilding the editor for that would discard the author's caret mid-save.
+  createEffect(
+    on(
+      () => `${props.rootId}\u0000${props.path}`,
+      () => remount(),
+      { defer: true },
+    ),
+  );
 
   createEffect(() => {
     editor?.setAnnotations(props.annotations);

@@ -7,12 +7,14 @@
 //!
 //! 这里不认识 Tauri。
 
+pub mod cancel;
 pub mod collect;
 pub mod decide;
 pub mod journal;
 pub mod review;
 pub mod scope;
 
+pub use cancel::{cancel_and_read_back, progress_of, refuse_cancel_without_handle};
 pub use collect::{Collected, collect_attempt};
 pub use decide::commit_decision_batch;
 pub use journal::{

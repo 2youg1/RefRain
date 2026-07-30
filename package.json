@@ -39,6 +39,7 @@
     "verify:manuscript-scale": "bun scripts/verify-manuscript-scale.ts",
     "verify:editor-performance": "bun apps/desktop/e2e/editor-performance.ts",
     "verify:editor-context": "bun apps/desktop/e2e/editor-context.ts",
+    "verify:editor-host-identity": "bun apps/desktop/e2e/editor-host-identity.ts",
     "verify:e2e-coverage": "bun scripts/verify-e2e-coverage.ts",
     "verify:project-performance": "cargo test --release -p refrain-store --test project_performance -- --nocapture",
     "verify:large-input-performance": "cargo test --release -p refrain-store --test large_input_performance -- --nocapture",
