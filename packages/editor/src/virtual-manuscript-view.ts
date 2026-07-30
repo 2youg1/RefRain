@@ -12,8 +12,43 @@ import { applyLocally, projectionIndex } from "./projection";
 import { applyPunctuationFinding, findPunctuation } from "./punctuation";
 
 const BLOCK_TAG = "p";
+
+/** 一个只占高度、不接事件、读屏器看不见的填充块。 */
+const makeSpacer = (document_: Document): HTMLElement => {
+  const spacer = document_.createElement("div");
+  spacer.dataset.editorSpacer = "";
+  spacer.style.pointerEvents = "none";
+  spacer.setAttribute("aria-hidden", "true");
+  return spacer;
+};
 const VIRTUALIZE_AFTER = 400;
-const WINDOW_BLOCKS = 200;
+/**
+ * 窗口覆盖几屏。
+ *
+ * 一屏之外前后各留一屏：作者往任一方向滚一整屏之内，要读的块都已经在 DOM 里。
+ * 更大的倍数只是提前做了迟早要做的工作，而每一帧都要为它付出代价。
+ */
+const WINDOW_SCREENS = 3;
+/**
+ * 窗口的块数下限与上限。
+ *
+ * 下限挡住「容器还没量出高度」那一帧（clientHeight 为 0 时窗口会算成空，作者看到
+ * 一片空白）；上限挡住极端小字号下窗口膨胀到几百块，那时每帧的渲染成本会盖过
+ * 虚拟化本身省下的。实测一屏的块数在 14（40px 字）到 62（9px 字）之间，
+ * 乘三屏即 42 到 186——两端都在这个区间里。
+ */
+const MIN_WINDOW_BLOCKS = 60;
+const MAX_WINDOW_BLOCKS = 400;
+/**
+ * 判断「已经在结尾」时允许的估算误差，按块数计。
+ *
+ * 它描述的是高度索引的误差，不是窗口大小——两者曾经共用一个常数，于是窗口改成
+ * 自适应之后容差跟着缩到不足三分之一，滚到底会停在半途（实测 10 万块时停在
+ * 3,594,067 / 7,168,082）。误差本身与窗口多大无关：未测量的块各贡献一个估计值，
+ * 浏览器按近似的 scrollHeight 夹住滚动位置，下一次测量再把总高修正回来。
+ * 10 万块时实测的落差是 4,138px，200 块的估算量足以覆盖它。
+ */
+const BOTTOM_DEADBAND_BLOCKS = 200;
 const INITIAL_BLOCK_HEIGHT = 40;
 const MIN_ESTIMATE_SAMPLES = 20;
 
@@ -130,6 +165,13 @@ function anchorOf(element: HTMLElement): EditorContext["anchor"] {
 export class VirtualManuscriptView {
   readonly #element: HTMLElement;
   readonly #scrollHost: HTMLElement;
+  /**
+   * 撑起未渲染区域的填充块，按需复用。
+   *
+   * 绝大多数帧只需要两个（窗口前、窗口后）；作者正在输入的块滚出窗口时需要第三个。
+   * 池只增不减：数量上限就是这几个，留着比每帧新建便宜。
+   */
+  readonly #spacers: HTMLElement[] = [];
   readonly #view: Window;
   readonly #submitChanges: (changes: readonly EditorChange[]) => void;
   readonly #byId = new Map<string, HTMLElement>();
@@ -161,6 +203,7 @@ export class VirtualManuscriptView {
     if (view === null) throw new Error("editor document has no window");
     this.#element = element;
     this.#scrollHost = element.parentElement ?? element;
+
     this.#view = view;
     this.#submitChanges = submitChanges;
     this.#blocks = [...blocks];
@@ -485,7 +528,45 @@ export class VirtualManuscriptView {
       this.#scrollHost.scrollHeight - this.#scrollHost.clientHeight - this.#scrollHost.scrollTop;
     if (residual <= 2) return true;
     if (this.#blocks.length <= VIRTUALIZE_AFTER) return false;
-    return residual <= this.#heightIndex.estimate * WINDOW_BLOCKS;
+    return residual <= this.#heightIndex.estimate * BOTTOM_DEADBAND_BLOCKS;
+  }
+
+  /**
+   * 这一刻该挂多少块在 DOM 里。
+   *
+   * 按可见像素高度算，不按固定块数：作者把字号从 9px 调到 40px，一屏的块数会从
+   * 62 掉到 14（实测，见 e2e/probe-viewport.ts），固定 200 块在前一种情况下只多
+   * 载了三倍多、在后一种下多载了十四倍，两头都不合适。
+   *
+   * 用 heightIndex 的估计值而不是重新测量：它本来就在维护这个数，且随作者滚动
+   * 越来越准；这里再量一次只会在每帧的路径上加一次强制布局。
+   */
+  #windowBlocks(): number {
+    const visible = this.#scrollHost.clientHeight;
+    const perBlock = this.#heightIndex.estimate;
+    if (visible <= 0 || perBlock <= 0) return MIN_WINDOW_BLOCKS;
+    const wanted = Math.ceil((visible / perBlock) * WINDOW_SCREENS);
+    return Math.min(MAX_WINDOW_BLOCKS, Math.max(MIN_WINDOW_BLOCKS, wanted));
+  }
+
+  /**
+   * 把一个 spacer 撑成 [start, end) 那段未渲染区域的高度。
+   *
+   * 高度为零时留在 DOM 里而不是摘掉：它只是一个零高度的空 div，留着可以省掉
+   * 每帧判断「这个 spacer 现在该不该存在」，也让子节点顺序恒定为
+   * 头 spacer → 段落 → 尾 spacer。
+   */
+  /** 取第 `slot` 个填充块并撑成 [start, end) 那段的高度。不够就新建一个。 */
+  #spacerAt(slot: number, start: number, end: number): HTMLElement {
+    let spacer = this.#spacers[slot];
+    if (spacer === undefined) {
+      spacer = makeSpacer(this.#element.ownerDocument);
+      this.#spacers[slot] = spacer;
+    }
+    const next = `${this.#heightIndex.span(start, end)}px`;
+    // 只在值真的变了时才写：写同样的值也会让浏览器把布局标脏。
+    if (spacer.style.height !== next) spacer.style.height = next;
+    return spacer;
   }
 
   #readOuterHeight(paragraph: HTMLElement): number {
@@ -578,14 +659,16 @@ export class VirtualManuscriptView {
     const virtual = this.#blocks.length > VIRTUALIZE_AFTER;
     const scrollIndex = this.#heightIndex.atOffset(this.#scrollHost.scrollTop);
     const focusIndex = center ?? Math.max(0, scrollIndex);
+    const windowBlocks = this.#windowBlocks();
+    // 焦点前留四分之一窗：作者多半往下读，把余量放在前进方向上。
     const visibleStart = virtual
       ? Math.max(
           0,
-          Math.min(this.#blocks.length - WINDOW_BLOCKS, focusIndex - Math.floor(WINDOW_BLOCKS / 4)),
+          Math.min(this.#blocks.length - windowBlocks, focusIndex - Math.floor(windowBlocks / 4)),
         )
       : 0;
     const visibleEnd = virtual
-      ? Math.min(this.#blocks.length, visibleStart + WINDOW_BLOCKS)
+      ? Math.min(this.#blocks.length, visibleStart + windowBlocks)
       : this.#blocks.length;
     const activeIndex = pinnedId === null ? -1 : this.#indexOf(pinnedId);
     const pinnedIndex =
@@ -600,27 +683,53 @@ export class VirtualManuscriptView {
     if (signature === this.#renderedSignature) return;
     this.#renderedSignature = signature;
 
+    // 只动差集，不整窗替换。
+    //
+    // 段落元素本来就是复用的（previous 那张表），但 replaceChildren 会把整窗的
+    // 节点从 DOM 摘下再插回，浏览器要重算整棵子树；而滚动一格实际只有几个块
+    // 进出。实测（10 万块、窗口 200、连续滚 120 次，e2e/probe-window-diff.ts）：
+    // 整窗替换 p50 1.90ms / p95 2.20ms，只动差集 p50 0.20ms / p95 0.30ms。
+    //
+    // spacer 从「每段之间按需插入」改成头尾各一个固定元素并复用：窗口是一段
+    // 连续区间，中间不需要 spacer；被钉住的那个块（正在输入、不在窗口里）单独
+    // 处理，它是唯一的例外。
     const previous = new Map(this.#byId);
     this.#byId.clear();
-    const fragment = this.#element.ownerDocument.createDocumentFragment();
-    const appendSpacer = (start: number, end: number): void => {
-      if (end <= start) return;
-      const spacer = this.#element.ownerDocument.createElement("div");
-      spacer.dataset.editorSpacer = "";
-      spacer.style.height = `${this.#heightIndex.span(start, end)}px`;
-      spacer.style.pointerEvents = "none";
-      spacer.setAttribute("aria-hidden", "true");
-      fragment.append(spacer);
-    };
 
     if (this.#blocks.length === 0) {
       const seed = previous.get("") ?? this.#paragraphFor({ id: "", text: "" });
       this.#byId.set("", seed);
-      fragment.append(seed);
+      for (const [id, node] of previous) if (id !== "") node.remove();
+      for (const spacer of this.#spacers) spacer.remove();
+      this.#element.replaceChildren(seed);
     } else {
-      let cursor = 0;
+      // 先把离开窗口的摘掉，再插进新来的。次序无关紧要，但先摘后插让 DOM 里
+      // 同时存在的节点数不会超过一窗。
+      const wanted = new Set<string>();
       for (const index of indices) {
-        appendSpacer(cursor, index);
+        const block = this.#blocks[index];
+        if (block !== undefined) wanted.add(block.id);
+      }
+      for (const [id, node] of previous) {
+        if (!wanted.has(id)) node.remove();
+      }
+
+      // spacer 按 indices 的间隙逐段给，而不是只在首尾各给一个。
+      //
+      // 「窗口是一段连续区间」这个想法漏掉了被钉住的块：作者正在输入的那一段
+      // 即使滚出窗口也必须留在 DOM 里，于是 indices 会长成 [50000, 99939…99999]，
+      // 只按首尾放 spacer 会把中间四万多块的高度整个丢掉（实测贴底那一帧文档
+      // 高度从 674 万掉到 337 万，下一帧弹回，滚动位置随之失守）。
+      //
+      // 逐段给不需要为钉住的块开特例：它自然就是 indices 里的一个孤立项。
+      const ordered: HTMLElement[] = [];
+      let nextIndex = 0;
+      let spacerSlot = 0;
+      for (const index of indices) {
+        if (index > nextIndex) {
+          ordered.push(this.#spacerAt(spacerSlot, nextIndex, index));
+          spacerSlot += 1;
+        }
         const block = this.#blocks[index];
         if (block === undefined) continue;
         const paragraph = previous.get(block.id) ?? this.#paragraphFor(block);
@@ -628,12 +737,30 @@ export class VirtualManuscriptView {
           paragraph.textContent = block.text;
         }
         this.#byId.set(block.id, paragraph);
-        fragment.append(paragraph);
-        cursor = index + 1;
+        ordered.push(paragraph);
+        nextIndex = index + 1;
       }
-      appendSpacer(cursor, this.#blocks.length);
+      if (nextIndex < this.#blocks.length) {
+        ordered.push(this.#spacerAt(spacerSlot, nextIndex, this.#blocks.length));
+      }
+
+      // 走一遍，把不在位的节点搬到位。绝大多数帧里只有两三个节点需要动，
+      // 其余的 insertBefore 判断为「已经在这里」而直接跳过。
+      let cursor: ChildNode | null = this.#element.firstChild;
+      for (const node of ordered) {
+        if (cursor === node) {
+          cursor = node.nextSibling;
+          continue;
+        }
+        this.#element.insertBefore(node, cursor);
+      }
+      // 剩下的都是这一帧不该出现的（例如上一帧被钉住、这一帧回到窗口里的那个）。
+      while (cursor !== null) {
+        const next: ChildNode | null = cursor.nextSibling;
+        cursor.remove();
+        cursor = next;
+      }
     }
-    this.#element.replaceChildren(fragment);
     this.#projectAnnotations();
     if (pinnedId !== null && activeOffset !== null) {
       const restored = this.#byId.get(pinnedId);

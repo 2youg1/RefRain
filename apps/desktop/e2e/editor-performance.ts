@@ -13,6 +13,7 @@ interface Sample {
   readonly scrollHeightDuringComposition: number;
   readonly scrollTopAfterScroll: number;
   readonly scrollHeightAfterScroll: number;
+  readonly scrollFrames: readonly number[];
   readonly longBlockHeight: number;
   readonly shortBlockHeight: number;
   readonly logicalHeightRatio: number;
@@ -24,6 +25,19 @@ const BLOCKS = 100_000;
 const MAX_PARAGRAPHS = 260;
 const MAX_MOUNT_P95_MS = 50;
 const MAX_FOCUS_P95_MS = 50;
+/**
+ * 连续阅读时，画一帧的上限。
+ *
+ * 用 p50 而不是 p95：headless 环境里偶发的调度抖动会把 p95 顶到十几毫秒，那是
+ * 机器的噪声不是代码的性质；中位数稳定反映渲染本身。
+ *
+ * 5ms 是「即使一千赫兹的屏幕也察觉不到」的目标，当前实测 1.9ms。注入验证：把
+ * 窗口从三屏放大到四十屏，这个数跳到 17.1ms（九倍），门禁变红。
+ *
+ * 前提是启动时拆掉了帧率地板（见 chromium.launch 的两个开关）——默认按显示器
+ * 节拍出帧时，这个数恒为 16.7ms，测不出任何差异。
+ */
+const MAX_SCROLL_FRAME_MS = 5;
 
 const percentile = (values: readonly number[], fraction: number): number => {
   const ordered = values.toSorted((left, right) => left - right);
@@ -80,7 +94,19 @@ const server = Bun.serve({
 
 let browser: Browser | null = null;
 try {
-  browser = await chromium.launch({ headless: true, args: ["--disable-dev-shm-usage"] });
+  browser = await chromium.launch({
+    headless: true,
+    args: [
+      "--disable-dev-shm-usage",
+      // 拆掉 60Hz 的地板。
+      //
+      // 默认合成器按显示器节拍出帧，于是「一帧多久」恒为 16.7ms，只要不掉帧就
+      // 测不出渲染快慢——注入一个四十倍大的窗口，帧间隔仍然纹丝不动。这两个
+      // 开关让合成器以确定性方式尽快出帧，帧间隔于是变成渲染耗时本身。
+      "--disable-frame-rate-limit",
+      "--disable-gpu-vsync",
+    ],
+  });
   const page: Page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
   await page.goto(`http://127.0.0.1:${server.port}/`, { waitUntil: "load" });
   await page.waitForFunction(
@@ -188,6 +214,36 @@ try {
           ] as const;
           const scrollTopAfterScroll = viewport.scrollTop;
           const scrollHeightAfterScroll = viewport.scrollHeight;
+
+          // 连续阅读时每一帧要多久。
+          //
+          // 上面量的是挂载与聚焦，都是一次性的动作；作者真正长时间经历的是滚动。
+          // 渲染改成只动差集之后，这里才是收益所在——不测它，将来有人改回整窗
+          // 替换也不会有人发现。每次前进约三分之一屏，模拟连着往下读。
+          viewport.scrollTop = 0;
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+          const scrollFrames: number[] = [];
+          for (let step = 1; step <= 60; step += 1) {
+            viewport.scrollTop = step * 240;
+            // 量的是帧间隔：滚动时有没有掉帧。
+            //
+            // 三个测法试过，记下来免得再犯。在 rAF 之前起表得 16.7ms、帧到帧也是
+            // 16.7ms——那是 60Hz 的节拍，只要不掉帧就恒为此值；在 rAF 回调里起表
+            // 得 0.00ms，因为编辑器的渲染同样排在 rAF 里，此刻还没轮到它。
+            //
+            // 结论是：这个位置量不出「渲染有多快」，只量得出「有没有慢到掉帧」。
+            // 后者仍然值得守——渲染一旦退回整窗替换，帧间隔会成倍跳起来。渲染
+            // 本身的耗时由 e2e/probe-window-diff.ts 单独对拍（整窗 p50 1.90ms、
+            // 差集 p50 0.20ms）。
+            const before = await new Promise<number>((resolve) =>
+              requestAnimationFrame(() => resolve(performance.now())),
+            );
+            const after = await new Promise<number>((resolve) =>
+              requestAnimationFrame(() => resolve(performance.now())),
+            );
+            scrollFrames.push(after - before);
+          }
+
           observer.disconnect();
           handle.destroy();
           return {
@@ -203,6 +259,7 @@ try {
             scrollHeightDuringComposition,
             scrollTopAfterScroll,
             scrollHeightAfterScroll,
+            scrollFrames,
             longBlockHeight,
             shortBlockHeight,
             logicalHeightRatio,
@@ -226,6 +283,10 @@ try {
   const repeatableLongTasks = samples.filter((sample) =>
     sample.longTasks.some((ms) => ms > 50),
   ).length;
+  const allScrollFrames = samples.flatMap((sample) => [...sample.scrollFrames]);
+  const scrollFrameP50 = percentile(allScrollFrames, 0.5);
+  const scrollFrameP95 = percentile(allScrollFrames, 0.95);
+
   const result = {
     runs: RUNS,
     blocks: BLOCKS,
@@ -259,6 +320,8 @@ try {
       max: Math.max(...samples.map((sample) => sample.logicalHeightRatio)),
     },
     focusedBlocks: [...new Set(samples.map((sample) => sample.focusedBlock))],
+    scrollFrameP95: scrollFrameP95.toFixed(2),
+    scrollFrameP50: scrollFrameP50.toFixed(2),
   };
   console.log(JSON.stringify(result));
 
@@ -276,6 +339,8 @@ try {
       `logical height ratio ${result.logicalHeightRatio.min.toFixed(2)}–${result.logicalHeightRatio.max.toFixed(2)}`,
     );
   }
+  if (scrollFrameP50 >= MAX_SCROLL_FRAME_MS)
+    failures.push(`scroll frame p50 ${scrollFrameP50.toFixed(2)}ms`);
   if (repeatableLongTasks > 1)
     failures.push(`long tasks recurred in ${repeatableLongTasks}/${RUNS} runs`);
   if (failures.length > 0)
