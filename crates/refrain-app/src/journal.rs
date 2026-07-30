@@ -12,7 +12,7 @@
 //! 断言实体逐字段相同、索引列与实体内部的值一致（两者不一致时查询会指向错的
 //! 行，而实体本身看起来完全正常，这是最难靠肉眼发现的那种错）。
 
-use refrain_core::{ErrorCode, RefrainError};
+use refrain_core::{ErrorCode, Id, RefrainError};
 use refrain_host::host::{
     DispatchAuthorization, HostJournal, HostRefusal, HostState, ReviewTask, Run, RunProgress,
     TaskProgress,
@@ -79,6 +79,28 @@ pub fn into_domain_host(refusal: HostRefusal) -> RefrainError {
 }
 
 /// 把一个编排实体写成 JSON。失败是 Io：这一步不该发生，发生了就是磁盘或内存出事。
+/// 账本写入失败时的说法。
+pub fn into_domain_store(failure: refrain_store::schema::StoreError) -> RefrainError {
+    RefrainError::new(
+        ErrorCode::StateUnavailable,
+        "write the verdict ledger",
+        failure.to_string(),
+    )
+}
+
+/// 把存下来的 id 字符串读回 `Id`。
+///
+/// 存储里的 id 是文本，领域里的是 `Id`。翻译失败时要说清是哪一类 id——
+/// 「parse an id」单独出现时，读到的人无从判断出错的是提案、运行还是切片。
+pub fn parse_id(raw: &str, what: &str) -> Result<Id, RefrainError> {
+    raw.parse::<uuid::Uuid>()
+        .map(Id::from_uuid)
+        .map_err(|error| {
+            RefrainError::new(ErrorCode::Io, "parse an id", raw)
+                .with_detail(format!("{what}: {error}"))
+        })
+}
+
 pub fn json_of<T: Serialize>(value: &T, what: &str) -> Result<String, RefrainError> {
     serde_json::to_string(value).map_err(|error| {
         RefrainError::new(ErrorCode::Io, "serialise orchestration state", what)
