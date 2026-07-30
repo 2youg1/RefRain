@@ -12,18 +12,31 @@ import { describe, expect, test } from "bun:test";
 import type { RecoveryStep } from "../src/generated/bindings.gen";
 import { RECOVERY_TEXT } from "../src/ui/recovery-text";
 
-// 域来自生成的联合类型，不来自记忆：凭记忆列的表恰好会漏掉忘了的那个。
-const EVERY_STEP = [
-  "retry",
-  "choose-another-location",
-  "choose-another-name",
-  "grant-permission",
-  "open-settings",
-  "report-defect",
-] as const satisfies readonly RecoveryStep[];
+/**
+ * 域从生成的联合类型取，不从记忆里列。
+ *
+ * 这里原本是一份手抄的六项清单加 `satisfies readonly RecoveryStep[]`，
+ * 注释也写着「不来自记忆」——但 `satisfies` 只保证**清单里的都合法**，
+ * 不保证**合法的都在清单里**。于是领域新增两个步骤时，它一声不响。
+ *
+ * `EXPECTED` 用一个 `Record<RecoveryStep, true>` 声明：漏掉任何一个成员
+ * 都会编译失败，这才是完整性。**能编译过就等于域是全的。**
+ */
+const EXPECTED: Record<RecoveryStep, true> = {
+  retry: true,
+  "choose-another-location": true,
+  "choose-another-name": true,
+  "grant-permission": true,
+  "open-settings": true,
+  "report-defect": true,
+  "compare-with-frozen-text": true,
+  "send-again": true,
+};
+
+const EVERY_STEP = Object.keys(EXPECTED) as readonly RecoveryStep[];
 
 describe("recovery steps become sentences the author can act on", () => {
-  test.each(EVERY_STEP)("%s has author-facing text", (step) => {
+  test.each([...EVERY_STEP])("%s has author-facing text", (step) => {
     const text = RECOVERY_TEXT[step];
     expect(text).toBeString();
     expect(text.length).toBeGreaterThan(0);

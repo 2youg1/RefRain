@@ -11,7 +11,9 @@
 use std::collections::HashMap;
 
 use refrain_core::manuscript::{DecisionBatch, Proposal, ReviewSliceId, Verdict, VerdictKind};
-use refrain_core::{ErrorCode, Id, Manuscript, RefrainError, TextCommand, TextTransition};
+use refrain_core::{
+    ErrorCode, Id, Manuscript, RecoveryStep, RefrainError, TextCommand, TextRefusal, TextTransition,
+};
 use refrain_store::ledger::{VerdictKindName, VerdictRecord};
 use refrain_store::project::ProjectStore;
 
@@ -53,21 +55,59 @@ pub fn commit_decision_batch(
         .map(|row| verdict_of(row, &proposal_at))
         .collect::<Result<Vec<_>, _>>()?;
 
+    // 冻结文本按 id 留一份：提案随即被 move 进批次，而拒绝时要把 Agent
+    // 当时读到的原文交还给作者。
+    let frozen: HashMap<Id, String> = proposals
+        .iter()
+        .map(|proposal| (proposal.id(), proposal.before().to_string()))
+        .collect();
+
     let base = manuscript.head().id();
     let transition = manuscript
         .execute(TextCommand::CommitDecisionBatch(DecisionBatch::new(
             base, proposals, verdicts,
         )))
-        .map_err(|error| {
-            RefrainError::new(ErrorCode::Io, "commit a decision batch", path.to_owned())
-                .with_detail(error.to_string())
-        })?;
+        .map_err(|error| stale_or_io(error, path, &frozen))?;
 
     // 批次与游标清空；候选留着供审计（SPEC 7.4）。
     store
         .review_session_set(path, 0, "[]")
         .map_err(into_domain)?;
     Ok(transition)
+}
+
+/// 把领域的拒绝翻译成作者能行动的错误。
+///
+/// 「提案过期」不是一次 I/O 失败，它是作者自己改了那一段——把它压成
+/// `ErrorCode::Io` 加一句英文，作者看到的是读不懂的技术消息，而他其实
+/// 是唯一知道该怎么办的人。
+///
+/// **`detail` 带上 Agent 当时读到的原文**（SPEC 7.4 与「四区·边缘情况 3」）：
+/// 默默套用是丢作者的字，直接丢弃是丢 Agent 的活，两者都不能替他决定。
+/// 恢复步骤给的是「对照冻结原文」与「按现状重发」，因为除了他没人能判断
+/// 那条建议对现在的文本还成不成立。
+fn stale_or_io(error: TextRefusal, path: &str, frozen: &HashMap<Id, String>) -> RefrainError {
+    if let TextRefusal::StaleProposal { proposal } = error {
+        let failure = RefrainError::new(
+            ErrorCode::StaleProposal,
+            "commit a decision batch",
+            path.to_owned(),
+        )
+        .with_recovery(vec![
+            RecoveryStep::CompareWithFrozenText,
+            RecoveryStep::SendAgain,
+        ]);
+        return match frozen.get(&proposal) {
+            Some(before) => failure.with_detail(before.clone()),
+            // 查不到冻结文本是个软件缺陷，不是作者的处境：批次里的每个
+            // 提案都来自上面那张表。如实说出来，别假装有原文可看。
+            None => failure
+                .with_detail(format!("proposal {proposal} has no frozen text"))
+                .with_recovery(vec![RecoveryStep::ReportDefect]),
+        };
+    }
+    RefrainError::new(ErrorCode::Io, "commit a decision batch", path.to_owned())
+        .with_detail(error.to_string())
 }
 
 /// 读出暂存的批次，空批次在这里就拒绝。
@@ -155,4 +195,62 @@ fn slice_of(raw: &str) -> Result<ReviewSliceId, RefrainError> {
         crate::journal::parse_id(proposal, "slice proposal")?,
         ordinal,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 提案过期不是一次 I/O 失败。
+    ///
+    /// 它此前被压成 `ErrorCode::Io` 加一句英文技术文本，而作者是唯一知道
+    /// 该怎么办的人——那一段是他自己改的。这几条钉住他拿得到的东西。
+    #[test]
+    fn a_stale_proposal_hands_back_the_text_the_agent_read() {
+        let proposal = Id::new();
+        let mut frozen = HashMap::new();
+        frozen.insert(proposal, "原来的第二句话。".to_owned());
+
+        let failure = stale_or_io(
+            TextRefusal::StaleProposal { proposal },
+            "第三章.md",
+            &frozen,
+        );
+
+        assert_eq!(failure.code, ErrorCode::StaleProposal);
+        // 冻结原文是整件事的核心：没有它，「过期了」只是一句无从行动的通知。
+        assert_eq!(failure.detail.as_deref(), Some("原来的第二句话。"));
+        // 两条路都给，不替他选。
+        assert_eq!(
+            failure.recovery,
+            vec![RecoveryStep::CompareWithFrozenText, RecoveryStep::SendAgain]
+        );
+    }
+
+    #[test]
+    fn a_missing_frozen_text_is_reported_as_our_defect_not_the_authors_problem() {
+        // 批次里的每个提案都来自那张表，取不到是软件缺陷。如实说出来，
+        // 而不是假装有原文可看——给一条对照不存在文本的出路更糟。
+        let failure = stale_or_io(
+            TextRefusal::StaleProposal {
+                proposal: Id::new(),
+            },
+            "第三章.md",
+            &HashMap::new(),
+        );
+
+        assert_eq!(failure.code, ErrorCode::StaleProposal);
+        assert_eq!(failure.recovery, vec![RecoveryStep::ReportDefect]);
+    }
+
+    #[test]
+    fn other_refusals_stay_io() {
+        // 只认过期这一种。别的失败该由懂它的地方去说，硬认会让它们说错话。
+        let failure = stale_or_io(
+            TextRefusal::OverlappingScopes { block: Id::new() },
+            "第三章.md",
+            &HashMap::new(),
+        );
+        assert_eq!(failure.code, ErrorCode::Io);
+    }
 }

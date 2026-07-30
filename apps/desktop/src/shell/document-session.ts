@@ -24,6 +24,7 @@ import type {
   SessionDocumentDto,
 } from "../generated/bindings.gen";
 import { commands } from "../generated/bindings.gen";
+import { RECOVERY_TEXT } from "../ui/recovery-text";
 import { type DescribeError, Session } from "./session";
 
 export type SaveState =
@@ -143,19 +144,17 @@ function recoveryOf(error: unknown): readonly RecoveryStep[] {
 /**
  * Every RecoveryStep the bridge can send.
  *
- * Listed here so the filter above rejects anything unknown rather than passing
- * it through as a step nobody can render. `satisfies` makes the compiler check
- * this against the generated union instead of trusting that it was kept in
- * step by hand.
+ * Derived from `RECOVERY_TEXT`'s keys rather than typed out again. The list
+ * used to be handwritten with `satisfies readonly RecoveryStep[]`, which
+ * checks that every entry is a real step but **not that every real step is an
+ * entry** — so adding `compare-with-frozen-text` and `send-again` to the
+ * domain left this filter silently dropping both, and the author would have
+ * seen a stale-proposal error with no way forward. The compiler pointed at
+ * `RECOVERY_TEXT` (a `Record` over the union, so a gap fails to compile) and
+ * not here, which is the tell: completeness has one authority and this was a
+ * second copy of it.
  */
-const RECOVERY_STEPS = [
-  "retry",
-  "choose-another-location",
-  "choose-another-name",
-  "grant-permission",
-  "open-settings",
-  "report-defect",
-] as const satisfies readonly RecoveryStep[];
+const RECOVERY_STEPS = Object.keys(RECOVERY_TEXT) as readonly RecoveryStep[];
 
 export class DocumentSession extends Session {
   #document: OpenDocumentDto_Serialize | null = null;

@@ -36,6 +36,8 @@ import {
   verdictIdsOf,
   writesOf,
 } from "../shell/review-verdicts";
+import { StaleProposalPanel } from "./StaleProposalPanel";
+import { staleProposalNotice } from "./stale-proposal";
 
 export type { Unit } from "../shell/review-verdicts";
 
@@ -50,10 +52,31 @@ export type ReviewSurfaceProps = {
 // 流程编排：只吃快照，只吐结果联合。
 // ──────────────────────────────────────────────────────────────────────────
 
-type Failure = { kind: "failed"; text: string };
+/**
+ * 一次失败。
+ *
+ * `stale` 在这里就摊开，而不是留给每个调用点各判一次：只有一处产生 Failure，
+ * 所以只有一处需要认识「提案过期长什么样」。调用点看到 `stale` 非空就用它。
+ */
+type Failure = {
+  kind: "failed";
+  text: string;
+  stale?: Notice & { kind: "stale" };
+};
 
 function failure(cause: unknown): Failure {
-  return { kind: "failed", text: describe(cause) };
+  const stale = staleProposalNotice(cause);
+  if (stale === null) return { kind: "failed", text: describe(cause) };
+  return {
+    kind: "failed",
+    text: stale.headline,
+    stale: {
+      kind: "stale",
+      text: stale.headline,
+      frozenText: stale.frozenText,
+      steps: stale.steps,
+    },
+  };
 }
 
 type SessionLoad = { kind: "loaded"; state: ReviewStateDto } | Failure;
@@ -152,6 +175,11 @@ export function ReviewSurface(props: ReviewSurfaceProps): JSX.Element {
     if (held.kind === "undecided") return null;
     return { kind: held.verdict.kind, staged: held.kind === "staged" };
   });
+  /** 过期通知单独取出来：它不是一句话，要展开成原文与出路。 */
+  const staleNotice = createMemo(() => {
+    const held = notice();
+    return held.kind === "stale" ? held : null;
+  });
   const noticeText = createMemo(() => {
     const held = notice();
     return held.kind === "silent" ? null : held.text;
@@ -211,7 +239,7 @@ export function ReviewSurface(props: ReviewSurfaceProps): JSX.Element {
     }
     const result = await performCommit(props.rootId, props.path);
     if (result.kind === "failed") {
-      setNotice(result);
+      setNotice(result.stale ?? result);
       return;
     }
     props.onCommitted?.();
@@ -287,6 +315,11 @@ export function ReviewSurface(props: ReviewSurfaceProps): JSX.Element {
       </header>
 
       <Show when={noticeText()}>{(text) => <p class="notice">{text()}</p>}</Show>
+
+      {/* 提案过期：出示 Agent 当时读到的原文，让作者自己判断。 */}
+      <Show when={staleNotice()}>
+        {(stale) => <StaleProposalPanel frozenText={stale().frozenText} steps={stale().steps} />}
+      </Show>
 
       <Show when={total() === 0}>
         <div class="empty">这份文档没有待判的提案。</div>

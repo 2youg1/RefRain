@@ -539,7 +539,17 @@ export type EditorChangeDto = { kind: "replace"; value: {
  *  The single authority for error kinds. `verify:docs-current` enumerates this
  *  type and fails when a document explains fewer codes than it declares.
  */
-export type ErrorCode = "permission-denied" | "illegal-name" | "occupied" | "outside-root" | "source-backup" | "not-a-directory" | "unsupported-format" | "state-unavailable" | "io";
+export type ErrorCode = "permission-denied" | "illegal-name" | "occupied" | "outside-root" | "source-backup" | "not-a-directory" | "unsupported-format" | "state-unavailable" | "io" | 
+/**
+ *  The manuscript moved underneath a Proposal.
+ * 
+ *  The Agent froze the text it was reading; the author has since changed
+ *  it. Applying the proposal anyway would overwrite words the Agent never
+ *  saw, and discarding it silently would throw away the Agent's work —
+ *  neither is ours to decide, so this reaches the author as its own fact
+ *  rather than as a generic I/O failure.
+ */
+"stale-proposal";
 
 /**  What a file looked like when this application last agreed with it. */
 export type FileStamp = FileStamp_Serialize | FileStamp_Deserialize;
@@ -912,7 +922,17 @@ export type RailWidth = "narrow" | "regular" | "wide";
  *  One thing the author can do about a failure. A step is a domain fact, not a
  *  sentence: the interface renders it, so changing wording never touches here.
  */
-export type RecoveryStep = "retry" | "choose-another-location" | "choose-another-name" | "grant-permission" | "open-settings" | "report-defect";
+export type RecoveryStep = "retry" | "choose-another-location" | "choose-another-name" | "grant-permission" | "open-settings" | "report-defect" | 
+/**
+ *  Read what the Agent was looking at, then decide.
+ * 
+ *  The only honest step when a proposal has gone stale: the author is the
+ *  one who changed the text, and only they know whether the Agent's
+ *  suggestion still applies to what is there now.
+ */
+"compare-with-frozen-text" | 
+/**  Ask the Agent again, against the text as it stands. */
+"send-again";
 
 /**  A failure crossing the bridge. */
 export type RefrainError = {

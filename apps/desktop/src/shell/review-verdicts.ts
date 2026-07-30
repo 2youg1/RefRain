@@ -49,7 +49,20 @@ export type Peer = { kind: "a" } | { kind: "b" };
 export type Notice =
   | { kind: "silent" }
   | { kind: "refused"; text: string }
-  | { kind: "failed"; text: string };
+  | { kind: "failed"; text: string }
+  /**
+   * 提案过期：作者在派发之后改了那一段。
+   *
+   * 单列一个变体而不是复用 `failed`，因为它要展示的东西不同——一句话说不完，
+   * 作者需要看到 Agent 当时读到的原文才能判断那条建议还成不成立。
+   * 摊平成三个字段而不是塞一个对象，是为了让渲染层直接读，不必再解一层。
+   */
+  | {
+      kind: "stale";
+      text: string;
+      frozenText: string;
+      steps: readonly string[];
+    };
 
 /** 当前 Unit 相对账本与批次的位置：原 verdictOf/isStaged 两个可空判断的合体。 */
 export type Standing =
