@@ -22,11 +22,12 @@ use std::sync::Arc;
 /// read from or owned because an edit produced it.
 #[derive(Debug, Clone)]
 pub enum BlockText {
-    /// A half-open interval of a snapshot's bytes, known to be valid UTF-8
-    /// because `Manuscript::open_at` validates each interval before building
-    /// the block.
+    /// A half-open interval of a snapshot's text.
+    ///
+    /// The snapshot settled UTF-8 validity when it was read, so this is a
+    /// slice of a `str` and needs no scan of its own.
     Shared {
-        bytes: Arc<[u8]>,
+        text: Arc<String>,
         start: usize,
         end: usize,
     },
@@ -35,32 +36,47 @@ pub enum BlockText {
 }
 
 impl BlockText {
-    /// Borrows `bytes[start..end]`.
+    /// Borrows `text[start..end]`.
     ///
     /// # Errors
     ///
-    /// Returns [`std::str::Utf8Error`] when the interval does not begin and end
-    /// on character boundaries, so that an invalid interval is refused where it
-    /// is built rather than panicking later in [`BlockText::as_str`].
-    pub fn shared(bytes: Arc<[u8]>, start: usize, end: usize) -> Result<Self, std::str::Utf8Error> {
-        std::str::from_utf8(&bytes[start..end])?;
-        Ok(Self::Shared { bytes, start, end })
+    /// Returns [`BoundaryError`] when the interval does not fall on character
+    /// boundaries, which would make the slice unrepresentable. Refusing here
+    /// keeps [`BlockText::as_str`] a slice with nothing to check.
+    pub fn shared(text: Arc<String>, start: usize, end: usize) -> Result<Self, BoundaryError> {
+        if !text.is_char_boundary(start) || !text.is_char_boundary(end) || start > end {
+            return Err(BoundaryError { start, end });
+        }
+        Ok(Self::Shared { text, start, end })
     }
 
     #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
-            // `shared` validated this interval and the bytes behind the `Arc`
-            // are immutable, so this cannot fail. The domain crate is
-            // `forbid(unsafe_code)`, so the check is re-run rather than
-            // skipped: it is a linear scan with no allocation, against a copy
-            // of the whole manuscript.
-            Self::Shared { bytes, start, end } => std::str::from_utf8(&bytes[*start..*end])
-                .expect("BlockText::shared validated this interval as UTF-8"),
+            Self::Shared { text, start, end } => &text[*start..*end],
             Self::Owned(text) => text,
         }
     }
 }
+
+/// An interval that does not fall on character boundaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoundaryError {
+    pub start: usize,
+    pub end: usize,
+}
+
+impl std::fmt::Display for BoundaryError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{}..{} does not fall on character boundaries",
+            self.start, self.end
+        )
+    }
+}
+
+impl std::error::Error for BoundaryError {}
 
 impl Deref for BlockText {
     type Target = str;
@@ -112,29 +128,30 @@ mod tests {
     use super::BlockText;
     use std::sync::Arc;
 
-    fn arc(text: &str) -> Arc<[u8]> {
-        text.as_bytes().into()
+    fn arc(text: &str) -> Arc<String> {
+        Arc::new(text.to_owned())
     }
 
     #[test]
     fn shared_text_reads_the_interval_it_was_given() {
-        let bytes = arc("序章\n\n本文");
-        let block = BlockText::shared(Arc::clone(&bytes), 0, "序章".len()).expect("valid utf-8");
+        let text = arc("序章\n\n本文");
+        let block = BlockText::shared(text, 0, "序章".len()).expect("a block boundary");
         assert_eq!(block.as_str(), "序章");
     }
 
     #[test]
-    fn a_split_character_is_refused_rather_than_read() {
-        // Half of a three-byte character. Accepting this would put invalid
-        // UTF-8 behind `from_utf8_unchecked`.
-        let bytes = arc("序");
-        assert!(BlockText::shared(bytes, 0, 2).is_err());
+    fn an_interval_that_splits_a_character_is_refused() {
+        // Two bytes into a three-byte character. The snapshot's text is valid
+        // either way; what this refuses is an interval that cannot name a
+        // slice of it.
+        let text = arc("序");
+        assert!(BlockText::shared(text, 0, 2).is_err());
     }
 
     #[test]
     fn shared_and_owned_text_compare_by_what_they_say() {
-        let bytes = arc("same");
-        let shared = BlockText::shared(bytes, 0, 4).expect("valid utf-8");
+        let text = arc("same");
+        let shared = BlockText::shared(text, 0, 4).expect("a block boundary");
         let owned = BlockText::Owned("same".to_owned());
         assert_eq!(shared, owned);
     }
