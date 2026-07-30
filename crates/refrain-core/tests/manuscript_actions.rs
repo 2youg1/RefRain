@@ -21,29 +21,17 @@ fn duplicate_lineage_ids_are_rejected_before_a_head_exists() {
 }
 
 #[test]
-fn unreadable_bytes_are_reported_before_a_duplicate_id() {
-    // `open_at` reads every block before it checks the lineage for repeats,
-    // so when a manuscript has both faults the unreadable bytes are what the
-    // author hears about. That is the useful order: bad bytes are a property
-    // of the file the author chose to open, while a repeated id comes from
-    // stored lineage the author never sees. Reporting the file first names
-    // something they can act on.
+fn unreadable_bytes_are_refused_before_a_manuscript_exists() {
+    // UTF-8 is settled when the snapshot is read, so a manuscript never holds
+    // bytes it cannot read. The author hears about the file they opened rather
+    // than about lineage they never see — and every later read is a slice with
+    // nothing left to check.
     //
-    // This test exists to make that order a decision rather than an accident:
-    // reordering the two passes flips the error, and the flip should not
-    // happen silently.
-    //
-    // Bytes 4..6 are the first two bytes of a three-byte character, so the
-    // second block is not valid UTF-8; the ids repeat from the first block.
+    // Bytes 4..6 are the first two bytes of a three-byte character.
     let mut bytes = b"ab\n\n".to_vec();
     bytes.extend_from_slice(&"序".as_bytes()[..2]);
-    let source = SourceSnapshot::read(bytes);
-    let repeated = refrain_core::Id::new();
 
-    assert!(matches!(
-        Manuscript::open(source, Lineage::from_ids(vec![repeated, repeated])),
-        Err(TextRefusal::InvalidUtf8 { block: 1 })
-    ));
+    assert!(SourceSnapshot::read_checked(bytes).is_err());
 }
 
 #[test]

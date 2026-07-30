@@ -23,21 +23,64 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use thiserror::Error;
 
-/// Immutable bytes and block intervals read from one manuscript revision.
+/// Immutable text and block intervals read from one manuscript revision.
+///
+/// The text is held as a `str`, not as bytes, because that is where the UTF-8
+/// question is settled: once, when the snapshot is read. Every block is then an
+/// interval of a string already known to be valid, so reading a block's text is
+/// a slice rather than another scan. Blocks are read on every render, diff,
+/// export and search, and read in exactly once.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceSnapshot {
-    bytes: Arc<[u8]>,
+    text: Arc<String>,
     layout: SourceLayout,
 }
 
 impl SourceSnapshot {
+    /// Read a snapshot whose bytes are already known to be valid UTF-8.
+    ///
+    /// # Panics
+    ///
+    /// Panics on invalid bytes. Callers holding bytes of unknown provenance —
+    /// anything read from disk — want [`SourceSnapshot::read_checked`].
     #[must_use]
     pub fn read(bytes: Vec<u8>) -> Self {
+        Self::read_checked(bytes).expect("SourceSnapshot::read requires valid UTF-8")
+    }
+
+    /// Read a snapshot, refusing bytes that are not valid UTF-8.
+    ///
+    /// The whole buffer is validated once, here. Every block is then a byte
+    /// interval of a string already known to be valid, so reading a block's
+    /// text is a slice rather than another scan — which matters because blocks
+    /// are read on every render, diff, export and search, while they are only
+    /// read in once.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`std::str::Utf8Error`] naming where the bytes stop being
+    /// valid UTF-8.
+    pub fn read_checked(bytes: Vec<u8>) -> Result<Self, std::str::Utf8Error> {
         let layout = SourceLayout::read(&bytes);
-        Self {
-            bytes: bytes.into(),
+        // `from_utf8` consumes the vector rather than copying it, so settling
+        // the question here costs a scan and no allocation.
+        let text = String::from_utf8(bytes).map_err(|error| error.utf8_error())?;
+        Ok(Self {
+            text: Arc::new(text),
             layout,
-        }
+        })
+    }
+
+    /// The snapshot's bytes. Valid UTF-8 by construction.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        self.text.as_bytes()
+    }
+
+    /// The snapshot's text, shared. Blocks hold intervals of this.
+    #[must_use]
+    pub(crate) fn text(&self) -> Arc<String> {
+        Arc::clone(&self.text)
     }
 
     #[must_use]
@@ -566,7 +609,7 @@ impl Manuscript {
             // Borrow the snapshot's bytes rather than copying them. This is
             // the whole reason `BlockText` exists; see its module comment for
             // the measurement that motivated it.
-            let text = BlockText::shared(Arc::clone(&source.bytes), span.start, span.end)
+            let text = BlockText::shared(source.text(), span.start, span.end)
                 .map_err(|_| TextRefusal::InvalidUtf8 { block: index })?;
             blocks.push(Block { id: *id, text });
         }
@@ -585,7 +628,7 @@ impl Manuscript {
                 .expect("a shorter index than block list means some id repeats");
             return Err(TextRefusal::DuplicateLineage { block: repeated });
         }
-        let materialized = ByteSequence::from_arc(source.bytes.clone());
+        let materialized = ByteSequence::from_source(source.text());
         let offsets = BlockOffsets::from_spans(source.layout.blocks().to_vec());
         Ok(Self {
             source,
