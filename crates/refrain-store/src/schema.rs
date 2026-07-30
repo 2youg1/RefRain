@@ -312,9 +312,14 @@ impl Database for ProjectDb {
                              detail=full
                          );
                          CREATE TABLE document_search_state (
-                             document TEXT PRIMARY KEY,
-                             rowid_of INTEGER NOT NULL UNIQUE,
-                             digest   TEXT NOT NULL
+                             document      TEXT PRIMARY KEY,
+                             rowid_of      INTEGER NOT NULL UNIQUE,
+                             digest        TEXT NOT NULL,
+                             -- Exactly the text handed to FTS5. Deleting from
+                             -- an external-content table means replaying what
+                             -- was inserted; without this the index corrupts.
+                             indexed_path  TEXT NOT NULL,
+                             indexed_body  TEXT NOT NULL
                          ) STRICT;",
                     )
                 },
