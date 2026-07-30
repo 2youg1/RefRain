@@ -15,13 +15,21 @@ export const commands = {
 	rootId: string,
 	backup: BackupStatus,
 	documents: DocumentRow[],
+	documentTotal: number,
+	documentCursor: string | null,
 } | null, RefrainError>(__TAURI_INVOKE("choose_and_adopt_root", { kind })),
 	/**  Let the author choose the parent and consume it while creating the project. */
 	chooseAndCreateProject: (name: string) => typedError<{
 	rootId: string,
 	backup: BackupStatus,
 	documents: DocumentRow[],
+	documentTotal: number,
+	documentCursor: string | null,
 } | null, RefrainError>(__TAURI_INVOKE("choose_and_create_project", { name })),
+	/**  Return one bounded page from an already reconciled project index. */
+	documentPage: (rootId: string, after: string | null) => typedError<DocumentPageDto, RefrainError>(__TAURI_INVOKE("document_page", { rootId, after })),
+	/**  Search the complete project index. Request ordering belongs to the caller. */
+	documentSearch: (rootId: string, query: string) => typedError<DocumentRow[], RefrainError>(__TAURI_INVOKE("document_search", { rootId, query })),
 	/**
 	 *  Open a document: bytes from disk, blocks from the byte-authoritative
 	 *  layout, the persisted revision chain resumed, and any journaled actions
@@ -143,10 +151,7 @@ export const commands = {
 	path: string,
 	role: DocumentRole,
 	digest: string | null,
-	/**
-	 *  The confirmed revision id and the lineage it pairs with (SPEC 7.2
-	 *  crash recovery). Present after the first save or a continuity-safe open.
-	 */
+	/**  The confirmed revision id and lineage paired with the digest. */
 	currentHead: string | null,
 	headBlockIds: string | null,
 } | null, RefrainError>(__TAURI_INVOKE("commit_material_action", { rootId, draftId, editedBody, dismiss })),
@@ -173,10 +178,7 @@ export const commands = {
 	path: string,
 	role: DocumentRole,
 	digest: string | null,
-	/**
-	 *  The confirmed revision id and the lineage it pairs with (SPEC 7.2
-	 *  crash recovery). Present after the first save or a continuity-safe open.
-	 */
+	/**  The confirmed revision id and lineage paired with the digest. */
 	currentHead: string | null,
 	headBlockIds: string | null,
 } | null, RefrainError>(__TAURI_INVOKE("choose_and_import_material", { rootId })),
@@ -186,10 +188,7 @@ export const commands = {
 	path: string,
 	role: DocumentRole,
 	digest: string | null,
-	/**
-	 *  The confirmed revision id and the lineage it pairs with (SPEC 7.2
-	 *  crash recovery). Present after the first save or a continuity-safe open.
-	 */
+	/**  The confirmed revision id and lineage paired with the digest. */
 	currentHead: string | null,
 	headBlockIds: string | null,
 } | null, RefrainError>(__TAURI_INVOKE("choose_and_import_manuscript", { rootId })),
@@ -203,10 +202,7 @@ export const commands = {
 	path: string,
 	role: DocumentRole,
 	digest: string | null,
-	/**
-	 *  The confirmed revision id and the lineage it pairs with (SPEC 7.2
-	 *  crash recovery). Present after the first save or a continuity-safe open.
-	 */
+	/**  The confirmed revision id and lineage paired with the digest. */
 	currentHead: string | null,
 	headBlockIds: string | null,
 } | null, RefrainError>(__TAURI_INVOKE("confirm_and_import_dropped", { rootId, sourcePath, kind })),
@@ -436,6 +432,12 @@ export type DisplayProfile = {
 	hairlineCssPx: number | null,
 };
 
+export type DocumentPageDto = {
+	documents: DocumentRow[],
+	total: number,
+	next: string | null,
+};
+
 /**  What a Markdown file is to the work. */
 export type DocumentRole = 
 /**  A standalone work opened on its own (single-file Root). */
@@ -455,10 +457,7 @@ export type DocumentRow = {
 	path: string,
 	role: DocumentRole,
 	digest: string | null,
-	/**
-	 *  The confirmed revision id and the lineage it pairs with (SPEC 7.2
-	 *  crash recovery). Present after the first save or a continuity-safe open.
-	 */
+	/**  The confirmed revision id and lineage paired with the digest. */
 	currentHead: string | null,
 	headBlockIds: string | null,
 };
@@ -795,6 +794,8 @@ export type ProjectOpenedDto = {
 	rootId: string,
 	backup: BackupStatus,
 	documents: DocumentRow[],
+	documentTotal: number,
+	documentCursor: string | null,
 };
 
 /**  A frozen candidate for the surface. */

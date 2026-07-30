@@ -4,7 +4,7 @@
 //! manuscript reaches disk. Ported behaviour (legacy `project.ts`, owned here
 //! since C3):
 //!
-//! - A FileStamp is `{ modified_ms, bytes, sha-256 digest }`. The digest
+//! - A FileStamp is `{ modified_ms, bytes, BLAKE3 digest }`. The digest
 //!   decides identity: an editor can preserve mtime and size while replacing
 //!   every byte, so neither is ever consulted for equality.
 //! - Commit is compare-and-swap against the stamp the author last agreed
@@ -19,9 +19,8 @@
 //!   two; the same path on a different volume is an identity change, which is
 //!   a Safety surface, not a new project.
 
-use refrain_core::{DocumentRole, ErrorCode, Id, RefrainError};
+use refrain_core::{DocumentRole, ErrorCode, Id, RefrainError, digest::content_hex};
 use rusqlite::{Connection, OptionalExtension, params};
-use sha2::{Digest, Sha256};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -31,6 +30,12 @@ use crate::root::{
     self, BackupOutcome, RootKind, RootLayout, assert_inside_root, assert_mutable_path,
 };
 use crate::schema::{Database, ProjectDb};
+
+mod catalog;
+pub use catalog::{
+    DocumentPage, DocumentPageQuery, DocumentRow, MAX_DOCUMENT_PAGE_SIZE,
+    MAX_DOCUMENT_SEARCH_RESULTS,
+};
 
 /// Where the project database lives inside the Root's state directory.
 const PROJECT_DB_NAME: &str = "refrain.db";
@@ -116,7 +121,7 @@ impl FileStamp {
         Ok(Self {
             modified_ms,
             bytes: bytes.len() as u64,
-            digest: format!("{:x}", Sha256::digest(bytes)),
+            digest: content_hex(bytes),
         })
     }
 }
@@ -132,21 +137,6 @@ pub struct ProposalRow {
     pub before_text: String,
     pub after_text: Option<String>,
     pub created_at: u64,
-}
-
-/// A document row as the project database knows it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct DocumentRow {
-    pub id: Id,
-    /// Portable identity inside the Root: the relative path, `/`-joined.
-    pub path: String,
-    pub role: DocumentRole,
-    pub digest: Option<String>,
-    /// The confirmed revision id and the lineage it pairs with (SPEC 7.2
-    /// crash recovery). Present after the first save or a continuity-safe open.
-    pub current_head: Option<String>,
-    pub head_block_ids: Option<String>,
 }
 
 /// An opened document: raw bytes plus the stamp a later commit needs.
@@ -288,70 +278,6 @@ impl ProjectStore {
         let store = Self { permit, layout, db };
         let backup = root::take_source_backup(&canonical, locator.kind, &store.layout).into();
         Ok((store, backup))
-    }
-
-    /// Registers every manuscript in the Root. The rail reads rows, and rows
-    /// exist only after this walk — adopting must scan, or a folder full of
-    /// chapters opens as an empty project.
-    pub fn refresh_documents(&mut self) -> Result<Vec<DocumentRow>, ProjectFailure> {
-        if self.permit.kind == RootKind::File {
-            // A single-file Root is its one document; the walker skips the
-            // root entry itself, so it is registered directly.
-            let path = self
-                .permit
-                .canonical_path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned();
-            if self.find_document(&path)?.is_none() {
-                self.upsert_document(&DocumentRow {
-                    id: Id::new(),
-                    path: path.clone(),
-                    role: DocumentRole::Document,
-                    digest: None,
-                    current_head: None,
-                    head_block_ids: None,
-                })?;
-            }
-            return self.documents().map_err(ProjectFailure::Domain);
-        }
-
-        let entries = crate::files::index::scan(
-            std::slice::from_ref(&self.permit.canonical_path),
-            &crate::files::ScanOptions {
-                manuscripts_only: true,
-                ..crate::files::ScanOptions::default_for_open()
-            },
-        );
-        for entry in entries.iter().filter(|entry| entry.manuscript) {
-            let path = entry
-                .path
-                .strip_prefix(&self.permit.canonical_path)
-                .map_err(|_| {
-                    ProjectFailure::Domain(RefrainError::new(
-                        ErrorCode::OutsideRoot,
-                        "name a document outside its Root",
-                        entry.path.display().to_string(),
-                    ))
-                })?
-                .components()
-                .map(|component| component.as_os_str().to_string_lossy().into_owned())
-                .collect::<Vec<_>>()
-                .join("/");
-            if self.find_document(&path)?.is_none() {
-                let row = DocumentRow {
-                    id: Id::new(),
-                    path: path.clone(),
-                    role: infer_role(self.permit.kind, &path),
-                    digest: None,
-                    current_head: None,
-                    head_block_ids: None,
-                };
-                self.upsert_document(&row)?;
-            }
-        }
-        self.documents().map_err(ProjectFailure::Domain)
     }
 
     fn permit_for(
@@ -534,65 +460,6 @@ impl ProjectStore {
     #[must_use]
     pub fn ledger(&self) -> crate::ledger::VerdictLedger<'_> {
         crate::ledger::VerdictLedger::new(&self.db)
-    }
-
-    /// Every registered document, in path order. The adopt response and the
-    /// rail read it; it is a page of rows, never file contents.
-    pub fn documents(&self) -> Result<Vec<DocumentRow>, RefrainError> {
-        let mut statement = self
-            .db
-            .prepare(
-                "SELECT id, path, role, digest, current_head, head_block_ids
-                 FROM documents ORDER BY path",
-            )
-            .map_err(|error| {
-                RefrainError::new(ErrorCode::StateUnavailable, "list documents", "refrain.db")
-                    .with_detail(error.to_string())
-            })?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, Option<String>>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                    row.get::<_, Option<String>>(5)?,
-                ))
-            })
-            .map_err(|error| {
-                RefrainError::new(ErrorCode::StateUnavailable, "list documents", "refrain.db")
-                    .with_detail(error.to_string())
-            })?;
-        rows.map(|row| {
-            let (id, path, role, digest, current_head, head_block_ids) = row.map_err(|error| {
-                RefrainError::new(
-                    ErrorCode::StateUnavailable,
-                    "read a document row",
-                    "refrain.db",
-                )
-                .with_detail(error.to_string())
-            })?;
-            let id = id
-                .parse::<uuid::Uuid>()
-                .map(Id::from_uuid)
-                .map_err(|error| {
-                    RefrainError::new(ErrorCode::StateUnavailable, "read a document id", &path)
-                        .with_detail(error.to_string())
-                })?;
-            let role = DocumentRole::from_wire(&role).ok_or_else(|| {
-                RefrainError::new(ErrorCode::StateUnavailable, "read a document role", &path)
-            })?;
-            Ok(DocumentRow {
-                id,
-                path,
-                role,
-                digest,
-                current_head,
-                head_block_ids,
-            })
-        })
-        .collect()
     }
 
     /// The absolute path of a document inside this Root, containment-checked.

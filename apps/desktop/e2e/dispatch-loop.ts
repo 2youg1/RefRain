@@ -1204,7 +1204,7 @@ const run = async (): Promise<void> => {
     "the imported html renders in the editor with provenance",
     rendered.includes("调查结论") &&
       rendered.includes("> 来源：") &&
-      rendered.includes("sha256") &&
+      rendered.includes("blake3") &&
       rendered.includes("原件克隆"),
     rendered.slice(0, 100),
   );

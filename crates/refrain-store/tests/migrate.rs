@@ -4,6 +4,7 @@
 //!
 //! Windows discipline: drop every database handle before `remove_dir_all`.
 
+use refrain_core::digest::content_hex;
 use refrain_store::config::AdapterKind;
 use refrain_store::migrate::{
     AgentOutcome, MigrationFailure, MigrationReport, MigrationStatus, migrate_legacy,
@@ -13,7 +14,6 @@ use refrain_store::project::RootLocator;
 use refrain_store::root::RootKind;
 use refrain_store::schema::{AppDb, Database};
 use rusqlite::Connection;
-use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -53,14 +53,14 @@ fn tree_digest(root: &Path) -> String {
     let mut entries: Vec<(String, String)> = Vec::new();
     walk(root, root, &mut |path, relative| {
         let bytes = fs::read(&path).unwrap();
-        entries.push((relative, format!("{:x}", Sha256::digest(&bytes))));
+        entries.push((relative, content_hex(&bytes)));
     });
     entries.sort();
     let mut text = String::new();
     for (path, digest) in entries {
         text.push_str(&format!("{path} {digest}\n"));
     }
-    format!("{:x}", Sha256::digest(text.as_bytes()))
+    content_hex(text.as_bytes())
 }
 
 fn walk(base: &Path, root: &Path, visit: &mut impl FnMut(PathBuf, String)) {
@@ -271,7 +271,7 @@ fn documents(db: &Connection) -> Vec<(String, String, String, String)> {
 }
 
 fn digest_of(text: &str) -> String {
-    format!("{:x}", Sha256::digest(text.as_bytes()))
+    content_hex(text.as_bytes())
 }
 
 #[test]

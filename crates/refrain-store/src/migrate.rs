@@ -25,10 +25,9 @@
 //! returned for the caller to upsert into the one Config — the app-level
 //! Config directory is not this function's to know.
 
-use refrain_core::{DocumentRole, Id};
+use refrain_core::{DocumentRole, Id, digest::content_hex};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
@@ -44,6 +43,7 @@ const SHADOW_DIR: &str = ".refrain-shadow";
 const LEGACY_BACKUP_DIR: &str = "legacy";
 const MANIFEST_FILE: &str = "manifest.json";
 const COMPLETION_MARK: &str = "migration-complete.json";
+const COMPLETION_MARK_VERSION: u32 = 1;
 const PROJECT_DB: &str = "refrain.db";
 const MIGRATION_NAME: &str = "legacy-v0.1.6";
 
@@ -402,7 +402,7 @@ pub fn migrate_legacy(
         let mark_bytes = fs::read(&mark_path).map_err(io_fail(&mark_path))?;
         let manifest_bytes = fs::read(&manifest_path).map_err(io_fail(&manifest_path))?;
         if let Ok(mark) = serde_json::from_slice::<CompletionMark>(&mark_bytes)
-            && mark.manifest_digest == sha256_hex(&manifest_bytes)
+            && completion_mark_matches(&mark, &manifest_bytes)
         {
             let manifest: Manifest = serde_json::from_slice(&manifest_bytes).map_err(|error| {
                 io_fail(&manifest_path)(io::Error::new(io::ErrorKind::InvalidData, error))
@@ -717,10 +717,6 @@ fn check_source_backup(legacy: &Path) -> (SourceBackupState, Option<QuarantineIt
     (SourceBackupState::Complete { files: taken.files }, None)
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
-}
-
 // ---- plan: every judgment is here, and every judgment call stops -------------
 
 fn plan(inventory: &Inventory) -> Result<Plan, MigrationFailure> {
@@ -777,7 +773,7 @@ fn plan(inventory: &Inventory) -> Result<Plan, MigrationFailure> {
             continue;
         }
         let bytes = fs::read(&file.absolute).map_err(io_fail(&file.absolute))?;
-        let digest = sha256_hex(&bytes);
+        let digest = content_hex(&bytes);
         if let Some(kept) = by_digest.get(&digest) {
             deduped.push((file.relative.clone(), kept.clone(), digest));
             continue;
@@ -1373,7 +1369,7 @@ fn build_and_install(
         let bytes = fs::read(&file.absolute).map_err(io_fail(&file.absolute))?;
         preserved_entries.push(ManifestFile {
             path: file.relative.clone(),
-            digest: sha256_hex(&bytes),
+            digest: content_hex(&bytes),
             bytes: bytes.len() as u64,
         });
         atomic::replace_file_atomically(&backup_dir.join(&file.relative), &bytes, |_| Ok(()))
@@ -1388,9 +1384,9 @@ fn build_and_install(
         .map_err(io_fail(&backup_dir.join(MANIFEST_FILE)))?;
 
     let mark = CompletionMark {
-        version: 1,
+        version: COMPLETION_MARK_VERSION,
         finished_at_ms: now_millis(),
-        manifest_digest: sha256_hex(&manifest_bytes),
+        manifest_digest: content_hex(&manifest_bytes),
     };
     let mark_bytes = serde_json::to_vec_pretty(&mark).map_err(|error| {
         io_fail(&state_dir.join(COMPLETION_MARK))(io::Error::new(io::ErrorKind::InvalidData, error))
@@ -1472,6 +1468,10 @@ struct CompletionMark {
     version: u32,
     finished_at_ms: u64,
     manifest_digest: String,
+}
+
+fn completion_mark_matches(mark: &CompletionMark, manifest: &[u8]) -> bool {
+    mark.version == COMPLETION_MARK_VERSION && mark.manifest_digest == content_hex(manifest)
 }
 
 fn status_of(plan: &Plan) -> MigrationStatus {
@@ -1631,4 +1631,26 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
     let day = doy - (153 * mp + 2) / 5 + 1;
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     (if month <= 2 { year + 1 } else { year }, month, day)
+}
+
+#[cfg(test)]
+mod completion_mark_tests {
+    use super::*;
+
+    #[test]
+    fn completion_marks_use_blake3_and_unknown_versions_refuse() {
+        let manifest = b"current manifest";
+        let current = CompletionMark {
+            version: COMPLETION_MARK_VERSION,
+            finished_at_ms: 0,
+            manifest_digest: content_hex(manifest),
+        };
+        let unknown = CompletionMark {
+            version: COMPLETION_MARK_VERSION + 1,
+            ..current.clone()
+        };
+
+        assert!(completion_mark_matches(&current, manifest));
+        assert!(!completion_mark_matches(&unknown, manifest));
+    }
 }

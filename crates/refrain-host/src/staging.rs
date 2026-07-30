@@ -25,10 +25,9 @@ use std::fs::{self, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use refrain_core::Id;
 use refrain_core::context_compiler::{DispatchPackage, ManifestEntry};
+use refrain_core::{Id, digest::content_hex};
 use serde::Serialize;
-use sha2::Digest;
 
 use crate::host::{FrozenContext, StagedDispatch};
 
@@ -143,10 +142,7 @@ impl FrozenContext for DirectoryContext {
             let file = self.staged_request(*run_id);
             fs::write(&file, request)?;
             sync_file(&file)?;
-            digests.push((
-                *run_id,
-                format!("{:x}", sha2::Sha256::digest(request.as_bytes())),
-            ));
+            digests.push((*run_id, content_hex(request.as_bytes())));
         }
         sync_directory(&requests_dir)?;
 
@@ -188,7 +184,7 @@ impl FrozenContext for DirectoryContext {
 
     fn staged_request_matches(&self, run_id: Id, digest: &str) -> Result<bool, io::Error> {
         match fs::read(self.staged_request(run_id)) {
-            Ok(bytes) => Ok(format!("{:x}", sha2::Sha256::digest(&bytes)) == digest),
+            Ok(bytes) => Ok(content_hex(&bytes) == digest),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
             Err(error) => Err(error),
         }
@@ -228,7 +224,7 @@ mod tests {
         let request_md =
             "# Request\n改克制。\n\n# Reply format\n写进 runs/<run-id>/result.md。\n".to_string();
         DispatchPackage {
-            digest: format!("{:x}", sha2::Sha256::digest(request_md.as_bytes())),
+            digest: content_hex(request_md.as_bytes()),
             request_md,
             manifest: vec![ManifestEntry {
                 section: "Request".to_string(),

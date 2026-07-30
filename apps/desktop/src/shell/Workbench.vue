@@ -17,7 +17,6 @@ import {
   type DocumentRow,
   type FileStamp_Serialize,
   type OpenDocumentDto_Serialize,
-  type ProjectOpenedDto,
 } from "../generated/bindings.gen";
 import ConflictDialog from "./ConflictDialog.vue";
 import ConnectionsSurface from "./ConnectionsSurface.vue";
@@ -26,6 +25,7 @@ import KaraSurface from "./KaraSurface.vue";
 import { useKara } from "./kara-state";
 import LogoMark from "./LogoMark.vue";
 import { e2ePickedPath } from "./pick";
+import { ProjectSession } from "./project-session";
 import ReviewSurface from "./ReviewSurface.vue";
 import SettingsSurface from "./SettingsSurface.vue";
 import StatusLine from "./StatusLine.vue";
@@ -43,11 +43,18 @@ type SaveState =
 
 defineEmits<{ "theme-changed": [slug: string] }>();
 
-const project = ref<ProjectOpenedDto | null>(null);
+const notice = ref<string | null>(null);
+const projectSession = new ProjectSession(undefined, undefined, (error) => {
+  notice.value = describe(error);
+});
+const project = projectSession.project;
+const documents = projectSession.documents;
+const visibleDocuments = projectSession.visibleDocuments;
+const documentSearchText = projectSession.query;
+const documentCatalogActivity = projectSession.activity;
 const active = ref<OpenDocumentDto_Serialize | null>(null);
 const stamp = ref<FileStamp_Serialize | null>(null);
 const saveState = ref<SaveState>({ kind: "clean" });
-const notice = ref<string | null>(null);
 const conflict = ref<{ mine: string; theirs: string; stamp: FileStamp_Serialize } | null>(null);
 const editor = ref<InstanceType<typeof EditorHost> | null>(null);
 const surface = ref<WorkbenchSurface>({ kind: "writing" });
@@ -130,6 +137,7 @@ onUnmounted(() => {
   window.removeEventListener("pointermove", wake);
   window.removeEventListener("keydown", onKeydown);
   unlistenDrop?.();
+  projectSession.dispose();
   if (idleTimer !== null) window.clearTimeout(idleTimer);
 });
 
@@ -177,6 +185,7 @@ const onDropped = async (
     const asManuscript =
       zone === "manuscript" || (zone !== "material" && MANUSCRIPT_EXT.test(source));
     try {
+      notice.value = asManuscript ? "正在导入手稿…" : "正在读取资料…";
       const row =
         e2ePickedPath() !== null
           ? asManuscript
@@ -189,7 +198,10 @@ const onDropped = async (
                 asManuscript ? "manuscript" : "material",
               ),
             );
-      if (row === null) continue;
+      if (row === null) {
+        notice.value = null;
+        continue;
+      }
       onMaterialSaved(row);
       notice.value = asManuscript ? "已收入原稿" : "已收入资料";
     } catch (error) {
@@ -248,12 +260,11 @@ const trackReturnPoint = (): void => {
   void kara.setReturnPoint({ blockId: caret.blockId, offset: caret.offset, sentenceTail: tail });
 };
 
-const documents = computed<DocumentRow[]>(() => project.value?.documents ?? []);
-const chapterDocs = computed<DocumentRow[]>(() =>
-  documents.value.filter((row) => row.role === "chapter"),
+const chapterDocs = computed<readonly DocumentRow[]>(() =>
+  visibleDocuments.value.filter((row) => row.role === "chapter"),
 );
-const materialRows = computed<DocumentRow[]>(() =>
-  documents.value.filter((row) => row.role === "material"),
+const materialRows = computed<readonly DocumentRow[]>(() =>
+  visibleDocuments.value.filter((row) => row.role === "material"),
 );
 const materialDocs = computed<{ path: string; label: string }[]>(() =>
   documents.value
@@ -265,6 +276,25 @@ const fail = (error: unknown): void => {
   notice.value = describe(error);
 };
 
+const onDocumentSearchInput = (event: Event): void => {
+  projectSession.setQuery((event.target as HTMLInputElement).value);
+};
+
+const onRailScroll = (event: Event): void => {
+  const rail = event.currentTarget as HTMLElement;
+  if (rail.scrollHeight - rail.scrollTop - rail.clientHeight <= 320) {
+    void projectSession.loadNext();
+  }
+};
+
+const installProject = (opened: NonNullable<typeof project.value>): void => {
+  projectSession.install(opened);
+};
+
+const addDocument = (row: DocumentRow): void => {
+  projectSession.add(row);
+};
+
 const openProjectFolder = async (): Promise<void> => {
   try {
     const debugPath = e2ePickedPath();
@@ -273,7 +303,7 @@ const openProjectFolder = async (): Promise<void> => {
         ? await unwrap(commands.chooseAndAdoptRoot("folder"))
         : await debugCommands.adoptRoot(debugPath, "folder");
     if (opened === null) return;
-    project.value = opened;
+    installProject(opened);
     notice.value = null;
   } catch (error) {
     fail(error);
@@ -288,9 +318,9 @@ const openSingleDocument = async (): Promise<void> => {
         ? await unwrap(commands.chooseAndAdoptRoot("file"))
         : await debugCommands.adoptRoot(debugPath, "file");
     if (opened === null) return;
-    project.value = opened;
+    installProject(opened);
     notice.value = null;
-    const first = project.value.documents[0];
+    const first = opened.documents[0];
     if (first) await select(first.path);
   } catch (error) {
     fail(error);
@@ -307,7 +337,7 @@ const newProject = async (): Promise<void> => {
         ? await unwrap(commands.chooseAndCreateProject(name))
         : await debugCommands.createProject(debugPath, name);
     if (opened === null) return;
-    project.value = opened;
+    installProject(opened);
     notice.value = null;
   } catch (error) {
     fail(error);
@@ -346,10 +376,7 @@ const newDocument = async (role: "chapter" | "material"): Promise<void> => {
   try {
     const created = await unwrap(commands.createDocument(project.value.rootId, title, role));
     kara.apply(created.kara);
-    project.value = {
-      ...project.value,
-      documents: [...project.value.documents, created.document],
-    };
+    addDocument(created.document);
     await select(created.document.path);
   } catch (error) {
     fail(error);
@@ -359,11 +386,7 @@ const newDocument = async (role: "chapter" | "material"): Promise<void> => {
 // A saved material draft joins the bookshelf; the ticket's materials list
 // derives from it.
 const onMaterialSaved = (row: DocumentRow): void => {
-  if (!project.value) return;
-  project.value = {
-    ...project.value,
-    documents: [...project.value.documents, row],
-  };
+  addDocument(row);
 };
 
 // Import a source file (C12.3): Rust owns the chooser and extraction; the
@@ -371,12 +394,16 @@ const onMaterialSaved = (row: DocumentRow): void => {
 const importMaterial = async (): Promise<void> => {
   if (!project.value) return;
   try {
+    notice.value = "正在读取资料…";
     const debugPath = e2ePickedPath();
     const row =
       debugPath === null
         ? await unwrap(commands.chooseAndImportMaterial(project.value.rootId))
         : await debugCommands.importMaterial(project.value.rootId, debugPath);
-    if (row === null) return;
+    if (row === null) {
+      notice.value = null;
+      return;
+    }
     onMaterialSaved(row);
     notice.value = "已导入";
   } catch (error) {
@@ -590,6 +617,7 @@ const onKeydown = (event: KeyboardEvent): void => {
         class="rail"
         :class="{ receded: railReceded || kara.engaged.value || surface.kind === 'settings' }"
         aria-label="文档"
+        @scroll.passive="onRailScroll"
       >
         <div
           class="brand"
@@ -606,6 +634,23 @@ const onKeydown = (event: KeyboardEvent): void => {
           <button type="button" @click="newDocument('chapter')">新章</button>
           <button type="button" @click="newDocument('material')">新资料</button>
           <button type="button" @click="importMaterial">导入</button>
+        </div>
+        <div class="rail-search">
+          <input
+            :value="documentSearchText"
+            type="search"
+            aria-label="搜索全部文档"
+            placeholder="搜索全部文档"
+            @input="onDocumentSearchInput"
+          />
+          <span v-if="documentCatalogActivity === 'waiting' || documentCatalogActivity === 'searching'">
+            正在搜索…
+          </span>
+          <span v-else-if="documentCatalogActivity === 'paging'">正在载入目录…</span>
+          <span v-else-if="documentCatalogActivity === 'failed'">搜索失败，请重试</span>
+          <span v-else-if="documentSearchText !== '' && visibleDocuments.length === 0">
+            没有匹配文档
+          </span>
         </div>
         <div class="shelf" data-shelf="manuscript">
           <div class="rail-group">原稿</div>
@@ -685,13 +730,18 @@ const onKeydown = (event: KeyboardEvent): void => {
           @theme-picked="(slug: string) => $emit('theme-changed', slug)"
         />
         <ReviewSurface
-          v-else-if="surface.kind === 'review' && active"
+          v-if="surface.kind === 'review' && active"
           :root-id="project.rootId"
           :path="active.document.path"
           @committed="afterCommit"
           @closed="returnToWriting"
         />
-        <div v-else-if="active" class="stage-row" @contextmenu="onContextMenu">
+        <div
+          v-if="active"
+          v-show="surface.kind !== 'settings' && surface.kind !== 'review'"
+          class="stage-row"
+          @contextmenu="onContextMenu"
+        >
           <EditorHost
             ref="editor"
             :key="active.document.path"
@@ -722,7 +772,12 @@ const onKeydown = (event: KeyboardEvent): void => {
         <div v-else-if="surface.kind === 'connections'" class="stage-row">
           <ConnectionsSurface :root-id="project.rootId" @closed="returnToWriting" />
         </div>
-        <p v-else class="empty">从左侧选一个文档，或新建一章。</p>
+        <p
+          v-else-if="surface.kind !== 'settings' && surface.kind !== 'review'"
+          class="empty"
+        >
+          从左侧选一个文档，或新建一章。
+        </p>
       </main>
 
       <div
@@ -881,6 +936,26 @@ const onKeydown = (event: KeyboardEvent): void => {
   flex-direction: column;
   padding: 0 0 8px;
   border-bottom: 1px solid var(--rail-rule);
+}
+
+.rail-search {
+  display: grid;
+  gap: 5px;
+  padding: 10px 0 4px;
+}
+
+.rail-search input {
+  width: 100%;
+  border-color: color-mix(in oklab, var(--rail-ink) 22%, transparent);
+  background: color-mix(in oklab, var(--rail) 82%, var(--rail-ink));
+  color: var(--rail-ink);
+  font-size: 12px;
+}
+
+.rail-search span {
+  padding: 0 8px;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .rail button {

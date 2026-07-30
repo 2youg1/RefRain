@@ -691,7 +691,7 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
 mod tests {
     use super::*;
     use refrain_core::context_compiler::ManifestEntry;
-    use sha2::Digest;
+    use refrain_core::digest::content_hex;
 
     #[derive(Default)]
     struct VecJournal {
@@ -786,10 +786,7 @@ mod tests {
             let mut digests = Vec::new();
             for (run_id, request) in requests {
                 self.staged.insert(*run_id, request.clone());
-                digests.push((
-                    *run_id,
-                    format!("{:x}", sha2::Sha256::digest(request.as_bytes())),
-                ));
+                digests.push((*run_id, content_hex(request.as_bytes())));
             }
             Ok(StagedDispatch {
                 manifest_path: self.manifest_path.clone(),
@@ -809,9 +806,10 @@ mod tests {
             if self.lost {
                 return Ok(false);
             }
-            Ok(self.staged.get(&run_id).is_some_and(|request| {
-                format!("{:x}", sha2::Sha256::digest(request.as_bytes())) == digest
-            }))
+            Ok(self
+                .staged
+                .get(&run_id)
+                .is_some_and(|request| content_hex(request.as_bytes()) == digest))
         }
     }
 
@@ -820,7 +818,7 @@ mod tests {
             "# Before\n<!-- scope ch01:b3 -->\n原文。\n\n# Request\n改克制。\n\n# Reply format\n把 <agent-result> 写进 runs/{RUN_ID_PLACEHOLDER}/attempts/{RUN_ID_PLACEHOLDER}/result.md。\n"
         );
         DispatchPackage {
-            digest: format!("{:x}", sha2::Sha256::digest(request_md.as_bytes())),
+            digest: content_hex(request_md.as_bytes()),
             request_md,
             manifest: vec![ManifestEntry {
                 section: "Request".to_string(),

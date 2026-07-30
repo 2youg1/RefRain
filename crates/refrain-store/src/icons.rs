@@ -10,13 +10,12 @@
 //! - **PNG**: magic bytes agree, 8-bit RGB(A), 32²–1024², at least one
 //!   non-transparent pixel.
 //!
-//! Both normalise to one 256×256 RGBA PNG, named by its SHA-256 in the
+//! Both normalise to one 256×256 RGBA PNG, named by its BLAKE3 identity in the
 //! application data assets directory. The preference stores the digest and
 //! nothing else — the asset is content-addressed, so a preference can never
 //! point at content it did not mean.
 
-use refrain_core::{ErrorCode, RefrainError};
-use sha2::{Digest, Sha256};
+use refrain_core::{ErrorCode, RefrainError, digest::content_hex};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -156,7 +155,7 @@ pub fn import_icon(assets_dir: &Path, bytes: &[u8]) -> Result<IconAsset, Refrain
     } else {
         sanitize_svg(bytes)?
     };
-    let digest = format!("{:x}", Sha256::digest(&png));
+    let digest = content_hex(&png);
     std::fs::create_dir_all(assets_dir).map_err(|error| {
         RefrainError::new(
             ErrorCode::Io,

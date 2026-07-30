@@ -4,8 +4,9 @@
 //! editor blocks; gaps, line endings, indentation, and every untouched byte stay
 //! in the original buffer. A layout can slice only the source digest it read.
 
-use sha2::{Digest, Sha256};
 use thiserror::Error;
+
+use crate::digest::content_bytes;
 
 /// One half-open block interval in the original source bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,7 +32,7 @@ impl SourceLayout {
     #[must_use]
     pub fn read(source: &[u8]) -> Self {
         Self {
-            digest: Sha256::digest(source).into(),
+            digest: content_bytes(source),
             blocks: block_spans(source).into_boxed_slice(),
         }
     }
@@ -43,7 +44,7 @@ impl SourceLayout {
 
     /// Rebuilds an unedited source from its measured intervals and untouched gaps.
     pub fn reproduce(&self, source: &[u8]) -> Result<Vec<u8>, SourceDrift> {
-        if <[u8; 32]>::from(Sha256::digest(source)) != self.digest {
+        if content_bytes(source) != self.digest {
             return Err(SourceDrift);
         }
 

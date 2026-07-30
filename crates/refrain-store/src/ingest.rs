@@ -10,8 +10,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use refrain_core::{ErrorCode, RefrainError};
-use sha2::Digest as _;
+use refrain_core::{ErrorCode, RefrainError, digest::content_hex};
 
 mod html;
 mod office;
@@ -110,28 +109,34 @@ pub fn read_source(path: &Path) -> Result<Vec<u8>, RefrainError> {
 /// and proven by the bytes: a zip container must carry the member its
 /// claimed family requires, and a PDF must start with its magic.
 pub fn ingest(path: &Path) -> Result<IngestedMaterial, RefrainError> {
+    let bytes = read_source(path)?;
+    ingest_bytes(path, &bytes)
+}
+
+/// Project bytes that have already passed the bounded reader.
+/// Material preparation uses this to parse and clone one identical buffer.
+pub(crate) fn ingest_bytes(path: &Path, bytes: &[u8]) -> Result<IngestedMaterial, RefrainError> {
     let extension = path
         .extension()
         .and_then(|ext| ext.to_str())
         .map(str::to_ascii_lowercase)
         .unwrap_or_default();
-    let bytes = read_source(path)?;
-    let digest = format!("{:x}", sha2::Sha256::digest(&bytes));
+    let digest = content_hex(bytes);
     let title = path
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or("material")
         .to_string();
     let (format, text) = match extension.as_str() {
-        "pdf" => (SourceFormat::Pdf, pdf::extract(&bytes)?),
+        "pdf" => (SourceFormat::Pdf, pdf::extract(bytes)?),
         "html" | "htm" => (
             SourceFormat::Html,
-            html::extract(&String::from_utf8_lossy(&bytes)),
+            html::extract(&String::from_utf8_lossy(bytes)),
         ),
-        "epub" => (SourceFormat::Epub, office::extract_epub(&bytes)?),
-        "docx" => (SourceFormat::Docx, office::extract_docx(&bytes)?),
-        "pptx" => (SourceFormat::Pptx, office::extract_pptx(&bytes)?),
-        "xlsx" => (SourceFormat::Xlsx, office::extract_xlsx(&bytes)?),
+        "epub" => (SourceFormat::Epub, office::extract_epub(bytes)?),
+        "docx" => (SourceFormat::Docx, office::extract_docx(bytes)?),
+        "pptx" => (SourceFormat::Pptx, office::extract_pptx(bytes)?),
+        "xlsx" => (SourceFormat::Xlsx, office::extract_xlsx(bytes)?),
         other => {
             return Err(failure(
                 "ingest a material source",
