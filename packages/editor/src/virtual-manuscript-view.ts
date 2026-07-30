@@ -13,6 +13,24 @@ import { applyPunctuationFinding, findPunctuation } from "./punctuation";
 
 const BLOCK_TAG = "p";
 
+/**
+ * How many lines a block is predicted to occupy, from its byte shape.
+ *
+ * Returns 0 when the block carries no shape — it was created locally and the
+ * domain has not confirmed it yet — and the index keeps the flat estimate for
+ * those. Each hard line wraps on its own: dividing the total width once would
+ * undercount, because the slack at the end of one hard line does not carry
+ * over to the next.
+ */
+function predictedLines(block: Block, lineUnits: number): number {
+  const width = block.widthUnits;
+  if (width === undefined || lineUnits <= 0) return 0;
+  const hard = (block.hardLines ?? 0) + 1;
+  if (block.isFence === true) return hard;
+  const perHard = Math.ceil(width / hard);
+  return hard * Math.max(1, Math.ceil(perHard / lineUnits));
+}
+
 /** 一个只占高度、不接事件、读屏器看不见的填充块。 */
 const makeSpacer = (document_: Document): HTMLElement => {
   const spacer = document_.createElement("div");
@@ -213,6 +231,9 @@ export class VirtualManuscriptView {
     this.#blocks = [...blocks];
     this.#heightIndex = BlockHeightIndex.uniform(this.#blocks.length, INITIAL_BLOCK_HEIGHT);
     this.#measuredWidth = element.clientWidth;
+    // Width has to be known before shapes can be turned into line counts, so
+    // this runs after #measuredWidth is set. One place builds the index.
+    this.#rebuildHeightIndex();
 
     const ResizeObserverConstructor = view.ResizeObserver;
     if (typeof ResizeObserverConstructor === "function") {
@@ -650,8 +671,28 @@ export class VirtualManuscriptView {
     return Math.ceil(Math.max(1, lineHeight + marginTop + marginBottom));
   }
 
+  /**
+   * Line width in display-width units.
+   *
+   * A CJK glyph is one em wide and counts two units, so one unit is half an em.
+   * Ratios are what matter here: the calibration scalar absorbs whatever this
+   * is systematically off by, so an approximation that tracks the real width is
+   * worth more than an exact number that has to be recomputed on every render.
+   */
+  #lineUnits(): number {
+    const style = this.#view.getComputedStyle(this.#element);
+    const fontSize = Number.parseFloat(style.fontSize) || 16;
+    const width = this.#measuredWidth > 0 ? this.#measuredWidth : this.#element.clientWidth;
+    return Math.max(1, Math.floor((width / fontSize) * 2));
+  }
+
   #rebuildHeightIndex(): void {
     const rebuilt = BlockHeightIndex.uniform(this.#blocks.length, this.#heightIndex.estimate);
+    // Predict from each block's own shape before anything is measured. Blocks
+    // without a shape (created locally, ahead of the domain's confirmation)
+    // contribute nothing here and keep the flat estimate.
+    const lineUnits = this.#lineUnits();
+    rebuilt.setPredictedLines(this.#blocks.map((block) => predictedLines(block, lineUnits)));
     const positions = projectionIndex(this.#blocks);
     for (const [id, height] of this.#measuredHeights) {
       const index = positions.get(id);
@@ -834,7 +875,11 @@ export class VirtualManuscriptView {
       anchor < 0 ? 0 : Math.max(0, this.#scrollHost.scrollTop - this.#heightIndex.prefix(anchor));
     this.#layoutKey = nextKey;
     this.#measuredHeights.clear();
+    // Rebuild through the one place that builds an index: a layout change is
+    // exactly when line width changed, so the per-block predictions have to be
+    // recomputed rather than dropped.
     this.#heightIndex = BlockHeightIndex.uniform(this.#blocks.length, this.#currentBlockEstimate());
+    this.#rebuildHeightIndex();
     if (pinnedToBottom) {
       this.#bottomPinned = true;
       this.#scrollHost.scrollTop = this.#heightIndex.total;

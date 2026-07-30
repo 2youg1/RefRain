@@ -20,6 +20,7 @@ import type {
   DocumentRow,
   FileStamp_Serialize,
   OpenDocumentDto_Serialize,
+  SessionDocumentDto,
 } from "../generated/bindings.gen";
 import { commands } from "../generated/bindings.gen";
 import { type DescribeError, Session } from "./session";
@@ -50,10 +51,10 @@ export interface DocumentSessionView {
  * than the whole generated binding. */
 export interface DocumentGateway {
   openDocument(rootId: string, path: string): Promise<OpenDocumentDto_Serialize>;
-  currentDocument(
-    rootId: string,
-    path: string,
-  ): Promise<{ revision: string; blocks: readonly { id: string; text: string }[] }>;
+  // The generated DTO, not a hand-written shape of it: spelling out
+  // `{ id, text }` here made this a second authority for what a block is, and
+  // it drifted the moment blocks began carrying their byte shape.
+  currentDocument(rootId: string, path: string): Promise<SessionDocumentDto>;
   persistRevision(
     rootId: string,
     path: string,

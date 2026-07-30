@@ -246,6 +246,37 @@ pub struct OpenDocumentDto {
 pub struct BlockDto {
     pub id: String,
     pub text: String,
+    /// Display-width equivalents: CJK and full-width punctuation count two.
+    /// Wrapping follows display width, not code point count, and in CJK prose
+    /// the two differ by nearly a factor of two.
+    pub width_units: u32,
+    /// Line breaks the author typed. A block occupies at least this many plus one.
+    pub hard_lines: u32,
+    /// The widest single line: a narrow block does not wrap just because it is long.
+    pub max_line_units: u32,
+    /// A fence keeps the author's lines instead of wrapping.
+    pub is_fence: bool,
+}
+
+impl BlockDto {
+    /// Carry a block across the bridge together with its shape.
+    ///
+    /// The viewport needs the shape to estimate this block's height before it
+    /// has laid anything out, and the shape is read from the same text that is
+    /// already being sent — so sending it costs one branch-free width scan and
+    /// saves the viewport from guessing this block's height from other blocks.
+    fn of(block: &refrain_core::manuscript::Block) -> Self {
+        let text = block.text();
+        let shape = refrain_core::block_shape::BlockShape::of(text);
+        Self {
+            id: block.id().to_string(),
+            text: text.to_owned(),
+            width_units: shape.width_units,
+            hard_lines: shape.hard_lines,
+            max_line_units: shape.max_line_units,
+            is_fence: shape.kind == refrain_core::block_shape::BlockKind::Fence,
+        }
+    }
 }
 
 /// The editor's settled input, as it crosses the bridge.
@@ -639,10 +670,7 @@ fn open_in_entry(
         .head()
         .blocks()
         .iter()
-        .map(|block| BlockDto {
-            id: block.id().to_string(),
-            text: block.text().to_owned(),
-        })
+        .map(BlockDto::of)
         .collect();
     entry.manuscripts.insert(path.to_string(), manuscript);
 
@@ -689,10 +717,7 @@ fn current_document(
                 .head()
                 .blocks()
                 .iter()
-                .map(|block| BlockDto {
-                    id: block.id().to_string(),
-                    text: block.text().to_owned(),
-                })
+                .map(BlockDto::of)
                 .collect(),
         })
     })
