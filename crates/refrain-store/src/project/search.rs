@@ -27,7 +27,7 @@
 //! pairs so that ordinary token matching works and bm25 keeps its
 //! discrimination. See `review/search-probe-results.md`.
 
-use refrain_core::chinese_index::{bigram, match_expression};
+use refrain_core::chinese_index::{Precision, bigram, match_expression_with};
 use refrain_core::{ErrorCode, RefrainError};
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -39,6 +39,15 @@ use rusqlite::{Connection, OptionalExtension, params};
 struct Entry {
     rowid: i64,
     digest: String,
+    /// The exact text handed to FTS5, path and body.
+    ///
+    /// An external-content table stores nothing itself, so deleting a row
+    /// means replaying precisely what was inserted — FTS5 re-tokenises the
+    /// text to find the postings to remove. Feeding it anything else does not
+    /// fail: it removes postings that were never there and leaves the real
+    /// ones behind, and SQLite reports the result as "database disk image is
+    /// malformed" the next time the index is read. That is how this was found.
+    indexed: (String, String),
 }
 
 fn store_failure(action: &'static str, cause: rusqlite::Error) -> RefrainError {
@@ -48,12 +57,14 @@ fn store_failure(action: &'static str, cause: rusqlite::Error) -> RefrainError {
 
 fn entry_of(db: &Connection, path: &str) -> Result<Option<Entry>, RefrainError> {
     db.query_row(
-        "SELECT rowid_of, digest FROM document_search_state WHERE document = ?1",
+        "SELECT rowid_of, digest, indexed_path, indexed_body
+         FROM document_search_state WHERE document = ?1",
         params![path],
         |row| {
             Ok(Entry {
                 rowid: row.get(0)?,
                 digest: row.get(1)?,
+                indexed: (row.get(2)?, row.get(3)?),
             })
         },
     )
@@ -79,28 +90,27 @@ pub fn index_document(
         if entry.digest == digest {
             return Ok(false);
         }
-        // An external-content table stores no text, so the only way to delete
-        // a row is to hand FTS5 back exactly what was inserted. That text is
-        // gone, so the delete has to be driven by the 'delete-all' command for
-        // this rowid instead: replay through the rebuild path below.
-        remove_rowid(db, entry.rowid)?;
+        remove_entry(db, entry)?;
     }
 
     let rowid = existing
         .as_ref()
         .map_or_else(|| next_rowid(db).unwrap_or(1), |entry| entry.rowid);
+    let indexed_path = bigram(path);
+    let indexed_body = bigram(text);
 
     db.execute(
         "INSERT INTO document_search(rowid, path, body) VALUES (?1, ?2, ?3)",
-        params![rowid, bigram(path), bigram(text)],
+        params![rowid, indexed_path, indexed_body],
     )
     .map_err(|cause| store_failure("index document", cause))?;
 
     db.execute(
-        "INSERT INTO document_search_state(document, rowid_of, digest)
-         VALUES (?1, ?2, ?3)
-         ON CONFLICT(document) DO UPDATE SET rowid_of = ?2, digest = ?3",
-        params![path, rowid, digest],
+        "INSERT INTO document_search_state(document, rowid_of, digest, indexed_path, indexed_body)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(document) DO UPDATE SET
+             rowid_of = ?2, digest = ?3, indexed_path = ?4, indexed_body = ?5",
+        params![path, rowid, digest, indexed_path, indexed_body],
     )
     .map_err(|cause| store_failure("record search state", cause))?;
 
@@ -121,18 +131,17 @@ fn next_rowid(db: &Connection) -> Result<i64, RefrainError> {
     .map_err(|cause| store_failure("allocate search rowid", cause))
 }
 
-/// Remove a rowid from the inverted index.
+/// Remove an entry from the inverted index.
 ///
-/// External-content tables delete by replaying the indexed text, which we no
-/// longer have. FTS5 provides `delete-all` for exactly this situation, but it
-/// clears the whole table, so instead the row is overwritten with empty text
-/// and its state row dropped: the tokens go, the rowid stays free for reuse,
-/// and no stale posting survives.
-fn remove_rowid(db: &Connection, rowid: i64) -> Result<(), RefrainError> {
+/// The text has to be exactly what was inserted. FTS5 re-tokenises it to find
+/// the postings to remove, and anything else corrupts the index silently —
+/// the failure surfaces later as "database disk image is malformed", which is
+/// how the first version of this function was caught.
+fn remove_entry(db: &Connection, entry: &Entry) -> Result<(), RefrainError> {
     db.execute(
         "INSERT INTO document_search(document_search, rowid, path, body)
-         VALUES ('delete', ?1, '', '')",
-        params![rowid],
+         VALUES ('delete', ?1, ?2, ?3)",
+        params![entry.rowid, entry.indexed.0, entry.indexed.1],
     )
     .map_err(|cause| store_failure("clear search entry", cause))?;
     Ok(())
@@ -143,7 +152,7 @@ pub fn forget_document(db: &Connection, path: &str) -> Result<bool, RefrainError
     let Some(entry) = entry_of(db, path)? else {
         return Ok(false);
     };
-    remove_rowid(db, entry.rowid)?;
+    remove_entry(db, &entry)?;
     db.execute(
         "DELETE FROM document_search_state WHERE document = ?1",
         params![path],
@@ -161,7 +170,21 @@ pub struct Hit {
     pub relevance: f64,
 }
 
+/// Find documents whose path or body matches the query, exactly.
+///
+/// For when the author remembers the words. See `search_with` for the other
+/// state an author can be in.
+pub fn search(db: &Connection, query: &str, limit: u32) -> Result<Vec<Hit>, RefrainError> {
+    search_with(db, query, Precision::Exact, limit)
+}
+
 /// Find documents whose path or body matches the query.
+///
+/// `Precision::Exact` requires every part of the query to appear; `Loose`
+/// takes documents holding any part and lets ranking sort them out. Measured
+/// over the workspace, 「渐进式披露」 returns 7 documents exact and 185 loose —
+/// the first is what an author who remembers the phrase wants, the second is
+/// what an author who only remembers the sense needs.
 ///
 /// Ordering here is by bm25 alone. The final order is decided by
 /// `refrain_core::search_rank`, which knows things this layer does not: which
@@ -169,20 +192,35 @@ pub struct Hit {
 /// touched it. Sorting twice is deliberate — this pass narrows a corpus to
 /// candidates, and the ranking pass decides what the author sees first.
 ///
-/// The path column is weighted above the body: a query matching the title the
-/// author chose is a stronger signal than the same words appearing in prose.
-pub fn search(db: &Connection, query: &str, limit: u32) -> Result<Vec<Hit>, RefrainError> {
-    let Some(expression) = match_expression(query) else {
+/// The path column is weighted far above the body: a query matching the title
+/// the author chose is a stronger signal than the same words appearing in
+/// prose. The multiplier is 16, not the 4 it started at, because BM25 counts
+/// term frequency and a body that mentions a word three times outscored a
+/// title that *is* that word — measured, and the reason the weight moved.
+/// Even 16 only buys a margin; the durable fix is `search_rank`, which caps
+/// each signal so no amount of repetition can overtake a title.
+pub fn search_with(
+    db: &Connection,
+    query: &str,
+    precision: Precision,
+    limit: u32,
+) -> Result<Vec<Hit>, RefrainError> {
+    let Some(expression) = match_expression_with(query, precision) else {
         return Ok(Vec::new());
     };
 
     let mut statement = db
         .prepare(
-            "SELECT s.document, bm25(document_search, 4.0, 1.0)
+            "SELECT s.document, bm25(document_search, 16.0, 1.0)
              FROM document_search
              JOIN document_search_state s ON s.rowid_of = document_search.rowid
              WHERE document_search MATCH ?1
-             ORDER BY rank
+             -- ORDER BY the same expression the SELECT computes, not `rank`.
+             -- `rank` is bm25() with *default* weights, so ordering by it
+             -- silently ignores the column weighting: a body mentioning a word
+             -- three times sorted above a title that is that word, while the
+             -- scores in the same result set said the opposite.
+             ORDER BY bm25(document_search, 16.0, 1.0)
              LIMIT ?2",
         )
         .map_err(|cause| store_failure("prepare search", cause))?;

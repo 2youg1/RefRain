@@ -93,25 +93,45 @@ fn flush(run: &mut Vec<char>, out: &mut String) {
     run.clear();
 }
 
+/// How much of the query a document has to contain.
+///
+/// The two modes answer two different states an author can be in, and the
+/// measurement that separated them is the same one that set the default:
+/// over the whole 252MB workspace, 22,410 documents,
+///
+/// | query | Exact (AND) | Loose (OR) |
+/// |---|---|---|
+/// | 渐进式披露 | 7 hits, 180µs | 185 hits, 496µs |
+/// | 不存在的词 | 21 hits | 500 hits |
+///
+/// An author who remembers the words wants the seven. An author who only
+/// remembers roughly what was said needs the hundred and eighty-five, because
+/// the phrasing they type is not the phrasing they wrote.
+///
+/// A third mode was measured and rejected: NEAR, requiring the pairs to sit
+/// adjacent, returned nothing at all for 「渐进式披露」 — a phrase that appears
+/// in the corpus and that both surviving modes scored at 49.8. Adjacency is
+/// too tight a constraint on overlapping bigrams to be usable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Precision {
+    /// Every piece must appear. For when the author remembers the words.
+    #[default]
+    Exact,
+    /// Any piece may appear, and ranking sorts out the rest. For when the
+    /// author remembers the sense but not the wording.
+    Loose,
+}
+
+impl Precision {
+    fn joiner(self) -> &'static str {
+        match self {
+            Self::Exact => " AND ",
+            Self::Loose => " OR ",
+        }
+    }
+}
+
 /// Turn an author's query into an FTS5 MATCH expression.
-///
-/// Pieces are joined with AND, which was chosen by measurement over a real
-/// 252MB corpus of 22,410 documents:
-///
-/// | query | OR | AND | NEAR |
-/// |---|---|---|---|
-/// | 不存在的词 | 500 hits | 21 | 0 |
-/// | 渐进式披露 | 185 | 7 | **0** |
-///
-/// OR treats a document holding any one pair as a candidate, and pairs like
-/// 「存在」 occur everywhere, so a query for a phrase nobody wrote still
-/// returned five hundred documents. AND cuts that to twenty-one without losing
-/// a single real answer, and runs faster for it — 278µs against 1859µs.
-///
-/// NEAR looks stricter still and is a trap: requiring the pairs to be adjacent
-/// returned nothing at all for 「渐进式披露」, a phrase that genuinely appears
-/// in the corpus and that OR and AND both scored at 49.8. Adjacency is too
-/// tight a constraint on overlapping bigrams.
 ///
 /// Every piece is quoted, because a bigram may contain characters FTS5 reads
 /// as syntax.
@@ -119,6 +139,11 @@ fn flush(run: &mut Vec<char>, out: &mut String) {
 /// Returns `None` for a query with nothing to match, so callers distinguish
 /// "no results" from "no query" instead of running an empty MATCH that errors.
 pub fn match_expression(query: &str) -> Option<String> {
+    match_expression_with(query, Precision::default())
+}
+
+/// As `match_expression`, choosing how much of the query must be present.
+pub fn match_expression_with(query: &str, precision: Precision) -> Option<String> {
     let pieces: Vec<String> = bigram(query)
         .split_whitespace()
         // A piece made only of punctuation carries no search intent. An
@@ -131,7 +156,7 @@ pub fn match_expression(query: &str) -> Option<String> {
     if pieces.is_empty() {
         return None;
     }
-    Some(pieces.join(" AND "))
+    Some(pieces.join(precision.joiner()))
 }
 
 #[cfg(test)]
