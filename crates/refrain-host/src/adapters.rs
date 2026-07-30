@@ -342,9 +342,14 @@ impl HarnessAdapter for KimiPrint {
 mod tests {
     use super::*;
 
-    /// Contract tests run live only when the CLI is on PATH; absence is a
-    /// skip with a note, not a failure (CI has no harnesses installed).
+    /// Contract tests run live only when explicitly requested and the CLI is
+    /// on PATH. A developer's installed but logged-out CLI must not make the
+    /// deterministic workspace suite depend on network or account state.
     fn kimi() -> Option<KimiPrint> {
+        if std::env::var("REFRAIN_RUN_LIVE_HARNESS").as_deref() != Ok("1") {
+            eprintln!("skipped: set REFRAIN_RUN_LIVE_HARNESS=1 for live Kimi contracts");
+            return None;
+        }
         let env_allow = std::env::var("REFRAIN_HARNESS_ENV_ALLOW")
             .ok()
             .map(|value| {

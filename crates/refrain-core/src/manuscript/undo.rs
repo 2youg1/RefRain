@@ -1,4 +1,6 @@
-use super::{AppliedRegion, Block, Id, Manuscript, TextAction, TextHead, TextRefusal};
+use super::{
+    AppliedRegion, Block, BlockSequence, Id, Manuscript, TextAction, TextHead, TextRefusal,
+};
 use std::collections::{BTreeMap, HashMap};
 
 pub(super) fn selective(
@@ -73,7 +75,7 @@ pub(super) fn selective(
     Ok((
         TextHead {
             id: Id::new(),
-            blocks: blocks.into_boxed_slice(),
+            blocks: BlockSequence::from_vec(blocks),
             cause: cause.clone(),
         },
         TextAction {

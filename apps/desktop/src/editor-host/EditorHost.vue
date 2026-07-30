@@ -12,11 +12,13 @@ import {
 } from "@refrain/editor";
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { describe, unwrap } from "../bridge";
+import { cancelScheduledFrame, scheduleFrame } from "../frame-scheduler";
 import {
   commands,
   type EditorChangeDto,
   type OpenDocumentDto_Serialize,
 } from "../generated/bindings.gen";
+import { EditorActionQueue } from "./editor-action-queue";
 
 const props = defineProps<{
   rootId: string;
@@ -31,15 +33,8 @@ const emit = defineEmits<{
 
 const host = ref<HTMLElement | null>(null);
 let editor: EditorHandle | null = null;
-// Confirmed-domain base for the next action: actions chain base → revision.
 let confirmedRevision = props.document.revision;
-// The bounded pending-action queue (SPEC 7.2-5): settles land here, one apply
-// crosses the bridge at a time, and a save waits for the queue to drain.
-// Without it two rapid settles race on the same base and all but the first
-// are refused as stale — which is how typed characters once vanished.
-let inFlight = false;
-const queue: EditorAction[] = [];
-const settled: { resolve: (() => void)[] } = { resolve: [] };
+const confirmationFrame = `editor-confirm:${props.rootId}:${props.path}`;
 
 const toDto = (action: EditorAction): EditorChangeDto[] =>
   action.changes.map((change) =>
@@ -51,70 +46,35 @@ const toDto = (action: EditorAction): EditorChangeDto[] =>
         },
   );
 
-/** A typing burst on one block coalesces into one action. */
-const tryMerge = (action: EditorAction): boolean => {
-  const last = queue.at(-1);
-  const only = action.changes.length === 1 ? action.changes[0] : undefined;
-  const prev = last?.changes.length === 1 ? last.changes[0] : undefined;
-  if (
-    last === undefined ||
-    only?.kind !== "replace" ||
-    prev?.kind !== "replace" ||
-    only.text === null ||
-    prev.text === null ||
-    only.blocks.length !== 1 ||
-    prev.blocks.length !== 1 ||
-    only.blocks[0] !== prev.blocks[0]
-  ) {
-    return false;
-  }
-  queue[queue.length - 1] = {
-    baseRevision: last.baseRevision,
-    changes: [{ kind: "replace", blocks: prev.blocks, text: only.text }],
-  };
-  return true;
-};
-
-const drain = async (): Promise<void> => {
-  if (inFlight) return;
-  const action = queue.shift();
-  if (action === undefined) {
-    for (const resolve of settled.resolve.splice(0)) resolve();
-    return;
-  }
-  inFlight = true;
+const apply = async (action: EditorAction): Promise<void> => {
   const structural = action.changes.some(
     (change) =>
       (change.kind === "replace" && (change.text === null || change.blocks.length > 1)) ||
       change.kind === "insert",
   );
-  try {
-    const transition = await unwrap(
-      commands.applyEditorAction(props.rootId, props.path, {
-        base: confirmedRevision,
-        changes: toDto(action),
-      }),
-    );
-    confirmedRevision = transition.revision;
-    editor?.setRevision(transition.revision);
-    if (structural) {
-      const confirmed = await unwrap(commands.currentDocument(props.rootId, props.path));
-      editor?.replace({ revision: confirmed.revision, blocks: confirmed.blocks });
-      editor?.focus();
-    }
-    emit("confirmed", transition.revision);
-  } catch (error) {
-    emit("rejected", describe(error));
-  } finally {
-    inFlight = false;
-    void drain();
+  const transition = await unwrap(
+    commands.applyEditorAction(props.rootId, props.path, {
+      base: confirmedRevision,
+      changes: toDto(action),
+    }),
+  );
+  confirmedRevision = transition.revision;
+  editor?.setRevision(transition.revision);
+  if (structural) {
+    const confirmed = await unwrap(commands.currentDocument(props.rootId, props.path));
+    editor?.replace({ revision: confirmed.revision, blocks: confirmed.blocks });
+    editor?.focus();
   }
+  emit("confirmed", transition.revision);
 };
 
-const submit = (action: EditorAction): void => {
-  if (!tryMerge(action)) queue.push(action);
-  void drain();
-};
+const actions = new EditorActionQueue(
+  apply,
+  (task) => scheduleFrame(confirmationFrame, task),
+  (error) => emit("rejected", describe(error)),
+);
+
+const submit = (action: EditorAction): void => actions.submit(action);
 
 onMounted(() => {
   if (!host.value) return;
@@ -127,6 +87,8 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  actions.destroy();
+  cancelScheduledFrame(confirmationFrame);
   editor?.destroy();
   editor = null;
 });
@@ -136,12 +98,7 @@ defineExpose({
   isComposing: () => editor?.isComposing() ?? false,
   caret: () => editor?.caret() ?? null,
   /** Resolves when the pending-action queue has fully drained (SPEC 7.2-5). */
-  settled: (): Promise<void> =>
-    queue.length === 0 && !inFlight
-      ? Promise.resolve()
-      : new Promise<void>((resolve) => {
-          settled.resolve.push(resolve);
-        }),
+  settled: (): Promise<void> => actions.settled(),
 });
 </script>
 

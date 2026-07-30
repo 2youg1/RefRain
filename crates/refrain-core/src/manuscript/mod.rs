@@ -1,17 +1,22 @@
 mod action;
 mod align;
+mod block_offsets;
+mod block_sequence;
+mod byte_sequence;
 mod decision;
 mod materialize;
 mod review;
 mod undo;
 
+pub use block_sequence::BlockSequence;
 pub use decision::{DecisionBatch, Verdict, VerdictKind};
 pub use review::{
     ChangeClass, EditScope, Proposal, ReviewSlice, ReviewSliceId, SliceKind, classify_change,
 };
 
 use crate::{Id, SourceDrift, SourceLayout};
-use sha2::{Digest, Sha256};
+use block_offsets::BlockOffsets;
+use byte_sequence::ByteSequence;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use thiserror::Error;
@@ -78,7 +83,7 @@ impl Block {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextHead {
     id: Id,
-    blocks: Box<[Block]>,
+    blocks: BlockSequence,
     cause: String,
 }
 
@@ -89,7 +94,7 @@ impl TextHead {
     }
 
     #[must_use]
-    pub fn blocks(&self) -> &[Block] {
+    pub fn blocks(&self) -> &BlockSequence {
         &self.blocks
     }
 
@@ -205,38 +210,48 @@ pub enum TextCommand {
 /// One minimal replacement over canonical source bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BytePatch {
-    before_digest: [u8; 32],
+    before: ByteSequence,
     start: usize,
     end: usize,
     replacement: Box<[u8]>,
 }
 
 impl BytePatch {
-    fn between(before: &[u8], after: &[u8]) -> Self {
-        if before == after {
+    fn at(before: &ByteSequence, start: usize, end: usize, replacement: &[u8]) -> Self {
+        Self {
+            before: before.clone(),
+            start,
+            end,
+            replacement: replacement.to_vec().into_boxed_slice(),
+        }
+    }
+
+    fn between(before: &ByteSequence, after: &[u8]) -> Self {
+        let before_bytes = before.to_vec();
+        if before_bytes == after {
             return Self {
-                before_digest: Sha256::digest(before).into(),
+                before: before.clone(),
                 start: 0,
                 end: 0,
                 replacement: Box::default(),
             };
         }
 
-        let prefix = before
+        let prefix = before_bytes
             .iter()
             .zip(after)
             .take_while(|(left, right)| left == right)
             .count();
-        let suffix = before[prefix..]
+        let suffix = before_bytes[prefix..]
             .iter()
             .rev()
             .zip(after[prefix..].iter().rev())
             .take_while(|(left, right)| left == right)
             .count();
         Self {
-            before_digest: Sha256::digest(before).into(),
+            before: before.clone(),
             start: prefix,
-            end: before.len() - suffix,
+            end: before_bytes.len() - suffix,
             replacement: after[prefix..after.len() - suffix]
                 .to_vec()
                 .into_boxed_slice(),
@@ -244,7 +259,7 @@ impl BytePatch {
     }
 
     pub fn apply(&self, source: &[u8]) -> Result<Vec<u8>, SourceDrift> {
-        if <[u8; 32]>::from(Sha256::digest(source)) != self.before_digest {
+        if !self.before.matches(source) {
             return Err(SourceDrift);
         }
         let mut output =
@@ -485,9 +500,26 @@ pub struct Manuscript {
     source: SourceSnapshot,
     original_ids: Box<[Id]>,
     head: TextHead,
+    materialized: ByteSequence,
+    offsets: BlockOffsets,
+    block_at: HashMap<Id, usize>,
     actions: Vec<TextAction>,
     action_at: HashMap<Id, usize>,
     last_touched: HashMap<Id, usize>,
+}
+
+fn local_replacement(editor: &EditorAction, at: &HashMap<Id, usize>) -> Option<usize> {
+    let [EditorChange::Replace(replacement)] = editor.changes.as_ref() else {
+        return None;
+    };
+    let [block] = replacement.blocks.as_ref() else {
+        return None;
+    };
+    let text = replacement.text.as_deref()?;
+    if SourceLayout::read(text.as_bytes()).blocks().len() != 1 {
+        return None;
+    }
+    at.get(block).copied()
 }
 
 impl Manuscript {
@@ -531,14 +563,24 @@ impl Manuscript {
                 text: text.to_owned(),
             });
         }
+        let block_at = blocks
+            .iter()
+            .enumerate()
+            .map(|(index, block)| (block.id, index))
+            .collect();
+        let materialized = ByteSequence::from_arc(source.bytes.clone());
+        let offsets = BlockOffsets::from_spans(source.layout.blocks().to_vec());
         Ok(Self {
             source,
             original_ids: lineage.0,
             head: TextHead {
                 id: head,
-                blocks: blocks.into_boxed_slice(),
+                blocks: BlockSequence::from_vec(blocks),
                 cause: "open".to_owned(),
             },
+            materialized,
+            offsets,
+            block_at,
             actions: Vec::new(),
             action_at: HashMap::new(),
             last_touched: HashMap::new(),
@@ -558,19 +600,38 @@ impl Manuscript {
     }
 
     pub fn materialize(&self) -> Result<Vec<u8>, SourceDrift> {
-        materialize::blocks(&self.source, &self.original_ids, self.head.blocks())
+        Ok(self.materialized.to_vec())
     }
 
     pub fn execute(&mut self, command: TextCommand) -> Result<TextTransition, TextRefusal> {
-        let before = self.materialize()?;
+        let local = match &command {
+            TextCommand::Editor(editor) => local_replacement(editor, &self.block_at),
+            TextCommand::CommitDecisionBatch(_) | TextCommand::SelectiveUndo { .. } => None,
+        };
         let (head, action) = match command {
-            TextCommand::Editor(editor) => action::apply_editor(&self.head, &editor)?,
+            TextCommand::Editor(editor) => {
+                action::apply_editor_indexed(&self.head, &editor, &self.block_at)?
+            }
             TextCommand::CommitDecisionBatch(batch) => decision::apply(&self.head, &batch)?,
             TextCommand::SelectiveUndo { action } => undo::selective(self, action)?,
         };
-        let after = materialize::blocks(&self.source, &self.original_ids, head.blocks())?;
+        let byte_patch = if let Some(index) = local {
+            self.replace_materialized_block(index, &head)?
+        } else {
+            let after = materialize::blocks(&self.source, &self.original_ids, head.blocks())?;
+            let patch = BytePatch::between(&self.materialized, &after);
+            self.offsets = BlockOffsets::from_spans(SourceLayout::read(&after).blocks().to_vec());
+            self.materialized = ByteSequence::from_vec(after);
+            self.block_at = head
+                .blocks
+                .iter()
+                .enumerate()
+                .map(|(index, block)| (block.id, index))
+                .collect();
+            patch
+        };
         let transition = TextTransition {
-            byte_patch: BytePatch::between(&before, &after),
+            byte_patch,
             action: action.clone(),
             head: head.clone(),
         };
@@ -582,5 +643,27 @@ impl Manuscript {
         }
         self.actions.push(action);
         Ok(transition)
+    }
+
+    fn replace_materialized_block(
+        &mut self,
+        index: usize,
+        head: &TextHead,
+    ) -> Result<BytePatch, TextRefusal> {
+        let span = self
+            .offsets
+            .span(index)
+            .ok_or(TextRefusal::SourceDrift(SourceDrift))?;
+        let replacement = head.blocks[index].text.as_bytes();
+        let patch = BytePatch::at(&self.materialized, span.start, span.end, replacement);
+        let materialized = self
+            .materialized
+            .replace(span.start..span.end, replacement)
+            .ok_or(TextRefusal::SourceDrift(SourceDrift))?;
+        self.offsets
+            .replace(index, replacement.len())
+            .ok_or(TextRefusal::SourceDrift(SourceDrift))?;
+        self.materialized = materialized;
+        Ok(patch)
     }
 }

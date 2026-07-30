@@ -1993,14 +1993,20 @@ fn find_scope_blocks(manuscript: &Manuscript, before: &str) -> Option<Vec<Id>> {
     let blocks = manuscript.head().blocks();
     for start in 0..blocks.len() {
         let mut text = String::new();
-        for block in &blocks[start..] {
+        for (offset, block) in blocks.iter().skip(start).enumerate() {
             if !text.is_empty() {
                 text.push_str("\n\n");
             }
             text.push_str(block.text());
             if text == before {
-                let end = start + text.matches("\n\n").count();
-                return Some(blocks[start..=end].iter().map(|block| block.id()).collect());
+                return Some(
+                    blocks
+                        .iter()
+                        .skip(start)
+                        .take(offset + 1)
+                        .map(|block| block.id())
+                        .collect(),
+                );
             }
             if text.len() > before.len() {
                 break;

@@ -34,8 +34,8 @@ pub use kara::{
     KaraSession, KaraState, KaraTransition, QuietEvent, ReturnPoint,
 };
 pub use manuscript::{
-    Block, BytePatch, ChangeClass, DecisionBatch, Edit, EditKind, EditScope, EditorAction,
-    EditorChange, Insertion, Lineage, Manuscript, Proposal, Replacement, ReviewSlice,
+    Block, BlockSequence, BytePatch, ChangeClass, DecisionBatch, Edit, EditKind, EditScope,
+    EditorAction, EditorChange, Insertion, Lineage, Manuscript, Proposal, Replacement, ReviewSlice,
     ReviewSliceId, SliceKind, SourceSnapshot, TextAction, TextCommand, TextHead, TextRefusal,
     TextTransition, Verdict, VerdictKind, classify_change,
 };
