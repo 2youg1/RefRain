@@ -24,6 +24,7 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["verify:logo", ["bun", "scripts/verify-logo.ts"]],
   ["verify:window-chrome", ["bun", "scripts/verify-window-chrome.ts"]],
   ["verify:workbench-architecture", ["bun", "scripts/verify-workbench-architecture.ts"]],
+  ["verify:component-depth", ["bun", "scripts/verify-component-depth.ts"]],
   ["verify:typography", ["bun", "scripts/verify-typography.ts"]],
   ["verify:fonts", ["bun", "scripts/verify-fonts.ts"]],
   ["verify:universal-menu", ["bun", "scripts/verify-universal-menu.ts"]],
@@ -37,6 +38,8 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["verify:roundtrip", ["bun", "scripts/verify-roundtrip.ts"]],
   ["verify:manuscript-scale", ["bun", "scripts/verify-manuscript-scale.ts"]],
   ["verify:editor-performance", ["bun", "apps/desktop/e2e/editor-performance.ts"]],
+  ["verify:editor-context", ["bun", "apps/desktop/e2e/editor-context.ts"]],
+  ["verify:e2e-coverage", ["bun", "scripts/verify-e2e-coverage.ts"]],
   [
     "verify:project-performance",
     [

@@ -12,9 +12,8 @@
     "dev": "cd apps/desktop && bun run dev",
     "build:web": "cd apps/desktop && bun run build:web",
     "generate": "cd apps/desktop/src-tauri && cargo test --features generate-bindings generate_bindings -- --nocapture",
-    "check": "bun run check:ts && bun run check:vue",
+    "check": "bun run check:ts",
     "check:ts": "tsc --build --force && tsc --noEmit -p apps/desktop/tsconfig.app.json",
-    "check:vue": "bun scripts/check-vue.ts",
     "fmt": "biome check --write .",
     "fmt:check": "biome check .",
     "test": "bun test --path-ignore-patterns='**/legacy/**'",
@@ -25,6 +24,7 @@
     "verify:logo": "bun scripts/verify-logo.ts",
     "verify:window-chrome": "bun scripts/verify-window-chrome.ts",
     "verify:workbench-architecture": "bun scripts/verify-workbench-architecture.ts",
+    "verify:component-depth": "bun scripts/verify-component-depth.ts",
     "verify:typography": "bun scripts/verify-typography.ts",
     "verify:fonts": "bun scripts/verify-fonts.ts",
     "verify:universal-menu": "bun scripts/verify-universal-menu.ts",
@@ -37,6 +37,8 @@
     "verify:roundtrip": "bun scripts/verify-roundtrip.ts",
     "verify:manuscript-scale": "bun scripts/verify-manuscript-scale.ts",
     "verify:editor-performance": "bun apps/desktop/e2e/editor-performance.ts",
+    "verify:editor-context": "bun apps/desktop/e2e/editor-context.ts",
+    "verify:e2e-coverage": "bun scripts/verify-e2e-coverage.ts",
     "verify:project-performance": "cargo test --release -p refrain-store --test project_performance -- --nocapture",
     "verify:large-input-performance": "cargo test --release -p refrain-store --test large_input_performance -- --nocapture",
     "verify:digest-authority": "bun scripts/verify-digest-authority.ts",
@@ -56,7 +58,6 @@
     "@biomejs/biome": "2.5.5",
     "@types/bun": "1.3.14",
     "playwright": "1.62.0",
-    "typescript": "7.0.2",
-    "vue-tsc": "3.3.8"
+    "typescript": "7.0.2"
   }
 }

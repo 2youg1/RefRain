@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { chromium } from "playwright";
 
 const sourcePath = "apps/desktop/src/assets/mark.svg";
-const componentPath = "apps/desktop/src/shell/LogoMark.vue";
+const componentPath = "apps/desktop/src/ui/LogoMark.tsx";
 const outputDir = "apps/desktop/src-tauri/icons";
 const outputPng = join(outputDir, "icon.png");
 const mark = readFileSync(sourcePath, "utf8");
@@ -15,7 +15,7 @@ const paths = [...mark.matchAll(/\sd="([^"]+)"/g)].map((match) => match[1]);
 
 for (const path of paths) {
   if (path === undefined || !component.includes(`d="${path}"`)) {
-    throw new Error("LogoMark.vue does not match the SVG geometry");
+    throw new Error("LogoMark.tsx does not match the SVG geometry");
   }
 }
 

@@ -23,7 +23,7 @@ const schema = await scan(["crates/refrain-store/src/*.rs"], /preferences/i, {
 });
 
 const renderer = await scan(
-  ["apps/desktop/src/**/*.ts", "apps/desktop/src/**/*.vue"],
+  ["apps/desktop/src/**/*.ts", "apps/desktop/src/**/*.tsx"],
   /localStorage/,
   {
     ignoreLine: (line) =>

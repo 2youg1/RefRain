@@ -137,6 +137,43 @@ priority = ["japanese", "chinese", "latin"]
 }
 
 #[test]
+fn unsafe_font_names_and_duplicate_priority_are_refused_without_rewriting_config() {
+    let dir = scratch();
+    let (store, _) = ConfigStore::load(&dir).unwrap();
+    let path = dir.join("config.toml");
+    let original = fs::read(&path).unwrap();
+
+    for family in [
+        "",
+        "Bad;Family",
+        "Bad\"Family",
+        "Bad\\Family",
+        "Bad\nFamily",
+    ] {
+        let mut typography = TypographyConfig::default();
+        typography.fonts.latin = family.to_string();
+        let error = store
+            .apply(ConfigChange::SetTypography(typography))
+            .unwrap_err();
+        assert!(error.to_string().contains("safe family name"));
+        assert_eq!(fs::read(&path).unwrap(), original);
+    }
+
+    let mut typography = TypographyConfig::default();
+    typography.fonts.priority = [
+        refrain_store::config::FontSlot::Latin,
+        refrain_store::config::FontSlot::Latin,
+        refrain_store::config::FontSlot::Japanese,
+    ];
+    let error = store
+        .apply(ConfigChange::SetTypography(typography))
+        .unwrap_err();
+    assert!(error.to_string().contains("each slot exactly once"));
+    assert_eq!(fs::read(&path).unwrap(), original);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn complete_typography_round_trips_as_one_typed_value() {
     let dir = scratch();
     let (store, _) = ConfigStore::load(&dir).unwrap();

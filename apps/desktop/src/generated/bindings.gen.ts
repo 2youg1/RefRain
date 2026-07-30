@@ -45,6 +45,9 @@ export const commands = {
 	 *  replays on the next open.
 	 */
 	applyEditorAction: (rootId: string, path: string, action: EditorActionDto) => typedError<TextTransitionDto, RefrainError>(__TAURI_INVOKE("apply_editor_action", { rootId, path, action })),
+	listAnnotations: (rootId: string, document: string) => typedError<AnnotationDto[], RefrainError>(__TAURI_INVOKE("list_annotations", { rootId, document })),
+	upsertAnnotation: (request: UpsertAnnotationRequest) => typedError<AnnotationDto, RefrainError>(__TAURI_INVOKE("upsert_annotation", { request })),
+	deleteAnnotation: (rootId: string, id: string) => typedError<boolean, RefrainError>(__TAURI_INVOKE("delete_annotation", { rootId, id })),
 	persistRevision: (rootId: string, path: string, expected: {
 	modifiedMs: string,
 	bytes: string,
@@ -291,6 +294,24 @@ export type AgentReadingDto_Serialize = {
 	currentHead: string | null,
 	stale: boolean,
 };
+
+export type AnnotationAnchorState = "anchored" | "drifted";
+
+export type AnnotationDto = {
+	id: string,
+	document: string,
+	blockId: string,
+	start: number,
+	end: number,
+	quote: string,
+	kind: AnnotationKind,
+	body: string | null,
+	createdAt: string,
+	updatedAt: string,
+	anchorState: AnnotationAnchorState,
+};
+
+export type AnnotationKind = "highlight" | "comment";
 
 /**
  *  What the author sees (SPEC 9.8). Values extend the same schema; nothing
@@ -982,6 +1003,18 @@ export type TypographyPreset = {
 	id: Id,
 	name: string,
 	typography: TypographyConfig,
+};
+
+export type UpsertAnnotationRequest = {
+	rootId: string,
+	id: string | null,
+	document: string,
+	blockId: string,
+	start: number,
+	end: number,
+	quote: string,
+	kind: AnnotationKind,
+	body: string | null,
 };
 
 /**

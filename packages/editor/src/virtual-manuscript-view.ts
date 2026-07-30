@@ -1,6 +1,15 @@
 import { BlockHeightIndex } from "./block-height-index";
-import type { Block, EditorChange } from "./model";
+import { applyInlineMark } from "./inline-mark";
+import type {
+  Block,
+  EditorAnnotationProjection,
+  EditorChange,
+  EditorContext,
+  EditorFormat,
+  PunctuationFinding,
+} from "./model";
 import { applyLocally, projectionIndex } from "./projection";
+import { applyPunctuationFinding, findPunctuation } from "./punctuation";
 
 const BLOCK_TAG = "p";
 const VIRTUALIZE_AFTER = 400;
@@ -21,6 +30,13 @@ interface FrameHandles {
   render: number | null;
   measurement: number | null;
   layout: number | null;
+}
+
+interface ContextSelection {
+  readonly blockId: string;
+  readonly start: number;
+  readonly end: number;
+  readonly sourceText: string;
 }
 
 function caretWithin(block: HTMLElement): number | null {
@@ -62,6 +78,47 @@ function placeCaret(block: HTMLElement, offset: number): void {
   selection.addRange(range);
 }
 
+function selectionWithin(block: HTMLElement): {
+  readonly start: number;
+  readonly end: number;
+  readonly anchor: EditorContext["anchor"];
+} | null {
+  const selection = block.ownerDocument.getSelection();
+  if (selection === null || selection.rangeCount === 0 || selection.isCollapsed) return null;
+  const range = selection.getRangeAt(0);
+  if (!block.contains(range.startContainer) || !block.contains(range.endContainer)) return null;
+  const beforeStart = range.cloneRange();
+  beforeStart.selectNodeContents(block);
+  beforeStart.setEnd(range.startContainer, range.startOffset);
+  const beforeEnd = range.cloneRange();
+  beforeEnd.selectNodeContents(block);
+  beforeEnd.setEnd(range.endContainer, range.endOffset);
+  const start = beforeStart.toString().length;
+  const end = beforeEnd.toString().length;
+  if (start >= end) return null;
+  const rectangle = range.getBoundingClientRect();
+  return {
+    start,
+    end,
+    anchor: {
+      left: rectangle.left,
+      top: rectangle.top,
+      right: rectangle.right,
+      bottom: rectangle.bottom,
+    },
+  };
+}
+
+function anchorOf(element: HTMLElement): EditorContext["anchor"] {
+  const rectangle = element.getBoundingClientRect();
+  return {
+    left: rectangle.left,
+    top: rectangle.top,
+    right: rectangle.right,
+    bottom: rectangle.bottom,
+  };
+}
+
 /**
  * Own the complete browser projection of a manuscript.
  *
@@ -79,8 +136,12 @@ export class VirtualManuscriptView {
   readonly #measuredHeights = new Map<string, number>();
   readonly #frames: FrameHandles = { render: null, measurement: null, layout: null };
 
+  #annotations: readonly EditorAnnotationProjection[] = [];
   #blocks: Block[];
   #heightIndex: BlockHeightIndex;
+  #contextBlock: { readonly blockId: string; readonly sourceText: string } | null = null;
+  #settledWaiters: (() => void)[] = [];
+  #contextSelection: ContextSelection | null = null;
   #interaction: InteractionState = { kind: "idle" };
   #bottomPinned = false;
   #destroyed = false;
@@ -133,6 +194,8 @@ export class VirtualManuscriptView {
   }
 
   replace(blocks: readonly Block[]): void {
+    this.#contextBlock = null;
+    this.#contextSelection = null;
     const previousBlocks = this.#blocks;
     const previousPositions = projectionIndex(previousBlocks);
     for (const block of blocks) {
@@ -178,8 +241,132 @@ export class VirtualManuscriptView {
     return offset === null ? null : { blockId: id, offset };
   }
 
+  context(target: EventTarget | null): EditorContext | null {
+    const paragraph = this.#paragraphFrom(target);
+    if (paragraph === null) return null;
+    const blockId = paragraph.dataset.blockId;
+    if (blockId === undefined) return null;
+    const block = this.#known(blockId);
+    if (block === undefined) return null;
+    this.#contextBlock = { blockId, sourceText: block.text };
+    this.#contextSelection = null;
+    const canDeleteEmpty = this.#blocks.length > 1 && block.text.trim() === "";
+    const punctuation = findPunctuation(blockId, block.text);
+    if (this.#interaction.kind === "composing") {
+      return {
+        blockId,
+        canFormat: false,
+        canDeleteEmpty: false,
+        selection: null,
+        punctuation: [],
+        anchor: anchorOf(paragraph),
+      };
+    }
+    const selected = selectionWithin(paragraph);
+    if (selected === null || selected.end > block.text.length) {
+      return {
+        blockId,
+        canFormat: false,
+        canDeleteEmpty,
+        selection: null,
+        punctuation,
+        anchor: anchorOf(paragraph),
+      };
+    }
+    this.#contextSelection = {
+      blockId,
+      start: selected.start,
+      end: selected.end,
+      sourceText: block.text,
+    };
+    return {
+      blockId,
+      canFormat: true,
+      canDeleteEmpty,
+      selection: {
+        start: selected.start,
+        end: selected.end,
+        quote: block.text.slice(selected.start, selected.end),
+      },
+      punctuation,
+      anchor: selected.anchor,
+    };
+  }
+
+  formatSelection(kind: EditorFormat): boolean {
+    const selection = this.#contextSelection;
+    if (selection === null || this.#interaction.kind === "composing") return false;
+    const block = this.#known(selection.blockId);
+    if (block === undefined || block.text !== selection.sourceText) return false;
+    const edit = applyInlineMark(block.text, selection.start, selection.end, kind);
+    if (edit === null) return false;
+    this.#contextBlock = null;
+    this.#contextSelection = null;
+    this.#submit([{ kind: "replace", blocks: [block.id], text: edit.text }]);
+    const paragraph = this.#byId.get(block.id);
+    if (paragraph !== undefined) {
+      paragraph.textContent = edit.text;
+      paragraph.focus({ preventScroll: true });
+      placeCaret(paragraph, edit.end);
+    }
+    return true;
+  }
+
+  deleteEmptyBlock(): boolean {
+    const captured = this.#contextBlock;
+    if (captured === null || this.#interaction.kind === "composing" || this.#blocks.length <= 1) {
+      return false;
+    }
+    const block = this.#known(captured.blockId);
+    if (block === undefined || block.text !== captured.sourceText || block.text.trim() !== "") {
+      return false;
+    }
+    this.#contextBlock = null;
+    this.#contextSelection = null;
+    this.#submit([{ kind: "replace", blocks: [block.id], text: null }]);
+    return true;
+  }
+
+  applyPunctuation(finding: PunctuationFinding): boolean {
+    const captured = this.#contextBlock;
+    if (
+      captured === null ||
+      this.#interaction.kind === "composing" ||
+      captured.blockId !== finding.blockId
+    ) {
+      return false;
+    }
+    const block = this.#known(finding.blockId);
+    if (block === undefined || block.text !== captured.sourceText) return false;
+    let text: string;
+    try {
+      text = applyPunctuationFinding(block.text, finding);
+    } catch {
+      return false;
+    }
+    this.#contextBlock = { blockId: block.id, sourceText: text };
+    this.#contextSelection = null;
+    this.#submit([{ kind: "replace", blocks: [block.id], text }]);
+    const paragraph = this.#byId.get(block.id);
+    if (paragraph !== undefined) paragraph.textContent = text;
+    return true;
+  }
+
+  setAnnotations(annotations: readonly EditorAnnotationProjection[]): void {
+    this.#annotations = [...annotations];
+    this.#projectAnnotations();
+  }
+
   isComposing(): boolean {
     return this.#interaction.kind === "composing";
+  }
+
+  /** Resolve now when idle, or on the next `compositionend`. No timers. */
+  whenSettled(): Promise<void> {
+    if (this.#interaction.kind !== "composing") return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      this.#settledWaiters.push(resolve);
+    });
   }
 
   destroy(): void {
@@ -197,9 +384,16 @@ export class VirtualManuscriptView {
     for (const frame of Object.values(this.#frames)) {
       if (frame !== null) this.#view.cancelAnimationFrame(frame);
     }
+    this.#clearAnnotations();
+    // Never leave a save awaiting a composition that can no longer end.
+    const waiting = this.#settledWaiters;
+    this.#settledWaiters = [];
+    for (const resolve of waiting) resolve();
     this.#element.textContent = "";
     this.#byId.clear();
     this.#measuredHeights.clear();
+    this.#contextBlock = null;
+    this.#contextSelection = null;
   }
 
   #paragraphFor(block: Block): HTMLElement {
@@ -230,11 +424,68 @@ export class VirtualManuscriptView {
     return index === -1 ? undefined : this.#blocks[index];
   }
 
+  #clearAnnotations(): void {
+    const css = (this.#view as unknown as { CSS?: unknown }).CSS as
+      | { highlights?: { delete(name: string): void } }
+      | undefined;
+    css?.highlights?.delete("refrain-highlight");
+    css?.highlights?.delete("refrain-comment");
+    for (const paragraph of this.#byId.values()) delete paragraph.dataset.annotation;
+  }
+
+  #projectAnnotations(): void {
+    this.#clearAnnotations();
+    const highlightRanges: Range[] = [];
+    const commentRanges: Range[] = [];
+    for (const annotation of this.#annotations) {
+      if (annotation.anchorState !== "anchored") continue;
+      const paragraph = this.#byId.get(annotation.blockId);
+      const text = paragraph?.firstChild;
+      if (paragraph === undefined || text === null || text === undefined) continue;
+      const length = text.textContent?.length ?? 0;
+      if (annotation.start >= annotation.end || annotation.end > length) continue;
+      const range = this.#element.ownerDocument.createRange();
+      range.setStart(text, annotation.start);
+      range.setEnd(text, annotation.end);
+      (annotation.kind === "highlight" ? highlightRanges : commentRanges).push(range);
+      paragraph.dataset.annotation = annotation.kind;
+    }
+    const HighlightConstructor = (
+      this.#view as unknown as { Highlight?: new (...ranges: Range[]) => unknown }
+    ).Highlight;
+    const css = (this.#view as unknown as { CSS?: unknown }).CSS as
+      | { highlights?: { set(name: string, highlight: unknown): void } }
+      | undefined;
+    if (HighlightConstructor === undefined || css?.highlights === undefined) return;
+    if (highlightRanges.length > 0) {
+      css.highlights.set("refrain-highlight", new HighlightConstructor(...highlightRanges));
+    }
+    if (commentRanges.length > 0) {
+      css.highlights.set("refrain-comment", new HighlightConstructor(...commentRanges));
+    }
+  }
+
+  /**
+   * Is the viewport resting at the end of the manuscript?
+   *
+   * The deadband must absorb estimation error, not just sub-pixel rounding.
+   * Unmeasured blocks contribute an estimated height, so the browser clamps a
+   * scroll-to-end against an approximate `scrollHeight`; the very next
+   * measurement pass corrects that total and leaves the viewport thousands of
+   * pixels short. A 2px deadband reads that as "the author scrolled to the
+   * middle" and abandons the end of the document — at 100,000 blocks the
+   * observed shortfall was 4,138px.
+   *
+   * One estimated window is the largest correction a single measurement pass
+   * can introduce, so it is the honest tolerance: anything closer to the end
+   * than that is the author asking for the end.
+   */
   #isBottomAnchored(): boolean {
-    return (
-      this.#scrollHost.scrollHeight - this.#scrollHost.clientHeight - this.#scrollHost.scrollTop <=
-      2
-    );
+    const residual =
+      this.#scrollHost.scrollHeight - this.#scrollHost.clientHeight - this.#scrollHost.scrollTop;
+    if (residual <= 2) return true;
+    if (this.#blocks.length <= VIRTUALIZE_AFTER) return false;
+    return residual <= this.#heightIndex.estimate * WINDOW_BLOCKS;
   }
 
   #readOuterHeight(paragraph: HTMLElement): number {
@@ -383,6 +634,7 @@ export class VirtualManuscriptView {
       appendSpacer(cursor, this.#blocks.length);
     }
     this.#element.replaceChildren(fragment);
+    this.#projectAnnotations();
     if (pinnedId !== null && activeOffset !== null) {
       const restored = this.#byId.get(pinnedId);
       if (restored !== undefined) {
@@ -550,6 +802,8 @@ export class VirtualManuscriptView {
 
   readonly #onBeforeInput = (event: InputEvent): void => {
     if (this.#interaction.kind === "composing") return;
+    this.#contextBlock = null;
+    this.#contextSelection = null;
     const paragraph = this.#paragraphFrom(event.target);
     if (paragraph === null) return;
     const id = paragraph.dataset.blockId ?? "";
@@ -592,11 +846,15 @@ export class VirtualManuscriptView {
 
   readonly #onInput = (event: Event): void => {
     if (this.#interaction.kind === "composing") return;
+    this.#contextBlock = null;
+    this.#contextSelection = null;
     const paragraph = this.#paragraphFrom(event.target);
     if (paragraph !== null) this.#settleBlock(paragraph.dataset.blockId ?? "");
   };
 
   readonly #onCompositionStart = (event: CompositionEvent): void => {
+    this.#contextBlock = null;
+    this.#contextSelection = null;
     const paragraph = this.#paragraphFrom(event.target);
     this.#interaction = {
       kind: "composing",
@@ -623,6 +881,9 @@ export class VirtualManuscriptView {
     if (completed.kind === "composing" && completed.refreshLayout) {
       this.#scheduleLayoutRefresh(true);
     }
+    const waiting = this.#settledWaiters;
+    this.#settledWaiters = [];
+    for (const resolve of waiting) resolve();
   };
 
   readonly #onScroll = (): void => {

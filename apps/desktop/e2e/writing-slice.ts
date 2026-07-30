@@ -12,7 +12,7 @@
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -25,6 +25,8 @@ if (!exe) {
 const DRIVER_PORT = Number(process.env.REFRAIN_E2E_PORT ?? 4444);
 const fixture = mkdtempSync(join(tmpdir(), "refrain-e2e-"));
 const dataDir = mkdtempSync(join(tmpdir(), "refrain-e2e-data-"));
+const evidenceDir = join(process.cwd(), "target", "e2e-evidence", "writing");
+mkdirSync(evidenceDir, { recursive: true });
 const chapterPath = join(fixture, "第一章.md");
 writeFileSync(chapterPath, "原来的第一句。\n\n原来的第二句。\n");
 
@@ -42,11 +44,9 @@ const check = (name: string, condition: boolean, detail?: unknown): void => {
 const base = `http://127.0.0.1:${DRIVER_PORT}`;
 
 async function call(method: string, path: string, body?: unknown): Promise<unknown> {
-  const response = await fetch(`${base}${path}`, {
-    method,
-    headers: { "content-type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  const init: RequestInit = { method, headers: { "content-type": "application/json" } };
+  if (body !== undefined) init.body = JSON.stringify(body);
+  const response = await fetch(`${base}${path}`, init);
   const text = await response.text();
   let parsed: { value?: unknown } = {};
   try {
@@ -126,6 +126,25 @@ const asElement = (el: El): Record<string, string> => ({ [ELEMENT_KEY]: el });
 
 const visible = async (el: El): Promise<boolean> =>
   ((await call("GET", `/session/${session}/element/${el}/displayed`)) as boolean) ?? false;
+
+const screenshot = async (name: string): Promise<void> => {
+  const encoded = (await call("GET", `/session/${session}/screenshot`)) as string;
+  writeFileSync(join(evidenceDir, `${name}.png`), Buffer.from(encoded, "base64"));
+};
+
+const pressKey = (key: string): Promise<unknown> =>
+  call("POST", `/session/${session}/actions`, {
+    actions: [
+      {
+        type: "key",
+        id: "single-key",
+        actions: [
+          { type: "keyDown", value: key },
+          { type: "keyUp", value: key },
+        ],
+      },
+    ],
+  });
 
 async function waitFor(
   description: string,
@@ -216,6 +235,106 @@ const run = async (): Promise<void> => {
   });
   session = ((await call("POST", "/session", caps)) as { sessionId?: string }).sessionId ?? "";
   check("the real window opens under WebDriver", session !== "", session);
+  await screenshot("01-welcome");
+
+  // WindowChrome is verified against the native Windows window, not only by
+  // source tokens. Three distinct rects prove repeated resize; the custom
+  // controls must change native state and keep their accessible names in sync.
+  type WindowRect = { x: number; y: number; width: number; height: number };
+  const rect = (): Promise<WindowRect> =>
+    call("GET", `/session/${session}/window/rect`) as Promise<WindowRect>;
+  for (const [width, height] of [
+    [1000, 700],
+    [1180, 760],
+    [900, 600],
+  ] as const) {
+    await call("POST", `/session/${session}/window/rect`, { width, height });
+    const measured = await rect();
+    check(
+      `the real window resizes to ${width}×${height}`,
+      Math.abs(measured.width - width) <= 2 && Math.abs(measured.height - height) <= 2,
+      JSON.stringify(measured),
+    );
+  }
+  const restoredRect = await rect();
+  await execute(
+    `document.body.tabIndex = -1; document.body.focus(); return document.activeElement === document.body`,
+  );
+  await pressKey("");
+  const firstFocus = String(
+    await execute(`return document.activeElement?.getAttribute("aria-label") ?? ""`),
+  );
+  check(
+    "keyboard Tab reaches the first custom window control",
+    firstFocus === "最小化",
+    firstFocus,
+  );
+  await click(await element('button[aria-label="最大化窗口"]'));
+  await waitFor(
+    "the maximize control to become restore",
+    async () => (await elementOrNull('button[aria-label="还原窗口"]')) !== null,
+  );
+  const maximizedRect = await rect();
+  check(
+    "the custom maximize control changes native window bounds",
+    maximizedRect.width >= restoredRect.width && maximizedRect.height >= restoredRect.height,
+    `${JSON.stringify(restoredRect)} → ${JSON.stringify(maximizedRect)}`,
+  );
+  await click(await element('button[aria-label="还原窗口"]'));
+  await waitFor(
+    "the restore control to become maximize",
+    async () => (await elementOrNull('button[aria-label="最大化窗口"]')) !== null,
+  );
+  await pressKey("");
+  await waitFor(
+    "F11 to enter fullscreen",
+    async () => (await elementOrNull('button[aria-label="退出全屏"]')) !== null,
+  );
+  await pressKey("");
+  await waitFor(
+    "F11 to exit fullscreen",
+    async () => (await elementOrNull('button[aria-label="进入全屏"]')) !== null,
+  );
+  check("F11 enters and exits the real fullscreen window", true);
+
+  await click(await element('button[aria-label="最小化"]'));
+  await waitFor(
+    "the minimized window to become hidden",
+    async () => String(await execute("return document.visibilityState")) === "hidden",
+  );
+  await call("POST", `/session/${session}/window/rect`, restoredRect);
+  await waitFor(
+    "the minimized window to restore",
+    async () => String(await execute("return document.visibilityState")) === "visible",
+  );
+  check("the custom minimize control minimizes the real window", true);
+
+  const display = (await execute(`return __TAURI_INTERNALS__.invoke("display_profile")`, [])) as {
+    refreshHz: number;
+    frameBudgetMs: number;
+    scaleFactor: number;
+    hairlineCssPx: number;
+  };
+  check(
+    "the real Windows display reports a coherent frame budget",
+    display.refreshHz > 1 && Math.abs(display.frameBudgetMs - 1000 / display.refreshHz) < 0.02,
+    JSON.stringify(display),
+  );
+  check(
+    "the real display hairline is one physical pixel",
+    Math.abs(display.hairlineCssPx * display.scaleFactor - 1) < 0.02,
+    JSON.stringify(display),
+  );
+  await waitFor("the display profile to reach CSS", async () =>
+    Boolean(
+      await execute(
+        `const root = document.documentElement;
+         return parseFloat(root.style.getPropertyValue("--display-refresh-hz")) > 1 &&
+           parseFloat(root.style.getPropertyValue("--hairline")) > 0`,
+      ),
+    ),
+  );
+  check("the measured DisplayProfile reaches the renderer once per frame", true);
 
   await execute(
     `window["refrain.e2e.pick"] = ${JSON.stringify(fixture)}; window["refrain.e2e.pin"] = true; "planted"`,
@@ -226,6 +345,19 @@ const run = async (): Promise<void> => {
   // the choice projects immediately (D12). Appearance lives in the Settings
   // surface, off the rail (C12.6).
   await clickButton("设置");
+  await screenshot("02-settings");
+  const systemFontCount = Number(
+    await execute(
+      `return __TAURI_INTERNALS__.invoke("list_fonts").then((fonts) =>
+        fonts.filter((font) => font.bundledSlot === null).length
+      )`,
+    ),
+  );
+  check(
+    "the real Windows font scan reaches Settings through IPC",
+    systemFontCount > 0,
+    systemFontCount,
+  );
   const paperOf = async (): Promise<string> =>
     String(
       await execute(
@@ -268,6 +400,28 @@ const run = async (): Promise<void> => {
     Boolean(await execute(`return document.documentElement.dataset.paper === "hairline"`, [])),
   );
   check("the sheet returns to hairline", true);
+
+  await clickButton("撤销本次调整");
+  await waitFor("the Settings-entry snapshot to return", async () =>
+    Boolean(
+      await execute(
+        `return document.documentElement.dataset.theme === "tou" && document.documentElement.dataset.paper === "hairline"`,
+      ),
+    ),
+  );
+  check("Settings can undo every adjustment made since entry", true);
+
+  await clickButton("墨");
+  await clickButton("无");
+  await clickButton("恢复本页默认");
+  await waitFor("the appearance defaults to return", async () =>
+    Boolean(
+      await execute(
+        `return document.documentElement.dataset.theme === "tou" && document.documentElement.dataset.paper === "hairline"`,
+      ),
+    ),
+  );
+  check("Settings resets only the current appearance page", true);
 
   // Font priority (SPEC 9.8): the same sentinel 直骨令 rendered under both
   // orders must differ, and the real editor stack must render it like the
@@ -431,6 +585,13 @@ const run = async (): Promise<void> => {
   );
   check("an outward-reaching SVG is refused", malicious.startsWith("refused:"), malicious);
 
+  await pressKey("");
+  await waitFor(
+    "Settings to close on Escape",
+    async () => (await elementOrNull(".settings")) === null,
+  );
+  check("Escape closes Settings and returns to the workbench", true);
+
   await clickButton("第一章.md");
   await waitFor("blocks to render", async () => (await elements("p[data-block-id]")).length === 2);
   const blocks = await elements("p[data-block-id]");
@@ -460,6 +621,57 @@ const run = async (): Promise<void> => {
   await chord("");
   await waitFor("KARA off again", async () => (await elementOrNull(".kara-chrome")) === null);
 
+  const selectAndOpenContext = async (block: El, start: number, end: number): Promise<void> => {
+    await execute(
+      `const block = arguments[0];
+       const text = block.firstChild;
+       const range = document.createRange();
+       range.setStart(text, ${start});
+       range.setEnd(text, ${end});
+       const selection = window.getSelection();
+       selection.removeAllRanges();
+       selection.addRange(range);
+       block.dispatchEvent(new MouseEvent("contextmenu", {
+         bubbles: true, clientX: 360, clientY: 240, button: 2,
+       }));`,
+      [asElement(block)],
+    );
+    await waitFor("the editor context menu", async () =>
+      Boolean(await execute(`return document.querySelector(".context-menu") !== null`)),
+    );
+  };
+
+  const firstBlock = blocks[0];
+  const secondBlock = blocks[1];
+  if (firstBlock === undefined || secondBlock === undefined)
+    throw new Error("annotation blocks gone");
+  await selectAndOpenContext(firstBlock, 0, 3);
+  await clickButton("建立高亮");
+  await execute(`window.prompt = () => "核对第二句的时间关系"`, []);
+  await selectAndOpenContext(secondBlock, 0, 5);
+  await clickButton("添加批注");
+  await clickButton("批注");
+  await waitFor("the persisted annotation panel", async () =>
+    Boolean(await execute(`return document.querySelectorAll(".annotations li").length === 2`)),
+  );
+  check("a highlight and a comment reach the annotation panel", true);
+  await screenshot("03-annotations");
+  const annotationCheckbox = await element(".annotations input[type=checkbox]");
+  await click(annotationCheckbox);
+  await clickButton("将所选批注转为派发工单");
+  await waitFor("the annotation dispatch ticket", async () =>
+    Boolean(await execute(`return document.querySelector(".dispatch-prompt") !== null`)),
+  );
+  const annotationPrompt = String(
+    await execute(`return document.querySelector(".dispatch-prompt")?.value ?? ""`),
+  );
+  check(
+    "the annotation dispatch ticket freezes the author's instruction",
+    annotationPrompt.includes("核对第二句的时间关系") && annotationPrompt.includes("原来的第二"),
+    annotationPrompt,
+  );
+  await clickButton("收起");
+
   const editable = (await elements("p[data-block-id]"))[1];
   if (editable === undefined) throw new Error("no second block");
   await click(editable);
@@ -467,6 +679,14 @@ const run = async (): Promise<void> => {
   await sendKeys(editable, "加一句结尾。");
   await waitFor("unsaved state", async () => (await statusText()).includes("未保存"));
   check("typing marks the document unsaved", true);
+  await click(await element('button[aria-label="关闭"]'));
+  await waitFor("close protection", async () =>
+    String(await execute(`return document.querySelector(".notice")?.textContent ?? ""`)).includes(
+      "正文尚未保存",
+    ),
+  );
+  check("the custom close control refuses to destroy an unsaved window", session !== "");
+  await screenshot("03-writing-unsaved");
 
   await chord("s"); // CTRL+S
   await waitFor("saved state", async () => (await statusText()).includes("已保存"));
@@ -527,6 +747,18 @@ const run = async (): Promise<void> => {
     async () => (await elements("p[data-block-id]")).length >= 2,
   );
   const blocks2 = await elements("p[data-block-id]");
+  await waitFor("annotations to project after restart", async () =>
+    Boolean(await execute(`return document.querySelectorAll('p[data-annotation]').length === 2`)),
+  );
+  check("highlights and comments recover after restart", true);
+  await clickButton("批注");
+  await waitFor("annotation bodies after restart", async () =>
+    String(
+      await execute(`return document.querySelector('.annotations')?.textContent ?? ''`),
+    ).includes("核对第二句的时间关系"),
+  );
+  check("the author's annotation body recovers after restart", true);
+  await clickButton("返回正文");
   const reopened = await text(blocks2[1] ?? "");
   check(
     "close and reopen finds the saved text",
@@ -547,13 +779,12 @@ const run = async (): Promise<void> => {
     async () => (await elementOrNull("//h2[contains(.,'磁盘上的版本已经变了')]", true)) !== null,
   );
   check("an outside edit surfaces as a Safety conflict", true);
+  await screenshot("04-conflict");
   check(
     "the refusal kept the other edit",
     readFileSync(chapterPath, "utf8") === "别处改写的一句。\n",
   );
-  // The click on the native-dialog-mocked button goes through the same Vue
-  // path as a trusted one (synthetic here; the trusted click was already
-  // covered by the CDP harness during development).
+  // The conflict choice uses the same Solid event path as a trusted click.
   await execute(
     `const button = [...document.querySelectorAll("button")].find((b) => b.textContent.includes("用我的覆盖磁盘"));
      if (!button) { throw new Error("resolve button gone"); }

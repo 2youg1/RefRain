@@ -2,18 +2,22 @@
 
 export {};
 
-const workbench = await Bun.file("apps/desktop/src/shell/Workbench.vue").text();
-const button = await Bun.file("apps/desktop/src/shell/UniversalButton.vue").text();
-const menu = await Bun.file("apps/desktop/src/shell/UniversalMenu.vue").text();
+const workbench = await Bun.file("apps/desktop/src/shell/Workbench.tsx").text();
+const button = await Bun.file("apps/desktop/src/ui/UniversalButton.tsx").text();
+const menu =
+  (await Bun.file("apps/desktop/src/ui/UniversalMenu.tsx").text()) +
+  (await Bun.file("apps/desktop/src/styles/surfaces.css").text());
 const catalog = await Bun.file("apps/desktop/src/shell/workbench-commands.ts").text();
 const icon = await Bun.file("apps/desktop/src/shell/universal-icon.ts").text();
-const picker = await Bun.file("apps/desktop/src/shell/IconPicker.vue").text();
+const picker = await Bun.file("apps/desktop/src/ui/IconPicker.tsx").text();
 const failures: string[] = [];
 
 for (const [source, fact, failure] of [
   [workbench, "<UniversalButton", "Workbench does not mount the Universal Button"],
   [workbench, "<UniversalMenu", "Workbench does not mount the Universal Menu"],
   [workbench, 'event.key.toLocaleLowerCase() === "k"', "Ctrl+K does not open the menu"],
+  // The open shortcut lives in Workbench; the menu owns the matching close.
+  [menu, 'event.key.toLocaleLowerCase() === "k"', "Ctrl+K does not close the menu"],
   [
     workbench,
     'window.addEventListener("keydown", onKeydown)',
@@ -21,7 +25,7 @@ for (const [source, fact, failure] of [
   ],
   [workbench, "event.isComposing", "Ctrl+K can intercept IME composition"],
   [workbench, "commandReturnFocus", "closing the menu does not restore its entry focus"],
-  [workbench, '@choose="executeCommand"', "the menu bypasses Workbench action ownership"],
+  [workbench, "onChoose={executeCommand}", "the menu bypasses Workbench action ownership"],
   [button, "commands.universalIcon()", "the button does not consume the stored icon"],
   [button, "universal-hot-zone", "the button has no top-edge hot zone"],
   [button, "}, 240);", "the button does not use the 240 ms leave delay"],
@@ -29,12 +33,12 @@ for (const [source, fact, failure] of [
   [menu, "padding: 12vh 24px", "the menu does not use the declared top offset"],
   [menu, "max-height: 62vh", "the menu exceeds its declared height"],
   [menu, "button:not(:disabled)", "Tab can escape the modal command menu"],
-  [menu, "@keydown.stop", "menu shortcuts can leak into the writing surface"],
+  [menu, "event.stopPropagation()", "menu shortcuts can leak into the writing surface"],
   [catalog, "slice(0, 9)", "an empty command query can exceed nine results"],
   [catalog, "先打开一篇手稿", "unavailable document actions have no next step"],
   [icon, "export function iconDataUrl", "the icon projection has no shared owner"],
-  [picker, 'from "./universal-icon"', "Settings duplicates the icon projection"],
-  [button, 'from "./universal-icon"', "the top-edge button duplicates the icon projection"],
+  [picker, 'from "../shell/universal-icon"', "Settings duplicates the icon projection"],
+  [button, 'from "../shell/universal-icon"', "the top-edge button duplicates the icon projection"],
 ] as const) {
   if (!source.includes(fact)) failures.push(failure);
 }

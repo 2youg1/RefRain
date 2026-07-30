@@ -10,14 +10,14 @@
     "build:web": "bun x vite build"
   },
   "dependencies": {
+    "@refrain/editor": "workspace:*",
     "@tauri-apps/api": "2.11.1",
-    "vue": "3.5.40",
     "@tauri-apps/plugin-dialog": "2.7.2",
-    "@refrain/editor": "workspace:*"
+    "solid-js": "1.9.14"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.4",
-    "@vitejs/plugin-vue": "6.0.8",
-    "vite": "8.1.5"
+    "vite": "8.1.5",
+    "vite-plugin-solid": "2.11.14"
   }
 }
