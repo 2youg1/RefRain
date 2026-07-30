@@ -34,6 +34,8 @@ if (!exe) {
 const DRIVER_PORT = Number(process.env.REFRAIN_E2E_PORT ?? 4444);
 const fixture = mkdtempSync(join(tmpdir(), "refrain-dispatch-"));
 const dataDir = mkdtempSync(join(tmpdir(), "refrain-dispatch-data-"));
+const evidenceDir = join(process.cwd(), "target", "e2e-evidence", "dispatch");
+mkdirSync(evidenceDir, { recursive: true });
 const fixtureBin = mkdtempSync(join(tmpdir(), "refrain-dispatch-bin-"));
 const chapterPath = join(fixture, "长章.md");
 
@@ -60,11 +62,9 @@ const check = (name: string, condition: boolean, detail?: unknown): void => {
 const base = `http://127.0.0.1:${DRIVER_PORT}`;
 
 async function call(method: string, path: string, body?: unknown): Promise<unknown> {
-  const response = await fetch(`${base}${path}`, {
-    method,
-    headers: { "content-type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  const init: RequestInit = { method, headers: { "content-type": "application/json" } };
+  if (body !== undefined) init.body = JSON.stringify(body);
+  const response = await fetch(`${base}${path}`, init);
   const text = await response.text();
   const parsed = JSON.parse(text) as { value?: unknown };
   if (!response.ok) {
@@ -79,6 +79,11 @@ let session = "";
 
 const execute = (script: string, args: unknown[] = []): Promise<unknown> =>
   call("POST", `/session/${session}/execute/sync`, { script, args });
+
+const screenshot = async (name: string): Promise<void> => {
+  const encoded = (await call("GET", `/session/${session}/screenshot`)) as string;
+  writeFileSync(join(evidenceDir, `${name}.png`), Buffer.from(encoded, "base64"));
+};
 
 const elementOrNull = async (selector: string, xpath = false): Promise<El | null> => {
   try {
@@ -304,6 +309,7 @@ const run = async (): Promise<void> => {
   await waitFor("the dispatch surface", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch") !== null`)),
   );
+  await screenshot("01-dispatch");
   await tickBlock(2);
   await tickBlock(3);
   await setPrompt("把这两段改得更克制。");
@@ -563,68 +569,11 @@ const run = async (): Promise<void> => {
     proposalsAfter.length,
   );
 
-  // ── The harness channel: the fake kimi does a real argv round trip. ──
-  const harnesses = (await invoke("list_harnesses", {})) as { agentId: string }[];
-  check("the fake harness is detected", harnesses.length === 1, harnesses.length);
-  const kimiAgent = harnesses[0]?.agentId ?? "";
-  await clickButton("再发");
-  await waitFor("the agent dropdown", async () =>
-    Boolean(await execute(`return document.querySelector(".dispatch-agent") !== null`)),
-  );
-  await execute(
-    `const s = document.querySelector(".dispatch-agent");
-     s.value = ${JSON.stringify(kimiAgent)};
-     s.dispatchEvent(new Event("change", { bubbles: true }));`,
-    [],
-  );
-  await tickBlock(6);
-  await setPrompt("改写第六段。");
-  await clickButton("送出");
-  await waitFor("the harness manifest", async () =>
-    Boolean(await execute(`return document.querySelector(".manifest") !== null`)),
-  );
-  await clickButton("授权");
-  await waitFor("the harness run to dispatch", async () => {
-    const s = await hostState(rootId);
-    return s.runs.some((r) => r.progress === "dispatched" && r.agentId === kimiAgent);
-  });
-  state = await hostState(rootId);
-  const harnessRun = state.runs.find((r) => r.agentId === kimiAgent && r.progress === "dispatched");
-  if (harnessRun === undefined) throw new Error("no dispatched harness run");
-  // The fake settles in milliseconds; the background observer lands the file.
-  await waitFor(
-    "the harness result to land",
-    async () =>
-      existsSync(
-        join(fixture, ".refrain", harnessRun.workspace, "attempts", harnessRun.id, "result.md"),
-      ),
-    30_000,
-  );
-  await clickButton("收取");
-  await waitFor("the harness run to complete", async () => {
-    const s = await hostState(rootId);
-    return s.runs.find((r) => r.id === harnessRun.id)?.progress === "completed";
-  });
-  const proposalsFinal = (await invoke("list_proposals", { rootId, path: "长章.md" })) as {
-    after: string | null;
-  }[];
-  check(
-    "the harness artifact froze into a proposal",
-    proposalsFinal.some((p) => (p.after ?? "").includes("伪 Agent 改写")),
-    proposalsFinal.length,
-  );
-  const landed = readFileSync(
-    join(fixture, ".refrain", harnessRun.workspace, "attempts", harnessRun.id, "result.md"),
-    "utf8",
-  );
-  check("the landed result carries the agent-result", landed.includes("<agent-result"));
-
   // ── The material-draft chain (SPEC 8.7): artifact → draft rows → the only
   // Human Material Action → a Material document → ticked into the next
   // frozen request. ──
   await clickButton("再发");
-  // The harness section left the fake kimi selected; this chain hand-writes
-  // its result, so it goes through the L0 file channel.
+  // This chain hand-writes its result, so it uses the L0 file channel.
   const l0Agent = (await invoke("l0_file_channel_agent", {})) as string;
   await execute(
     `const s = document.querySelector(".dispatch-agent");
@@ -981,61 +930,71 @@ const run = async (): Promise<void> => {
   );
   await cancelRun(bareRun.id);
 
-  // The fake kimi already ran once: its next request carries the pointer
-  // line, not the whole contract (KL9's contract injection).
-  await clickButton("再发");
-  await execute(
-    `const s = document.querySelector(".dispatch-agent");
-     s.value = ${JSON.stringify(kimiAgent)};
-     s.dispatchEvent(new Event("change", { bubbles: true }));`,
-    [],
-  );
-  await setCarry("diff");
-  const pointerRun = await dispatchOnce("再改一次第二段。");
-  const pointerRequest = requestOf(pointerRun);
-  check(
-    "a harness's later round carries only the contract pointer",
-    pointerRequest.includes("按 RefRain 兼容格式输出") &&
-      !pointerRequest.includes("One <replacement> per scope"),
-  );
-  await cancelRun(pointerRun.id);
-
-  // ── Connections (C12 roster): register → probe → dispatch through →
-  // remove. The declared connection replaces PATH detection on the ticket. ──
-  const fakeKimiExe = join(fixtureBin, "kimi.exe");
-  await invoke("upsert_harness_connection", { executable: fakeKimiExe });
-  const cfg = (await invoke("read_config", {})) as {
-    config: { harness_connections: { id: string; adapter: string; executable: string }[] };
-  };
-  check(
-    "the connection landed in the one Config without any trust bit",
-    cfg.config.harness_connections.length === 1 &&
-      cfg.config.harness_connections[0]?.executable === fakeKimiExe &&
-      !("trusted" in (cfg.config.harness_connections[0] ?? {})),
-    cfg.config.harness_connections.length,
-  );
-  const conn = cfg.config.harness_connections[0];
-  if (conn === undefined) throw new Error("no registered connection");
-  const probed = (await invoke("probe_connection", { executable: fakeKimiExe })) as string;
-  check("the probe reads the fake kimi's version", probed === "9.9.9-fake", probed);
-  const registered = (await invoke("list_harnesses", {})) as { agentId: string }[];
-  check(
-    "the declared connection replaces PATH detection",
-    registered.length === 1 && registered[0]?.agentId === conn.id,
-    registered.map((harness) => harness.agentId),
-  );
-
-  // The ticket loads its agent list on mount: remount it so the connection
-  // appears, then dispatch through it. A first-round harness gets the FULL
-  // contract (KL9's contract injection).
+  // ── Connections (C12 roster): fixed candidate → guided connection →
+  // named writing partner → dispatch → disconnect. No executable path crosses
+  // the renderer boundary. ──
   await clickButton("收起");
+  await clickButton("连接");
+  await waitFor("the guided Connections surface", async () =>
+    Boolean(await execute(`return document.querySelector(".connections") !== null`)),
+  );
+  await screenshot("02-connections");
+  const connectButton = await elementOrNull(".tool-card button.primary");
+  if (connectButton === null) throw new Error("the fixed Kimi candidate was not available");
+  await click(connectButton);
+  await waitFor("the fixed Kimi candidate to connect", async () =>
+    Boolean(
+      await execute(
+        `return Array.from(document.querySelectorAll(".tool-state"))
+          .some((node) => node.dataset.status === "connected")`,
+      ),
+    ),
+  );
+  const connected = (await invoke("list_harnesses", {})) as {
+    candidateId: string;
+    connectionId: string | null;
+    status: string;
+  }[];
+  const connection = connected.find(
+    (candidate) => candidate.candidateId === "kimi-code" && candidate.status === "connected",
+  );
+  if (connection?.connectionId === null || connection?.connectionId === undefined) {
+    throw new Error("connected Kimi has no Config connection id");
+  }
+  const probed = (await invoke("probe_connection", {
+    connectionId: connection.connectionId,
+  })) as string;
+  check("the guided probe reads the fake Kimi version", probed === "9.9.9-fake", probed);
+
+  await execute(
+    `const name = document.querySelector('.partner-form input');
+     name.value = '史料校对';
+     name.dispatchEvent(new InputEvent('input', { bubbles: true, data: '史料校对' }));
+     const channel = document.querySelector('.partner-form select');
+     channel.value = ${JSON.stringify(connection.connectionId)};
+     channel.dispatchEvent(new Event('change', { bubbles: true }));`,
+  );
+  await clickButton("添加写作伙伴");
+  await waitFor("the named partner to appear", async () =>
+    Boolean(
+      await execute(
+        `return Array.from(document.querySelectorAll('.partner-card strong'))
+          .some((node) => node.textContent === '史料校对')`,
+      ),
+    ),
+  );
+  const agent = ((await invoke("list_agents", {})) as { id: string; name: string }[]).find(
+    (candidate) => candidate.name === "史料校对",
+  );
+  if (agent === undefined) throw new Error("the guided partner was not persisted");
+  await clickButton("返回手稿");
   await clickButton("派发");
   await waitFor("the remounted ticket", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch-agent") !== null`)),
   );
   await execute(
     `const s = document.querySelector(".dispatch-agent");
-     s.value = ${JSON.stringify(conn.id)};
+     s.value = ${JSON.stringify(agent.id)};
      s.dispatchEvent(new Event("change", { bubbles: true }));`,
     [],
   );
@@ -1065,15 +1024,44 @@ const run = async (): Promise<void> => {
     connProposals.length,
   );
 
-  await invoke("remove_harness_connection", { id: conn.id });
-  const cfgAfter = (await invoke("read_config", {})) as {
-    config: { harness_connections: unknown[] };
-  };
-  check(
-    "the remove leaves the Config empty",
-    cfgAfter.config.harness_connections.length === 0,
-    cfgAfter.config.harness_connections.length,
+  // The same named partner has now run once. Its next request carries the
+  // short contract pointer rather than repeating the full generated protocol.
+  await clickButton("再发");
+  await execute(
+    `const s = document.querySelector(".dispatch-agent");
+     s.value = ${JSON.stringify(agent.id)};
+     s.dispatchEvent(new Event("change", { bubbles: true }));`,
+    [],
   );
+  await setCarry("diff");
+  const pointerRun = await dispatchOnce("再改一次第二段。");
+  const pointerRequest = requestOf(pointerRun);
+  check(
+    "a harness's later round carries only the contract pointer",
+    pointerRequest.includes("按 RefRain 兼容格式输出") &&
+      !pointerRequest.includes("One <replacement> per scope"),
+  );
+  await cancelRun(pointerRun.id);
+
+  await clickButton("收起");
+  await clickButton("连接");
+  await waitFor("Connections to reopen for disconnect", async () =>
+    Boolean(await execute(`return document.querySelector(".connections") !== null`)),
+  );
+  const removePartner = await elementOrNull(".partner-card button.quiet");
+  if (removePartner === null) throw new Error("guided partner has no remove action");
+  await click(removePartner);
+  const disconnect = await elementOrNull(".tool-actions button.quiet");
+  if (disconnect === null) throw new Error("guided connection has no disconnect action");
+  await click(disconnect);
+  await waitFor("the guided disconnect to clear Config", async () => {
+    const snapshot = (await invoke("read_config", {})) as {
+      config: { harness_connections: unknown[]; agents: unknown[] };
+    };
+    return snapshot.config.harness_connections.length === 0 && snapshot.config.agents.length === 0;
+  });
+  check("the guided remove and disconnect leave Config empty", true);
+  await clickButton("返回手稿");
 
   // ── Source import (C12.3): a real HTML through the real button, a DOCX
   // through the command, a real Word document when Word is present. The
@@ -1084,7 +1072,7 @@ const run = async (): Promise<void> => {
     htmlPath,
     `<!doctype html><html><head><title>t</title></head><body><h1>调查结论</h1><p>数字不说谎。</p><script>var x=1;</script></body></html>`,
   );
-  await execute(`window.prompt = () => ${JSON.stringify(htmlPath)}; "stubbed"`, []);
+  await execute(`window["refrain.e2e.pick"] = ${JSON.stringify(htmlPath)}; "planted"`, []);
   await clickButton("导入");
   await waitFor("the imported material on the rail", async () =>
     Boolean(

@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod annotations;
 pub mod atomic;
 pub mod config;
 pub mod files;

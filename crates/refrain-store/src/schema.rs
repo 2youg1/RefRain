@@ -257,6 +257,27 @@ impl Database for ProjectDb {
                     )
                 },
             },
+            Migration {
+                version: SchemaVersion(6),
+                name: "annotations",
+                apply: |tx| {
+                    tx.execute_batch(
+                        "CREATE TABLE annotations (
+                             id         TEXT PRIMARY KEY,
+                             document   TEXT NOT NULL,
+                             block_id   TEXT NOT NULL,
+                             start      INTEGER NOT NULL CHECK (start >= 0),
+                             end        INTEGER NOT NULL CHECK (end >= start),
+                             quote      TEXT NOT NULL,
+                             kind       TEXT NOT NULL CHECK (kind IN ('highlight', 'comment')),
+                             body       TEXT,
+                             created_at INTEGER NOT NULL,
+                             updated_at INTEGER NOT NULL
+                         ) STRICT;
+                         CREATE INDEX annotations_document ON annotations(document, created_at);",
+                    )
+                },
+            },
         ]
     }
 }

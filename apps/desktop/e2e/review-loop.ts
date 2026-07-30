@@ -10,7 +10,7 @@
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -23,6 +23,8 @@ if (!exe) {
 const DRIVER_PORT = Number(process.env.REFRAIN_E2E_PORT ?? 4444);
 const fixture = mkdtempSync(join(tmpdir(), "refrain-review-"));
 const dataDir = mkdtempSync(join(tmpdir(), "refrain-review-data-"));
+const evidenceDir = join(process.cwd(), "target", "e2e-evidence", "review");
+mkdirSync(evidenceDir, { recursive: true });
 const chapterPath = join(fixture, "长章.md");
 
 // Forty-five paragraphs — the long keyboard path and the kill-after-forty
@@ -43,11 +45,9 @@ const check = (name: string, condition: boolean, detail?: unknown): void => {
 const base = `http://127.0.0.1:${DRIVER_PORT}`;
 
 async function call(method: string, path: string, body?: unknown): Promise<unknown> {
-  const response = await fetch(`${base}${path}`, {
-    method,
-    headers: { "content-type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  const init: RequestInit = { method, headers: { "content-type": "application/json" } };
+  if (body !== undefined) init.body = JSON.stringify(body);
+  const response = await fetch(`${base}${path}`, init);
   const text = await response.text();
   const parsed = JSON.parse(text) as { value?: unknown };
   if (!response.ok) {
@@ -62,6 +62,11 @@ let session = "";
 
 const execute = (script: string, args: unknown[] = []): Promise<unknown> =>
   call("POST", `/session/${session}/execute/sync`, { script, args });
+
+const screenshot = async (name: string): Promise<void> => {
+  const encoded = (await call("GET", `/session/${session}/screenshot`)) as string;
+  writeFileSync(join(evidenceDir, `${name}.png`), Buffer.from(encoded, "base64"));
+};
 
 const elementOrNull = async (selector: string, xpath = false): Promise<El | null> => {
   try {
@@ -268,6 +273,7 @@ const run = async (): Promise<void> => {
   await waitFor("the review surface", async () =>
     Boolean(await execute(`return document.querySelector(".review-surface") !== null`)),
   );
+  await screenshot("01-review");
   const surfaceEl = await elementOrNull(".review-surface");
   if (surfaceEl !== null) await click(surfaceEl);
 

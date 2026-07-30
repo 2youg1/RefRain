@@ -278,6 +278,43 @@ pub struct TextTransitionDto {
     pub touched_blocks: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum AnnotationAnchorState {
+    Anchored,
+    Drifted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AnnotationDto {
+    pub id: String,
+    pub document: String,
+    pub block_id: String,
+    pub start: u32,
+    pub end: u32,
+    pub quote: String,
+    pub kind: refrain_store::annotations::AnnotationKind,
+    pub body: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub anchor_state: AnnotationAnchorState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct UpsertAnnotationRequest {
+    pub root_id: String,
+    pub id: Option<String>,
+    pub document: String,
+    pub block_id: String,
+    pub start: u32,
+    pub end: u32,
+    pub quote: String,
+    pub kind: refrain_store::annotations::AnnotationKind,
+    pub body: Option<String>,
+}
+
 /// What a save became. `ChangedUnderneath` is a Safety surface, not an error.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase", tag = "kind", content = "value")]
@@ -1096,6 +1133,186 @@ fn read_config(
     })
 }
 
+fn utf16_quote(text: &str, start: u32, end: u32) -> Option<String> {
+    let units = text.encode_utf16().collect::<Vec<_>>();
+    let range = start as usize..end as usize;
+    if range.start >= range.end || range.end > units.len() {
+        return None;
+    }
+    String::from_utf16(&units[range]).ok()
+}
+
+#[cfg(test)]
+mod annotation_offset_tests {
+    use super::utf16_quote;
+
+    #[test]
+    fn offsets_follow_the_browser_utf16_contract() {
+        assert_eq!(utf16_quote("甲😀乙", 1, 3).as_deref(), Some("😀"));
+        assert_eq!(utf16_quote("甲😀乙", 1, 2), None);
+        assert_eq!(utf16_quote("甲😀乙", 3, 4).as_deref(), Some("乙"));
+        assert_eq!(utf16_quote("甲😀乙", 4, 5), None);
+    }
+}
+
+fn annotation_anchor_state(
+    manuscript: &Manuscript,
+    row: &refrain_store::annotations::AnnotationRow,
+) -> AnnotationAnchorState {
+    let text = manuscript
+        .head()
+        .blocks()
+        .iter()
+        .find(|block| block.id().to_string() == row.block_id)
+        .map(|block| block.text());
+    let Some(text) = text else {
+        return AnnotationAnchorState::Drifted;
+    };
+    match utf16_quote(text, row.start, row.end) {
+        Some(quote) if quote == row.quote => AnnotationAnchorState::Anchored,
+        _ => AnnotationAnchorState::Drifted,
+    }
+}
+
+fn annotation_dto(
+    manuscript: &Manuscript,
+    row: refrain_store::annotations::AnnotationRow,
+) -> AnnotationDto {
+    let anchor_state = annotation_anchor_state(manuscript, &row);
+    AnnotationDto {
+        id: row.id,
+        document: row.document,
+        block_id: row.block_id,
+        start: row.start,
+        end: row.end,
+        quote: row.quote,
+        kind: row.kind,
+        body: row.body,
+        created_at: row.created_at.to_string(),
+        updated_at: row.updated_at.to_string(),
+        anchor_state,
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+fn list_annotations(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    document: String,
+) -> Result<Vec<AnnotationDto>, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        let manuscript = entry.manuscripts.get(&document).ok_or_else(|| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "list annotations for a document that is not open",
+                document.clone(),
+            )
+        })?;
+        entry
+            .store
+            .annotations(&document)
+            .map_err(into_domain)
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|row| annotation_dto(manuscript, row))
+                    .collect()
+            })
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+fn upsert_annotation(
+    state: tauri::State<'_, AppState>,
+    request: UpsertAnnotationRequest,
+) -> Result<AnnotationDto, RefrainError> {
+    state.with_project(&request.root_id, |_state, entry| {
+        let manuscript = entry.manuscripts.get(&request.document).ok_or_else(|| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "annotate a document that is not open",
+                request.document.clone(),
+            )
+        })?;
+        let block = manuscript
+            .head()
+            .blocks()
+            .iter()
+            .find(|block| block.id().to_string() == request.block_id)
+            .ok_or_else(|| {
+                RefrainError::new(
+                    ErrorCode::Io,
+                    "anchor an annotation to a missing block",
+                    request.block_id.clone(),
+                )
+            })?;
+        let quote = utf16_quote(block.text(), request.start, request.end);
+        if quote.as_deref() != Some(request.quote.as_str()) {
+            return Err(RefrainError::new(
+                ErrorCode::Io,
+                "anchor an annotation after the source changed",
+                request.block_id,
+            ));
+        }
+        let body = match request.kind {
+            refrain_store::annotations::AnnotationKind::Highlight => None,
+            refrain_store::annotations::AnnotationKind::Comment => {
+                let body = request.body.as_deref().map(str::trim).unwrap_or("");
+                if body.is_empty() {
+                    return Err(RefrainError::new(
+                        ErrorCode::Io,
+                        "save an empty comment",
+                        request.document,
+                    ));
+                }
+                Some(body.to_string())
+            }
+        };
+        let id = match request.id {
+            Some(id) => parse_id(&id, "annotation")?.to_string(),
+            None => Id::new().to_string(),
+        };
+        let now = now_millis() as i64;
+        let row = refrain_store::annotations::AnnotationRow {
+            id: id.clone(),
+            document: request.document.clone(),
+            block_id: block.id().to_string(),
+            start: request.start,
+            end: request.end,
+            quote: request.quote,
+            kind: request.kind,
+            body,
+            created_at: now,
+            updated_at: now,
+        };
+        entry.store.annotation_upsert(&row).map_err(into_domain)?;
+        let persisted = entry
+            .store
+            .annotations(&request.document)
+            .map_err(into_domain)?
+            .into_iter()
+            .find(|candidate| candidate.id == id)
+            .ok_or_else(|| {
+                RefrainError::new(ErrorCode::StateUnavailable, "reload an annotation", id)
+            })?;
+        Ok(annotation_dto(manuscript, persisted))
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+fn delete_annotation(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    id: String,
+) -> Result<bool, RefrainError> {
+    let id = parse_id(&id, "annotation")?.to_string();
+    state.with_project(&root_id, |_state, entry| {
+        entry.store.annotation_delete(&id).map_err(into_domain)
+    })
+}
+
 fn now_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1117,6 +1334,9 @@ macro_rules! refrain_commands {
         create_document,
         current_document,
         apply_editor_action,
+        list_annotations,
+        upsert_annotation,
+        delete_annotation,
         persist_revision,
         kara_event,
         kara_state,

@@ -3,7 +3,7 @@
  * applies transitions, feeds facts (caret, blur), and renders effects. It
  * never re-derives a state the machine already owns (INV-10).
  */
-import { computed, ref } from "vue";
+
 import { describe, unwrap } from "../bridge";
 import {
   commands,
@@ -14,17 +14,18 @@ import {
   type QuietEvent,
   type ReturnPoint,
 } from "../generated/bindings.gen";
+import { cell, derived } from "./cell";
 
-const machine = ref<KaraMachine | null>(null);
-const lastEffects = ref<KaraEffect[]>([]);
-const returnCard = ref<ReturnPoint | null>(null);
-const debrief = ref<QuietEvent[] | null>(null);
-const interruption = ref<string | null>(null);
+const machine = cell<KaraMachine | null>(null);
+const lastEffects = cell<KaraEffect[]>([]);
+const returnCard = cell<ReturnPoint | null>(null);
+const debrief = cell<QuietEvent[] | null>(null);
+const interruption = cell<string | null>(null);
 
-const state = computed(() => machine.value?.state ?? { kind: "off" });
-const engaged = computed(() => state.value.kind !== "off");
-const away = computed(() => state.value.kind === "away");
-const leaving = computed(() => state.value.kind === "leaving");
+const state = derived(() => machine.value?.state ?? { kind: "off" });
+const engaged = derived(() => state.value.kind !== "off");
+const away = derived(() => state.value.kind === "away");
+const leaving = derived(() => state.value.kind === "leaving");
 
 const QUIET_TEXT: Record<string, string> = {
   "save-succeeded": "已保存",
@@ -33,9 +34,7 @@ const QUIET_TEXT: Record<string, string> = {
   "index-refreshed": "索引刷新了",
 };
 
-const debriefText = computed(() =>
-  (debrief.value ?? []).map((event) => QUIET_TEXT[event] ?? event),
-);
+const debriefText = derived(() => (debrief.value ?? []).map((event) => QUIET_TEXT[event] ?? event));
 
 const perform = (effects: KaraEffect[]): void => {
   for (const effect of effects) {
@@ -119,6 +118,17 @@ export function useKara() {
     returnCard,
     debriefText,
     interruption,
+    subscribe: (listener: () => void) => {
+      const stops = [
+        machine.subscribe(listener),
+        returnCard.subscribe(listener),
+        debrief.subscribe(listener),
+        interruption.subscribe(listener),
+      ];
+      return () => {
+        for (const stop of stops) stop();
+      };
+    },
     apply,
     toggle: () => send({ kind: "manualToggle" }),
     setReturnPoint: (point: ReturnPoint) => send({ kind: "setReturnPoint", value: point }),

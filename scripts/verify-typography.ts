@@ -6,10 +6,30 @@ const config = await Bun.file("crates/refrain-store/src/config.rs").text();
 const fonts = await Bun.file("apps/desktop/src-tauri/src/fonts.rs").text();
 const bridge = await Bun.file("apps/desktop/src-tauri/src/lib.rs").text();
 const bindings = await Bun.file("apps/desktop/src/generated/bindings.gen.ts").text();
-const app = await Bun.file("apps/desktop/src/App.vue").text();
+const app = await Bun.file("apps/desktop/src/App.tsx").text();
 const projection = await Bun.file("apps/desktop/src/typography.ts").text();
-const panel = await Bun.file("apps/desktop/src/shell/TypographyPanel.vue").text();
-const editorHost = await Bun.file("apps/desktop/src/editor-host/EditorHost.vue").text();
+const panel = await Bun.file("apps/desktop/src/ui/TypographyPanel.tsx").text();
+// The panel became a projection: it renders a view and emits intents, while the
+// bridge calls moved to the session that owns the manuscript setting. The four
+// facts below are still facts about "Settings can do X" — they just have a new
+// owner, so they are read there. Checking the panel would now check nothing.
+const typographySession = await Bun.file("apps/desktop/src/shell/typography-session.ts").text();
+const configTests = await Bun.file("crates/refrain-store/tests/config.rs").text();
+const windowsE2e = await Bun.file("apps/desktop/e2e/writing-slice.ts").text();
+// The Solid rewrite moved component `<style>` blocks into one stylesheet, so
+// the editor's typography authority is now the component plus that sheet.
+// Checking only the component would silently stop checking anything — but
+// searching the whole sheet would be weaker than the old scoped `<style>`
+// block, since any unrelated rule could satisfy the assertion. Read the sheet
+// per selector so `.editor-host` facts must appear on `.editor-host` rules.
+const stylesheet = await Bun.file("apps/desktop/src/styles/surfaces.css").text();
+const cssRulesFor = (selectorFragment: string): string =>
+  [...stylesheet.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter((rule) => rule[1]?.includes(selectorFragment))
+    .map((rule) => rule[0])
+    .join("\n");
+const editorHost =
+  (await Bun.file("apps/desktop/src/ui/EditorHost.tsx").text()) + cssRulesFor(".editor-host");
 const editor = await Bun.file("packages/editor/src/index.ts").text();
 const failures: string[] = [];
 
@@ -36,10 +56,23 @@ for (const [source, fact, failure] of [
   [projection, '"--manuscript-measure"', "the projection drops manuscript measure"],
   [projection, '"--paragraph-gap"', "the projection drops paragraph spacing"],
   [projection, '"--grid-period"', "the projection drops the baseline period"],
-  [panel, "commands.listFonts()", "Settings does not load installed fonts"],
-  [panel, 'kind: "setTypography"', "Settings does not write one complete typography value"],
-  [panel, 'kind: "saveTypographyPreset"', "Settings cannot save a user preset"],
-  [panel, 'kind: "removeTypographyPreset"', "Settings cannot remove a user preset"],
+  [typographySession, "commands.listFonts()", "Settings does not load installed fonts"],
+  [
+    typographySession,
+    'kind: "setTypography"',
+    "Settings does not write one complete typography value",
+  ],
+  [typographySession, 'kind: "saveTypographyPreset"', "Settings cannot save a user preset"],
+  [typographySession, 'kind: "removeTypographyPreset"', "Settings cannot remove a user preset"],
+  [
+    configTests,
+    "unsafe_font_names_and_duplicate_priority_are_refused_without_rewriting_config",
+    "Config has no negative font-family or priority test",
+  ],
+  [windowsE2e, 'invoke("list_fonts")', "the Windows E2E never enumerates real system fonts"],
+  [windowsE2e, 'clickButton("撤销本次调整")', "Settings entry undo has no real-window test"],
+  [windowsE2e, 'clickButton("恢复本页默认")', "Settings page reset has no real-window test"],
+  [windowsE2e, 'pressKey("")', "Settings Escape has no real-window test"],
   [editorHost, "var(--manuscript-weight", "the editor drops font weight"],
   [editorHost, "var(--manuscript-measure", "the editor drops manuscript measure"],
   [editorHost, "var(--paragraph-gap", "the editor drops paragraph spacing"],
@@ -70,6 +103,16 @@ for (const removed of ["setFontFamily", "setFontPriority", "setTextSize", "setLi
   if (panel.includes(removed))
     failures.push(`TypographyPanel restored the split ${removed} command`);
 }
+// Keep the convergence rather than trusting it to hold. A single `commands.`
+// in the panel means logic started flowing back into the component, which is
+// how this file grew to 629 lines the first time.
+if (/\bcommands\./.test(panel)) {
+  failures.push("TypographyPanel calls the bridge directly again; that belongs to its session");
+}
+if (!/new TypographySession\(/.test(panel)) {
+  failures.push("TypographyPanel no longer routes through TypographySession");
+}
+
 if (editor.includes('paragraph.style.margin = "0 0 1em"')) {
   failures.push("the editor kernel overrides the configured paragraph spacing");
 }
@@ -81,5 +124,5 @@ if (failures.length > 0) {
 }
 
 console.log(
-  "PASS  verify:typography  (9 files, Config v2, installed fonts, complete projection, presets)",
+  "PASS  verify:typography  (11 files, Config v2, real system fonts, negative inputs, Settings integration, complete projection, presets)",
 );

@@ -2,12 +2,13 @@
 
 export {};
 
-const chrome = await Bun.file("apps/desktop/src/shell/WindowChrome.vue").text();
-const workbench = await Bun.file("apps/desktop/src/shell/Workbench.vue").text();
+const chrome = await Bun.file("apps/desktop/src/ui/WindowChrome.tsx").text();
+const workbench = await Bun.file("apps/desktop/src/shell/Workbench.tsx").text();
 const display = await Bun.file("apps/desktop/src-tauri/src/display.rs").text();
 const scheduler = await Bun.file("apps/desktop/src/frame-scheduler.ts").text();
 const capability = await Bun.file("apps/desktop/src-tauri/capabilities/default.json").json();
 const config = await Bun.file("apps/desktop/src-tauri/tauri.conf.json").json();
+const windowsE2e = await Bun.file("apps/desktop/e2e/writing-slice.ts").text();
 const permissions = new Set<string>(capability.permissions);
 const failures: string[] = [];
 
@@ -27,7 +28,7 @@ for (const label of ["最小化", "最大化窗口", "进入全屏", "关闭"]) 
 }
 if (!chrome.includes('event.key !== "F11"')) failures.push("F11 is not the fullscreen shortcut");
 if (!workbench.includes("<WindowChrome")) failures.push("Workbench does not mount WindowChrome");
-if (!workbench.includes('@close-requested="requestClose"')) {
+if (!workbench.includes("onCloseRequested={requestClose}")) {
   failures.push("the window close request bypasses Workbench");
 }
 const windowConfig = config.app?.windows?.[0];
@@ -45,10 +46,31 @@ if (!scheduler.includes("requestAnimationFrame(flush)")) {
 if (chrome.includes(" Hz"))
   failures.push("window chrome exposes internal refresh telemetry as UI text");
 
+for (const fact of [
+  'button[aria-label="最小化"]',
+  'button[aria-label="最大化窗口"]',
+  'button[aria-label="还原窗口"]',
+  'button[aria-label="退出全屏"]',
+  'pressKey("")',
+  "/window/rect",
+  "正文尚未保存",
+  "display_profile",
+  "display.hairlineCssPx * display.scaleFactor",
+]) {
+  if (!windowsE2e.includes(fact)) {
+    failures.push(`the Windows black-box path does not verify: ${fact}`);
+  }
+}
+if (!windowsE2e.includes("for (const [width, height] of [")) {
+  failures.push("the Windows black-box path lost its three-size resize loop");
+}
+
 if (failures.length > 0) {
   console.error("FAIL  verify:window-chrome");
   for (const failure of failures) console.error(`      ${failure}`);
   process.exit(1);
 }
 
-console.log("PASS  verify:window-chrome  (6 files, 6 controls, display profile, frame scheduler)");
+console.log(
+  "PASS  verify:window-chrome  (7 files, 6 controls, native resize/state E2E, display profile, frame scheduler)",
+);

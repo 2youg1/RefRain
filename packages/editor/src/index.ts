@@ -7,18 +7,32 @@
  * IME, measurement, scroll anchoring, and frame lifecycle from callers.
  */
 
-import type { Block, EditorChange, EditorDocument, EditorHandle, EditorPort } from "./model";
+import type {
+  Block,
+  EditorAnnotationProjection,
+  EditorChange,
+  EditorDocument,
+  EditorFormat,
+  EditorHandle,
+  EditorPort,
+  PunctuationFinding,
+} from "./model";
 import { VirtualManuscriptView } from "./virtual-manuscript-view";
 
 export type {
   Block,
   EditorAction,
+  EditorAnnotationProjection,
   EditorChange,
+  EditorContext,
   EditorDocument,
+  EditorFormat,
   EditorHandle,
   EditorPort,
+  PunctuationFinding,
 } from "./model";
 export { applyLocally } from "./projection";
+export { findPunctuation } from "./punctuation";
 
 /** Mount one editor projection. The returned handle is its complete interface. */
 export function mountEditor(
@@ -45,8 +59,26 @@ export function mountEditor(
     caret() {
       return view.caret();
     },
+    context(target) {
+      return view.context(target);
+    },
+    formatSelection(kind: EditorFormat) {
+      return view.formatSelection(kind);
+    },
+    deleteEmptyBlock() {
+      return view.deleteEmptyBlock();
+    },
+    applyPunctuation(finding: PunctuationFinding) {
+      return view.applyPunctuation(finding);
+    },
+    setAnnotations(annotations: readonly EditorAnnotationProjection[]) {
+      view.setAnnotations(annotations);
+    },
     isComposing() {
       return view.isComposing();
+    },
+    whenSettled() {
+      return view.whenSettled();
     },
     destroy() {
       view.destroy();

@@ -7,8 +7,10 @@ const boundary = await Bun.file("apps/desktop/src-tauri/src/harnesses.rs").text(
 const adapters = await Bun.file("crates/refrain-host/src/adapters.rs").text();
 const processOwner = await Bun.file("crates/refrain-host/src/process.rs").text();
 const bindings = await Bun.file("apps/desktop/src/generated/bindings.gen.ts").text();
-const connections = await Bun.file("apps/desktop/src/shell/ConnectionsSurface.vue").text();
-const dispatch = await Bun.file("apps/desktop/src/shell/DispatchSurface.vue").text();
+const connections = await Bun.file("apps/desktop/src/ui/ConnectionsSurface.tsx").text();
+// 票据的领域层搬进了 session；组件只做投影。这条事实的权威随之移位。
+const dispatch = await Bun.file("apps/desktop/src/shell/dispatch-session.ts").text();
+const e2e = await Bun.file("apps/desktop/e2e/dispatch-loop.ts").text();
 const failures: string[] = [];
 
 for (const [source, fact, failure] of [
@@ -52,11 +54,10 @@ for (const [source, fact, failure] of [
   ],
   [connections, "不保存账号或密钥", "the page does not explain the local account boundary"],
   [connections, "添加写作伙伴", "the guided flow does not reach an Agent"],
-  [
-    dispatch,
-    "A machine connection is",
-    "the dispatch ticket does not state Agent/Connection separation",
-  ],
+  // Assert behaviour, not comment wording: the ticket owns an Agent identity,
+  // loads the Agent catalogue, and never reads machine connections as Agents.
+  [dispatch, "type AgentChoice", "the dispatch ticket has no Agent identity type"],
+  [dispatch, "commands.listAgents()", "the dispatch ticket does not load Agents"],
 ] as const) {
   if (!source.includes(fact)) failures.push(failure);
 }
@@ -81,6 +82,27 @@ if (dispatch.includes("commands.listHarnesses()")) {
   failures.push("the dispatch ticket still treats a machine connection as an Agent");
 }
 
+for (const staleE2eContract of [
+  /upsert_harness_connection[\s\S]{0,120}executable/,
+  /probe_connection[\s\S]{0,120}executable/,
+  /list_harnesses[\s\S]{0,120}agentId/,
+]) {
+  if (staleE2eContract.test(e2e)) {
+    failures.push(`the Windows dispatch E2E uses a retired bridge contract: ${staleE2eContract}`);
+  }
+}
+for (const guidedFact of [
+  'candidate.candidateId === "kimi-code"',
+  "connectionId: connection.connectionId",
+  'invoke("list_agents"',
+  'clickButton("添加写作伙伴")',
+  'clickButton("返回手稿")',
+]) {
+  if (!e2e.includes(guidedFact)) {
+    failures.push(`the Windows E2E skips the guided connection fact: ${guidedFact}`);
+  }
+}
+
 const cancelBody = rust.slice(rust.indexOf("fn cancel_run("), rust.indexOf("fn retry_run("));
 if (
   cancelBody.indexOf("active.cancel.cancel_tree()") > cancelBody.indexOf("HostCommand::CancelRun")
@@ -95,5 +117,5 @@ if (failures.length > 0) {
 }
 
 console.log(
-  "PASS  verify:connections  (7 files, fixed candidates, real cancellation, guided Agent flow)",
+  "PASS  verify:connections  (8 files, fixed candidates, real cancellation, guided Agent flow)",
 );

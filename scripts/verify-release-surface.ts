@@ -5,7 +5,9 @@ import { spawnSync } from "node:child_process";
 const rust = await Bun.file("apps/desktop/src-tauri/src/lib.rs").text();
 const bindings = await Bun.file("apps/desktop/src/generated/bindings.gen.ts").text();
 const debugBridge = await Bun.file("apps/desktop/src/e2e/debug-bridge.ts").text();
-const workbench = await Bun.file("apps/desktop/src/shell/Workbench.vue").text();
+const workbench = await Bun.file("apps/desktop/src/shell/Workbench.tsx").text();
+// 「取得一个项目」搬进了 ProjectSession：选择器归 Rust 这条事实的权威随之移位。
+const projectSession = await Bun.file("apps/desktop/src/shell/project-session.ts").text();
 const failures: string[] = [];
 
 for (const [source, fact, failure] of [
@@ -28,14 +30,35 @@ for (const [source, fact, failure] of [
     "release bindings have no material chooser",
   ],
   [bindings, "confirmAndImportDropped", "release bindings have no confirmed drop path"],
-  [workbench, "commands.chooseAndAdoptRoot", "Workbench does not use the Rust-owned Root chooser"],
   [
-    workbench,
+    projectSession,
+    "commands.chooseAndAdoptRoot",
+    "the app does not use the Rust-owned Root chooser",
+  ],
+  [
+    projectSession,
+    "commands.chooseAndCreateProject",
+    "the app does not use the Rust-owned project chooser",
+  ],
+  [
+    projectSession,
     "commands.chooseAndImportMaterial",
-    "Workbench does not use the Rust-owned source chooser",
+    "the app does not use the Rust-owned source chooser",
   ],
 ] as const) {
   if (!source.includes(fact)) failures.push(failure);
+}
+
+// 选择器只能有一个入口。上面几条证明 ProjectSession 用了它，这一条证明别人没有
+// 绕过它自己开一个——单一入口才是这条不变量真正想要的东西。
+const chooserOwners = new Set(["apps/desktop/src/shell/project-session.ts"]);
+const chooserCallers = new Bun.Glob("apps/desktop/src/**/*.{ts,tsx}");
+for await (const file of chooserCallers.scan(".")) {
+  if (chooserOwners.has(file)) continue;
+  const text = await Bun.file(file).text();
+  if (/commands\.chooseAnd/.test(text)) {
+    failures.push(`${file} opens a native chooser directly; that belongs to ProjectSession`);
+  }
 }
 
 for (const forbidden of [

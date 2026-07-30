@@ -34,19 +34,17 @@ interface Injection {
 const INJECTIONS: readonly Injection[] = [
   {
     gate: "verify:no-network",
-    file: "apps/desktop/src/shell/HealthProbe.vue",
-    anchor: "const report = ref<HealthReport | null>(null);",
-    replacement:
-      'const report = ref<HealthReport | null>(null);\nawait fetch("https://example.com/telemetry");',
-    expect: "HealthProbe.vue",
+    file: "apps/desktop/src/ui/StatusLine.tsx",
+    anchor: "export type StatusLineProps = {",
+    replacement: 'await fetch("https://example.com/telemetry");\nexport type StatusLineProps = {',
+    expect: "StatusLine.tsx",
   },
   {
     gate: "verify:bridge",
-    file: "apps/desktop/src/shell/HealthProbe.vue",
-    anchor: "const report = ref<HealthReport | null>(null);",
-    replacement:
-      'const report = ref<HealthReport | null>(null);\nconst raw = invoke("health", {});',
-    expect: "HealthProbe.vue",
+    file: "apps/desktop/src/ui/StatusLine.tsx",
+    anchor: "export type StatusLineProps = {",
+    replacement: 'const raw = invoke("health", {});\nexport type StatusLineProps = {',
+    expect: "StatusLine.tsx",
   },
   {
     gate: "verify:core-purity",
