@@ -39,20 +39,20 @@ pub(super) fn selective(
                     .before
                     .iter()
                     .find(|candidate| candidate.id == *block)
-                    .map(|candidate| candidate.text.clone())
+                    .map(|candidate| candidate.text.to_string())
                     .unwrap_or_default(),
                 after: region
                     .after
                     .iter()
                     .find(|candidate| candidate.id == *block)
-                    .map(|candidate| candidate.text.clone())
+                    .map(|candidate| candidate.text.to_string())
                     .unwrap_or_default(),
                 current: manuscript
                     .head
                     .blocks
                     .iter()
                     .find(|candidate| candidate.id == *block)
-                    .map(|candidate| candidate.text.clone())
+                    .map(|candidate| candidate.text.to_string())
                     .unwrap_or_default(),
             });
         }

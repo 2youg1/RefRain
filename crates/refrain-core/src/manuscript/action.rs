@@ -93,7 +93,7 @@ pub(super) fn apply_editor_indexed(
                     .get(index)
                     .copied()
                     .unwrap_or_else(Id::new),
-                text,
+                text: text.into(),
             })
             .collect::<Vec<_>>()
             .into_boxed_slice();
@@ -162,7 +162,7 @@ pub(super) fn apply_editor_indexed(
             .or_default()
             .extend(insertion.texts.iter().map(|text| Block {
                 id: Id::new(),
-                text: text.clone(),
+                text: text.as_str().into(),
             }));
     }
 
@@ -262,7 +262,7 @@ fn apply_single_block(
     let before = head.blocks[index].clone();
     let after = Block {
         id: *block_id,
-        text: text.clone(),
+        text: text.as_str().into(),
     };
     if before == after {
         return Some(Err(TextRefusal::NothingChanged));

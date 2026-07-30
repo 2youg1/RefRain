@@ -142,7 +142,7 @@ mod tests {
         let blocks = (0..4_000)
             .map(|index| super::Block {
                 id: Id::new(),
-                text: format!("block {index}"),
+                text: format!("block {index}").into(),
             })
             .collect::<Vec<_>>();
         let sequence = BlockSequence::from_vec(blocks);
@@ -152,7 +152,7 @@ mod tests {
             2_000,
             super::Block {
                 id,
-                text: "changed".to_owned(),
+                text: "changed".into(),
             },
         );
 
