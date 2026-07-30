@@ -80,10 +80,17 @@ pub struct AppearanceConfig {
     /// and it must survive a theme change, which a resolved default cannot.
     #[serde(default)]
     pub code_theme: Option<String>,
-    /// The night lamp: a halo around the sheet, so the light has a source
-    /// instead of the glyphs appearing to emit it themselves.
+    /// The night lamp, so the light has a source instead of the glyphs
+    /// appearing to emit it themselves.
     #[serde(default)]
-    pub night_lamp: bool,
+    pub night_lamp: NightLamp,
+
+/// How wide a panel opens.
+    #[serde(default)]
+    pub panel_width: PanelWidth,
+    /// How wide the document rail sits.
+    #[serde(default)]
+    pub rail_width: RailWidth,
     /// Which side panels open from. Left by default.
     #[serde(default)]
     pub panel_side: PanelSide,
@@ -106,7 +113,9 @@ impl Default for AppearanceConfig {
             paper: PaperMode::default(),
             panel_material: PanelMaterial::default(),
             code_theme: None,
-            night_lamp: false,
+            panel_width: PanelWidth::default(),
+            rail_width: RailWidth::default(),
+            night_lamp: NightLamp::default(),
             panel_side: PanelSide::default(),
             panel_animation: true,
             icon_digest: None,
@@ -251,6 +260,44 @@ pub enum PanelMaterial {
 /// turned that off, so the default needs saying out loud.
 fn yes() -> bool {
     true
+}
+
+/// Where the night lamp hangs.
+///
+/// `Side` puts it beside the panels, so the light crosses the stage and the
+/// panels themselves stand in its path — which is where their translucency
+/// gets its reason. `Overhead` hangs it above: a soft wash falling from the
+/// top, with no side to it. `Off` is no lamp at all.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum NightLamp {
+    #[default]
+    Off,
+    Side,
+    Overhead,
+}
+
+/// How wide a panel opens. `Full` gives it the whole stage: finding material or
+/// writing an instruction for an agent is the work at that moment, and there is
+/// no reason to crowd it beside a manuscript nobody is reading.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum PanelWidth {
+    Narrow,
+    #[default]
+    Regular,
+    Full,
+}
+
+/// How wide the document rail sits. It carries file names, so it is narrower
+/// than a panel.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum RailWidth {
+    #[default]
+    Narrow,
+    Regular,
+    Wide,
 }
 
 /// Which side the panel stack grows from.
@@ -482,9 +529,11 @@ pub enum ConfigChange {
     SetPaper(PaperMode),
     SetPanelSide(PanelSide),
     SetPanelMaterial(PanelMaterial),
-    SetNightLamp(bool),
+    SetNightLamp(NightLamp),
     /// None restores "follow the interface theme".
     SetCodeTheme(Option<String>),
+    SetPanelWidth(PanelWidth),
+    SetRailWidth(RailWidth),
     SetPanelAnimation(bool),
     SetTypography(TypographyConfig),
     SaveTypographyPreset(String),
@@ -571,8 +620,10 @@ impl ConfigV1 {
                 panel_side: PanelSide::default(),
                 panel_animation: true,
                 panel_material: PanelMaterial::default(),
-                night_lamp: false,
+                night_lamp: NightLamp::default(),
                 code_theme: None,
+                panel_width: PanelWidth::default(),
+                rail_width: RailWidth::default(),
                 icon_digest: self.appearance.icon_digest,
             },
             harness_connections: self.harness_connections,
@@ -730,11 +781,17 @@ impl ConfigStore {
             ConfigChange::SetPanelMaterial(material) => {
                 snapshot.config.appearance.panel_material = material;
             }
-            ConfigChange::SetNightLamp(on) => {
-                snapshot.config.appearance.night_lamp = on;
+            ConfigChange::SetNightLamp(lamp) => {
+                snapshot.config.appearance.night_lamp = lamp;
             }
             ConfigChange::SetCodeTheme(theme) => {
                 snapshot.config.appearance.code_theme = theme;
+            }
+            ConfigChange::SetPanelWidth(width) => {
+                snapshot.config.appearance.panel_width = width;
+            }
+            ConfigChange::SetRailWidth(width) => {
+                snapshot.config.appearance.rail_width = width;
             }
             ConfigChange::SetPanelAnimation(animated) => {
                 snapshot.config.appearance.panel_animation = animated;

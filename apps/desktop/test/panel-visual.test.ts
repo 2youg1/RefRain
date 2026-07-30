@@ -6,7 +6,9 @@ import { describe, expect, test } from "bun:test";
 
 import { materialSpec, supportedMaterial } from "../src/shell/panel-material";
 import {
+  PANEL_WIDTH,
   panelOffset,
+  panelReserve,
   SPINE_STAGGER_MS,
   SPINE_WIDTH,
   spineLayout,
@@ -41,6 +43,15 @@ describe("书脊", () => {
     // 一层时没有错开，就是那一层的时长。
     expect(spineSettleMs(1, 300)).toBe(300);
     expect(spineSettleMs(0, 300)).toBe(300);
+  });
+
+  test("正文让开的宽度＝几条脊加展开的那一层", () => {
+    // 没有面板时不让：版心不该被平白推走。
+    expect(panelReserve(0)).toBe(0);
+    // 一层时只有那一层的宽度，没有脊。
+    expect(panelReserve(1)).toBe(PANEL_WIDTH);
+    // 三层＝两条脊 + 一层。让不够的话，行首会被切掉。
+    expect(panelReserve(3)).toBe(SPINE_WIDTH * 2 + PANEL_WIDTH);
   });
 
   test("负数与乱数不产生负偏移", () => {

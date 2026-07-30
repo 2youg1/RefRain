@@ -40,23 +40,48 @@ textarea {
   color: inherit;
 }
 
-/* 器物：3px 半径、发丝边、hover 只移明度。 */
+/*
+ * 器物。
+ *
+ * 从前每个按钮都常驻一圈发丝框，于是纸面上到处是空盒子——读起来像表单，
+ * 不像一件可以拿起来用的东西。现在静止时只有字：边界在指针到它身上时才出现，
+ * 按下去时底色沉一档并微微内缩。这让「可点」由**动作**说明，而不是由一圈
+ * 常驻的线说明。
+ *
+ * 半径 4px、过渡 140ms：比手感上的临界值略慢一点点，够读出「它在回应我」，
+ * 又不至于让连点变成等待。
+ */
 button {
   cursor: pointer;
-  border: 1px solid color-mix(in oklab, var(--ink) 24%, transparent);
-  border-radius: 3px;
+  border: 1px solid transparent;
+  border-radius: 4px;
   background: transparent;
   padding: 5px 12px;
   font-size: 13px;
   letter-spacing: 0.04em;
   transition:
-    background 120ms ease,
-    border-color 120ms ease;
+    background 140ms var(--ease),
+    border-color 140ms var(--ease),
+    color 140ms var(--ease),
+    transform 90ms var(--ease);
 }
 
 button:hover:not(:disabled) {
-  border-color: color-mix(in oklab, var(--ink) 44%, transparent);
-  background: color-mix(in oklab, var(--ink) 5%, transparent);
+  border-color: color-mix(in oklab, var(--ink) 18%, transparent);
+  background: color-mix(in oklab, var(--ink) 6%, transparent);
+  color: var(--ink);
+}
+
+/* 按下去：底色再沉一档，并让它真的往下走一点。 */
+button:active:not(:disabled) {
+  background: color-mix(in oklab, var(--ink) 11%, transparent);
+  transform: translateY(0.5px);
+}
+
+/* 键盘走到它身上时，边界必须出现——不能只有指针用户看得见落点。 */
+button:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--seal) 62%, transparent);
+  outline-offset: 1px;
 }
 
 button:disabled {
@@ -64,7 +89,8 @@ button:disabled {
   cursor: default;
 }
 
-/* 唯一允许醒目的控件：只有人能做的行动（送出、授权、合并）。 */
+/* 唯一允许醒目的控件：只有人能做的行动（送出、授权、合并）。
+   它保留常驻边界——正因为别的按钮都不再有，这一圈才读得出分量。 */
 button.primary {
   color: var(--seal);
   border-color: color-mix(in oklab, var(--seal) 45%, transparent);
