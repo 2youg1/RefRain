@@ -30,6 +30,10 @@ function press(
     closeMenu: () => calls.push("close-menu"),
     panelDepth: () => 0,
     closePanel: () => calls.push("close-panel"),
+    goToQuarter: (key: string) => {
+      calls.push(`quarter-${key}`);
+      return true;
+    },
     ...overrides,
   };
 
@@ -82,5 +86,29 @@ describe("handleShortcut", () => {
 
   test("没有修饰键的 s 是作者在写字，不是保存", () => {
     expect(press({ key: "s" }).calls).toEqual([]);
+  });
+});
+
+describe("Cmd+1..4 按层直达", () => {
+  test("数字键交给层导航，并带上按的是哪一个", () => {
+    expect(press({ key: "1", ctrl: true }).calls).toEqual(["quarter-1"]);
+    expect(press({ key: "4", ctrl: true }).calls).toEqual(["quarter-4"]);
+  });
+
+  test("那一层此刻去不了时，这一下不被接管", () => {
+    // 没有稿子时按 Cmd+4：批注没有可锚之处。**不 preventDefault**——
+    // 这一下没被我们接管，就该按浏览器的默认行为走，而不是被静默吃掉。
+    const refused = press({ key: "4", ctrl: true }, { goToQuarter: () => false });
+    expect(refused.handled).toBe(false);
+    expect(refused.prevented).toBe(false);
+  });
+
+  test("没有修饰键的数字是作者在写字", () => {
+    // 「第 3 章」里的 3 必须落进正文。
+    expect(press({ key: "3" }).calls).toEqual([]);
+  });
+
+  test("接管的那一下 preventDefault——否则浏览器会去切标签页", () => {
+    expect(press({ key: "2", ctrl: true }).prevented).toBe(true);
   });
 });
