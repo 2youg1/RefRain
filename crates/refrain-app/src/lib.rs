@@ -8,12 +8,16 @@
 //! 这里不认识 Tauri。
 
 pub mod collect;
+pub mod decide;
 pub mod journal;
+pub mod review;
 pub mod scope;
 
 pub use collect::{Collected, collect_attempt};
+pub use decide::commit_decision_batch;
 pub use journal::{
     StoreJournal, entity_of, into_domain, into_domain_host, json_of, run_kind, run_row, task_kind,
     task_row,
 };
+pub use review::rebuild_proposal;
 pub use scope::{before_sections, find_scope_blocks};

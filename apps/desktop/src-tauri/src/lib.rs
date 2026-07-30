@@ -331,15 +331,6 @@ pub enum SaveOutcomeDto {
     },
 }
 
-fn parse_id(raw: &str, what: &str) -> Result<Id, RefrainError> {
-    raw.parse::<uuid::Uuid>()
-        .map(Id::from_uuid)
-        .map_err(|error| {
-            RefrainError::new(ErrorCode::Io, "parse an id", raw)
-                .with_detail(format!("{what}: {error}"))
-        })
-}
-
 // host 实体 ↔ store 行 的翻译，连同 StoreJournal 接缝与两个错误转换，已搬进
 // refrain-app::journal。它们既不属于 host（host 不认识数据库）也不属于 store
 // （store 不认识 ReviewTask），住在桥上时只能连着一个 Tauri 窗口一起验证。
@@ -1386,7 +1377,7 @@ pub fn run() {
 // The review loop commands: fixture injection (debug only), proposal
 // listing, write-through verdicts, batch staging, and the one commit path.
 
-use refrain_core::{DecisionBatch, EditScope, Proposal, ReviewSliceId, Verdict, VerdictKind};
+use refrain_core::{EditScope, Proposal};
 use refrain_store::ledger::{VerdictKindName, VerdictRecord};
 
 /// One sentence for the surface.
@@ -1466,34 +1457,6 @@ fn proposal_dto(proposal: &Proposal) -> ProposalDto {
             .map(|slice| slice_dto(proposal, slice))
             .collect(),
     }
-}
-
-/// Rebuild a persisted candidate exactly (deterministic slices, stable id).
-fn rebuild_proposal(row: &refrain_store::project::ProposalRow) -> Result<Proposal, RefrainError> {
-    let scope_ids: Vec<Id> = serde_json::from_str(&row.scope).map_err(|error| {
-        RefrainError::new(
-            ErrorCode::StateUnavailable,
-            "read a proposal scope",
-            row.id.clone(),
-        )
-        .with_detail(error.to_string())
-    })?;
-    let scope = EditScope::new(scope_ids).map_err(|error| {
-        RefrainError::new(
-            ErrorCode::StateUnavailable,
-            "read a proposal scope",
-            row.id.clone(),
-        )
-        .with_detail(error.to_string())
-    })?;
-    Ok(Proposal::with_id(
-        parse_id(&row.id, "proposal")?,
-        parse_id(&row.run, "run")?,
-        parse_id(&row.baseline, "baseline")?,
-        scope,
-        row.before_text.clone(),
-        row.after_text.clone(),
-    ))
 }
 
 /// Inject fixture candidates (debug builds only). The candidates freeze
@@ -1639,14 +1602,6 @@ fn record_verdict(
     })
 }
 
-fn into_domain_store(failure: refrain_store::schema::StoreError) -> RefrainError {
-    RefrainError::new(
-        ErrorCode::StateUnavailable,
-        "write the verdict ledger",
-        failure.to_string(),
-    )
-}
-
 /// Stage the batch and the cursor (SPEC 9.7: cursor and batch persist with
 /// every change, not at commit time).
 #[tauri::command]
@@ -1721,117 +1676,18 @@ fn commit_decision_batch(
     path: String,
 ) -> Result<TextTransitionDto, RefrainError> {
     state.with_project(&root_id, |_state, entry| {
-        let (_cursor, batch_json) = entry
-            .store
-            .review_session_get(&path)
-            .map_err(into_domain)?
-            .ok_or_else(|| {
-                RefrainError::new(
-                    ErrorCode::StateUnavailable,
-                    "commit an empty batch",
-                    path.clone(),
-                )
-            })?;
-        let batch_ids: Vec<String> = serde_json::from_str(&batch_json).map_err(|error| {
-            RefrainError::new(ErrorCode::StateUnavailable, "read a batch", path.clone())
-                .with_detail(error.to_string())
-        })?;
-        if batch_ids.is_empty() {
-            return Err(RefrainError::new(
-                ErrorCode::StateUnavailable,
-                "commit an empty batch",
-                path.clone(),
-            ));
-        }
-        let rows = entry
-            .store
-            .ledger()
-            .find_many(&batch_ids)
-            .map_err(into_domain_store)?;
-        let proposals = entry
-            .store
-            .proposals_for(&path)
-            .map_err(into_domain)?
-            .iter()
-            .map(rebuild_proposal)
-            .collect::<Result<Vec<_>, _>>()?;
-        let proposal_at: HashMap<Id, &Proposal> = proposals.iter().map(|p| (p.id(), p)).collect();
-
-        let mut verdicts = Vec::with_capacity(rows.len());
-        for row in &rows {
-            let proposal_id = parse_id(&row.proposal_id, "verdict proposal")?;
-            let proposal = proposal_at.get(&proposal_id).ok_or_else(|| {
-                RefrainError::new(
-                    ErrorCode::StateUnavailable,
-                    "judge a candidate that is not here",
-                    row.proposal_id.clone(),
-                )
-            })?;
-            let (proposal_uuid, ordinal) = row.slice_id.rsplit_once(':').ok_or_else(|| {
-                RefrainError::new(
-                    ErrorCode::StateUnavailable,
-                    "read a slice id",
-                    row.slice_id.clone(),
-                )
-            })?;
-            let slice = ReviewSliceId::new(
-                parse_id(proposal_uuid, "slice proposal")?,
-                ordinal.parse::<u32>().map_err(|error| {
-                    RefrainError::new(
-                        ErrorCode::StateUnavailable,
-                        "read a slice ordinal",
-                        &row.slice_id,
-                    )
-                    .with_detail(error.to_string())
-                })?,
-            );
-            let kind = match row.kind {
-                VerdictKindName::Accept => VerdictKind::Accept,
-                VerdictKindName::AcceptModified => {
-                    VerdictKind::AcceptModified(row.final_text.clone().ok_or_else(|| {
-                        RefrainError::new(
-                            ErrorCode::StateUnavailable,
-                            "apply a modified verdict without its final text",
-                            row.id.clone(),
-                        )
-                    })?)
-                }
-                VerdictKindName::Reject => VerdictKind::Reject,
-                VerdictKindName::CommentOnly => VerdictKind::CommentOnly,
-            };
-            verdicts.push(
-                Verdict::new(proposal, slice, kind, row.reason.clone()).map_err(|error| {
-                    RefrainError::new(
-                        ErrorCode::StateUnavailable,
-                        "rebuild a verdict",
-                        row.id.clone(),
-                    )
-                    .with_detail(error.to_string())
-                })?,
-            );
-        }
-
-        let manuscript = entry.manuscripts.get_mut(&path).ok_or_else(|| {
+        // 分别借用两个字段：提交要改 store，也要改打开着的稿子。
+        let ProjectEntry {
+            store, manuscripts, ..
+        } = entry;
+        let manuscript = manuscripts.get_mut(&path).ok_or_else(|| {
             RefrainError::new(
                 ErrorCode::StateUnavailable,
                 "commit against a document that is not open",
                 path.clone(),
             )
         })?;
-        let base = manuscript.head().id();
-        let transition = manuscript
-            .execute(TextCommand::CommitDecisionBatch(DecisionBatch::new(
-                base, proposals, verdicts,
-            )))
-            .map_err(|error| {
-                RefrainError::new(ErrorCode::Io, "commit a decision batch", path.clone())
-                    .with_detail(error.to_string())
-            })?;
-
-        entry
-            .store
-            .review_session_set(&path, 0, "[]")
-            .map_err(into_domain)?;
+        let transition = refrain_app::commit_decision_batch(store, manuscript, &path)?;
         Ok(TextTransitionDto {
             revision: transition.head().id().to_string(),
             action_id: transition.action().id().to_string(),
@@ -1852,7 +1708,10 @@ fn commit_decision_batch(
 // in .refrain/ through DirectoryContext. Nothing here decides a domain rule:
 // the host's state machine does.
 
-use refrain_app::journal::{StoreJournal, into_domain, into_domain_host, run_kind, task_kind};
+use refrain_app::journal::{
+    StoreJournal, into_domain, into_domain_host, into_domain_store, parse_id, run_kind, task_kind,
+};
+use refrain_app::rebuild_proposal;
 use refrain_core::context_compiler::{
     self, BeforeScope, ChangeEntry, ChangeKind, ContractMode, DispatchInput, DispatchPackage,
     ManifestEntry,
