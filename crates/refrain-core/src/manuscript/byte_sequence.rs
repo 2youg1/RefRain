@@ -1,10 +1,21 @@
+use std::fmt;
 use std::ops::Range;
 use std::sync::Arc;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(super) struct ByteSequence {
     pieces: Arc<[Piece]>,
     len: usize,
+}
+
+impl fmt::Debug for ByteSequence {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ByteSequence")
+            .field("len", &self.len)
+            .field("pieces", &self.pieces.len())
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone)]
