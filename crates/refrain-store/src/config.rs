@@ -85,7 +85,7 @@ pub struct AppearanceConfig {
     #[serde(default)]
     pub night_lamp: NightLamp,
 
-/// How wide a panel opens.
+    /// How wide a panel opens.
     #[serde(default)]
     pub panel_width: PanelWidth,
     /// How wide the document rail sits.

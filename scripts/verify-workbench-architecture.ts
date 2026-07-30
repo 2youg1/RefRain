@@ -8,6 +8,7 @@ const reducer = await Bun.file("apps/desktop/src/shell/workbench-state.ts").text
 const panels = await Bun.file("apps/desktop/src/shell/panel-stack.ts").text();
 const settings = await Bun.file("apps/desktop/src/ui/SettingsSurface.tsx").text();
 const iconPicker = await Bun.file("apps/desktop/src/ui/IconPicker.tsx").text();
+const icon = await Bun.file("apps/desktop/src/shell/universal-icon.ts").text();
 const storeConfig = await Bun.file("crates/refrain-store/src/config.rs").text();
 const bridge = await Bun.file("apps/desktop/src-tauri/src/lib.rs").text();
 const bindings = await Bun.file("apps/desktop/src/generated/bindings.gen.ts").text();
@@ -94,8 +95,15 @@ for (const [source, fact, message] of [
   [settings, 'kind: "resetTypography"', "the typography reset is not wired"],
   [settings, 'kind: "restoreAppearance"', "the Settings-entry snapshot is not wired"],
   // Vue `onBeforeUnmount` → Solid `onCleanup`: same teardown hook, same owner.
-  [iconPicker, "onCleanup(", "IconPicker does not own its listener lifetime"],
-  [iconPicker, "stopConfig?.()", "IconPicker leaks its config-changed listener"],
+  //
+  // 生命周期已搬进 shell/universal-icon.ts：取字节、跟随 config-changed、卸载后
+  // 丢弃响应，此前在 UniversalButton 与 IconPicker 里各抄一遍**且已经漂开**
+  // （一个先订阅后取，一个反过来，后者会漏掉两步之间到达的变更）。断言跟着搬到
+  // 权威那一侧，并单独钉住两个组件不得再自己订阅。
+  [icon, "onCleanup(", "the icon does not own its listener lifetime"],
+  [icon, 'listen("config-changed"', "the icon no longer follows config changes"],
+  // 两个组件都不该再自己订阅——订阅归模块。各持一份生命周期正是它们漂开的原因。
+  [iconPicker, "universalIcon()", "IconPicker no longer takes its icon from the shared owner"],
   [storeConfig, "ResetVisual", "Config has no scoped visual reset"],
   [storeConfig, "ResetTypography", "Config has no scoped typography reset"],
   [storeConfig, "RestoreAppearance", "Config cannot restore the entry snapshot"],

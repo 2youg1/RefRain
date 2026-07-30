@@ -33,7 +33,9 @@ for (const [source, fact, failure] of [
   [focus, "isConnected", "focus can be returned to a node that already left the DOM"],
   [focus, "universal-button-zone", "returning focus to the hot zone can trap the author in a loop"],
   [workbench, "onChoose={executeCommand}", "the menu bypasses Workbench action ownership"],
-  [button, "commands.universalIcon()", "the button does not consume the stored icon"],
+  // 取图标已归 shell/universal-icon.ts；按钮向它要，不再自己跨桥。
+  [button, "universalIcon()", "the button does not consume the stored icon"],
+  [icon, "commands.universalIcon()", "the icon owner no longer reads the stored icon"],
   [button, "universal-hot-zone", "the button has no top-edge hot zone"],
   [button, "}, 240);", "the button does not use the 240 ms leave delay"],
   [menu, "width: min(520px", "the menu exceeds its declared width"],

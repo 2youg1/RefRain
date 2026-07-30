@@ -187,30 +187,6 @@ function settling(journal: Journal): boolean {
   );
 }
 
-export function tokenLabel(tokens: Tokens): string {
-  if (tokens.kind === "actual") return `token 实报 ${tokens.value}`;
-  if (tokens.kind === "estimated") return `token 预估约 ${tokens.value}`;
-  return "token 未知";
-}
-
-export function runStatusLabel(run: RunDto): string {
-  const labels: Record<string, string> = {
-    queued: "排队",
-    authorized: "已授权",
-    launching: "启动",
-    dispatched: "在途",
-    completed: "完成",
-    failed: `失败：${run.failure ?? ""}`,
-    cancelled: "取消",
-  };
-  return labels[run.progress] ?? run.progress;
-}
-
-/** 一个 Run 还能不能取消：原 template 里那串三重 !== 比较。 */
-export function terminal(run: RunDto): boolean {
-  return run.progress === "completed" || run.progress === "failed" || run.progress === "cancelled";
-}
-
 export function editingDraftId(edit: DraftEdit): string | null {
   return edit.kind === "open" ? edit.draftId : null;
 }
