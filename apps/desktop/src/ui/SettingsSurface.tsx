@@ -200,7 +200,7 @@ export function SettingsSurface(props: SettingsSurfaceProps) {
   });
 
   return (
-    <section class="settings" aria-labelledby="settings-title">
+    <section class="settings" data-quarter="settings" aria-labelledby="settings-title">
       <div class="settings-frame">
         <header class="settings-hero">
           <button class="settings-back" type="button" onClick={() => props.onClosed?.()}>

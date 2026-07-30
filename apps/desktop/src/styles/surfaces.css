@@ -2374,8 +2374,14 @@ kbd {
  *
  * 方向、时长、缓动三个值都来自 shell/panel-motion.ts，由那里写进这三个变量。
  * 关掉动画是把 --panel-motion 压到 1ms，不是换一条没有过渡的路径。
+ *
+ * **身份由 `data-quarter` 声明，不由类名清单枚举。** 这里原本写的是
+ * `:is(.dispatch, .connections, .annotations, .panel-layer)`，同一份清单在本文件里
+ * 抄了五遍（定位、内缘、铺满、侧灯、顶灯）。加一种面板要改五处，漏掉其中一处
+ * 不会有任何东西报错——它只是在某个主题或某盏灯下看起来不对。属性选择器让
+ * 「我是四区的一层」成为面板自己声明的事，五处规则自动跟随。
  */
-.stage-row > :is(.dispatch, .connections, .annotations, .panel-layer) {
+.stage-row > [data-quarter] {
   position: absolute;
   inset-inline-start: var(--panel-offset, 0);
   top: 0;
@@ -2408,7 +2414,7 @@ kbd {
  * 只有这两条线在区分「一块玻璃」与「一片模糊」——模糊人人会做，
  * 边缘才让它有体积。rim 为 0 时（实心）整条规则自动失效，不必另写选择器。
  */
-.stage-row > :is(.dispatch, .connections, .annotations, .panel-layer)::before {
+.stage-row > [data-quarter]::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -2443,9 +2449,7 @@ kbd {
  * 陪着一篇看不见的稿子。铺满时正文一点也不让——舞台整个归了它，再为正文
  * 保留位置只会让面板凭空少一块。
  */
-:root[data-panel-width="full"]
-  .stage-row
-  > :is(.dispatch, .connections, .annotations, .panel-layer) {
+:root[data-panel-width="full"] .stage-row > [data-quarter] {
   inset-inline: 0;
   width: auto;
   max-width: none;
@@ -2524,7 +2528,7 @@ kbd {
  * 透光的来由：不是「玻璃自己会亮」，是它挡在光路上。全侧灯从头顶来，
  * 面板的上缘蹭到光。实心档两种灯都不蹭，它本来就不透。
  */
-:root[data-lamp="side"] .stage-row > :is(.dispatch, .connections, .annotations, .panel-layer) {
+:root[data-lamp="side"] .stage-row > [data-quarter] {
   background-image: linear-gradient(
     calc(90deg - var(--lamp-x, 1) * 55deg),
     color-mix(in oklab, var(--lamp-glow) calc(var(--panel-rim, 0) * 70%), transparent),
@@ -2532,7 +2536,7 @@ kbd {
   );
 }
 
-:root[data-lamp="overhead"] .stage-row > :is(.dispatch, .connections, .annotations, .panel-layer) {
+:root[data-lamp="overhead"] .stage-row > [data-quarter] {
   background-image: linear-gradient(
     to bottom,
     color-mix(in oklab, var(--lamp-glow) calc(var(--panel-rim, 0) * 60%), transparent),

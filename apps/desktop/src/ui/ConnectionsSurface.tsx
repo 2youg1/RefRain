@@ -67,7 +67,7 @@ export function ConnectionsSurface(props: ConnectionsSurfaceProps): JSX.Element 
   });
 
   return (
-    <section class="connections" aria-label="Agent 连接">
+    <section class="connections" data-quarter="agent" aria-label="Agent 连接">
       <header class="connections-head">
         <div>
           <h2 class="conn-title">Agent 连接</h2>

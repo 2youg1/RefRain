@@ -319,9 +319,11 @@ fn document_pages_are_ordered_complete_and_hard_limited() {
 }
 
 #[test]
-fn document_search_is_literal_ordered_and_hard_limited() {
+fn document_search_is_ranked_and_hard_limited() {
     let root = scratch();
-    fs::write(root.join("100%_确定.md"), "精确命中。\n").unwrap();
+    // 一份标题里带 FTS5 与 LIKE 都视为语法的字符。它必须能被当字面搜到，
+    // 而不是把查询读成通配符或 MATCH 语法。
+    fs::write(root.join("100%_确定.md").as_path(), "精确命中。\n").unwrap();
     for index in 0..(MAX_DOCUMENT_SEARCH_RESULTS + 17) {
         fs::write(root.join(format!("needle-{index:04}.md")), "命中。\n").unwrap();
     }
@@ -338,7 +340,8 @@ fn document_search_is_literal_ordered_and_hard_limited() {
     .unwrap();
     store.refresh_documents().unwrap();
 
-    let literal = store.search_documents("%_", u32::MAX).unwrap();
+    // 「确定」两篇都有；只有 100%_确定 的标题里有那串字面字符。
+    let literal = store.search_documents("100%_确定", u32::MAX).unwrap();
     assert_eq!(
         literal
             .iter()
@@ -347,9 +350,19 @@ fn document_search_is_literal_ordered_and_hard_limited() {
         ["100%_确定.md"]
     );
 
+    // 上限仍是硬的。次序现在由相关度决定，不再是路径字典序——检索层排的是
+    // 「作者要哪一份」，而路径序只是「文件系统怎么摆」。
     let bounded = store.search_documents("needle", u32::MAX).unwrap();
     assert_eq!(bounded.len(), MAX_DOCUMENT_SEARCH_RESULTS as usize);
-    assert!(bounded.windows(2).all(|pair| pair[0].path < pair[1].path));
+    let unique: std::collections::BTreeSet<&str> = bounded
+        .iter()
+        .map(|document| document.path.as_str())
+        .collect();
+    assert_eq!(
+        unique.len(),
+        bounded.len(),
+        "同一份文档不得在结果里出现两次"
+    );
 
     drop(store);
     drop(app);

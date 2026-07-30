@@ -375,6 +375,29 @@ export function Workbench(props: WorkbenchProps) {
     stopKara();
   });
 
+  /**
+   * 设置面板的接线，一处。
+   *
+   * 它出现在两个位置——有稿子时在 stage-row 内与正文并存，没稿子时在一条空
+   * stage-row 里。两处的接线完全相同，抄两遍的代价是它们会漂开：改了一处的
+   * `onThemePicked` 而忘了另一处，换主题在其中一种情形下静默失效。
+   *
+   * 设置是四区第 1 层，与正文并存——作者改字号时要看得见自己的字。它在
+   * stage-row 里而不是 stage 里，因此走的是与其他面板同一条 CSS 路径：
+   * 绝对定位、正文让位、书脊、动效、材质、灯光全部自动跟随。此前它是 stage
+   * 的直接子元素，探针实测把正文挤到视口外 156px 处。
+   */
+  const settingsPanel = () => (
+    <Show when={reference()?.kind === "settings"}>
+      <SettingsSurface
+        initialSection={settingsSection(reference())}
+        returnLabel={active()?.document.path ?? "工作台"}
+        onClosed={closeReference}
+        onThemePicked={(slug: string) => props.onThemeChanged?.(slug)}
+      />
+    </Show>
+  );
+
   return (
     <div class="workbench">
       <WindowChrome
@@ -508,14 +531,6 @@ export function Workbench(props: WorkbenchProps) {
 
             <main class="stage">
               <Show when={notice()}>{(text) => <p class="notice">{text()}</p>}</Show>
-              <Show when={reference()?.kind === "settings"}>
-                <SettingsSurface
-                  initialSection={settingsSection(reference())}
-                  returnLabel={active()?.document.path ?? "工作台"}
-                  onClosed={closeReference}
-                  onThemePicked={(slug: string) => props.onThemeChanged?.(slug)}
-                />
-              </Show>
               <Show when={state().stage === "review" && active() !== null}>
                 <ReviewSurface
                   rootId={root().rootId}
@@ -575,21 +590,24 @@ export function Workbench(props: WorkbenchProps) {
                     <Show when={reference()?.kind === "connections"}>
                       <ConnectionsSurface rootId={root().rootId} onClosed={closeReference} />
                     </Show>
+                    {settingsPanel()}
                   </div>
                 )}
               </Show>
-              <Show when={active() === null && reference()?.kind === "connections"}>
+              {/*
+                还没打开稿子时，面板没有正文可以并存，自己占着一条空舞台行即可。
+                走同一个 stage-row，是为了让面板的定位、动效、材质、灯光只有一条
+                CSS 路径——分成两套写法，其中一套迟早会在某个主题下看起来不对。
+              */}
+              <Show when={active() === null && reference() !== null}>
                 <div class="stage-row">
-                  <ConnectionsSurface rootId={root().rootId} onClosed={closeReference} />
+                  <Show when={reference()?.kind === "connections"}>
+                    <ConnectionsSurface rootId={root().rootId} onClosed={closeReference} />
+                  </Show>
+                  {settingsPanel()}
                 </div>
               </Show>
-              <Show
-                when={
-                  active() === null &&
-                  reference()?.kind !== "settings" &&
-                  reference()?.kind !== "connections"
-                }
-              >
+              <Show when={active() === null && reference() === null}>
                 <p class="empty">从左侧选一个文档，或新建一章。</p>
               </Show>
             </main>

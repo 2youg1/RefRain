@@ -36,7 +36,7 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): JSX.Element {
   };
 
   return (
-    <aside class="annotations" aria-label="高亮与批注">
+    <aside class="annotations" data-quarter="agent" aria-label="高亮与批注">
       <header>
         <div>
           <small>ANNOTATIONS</small>

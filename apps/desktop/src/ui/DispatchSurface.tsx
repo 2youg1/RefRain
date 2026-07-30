@@ -107,7 +107,7 @@ export function DispatchSurface(props: DispatchSurfaceProps): JSX.Element {
   });
 
   return (
-    <section class="dispatch" aria-label="派发">
+    <section class="dispatch" data-quarter="agent" aria-label="派发">
       <header class="ticket">
         <div class="cell">
           <span class="name">段落</span>
