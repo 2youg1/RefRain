@@ -86,7 +86,10 @@ for (const file of files) {
 // —— 分支 1 的另一半：数目本身是不变量 ——
 // 光看「每个信号有人读」不够：一个信号被两个 memo 读，删掉其中一个仍然过关。
 // 所以把配对数登记下来，少一个就报，多一个也要求更新登记——与棘轮同一个道理。
-const EXPECTED_SUBSCRIBING_MEMOS = 8;
+// 9：新增 `selectedAnnotations`（作者勾了哪些批注要派发）。
+// 已确认它确实需要 tick——`AnnotationSelection` 是 framework-free 的会话对象，
+// 与另外五个同形，不是把一个已经响应式的值多包一层。
+const EXPECTED_SUBSCRIBING_MEMOS = 9;
 if (subscribingMemos !== EXPECTED_SUBSCRIBING_MEMOS) {
   failures.push(
     subscribingMemos < EXPECTED_SUBSCRIBING_MEMOS

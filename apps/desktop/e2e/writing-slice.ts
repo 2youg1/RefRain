@@ -658,6 +658,32 @@ const run = async (): Promise<void> => {
   await screenshot("03-annotations");
   const annotationCheckbox = await element(".annotations input[type=checkbox]");
   await click(annotationCheckbox);
+
+  // 关掉面板去看正文，再打开——勾选必须还在。
+  //
+  // 这曾经是 AnnotationSurface 的组件本地信号，面板一关就随 DOM 消失：
+  // 作者勾了十条、回正文核对一句、再打开，全没了且没有任何提示，他会以为
+  // 自己没点。选择现在归外壳的 AnnotationSelection，面板的生死碰不到它。
+  //
+  // 这条只能在真窗口里验：单元测试测得了那个模块，测不了「面板卸载之后
+  // 复选框还勾着」——那是组件与外壳之间的事。
+  await clickButton("返回正文");
+  await waitFor("the annotation panel to close", async () =>
+    Boolean(await execute(`return document.querySelector(".annotations") === null`)),
+  );
+  await clickButton("批注");
+  await waitFor("the annotation panel to reopen", async () =>
+    Boolean(await execute(`return document.querySelectorAll(".annotations li").length === 2`)),
+  );
+  check(
+    "a selected annotation survives closing and reopening the panel",
+    Boolean(
+      await execute(
+        `return document.querySelectorAll(".annotations input[type=checkbox]:checked").length === 1`,
+      ),
+    ),
+  );
+
   await clickButton("将所选批注转为派发工单");
   await waitFor("the annotation dispatch ticket", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch-prompt") !== null`)),
