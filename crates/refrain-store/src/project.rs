@@ -244,6 +244,8 @@ pub struct ProjectStore {
     permit: RootPermit,
     layout: RootLayout,
     pub(crate) db: Connection,
+    /// The paths and roles from the last successful catalog reconciliation.
+    pub(crate) reconciled: Option<[u8; 32]>,
 }
 
 impl ProjectStore {
@@ -275,7 +277,12 @@ impl ProjectStore {
         let mut db = Connection::open(&db_path).map_err(crate::schema::StoreError::from)?;
         ProjectDb::migrate(&mut db)?;
 
-        let store = Self { permit, layout, db };
+        let store = Self {
+            permit,
+            layout,
+            db,
+            reconciled: None,
+        };
         let backup = root::take_source_backup(&canonical, locator.kind, &store.layout).into();
         Ok((store, backup))
     }

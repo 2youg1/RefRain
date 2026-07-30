@@ -17,9 +17,53 @@ pub fn content_hex(content: &[u8]) -> String {
     blake3::hash(content).to_hex().to_string()
 }
 
+/// Names a sequence of parts without joining them into one buffer first.
+///
+/// The catalogue fingerprints 100,000 scanned rows on every open. Building one
+/// string to hash would allocate megabytes to answer a question the caller
+/// throws away — this feeds the parts through instead.
+///
+/// Each part carries its length, so two different sequences cannot collide by
+/// concatenating to the same bytes: a path may contain any character, which
+/// leaves no separator safe to rely on.
+#[must_use]
+pub fn sequence_bytes<'part>(parts: impl IntoIterator<Item = &'part [u8]>) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    for part in parts {
+        hasher.update(&(part.len() as u64).to_le_bytes());
+        hasher.update(part);
+    }
+    *hasher.finalize().as_bytes()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sequence_is_named_by_its_parts_and_their_order() {
+        let one = sequence_bytes([b"alpha".as_slice(), b"beta".as_slice()]);
+        assert_eq!(
+            one,
+            sequence_bytes([b"alpha".as_slice(), b"beta".as_slice()])
+        );
+        // A different order names a different sequence.
+        assert_ne!(
+            one,
+            sequence_bytes([b"beta".as_slice(), b"alpha".as_slice()])
+        );
+        // Length prefixes distinguish different part boundaries.
+        assert_ne!(one, sequence_bytes([b"alphabeta".as_slice()]));
+        assert_ne!(
+            one,
+            sequence_bytes([b"alph".as_slice(), b"abeta".as_slice()])
+        );
+        // An empty sequence differs from a sequence with one empty part.
+        assert_ne!(
+            sequence_bytes(std::iter::empty()),
+            sequence_bytes([b"".as_slice()])
+        );
+    }
 
     #[test]
     fn byte_and_text_forms_name_the_same_content() {

@@ -5,13 +5,34 @@
 //! the durable catalog. Existing rows keep identity, role, digest, confirmed
 //! head, and lineage across a refresh.
 
-use refrain_core::{DocumentRole, ErrorCode, Id, RefrainError};
+use refrain_core::{DocumentRole, ErrorCode, Id, RefrainError, digest};
 use rusqlite::params;
 
 use super::{ProjectFailure, ProjectStore, infer_role};
 use crate::files::{ScanOptions, index::scan_checked};
 use crate::root::RootKind;
 
+/// Name one scanned set by its paths and inferred roles.
+///
+/// Skip the generated ID because it changes on every scan. Sort the set because
+/// filesystem traversal order is not stable. Length-prefixed parts keep paths
+/// with arbitrary characters unambiguous without joining the full set first.
+fn fingerprint_of(scanned: &[[String; 3]]) -> [u8; 32] {
+    let mut identity: Vec<(&str, &str)> = scanned
+        .iter()
+        .map(|entry| (entry[1].as_str(), entry[2].as_str()))
+        .collect();
+    identity.sort_unstable();
+    digest::sequence_bytes(
+        identity
+            .iter()
+            .flat_map(|(path, role)| [path.as_bytes(), role.as_bytes()]),
+    )
+}
+
+#[cfg(test)]
+#[path = "catalog/tests/mod.rs"]
+mod tests;
 /// The largest document page that may cross a composition boundary at once.
 pub const MAX_DOCUMENT_PAGE_SIZE: u32 = 256;
 /// The largest search result that may cross the bridge at once.
@@ -89,6 +110,10 @@ fn decode_document(stored: StoredDocument) -> Result<DocumentRow, RefrainError> 
 
 impl ProjectStore {
     /// Reconcile the authoritative scan in one transaction.
+    ///
+    /// An unchanged path-and-role fingerprint skips the temporary-table load
+    /// and set comparison. Content changes do not invalidate this cache because
+    /// this operation owns catalog membership only; document heads own content.
     fn reconcile_documents(&mut self) -> Result<(), ProjectFailure> {
         let scanned = if self.permit.kind == RootKind::File {
             vec![[
@@ -131,6 +156,11 @@ impl ProjectStore {
             })
             .collect::<Result<Vec<_>, ProjectFailure>>()?
         };
+        let fingerprint = fingerprint_of(&scanned);
+        if self.reconciled == Some(fingerprint) {
+            return Ok(());
+        }
+
         let scanned_json = serde_json::to_string(&scanned).map_err(|error| {
             ProjectFailure::Domain(
                 RefrainError::new(
@@ -176,6 +206,8 @@ impl ProjectStore {
             remove_absent.execute([])?;
         }
         transaction.commit()?;
+        // A failed transaction leaves the cache empty so the next call retries.
+        self.reconciled = Some(fingerprint);
         Ok(())
     }
 
