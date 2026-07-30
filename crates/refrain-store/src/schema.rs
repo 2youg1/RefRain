@@ -278,6 +278,47 @@ impl Database for ProjectDb {
                     )
                 },
             },
+            Migration {
+                version: SchemaVersion(7),
+                name: "chinese-search",
+                apply: |tx| {
+                    // Full-text search over the manuscript.
+                    //
+                    // The tokenizer is `unicode61` and the text stored in it has
+                    // been split into overlapping two-character pieces by
+                    // `refrain_core::chinese_index`. The two FTS5 tokenizers that
+                    // might have served instead were measured and both fail:
+                    // `unicode61` alone makes a run of Chinese into one token, so
+                    // 「营销」 inside it matches nothing, and `trigram` indexes
+                    // nothing shorter than three characters *and* returns
+                    // bm25 = -0.0000 for every row because it keeps no column
+                    // sizes. See review/search-probe-results.md.
+                    //
+                    // `content=''` makes this an external-content table holding
+                    // no copy of the author's words. The manuscript lives in .md
+                    // files on disk and this index is a derived artifact that can
+                    // be thrown away and rebuilt — the same reason `documents`
+                    // stores a digest rather than the text.
+                    //
+                    // `detail=full` is required: it is what maintains the column
+                    // sizes bm25() needs, and dropping to 'column' or 'none' to
+                    // save space would reproduce trigram's ranking failure.
+                    tx.execute_batch(
+                        "CREATE VIRTUAL TABLE document_search USING fts5(
+                             path,
+                             body,
+                             content='',
+                             tokenize='unicode61 remove_diacritics 2',
+                             detail=full
+                         );
+                         CREATE TABLE document_search_state (
+                             document TEXT PRIMARY KEY,
+                             rowid_of INTEGER NOT NULL UNIQUE,
+                             digest   TEXT NOT NULL
+                         ) STRICT;",
+                    )
+                },
+            },
         ]
     }
 }

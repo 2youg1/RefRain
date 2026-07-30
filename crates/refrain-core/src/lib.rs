@@ -9,6 +9,7 @@
 
 pub mod agent_protocol;
 pub mod block_shape;
+pub mod chinese_index;
 pub mod context_compiler;
 pub mod digest;
 pub mod error;

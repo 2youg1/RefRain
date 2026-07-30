@@ -32,6 +32,7 @@ use crate::root::{
 use crate::schema::{Database, ProjectDb};
 
 mod catalog;
+pub mod search;
 pub use catalog::{
     DocumentPage, DocumentPageQuery, DocumentRow, MAX_DOCUMENT_PAGE_SIZE,
     MAX_DOCUMENT_SEARCH_RESULTS,
