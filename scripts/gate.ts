@@ -41,6 +41,7 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["verify:editor-performance", ["bun", "apps/desktop/e2e/editor-performance.ts"]],
   ["verify:editor-context", ["bun", "apps/desktop/e2e/editor-context.ts"]],
   ["verify:editor-host-identity", ["bun", "apps/desktop/e2e/editor-host-identity.ts"]],
+  ["verify:cross-block-selection", ["bun", "apps/desktop/e2e/cross-block-selection.ts"]],
   ["verify:e2e-coverage", ["bun", "scripts/verify-e2e-coverage.ts"]],
   [
     "verify:project-performance",

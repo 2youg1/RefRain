@@ -203,6 +203,10 @@ export class VirtualManuscriptView {
     if (view === null) throw new Error("editor document has no window");
     this.#element = element;
     this.#scrollHost = element.parentElement ?? element;
+    // One editing host for the whole manuscript (see #paragraphFor).
+    element.contentEditable = "true";
+    element.style.outline = "none";
+    element.spellcheck = false;
 
     this.#view = view;
     this.#submitChanges = submitChanges;
@@ -271,16 +275,22 @@ export class VirtualManuscriptView {
       }
     }
     if (target === null) return;
-    target.focus();
+    // The host takes focus; the caret says which paragraph. Focusing must not
+    // scroll: the host spans the whole manuscript, so letting the browser bring
+    // it into view would undo the scroll position just computed above.
+    this.#element.focus({ preventScroll: true });
     placeCaret(target, offset ?? (target.textContent ?? "").length);
   }
 
   caret(): { blockId: string; offset: number } | null {
     const active = this.#element.ownerDocument.activeElement;
-    if (!(active instanceof HTMLElement) || !this.#element.contains(active)) return null;
-    const id = active.dataset.blockId;
+    // The host is what holds focus now, so the caret — not activeElement —
+    // is what identifies the block.
+    if (active !== this.#element && !this.#element.contains(active)) return null;
+    const paragraph = this.#paragraphAtCaret();
+    const id = paragraph?.dataset.blockId;
     if (id === undefined) return null;
-    const offset = caretWithin(active);
+    const offset = caretWithin(paragraph as HTMLElement);
     return offset === null ? null : { blockId: id, offset };
   }
 
@@ -444,7 +454,10 @@ export class VirtualManuscriptView {
     if (existing !== undefined) return existing;
     const paragraph = this.#element.ownerDocument.createElement(BLOCK_TAG);
     paragraph.dataset.blockId = block.id;
-    paragraph.contentEditable = "true";
+    // Not editable individually: the manuscript is one editing host, so a
+    // selection can cross paragraph boundaries. Per-paragraph contentEditable
+    // makes each one its own host and the browser collapses any drag that
+    // leaves it — the author watches the selection stop at the block edge.
     paragraph.textContent = block.text;
     paragraph.style.minHeight = "1em";
     paragraph.style.whiteSpace = "pre-wrap";
@@ -452,10 +465,38 @@ export class VirtualManuscriptView {
     return paragraph;
   }
 
+  /**
+   * The paragraph an event concerns.
+   *
+   * The whole manuscript is one editing host, so a browser-generated event
+   * targets the container rather than a paragraph — the caret is what says
+   * which block the author is in. Pointer events still carry a paragraph, and
+   * that answer is preferred because a right-click does not move the caret.
+   */
+  /**
+   * The paragraph a pointer landed on. Nothing else counts: a right-click does
+   * not move the caret, so falling back to the selection here would answer for
+   * a target the author never pointed at.
+   */
   #paragraphFrom(target: EventTarget | null): HTMLElement | null {
     return (target as HTMLElement | null)?.closest?.(
       `${BLOCK_TAG}[data-block-id]`,
     ) as HTMLElement | null;
+  }
+
+  /**
+   * The paragraph the caret is in.
+   *
+   * The whole manuscript is one editing host, so a browser-generated editing
+   * event targets the container rather than a paragraph — only the caret says
+   * which block the author is editing.
+   */
+  #paragraphAtCaret(): HTMLElement | null {
+    const selection = this.#element.ownerDocument.getSelection();
+    const anchor = selection?.anchorNode ?? null;
+    if (anchor === null || !this.#element.contains(anchor)) return null;
+    const node = anchor.nodeType === Node.ELEMENT_NODE ? (anchor as Element) : anchor.parentElement;
+    return (node?.closest(`${BLOCK_TAG}[data-block-id]`) ?? null) as HTMLElement | null;
   }
 
   #indexOf(id: string): number {
@@ -650,9 +691,11 @@ export class VirtualManuscriptView {
   }
 
   #render(center?: number): void {
-    const active = this.#element.ownerDocument.activeElement;
-    const activeParagraph =
-      active instanceof HTMLElement && this.#element.contains(active) ? active : null;
+    // Where the author is editing is the caret, not the focused element: the
+    // manuscript is one editing host, so focus always sits on the container.
+    // Windowing must keep that paragraph mounted, or scrolling past it destroys
+    // the selection along with the node.
+    const activeParagraph = this.#paragraphAtCaret();
     const activeOffset = activeParagraph === null ? null : caretWithin(activeParagraph);
     const composingId = this.#interaction.kind === "composing" ? this.#interaction.blockId : null;
     const pinnedId = composingId ?? activeParagraph?.dataset.blockId ?? null;
@@ -733,7 +776,9 @@ export class VirtualManuscriptView {
         const block = this.#blocks[index];
         if (block === undefined) continue;
         const paragraph = previous.get(block.id) ?? this.#paragraphFor(block);
-        if (paragraph !== active && paragraph.textContent !== block.text) {
+        // Never overwrite the paragraph holding the caret: its DOM text is the
+        // author's in-flight edit, ahead of the projection.
+        if (paragraph !== activeParagraph && paragraph.textContent !== block.text) {
           paragraph.textContent = block.text;
         }
         this.#byId.set(block.id, paragraph);
@@ -765,7 +810,7 @@ export class VirtualManuscriptView {
     if (pinnedId !== null && activeOffset !== null) {
       const restored = this.#byId.get(pinnedId);
       if (restored !== undefined) {
-        restored.focus({ preventScroll: true });
+        this.#element.focus({ preventScroll: true });
         placeCaret(restored, activeOffset);
       }
     }
@@ -931,7 +976,7 @@ export class VirtualManuscriptView {
     if (this.#interaction.kind === "composing") return;
     this.#contextBlock = null;
     this.#contextSelection = null;
-    const paragraph = this.#paragraphFrom(event.target);
+    const paragraph = this.#paragraphAtCaret();
     if (paragraph === null) return;
     const id = paragraph.dataset.blockId ?? "";
     if (event.inputType === "insertParagraph" || event.inputType === "insertLineBreak") {
@@ -944,7 +989,7 @@ export class VirtualManuscriptView {
   };
 
   readonly #onPaste = (event: ClipboardEvent): void => {
-    const paragraph = this.#paragraphFrom(event.target);
+    const paragraph = this.#paragraphAtCaret();
     if (paragraph === null || this.#interaction.kind === "composing") return;
     const text = event.clipboardData?.getData("text/plain") ?? "";
     if (!/\n\s*\n/.test(text)) return;
@@ -975,14 +1020,14 @@ export class VirtualManuscriptView {
     if (this.#interaction.kind === "composing") return;
     this.#contextBlock = null;
     this.#contextSelection = null;
-    const paragraph = this.#paragraphFrom(event.target);
+    const paragraph = this.#paragraphAtCaret();
     if (paragraph !== null) this.#settleBlock(paragraph.dataset.blockId ?? "");
   };
 
-  readonly #onCompositionStart = (event: CompositionEvent): void => {
+  readonly #onCompositionStart = (_event: CompositionEvent): void => {
     this.#contextBlock = null;
     this.#contextSelection = null;
-    const paragraph = this.#paragraphFrom(event.target);
+    const paragraph = this.#paragraphAtCaret();
     this.#interaction = {
       kind: "composing",
       blockId: paragraph?.dataset.blockId ?? "",
@@ -991,8 +1036,8 @@ export class VirtualManuscriptView {
     };
   };
 
-  readonly #onCompositionEnd = (event: CompositionEvent): void => {
-    const paragraph = this.#paragraphFrom(event.target);
+  readonly #onCompositionEnd = (_event: CompositionEvent): void => {
+    const paragraph = this.#paragraphAtCaret();
     const id = paragraph?.dataset.blockId ?? null;
     const completed = this.#interaction;
     this.#interaction = { kind: "idle" };
