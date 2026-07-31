@@ -565,23 +565,25 @@ impl ProjectStore {
         let mut rows = self.documents_at(hits.iter().map(|hit| hit.path.as_str()))?;
         let mut candidates: Vec<Candidate> = rows
             .iter()
-            .map(|row| Candidate {
-                path: row.path.clone(),
-                role: row.role,
-                path_match: path_match_of(&row.path, query),
-                // The retriever works at document granularity, so which block
-                // a hit landed in is not known here. `Paragraph` is the honest
-                // answer: claiming `Heading` would award structure this layer
-                // never observed.
-                block: BlockKind::Paragraph,
-                bm25: hits
-                    .iter()
-                    .find(|hit| hit.path == row.path)
-                    .map_or(0.0, |hit| hit.relevance),
-                // Edit times are not carried on a document row. Zero days is
-                // not "edited today" — `search_rank` caps recency below every
-                // other signal precisely so a missing one cannot reorder.
-                days_since_edit: 0.0,
+            .map(|row| {
+                // A document is represented by its best-matching block. The
+                // retriever returns blocks in bm25 order, so the first hit for
+                // a path is that document's strongest passage — and its kind
+                // is now a fact the index recorded rather than a guess. Before
+                // block-level indexing this had to claim `Paragraph` for
+                // everything, which threw away the `HEADING` signal entirely.
+                let best = hits.iter().find(|hit| hit.path == row.path);
+                Candidate {
+                    path: row.path.clone(),
+                    role: row.role,
+                    path_match: path_match_of(&row.path, query),
+                    block: best.map_or(BlockKind::Paragraph, |hit| hit.kind),
+                    bm25: best.map_or(0.0, |hit| hit.relevance),
+                    // Edit times are not carried on a document row. Zero days is
+                    // not "edited today" — `search_rank` caps recency below every
+                    // other signal precisely so a missing one cannot reorder.
+                    days_since_edit: 0.0,
+                }
             })
             .collect();
 
