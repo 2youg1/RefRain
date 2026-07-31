@@ -271,7 +271,7 @@ fail is a gate that has proven nothing — see [CONTRIBUTING.md](CONTRIBUTING.md
 
 - [README.md](../README.md) — what RefRain is, and how to install it
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to propose a change
-- [ROADMAP.md](ROADMAP.md) — what is planned
+- [ROADMAP.md](ROADMAP.md) — what is planned (written in Chinese)
 - [AGENTS.md](AGENTS.md) — working discipline for agents in this repository
 - [SKILL.md](SKILL.md) — the agent protocol (generated)
 - [LICENSE](../LICENSE) — MPL 2.0

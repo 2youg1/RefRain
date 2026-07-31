@@ -135,7 +135,7 @@ bun run gate
 
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) — modules, glossary, and where a problem most likely lives
 - [CONTRIBUTING.md](docs/CONTRIBUTING.md) — how to propose a change
-- [ROADMAP.md](docs/ROADMAP.md) — what is planned
+- [ROADMAP.md](docs/ROADMAP.md) — what is planned (written in Chinese)
 - [AGENTS.md](docs/AGENTS.md) — working discipline for agents in this repository
 - [SKILL.md](docs/SKILL.md) — the agent protocol, generated from the parser
 

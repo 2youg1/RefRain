@@ -169,5 +169,5 @@ By contributing you agree that your contribution is licensed under
 
 - [README.md](../README.md) — what RefRain is
 - [ARCHITECTURE.md](ARCHITECTURE.md) — modules, glossary, and where problems live
-- [ROADMAP.md](ROADMAP.md) — what is planned
+- [ROADMAP.md](ROADMAP.md) — what is planned (written in Chinese)
 - [AGENTS.md](AGENTS.md) — working discipline for agents

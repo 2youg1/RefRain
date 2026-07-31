@@ -1,102 +1,84 @@
-# Roadmap
+# 路线图
 
-Directions, not dates.
+按版本推进，不给日期。每条只说做什么、以及怎样算做完。
 
-Each entry says what it would take to call it done, so that measurement can
-remove an entry rather than leaving it to accumulate. Entries leave this file
-when they ship, or when a measurement kills them.
-
-**Feature requests are welcome.** Open an issue and describe what you were
-trying to write when the software got in the way. A request that names the
-situation is worth more than one that names a feature, because the situation
-usually admits a better answer than the feature would.
-
-## Next
-
-**Markdown preview viewport.** A new `packages/preview`. The security surface is
-part of the design, not a setting: sandboxed, no scripts, no network.
-
-*Done when* a manuscript renders beside the editor, scroll positions stay
-locked to each other across a hundred thousand blocks, and a gate proves the
-preview frame can reach neither the network nor the filesystem.
-
-**Block-level hits in the sidebar.** The index already works at block level and
-every hit carries a location a human would recognise. The bridge still returns
-`DocumentRow[]`, so the surface can say which file but not where in it.
-
-*Done when* a search result names the block, clicking it scrolls there, and the
-sidebar shows the surrounding sentence rather than the filename alone.
-
-**Precision as a visible choice.** Search has `Exact` and `Loose`, and `Exact`
-falls back automatically. Whether the author should ever see that control is
-undecided: measurement showed the two modes return identical results for
-queries of two to five characters, so a switch would mostly be theatre. What is
-*not* theatre is the case where they diverge — one exact hit against five loose
-ones.
-
-*Done when* the divergent case is visible without adding a control for the
-identical case. If no such design exists, this entry is removed rather than
-implemented.
-
-## Later
-
-**Panels on opposite sides.** The layer rules already carry `Side` — the data
-model knows a panel can sit opposite another. The animation and the visual
-judgment are not made.
-
-*Done when* two panels can hold both sides at once without the manuscript
-column reflowing, since reflowing on every panel change is what makes a
-two-sided layout unusable.
-
-**Typography preview inside the settings panel.** Adjusting a measure or a
-baseline grid while looking at real text, rather than at a number.
-
-*Done when* changing any typographic control updates a live specimen using the
-author's own manuscript text, at the author's own font stack.
-
-**Rail virtualisation under a hundred thousand files.** The windowing exists in
-`rail-window.ts`; the open question is whether directory reconciliation stays
-honest at that size.
-
-*Done when* a 100k-file directory scrolls at the display's refresh rate and a
-file added outside the application appears without a manual refresh.
-
-## Under consideration
-
-**Binary size.** 22.08MB in release on Linux, with `strip`, `lto` and
-`codegen-units = 1` already on. `panic = "abort"` and dependency pruning (605
-crates) are unexplored. `opt-level = "z"` is **not** planned: it trades away
-performance work this project has already banked.
-
-*Worth doing only if* a measurable fraction comes off without costing measured
-performance. A megabyte is not worth a millisecond on a manuscript this size.
-
-**Windows evidence.** Every number in this repository comes from Linux. WebView2
-in a real window, IME behaviour, the installer path, a high-refresh display,
-input-to-paint end to end — none of it has been measured on the platform most
-authors will use, and none of it will be claimed until it has.
-
-*This one blocks claims rather than features.* A v0.1.6 release surfaced seven
-Windows-specific defects in one night, all of the same shape: what Unix
-tolerates, Windows enforces. Until these numbers exist, every performance
-statement in this repository silently means "on Linux".
-
-## Not planned
-
-**A cloud sync service.** The manuscript is a folder of Markdown on your disk.
-Any sync tool you already trust works on it, and none of them need this
-application's help.
-
-**An account system.** There is nothing to sign in to. The application makes no
-network requests, and adding a reason for it to do so would cost the invariant
-that makes everything else here defensible.
-
-**Becoming the format.** RefRain reads and writes Markdown files that other
-tools can read. It will not introduce a proprietary container that you would
-later need to export from.
+**欢迎提功能建议**。开一个 issue，讲清你当时想写什么、软件在哪里挡了你。讲情境比讲
+功能有用——情境往往容得下比那个功能更好的答案。
 
 ---
 
-- [README.md](../README.md) — what RefRain is today
-- [ARCHITECTURE.md](ARCHITECTURE.md) — how it is built
-- [CONTRIBUTING.md](CONTRIBUTING.md) — how to propose a change
+## v0.2.2 — 前端重做与 Windows 实测
+
+**前端完全重做。** 界面层推倒重来，把这一年积下的形状问题一次改掉。
+
+**Windows 实测。** 本仓库现有的每个数字都出自 Linux。WebView2 真实窗口、输入法行为、
+安装路径、高刷新率屏幕、从按键到出字的全链路——在 Windows 上测过之前，任何性能声称都
+默认只对 Linux 成立。
+
+*做完的判据*：Windows 上有一份与 Linux 同口径的实测数据，且四道检查在该平台全绿。
+
+---
+
+## v0.2.3 — 渲染器进化与原生多格式编辑
+
+**Markdown 渲染器完全进化。** 从「能显示」推进到「排得住」。
+
+**新增可编辑的文件类型**，全部原生兼容编辑，不经转换中间层：
+
+| 类别 | 格式 |
+|---|---|
+| 文档 | DOCX、文字版 PDF、LaTeX |
+| 代码 | TypeScript、Rust、Python、Go、Lean 4 |
+| 样式与标记 | CSS、HTML、XML |
+| 配置 | TOML、YAML |
+
+**HTML 的特殊处理**：HTML 要么以资料形式呈现，要么拉起真实浏览器渲染。不在编辑器内
+自造一个半吊子渲染引擎——那既不准确，也会把「零出网」这条不变量的边界搅浑。
+
+*做完的判据*：每种格式都能打开、编辑、保存回原格式，且往返后字节可核对；不能无损往返
+的格式必须在打开时说明它会丢什么。
+
+---
+
+## v0.2.4 — 智能体互动创作
+
+**全面替代 AI 酒馆一类工具**，做出智能体互动创作文本的方案。
+
+现有的编排层已经能让多个智能体在一轮里并列、承接、校验；这一版把它推到创作场景：
+角色、长期设定、多轮互动，而裁决权仍然在人手里。
+
+*做完的判据*：一次多角色、多轮的创作会话可以完整跑通并保存，而每一段进入正文的文字
+都留有裁决记录。
+
+---
+
+## 已经在做但不属于某一版
+
+**Markdown 预览视口。** 新的 `packages/preview`，沙箱、无脚本、不出网——安全面是设计的
+一部分，不是一个开关。
+
+**侧栏的块级命中。** 索引已经工作在块一级，桥还只返回文档行，所以界面能说是哪个文件，
+说不出在文件的哪里。
+
+**精度作为可见选项。** 搜索已有 `Exact` 与 `Loose` 且会自动放宽。实测显示二到五字的
+查询下两者结果相同，所以做成开关多半是表演；真正值得暴露的是两者分歧的那种情况。若找
+不到只暴露分歧而不暴露雷同的设计，这条就删掉而不是实现。
+
+---
+
+## 不打算做的事
+
+**云同步服务。** 手稿是你硬盘上的一堆 Markdown 文件。你已经信任的任何同步工具都能处理
+它们，没有一个需要这个软件帮忙。
+
+**账号体系。** 没有东西可登录。应用进程不发起任何网络请求，而给它一个联网的理由，代价
+是丢掉那条让其余一切站得住的不变量。
+
+**成为格式本身。** RefRain 读写别的工具也能读的 Markdown 文件，不会引入一个你日后必须
+从中导出的私有容器。
+
+---
+
+- [README](../README.md) — RefRain 今天是什么
+- [ARCHITECTURE](ARCHITECTURE.md) — 它是怎么搭的
+- [CONTRIBUTING](CONTRIBUTING.md) — 怎么提改动
