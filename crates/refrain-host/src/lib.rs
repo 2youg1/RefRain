@@ -8,6 +8,7 @@
 
 pub mod host;
 pub mod process;
+pub mod run_edge;
 pub mod staging;
 
 pub mod adapters;

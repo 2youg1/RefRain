@@ -17,6 +17,7 @@ pub mod cancel;
 pub mod collect;
 pub mod decide;
 pub mod journal;
+pub mod material_access;
 pub mod review;
 pub mod scope;
 

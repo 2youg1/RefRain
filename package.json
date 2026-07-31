@@ -58,6 +58,7 @@
     "verify:workflows": "bun scripts/verify-workflows.ts",
     "verify:legacy-parity": "bun scripts/verify-legacy-parity.ts",
     "verify:text-surface": "bun scripts/verify-text-surface.ts",
+    "verify:skill-doc-current": "bun scripts/verify-skill-doc-current.ts",
     "verify:gates-run": "bun scripts/verify-gates-run.ts",
     "make:icon": "bun scripts/make-app-icon.ts",
     "e2e:app": "bun apps/desktop/e2e/writing-slice.ts target/debug/refrain-desktop.exe",

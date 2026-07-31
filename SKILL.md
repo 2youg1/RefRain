@@ -1,0 +1,160 @@
+---
+name: refrain
+description: RefRain 写作工作台的 agent 协议。当你收到一份含 "# Before / # Context / # Request / # Reply format / # Agent reply" 的请求文件时，加载本 skill。
+---
+
+<!-- 由 `cargo run -p refrain-core --example generate_skill_doc` 生成。
+     不要手改：协议的权威是 `agent_protocol::skill_doc()`，
+     手写副本漂移过一次——它教 agent 写 version="1" 而解析器要 "2"。 -->
+
+# RefRain Agent 协议 v2
+
+你写提案。人点鼠标，文字才进手稿。没有自动合并。
+
+## 架构
+
+```
+作者的 .md 文件            ← 唯一正本。你改的是它的 scope
+  ├─ .refrain/            ← 应用状态。你的请求与产出在这里
+  │    └─ <workspace>/
+  │         ├─ request.md    ← 发给你的请求
+  │         └─ result.md     ← 你写产出到这里
+  └─ .refrain-source/     ← 备份原件。永不写入，也不要读它作依据
+```
+
+**改写依据只用 `# Before` 里的原文。** 那是应用从正本取的当前字节。
+不要去读 `.refrain-source/`：它是旧副本，与正本可能已不同。
+
+## 请求结构
+
+```
+# Before        带 scope 注释的原文。改写的对象
+# Context       Persona、手稿或 <changes>、材料目录
+# Request       作者的要求
+# Reply format  本契约
+# Agent reply   你写在这里
+```
+
+前面的段每轮相同。harness 按前缀匹配缓存。
+
+## 材料
+
+`# Context` 给目录，不给全文：
+
+```xml
+<material path="资料/人物志.md" digest="…" bytes="104857" blocks="212" access="retrievable">
+  <title>人物志</title>
+  <outline><h># 人物志</h><h>## 陆沉舟</h></outline>
+  <excerpt>开篇的原文…</excerpt>
+</material>
+```
+
+`<outline>` 是作者写的标题，逐字。`<excerpt>` 是开头的原文。
+应用不联网、不带模型，因此它不概括材料。目录里没有生成的内容。
+
+`access` 是作者的授权：
+
+| access | 允许 |
+|---|---|
+| `outline-only` | 只有目录。不给正文 |
+| `retrievable` | 取片段、按块区间读 |
+| `full` | 取整篇 |
+
+取材料有两条路：
+
+1. **打开文件。** `path` 是相对 Root 的路径。你在作者机器上跑，可以直接读。
+2. **检索。** 你不知道读哪里时用。给词，应用回块：路径、块序号、原文、位置。
+
+块 = 按空行切开的一段。序号从 0 开始。引用材料用「路径 + 块序号」。
+
+不要要求整篇材料。目录加按需取更准。
+
+## 回复
+
+写一个 `<agent-result version="2">` 元素。元素外不要写字。
+
+```xml
+<agent-result version="2">
+  <replacement scope="SCOPE-ID">改写后的文本</replacement>
+  <comments>
+    <comment target="SCOPE-ID">只留话，不改</comment>
+  </comments>
+  <memo topic="标签">下一轮要记住的事</memo>
+  <material-draft kind="KIND" title="TITLE">
+    <basis ref="DOCUMENT@REVISION" />
+    <body><![CDATA[草稿]]></body>
+  </material-draft>
+</agent-result>
+```
+
+规则：
+
+- scope id 从 `# Before` 逐字抄。
+- 一个 scope 至多一个 `<replacement>`。
+- 空的 `<replacement>` 删除该 scope。
+- `<comment>` 用 `target=`，放在 `<comments>` 里。
+- 不改就不写 `<replacement>`。只写 `<comment>` 合法。
+- `<memo>` 写打开手稿看不到的事：作者的偏好、已定的决定。
+- `<material-draft>` 只成草稿。`kind` 取 chapter-synopsis、character-profile、
+  concept-explanation 或 custom。`basis ref` 取本轮给你的文档。
+
+## 你的产出如何呈现
+
+应用冻结你的回复成提案，按句切成评审切片。
+作者逐片裁决：接受、拒绝、改后接受。作者可以附理由。
+并列方案并排显示。作者选一份，另一份保留。
+作者裁决完再点合并。此时文字进手稿。
+
+一次回复里部分句子被采纳，部分不被采纳。这是设计。
+
+## 反馈
+
+下一轮 `# Context` 可能含 `<changes>`：
+
+```xml
+<changes>
+<verdict n="1" ref="p7.s2" kind="accept"><reason>这句改得对</reason></verdict>
+<verdict n="2" ref="p7.s5" kind="reject"><reason>不要用设问句结尾</reason></verdict>
+<verdict n="3" ref="p7.s8" kind="accept-modified"><final><![CDATA[采用的版本]]></final></verdict>
+</changes>
+```
+
+`reject` 带的理由是规则。不要再犯同样的错。
+`accept-modified` 的 `<final>` 是作者要的样子。对照你写的那版。
+`ref` 指切片，不指 scope。
+
+## 源码
+
+要读实现时，从 RefRain 仓库根按相对路径找：
+
+| 你想知道 | 读 |
+|---|---|
+| 请求怎么编出来 | `crates/refrain-core/src/context_compiler.rs` |
+| 本契约与解析器 | `crates/refrain-core/src/agent_protocol.rs` |
+| 材料目录怎么生成 | `crates/refrain-core/src/material_ref.rs` |
+| 块边界怎么定 | `crates/refrain-core/src/source_layout.rs` |
+| 检索与取数 | `crates/refrain-app/src/material_access.rs` |
+| Run 与编排 | `crates/refrain-host/src/host.rs` |
+
+---
+
+## 错误码（从解析器枚举生成，与实现逐项一致）
+
+这张表给排查问题的人看。Agent 拿不到实时的解析反馈，所以它不随请求走。
+
+| 错误码 | 含义 |
+|---|---|
+| `missing-root` | 找不到 <agent-result>；它必须在 # Agent reply 这一节里 |
+| `text-outside-root` | 元素外面有字——检查开头的客套话和代码围栏 |
+| `dtd-forbidden` | 写了 DOCTYPE 或实体声明；这个格式不接受 |
+| `unsupported-version` | version 不是 "2" |
+| `unknown-element` | 用了协议之外的标签名 |
+| `missing-scope` | <replacement> 少了 scope= |
+| `duplicate-replacement` | 同一个 scope 写了两次 <replacement> |
+| `malformed` | 标签没闭合 |
+| `too-deep` | 嵌套超过 8 层 |
+| `unknown-scope` | scope 不在本轮发给你的 # Before 里 |
+| `unknown-basis` | basis ref 不在本轮发给你的文档里 |
+| `missing-material-kind` | <material-draft> 少了 kind= |
+| `missing-material-title` | <material-draft> 少了 title= |
+

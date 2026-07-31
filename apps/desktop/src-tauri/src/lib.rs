@@ -1762,6 +1762,7 @@ use refrain_core::context_compiler::{
     self, BeforeScope, ChangeEntry, ChangeKind, ContractMode, DispatchInput, DispatchPackage,
     ManifestEntry,
 };
+use refrain_core::material_ref::{Disclosure, MaterialRef};
 use refrain_host::host::{AgentHost, HostCommand, HostRefusal, ReviewTask, Run, RunProgress};
 use refrain_host::staging::DirectoryContext;
 
@@ -1923,13 +1924,35 @@ fn compile_package(
             changes,
         ),
     };
-    // Ticked materials ride as context sections, read from disk truth at
-    // compile time (SPEC 8.5: the manifest shows each one's bytes).
-    let mut materials: Vec<(String, String)> = Vec::with_capacity(material_paths.len());
+    // Ticked materials ride as *listings*, not as their texts.
+    //
+    // This used to read each material whole — `String::from_utf8_lossy` over
+    // the entire file — so three 100KB references entered the request as
+    // roughly 153,600 tokens by this project's own estimate. The cost was not
+    // only the tokens: recall degrades as a context fills, so pasting
+    // everything made the agent worse at the work as well as more expensive.
+    //
+    // What travels now is the author's own headings, an excerpt of the
+    // opening bytes, the size, the digest, and what the author permits. The
+    // agent fetches the passages it decides it needs — it runs on this
+    // machine and can open the file, and `material_access` ranks passages
+    // across materials when it does not yet know where to look.
+    //
+    // Nothing here is generated: there is no model in this process to
+    // summarise with, and a summary would be a second authority on what the
+    // material says that goes stale the moment the author edits it.
+    let mut materials: Vec<MaterialRef> = Vec::with_capacity(material_paths.len());
     for material_path in material_paths {
         let opened = store.open_document(material_path).map_err(into_domain)?;
-        let name = doc_slug(material_path);
-        materials.push((name, String::from_utf8_lossy(&opened.bytes).into_owned()));
+        let text = String::from_utf8_lossy(&opened.bytes);
+        materials.push(MaterialRef::describe(
+            material_path,
+            &doc_slug(material_path),
+            DocumentRole::Material,
+            &refrain_core::digest::content_hex(&opened.bytes),
+            &text,
+            Disclosure::default(),
+        ));
     }
     let input = DispatchInput {
         persona,

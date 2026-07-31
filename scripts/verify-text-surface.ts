@@ -31,9 +31,16 @@ const localSpecIsIgnored =
  * 的测试语料（它们碰巧是 .md，因为被解析的就是 Markdown），README/AGENTS 是仓库的
  * 门面与给 agent 的说明。设计文档、色表、预览页一律写到仓库之外——留在里面就成了
  * 第二权威，跟着代码漂，而下一个人不知道该信哪一份。
+ *
+ * SKILL.md 是 KL9 2026-07-31 点名加入的第四份：它告诉 agent 这个软件怎么运作、
+ * 请求是怎么编出来的、它的回复会被怎么渲染。它之所以不违反上面那条理由，是因为
+ * 它**不是手写的**——由 `cargo run -p refrain-core --example generate_skill_doc`
+ * 从 `agent_protocol::skill_doc()` 生成，而那正是编译器给 agent 的同一份契约。
+ * 手写副本漂移过：它教 agent 写 version="1"（解析器要 "2"，照做的 agent 每轮被拒），
+ * 且完全没提 <material-draft>。`verify:skill-doc-current` 守着这份生成关系。
  */
 const allowed = (file: string): boolean =>
-  /^(README|AGENTS|ROADMAP)\.md$/.test(file) ||
+  /^(README|AGENTS|ROADMAP|SKILL)\.md$/.test(file) ||
   file === "apps/desktop/index.html" ||
   /^tests\/corpora\/[^/]+\.md$/.test(file) ||
   /^probe-results\/[^/]+\.md$/.test(file) ||
