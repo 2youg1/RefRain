@@ -27,7 +27,7 @@ toml = { workspace = true }
 trash = { workspace = true }
 uuid = { workspace = true }
 zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
-lopdf = "=0.42.0"
+lopdf = "=0.44.0"
 html5gum = "=0.8.4"
 
 [dev-dependencies]
