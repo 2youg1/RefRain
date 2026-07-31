@@ -66,7 +66,8 @@ The application makes no network requests.
 
 ## Install
 
-Packaged with **ScriptC**.
+Windows installer (NSIS), built with Tauri. WebView2 is installed by the
+bootstrapper if it is missing.
 
 Building from source requires the Rust toolchain and Bun:
 

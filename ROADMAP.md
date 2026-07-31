@@ -41,6 +41,19 @@ question is whether the directory reconciliation stays honest at that size.
 
 ## Under consideration
 
+**ScriptC.** Compiling parts of this project ahead of time is an open question,
+and the measurements so far are mixed rather than negative. On this machine with
+ScriptC 0.0.17: `shell/strata.ts` is 100% statically compilable, `quarters.ts`
+88%, `projection.ts` 77% — the pure logic modules compile well. Two things are
+in the way of the obvious use. The build scripts call Bun-specific APIs
+(`Bun.file`), which ScriptC does not recognise. And the output is a native
+executable, while the frontend runs inside WebView2 and needs loadable
+JavaScript — so it is not a drop-in for the web build.
+
+Worth noting for scope: **Bun contributes no bytes to the installer.** It
+appears only in `beforeDevCommand` and `beforeBuildCommand`; the bundle target
+is NSIS. Any lightness argument has to look elsewhere.
+
 **Binary size.** 17.34MB in release, with `strip`, `lto` and
 `codegen-units = 1` already on. `panic = "abort"` and dependency pruning (571
 crates) are unexplored. `opt-level = "z"` is **not** planned: it trades away the
