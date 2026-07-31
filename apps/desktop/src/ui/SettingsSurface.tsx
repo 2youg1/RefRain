@@ -1,24 +1,5 @@
-// 设置页外壳（SPEC 9.8 投影）：三个分类共用一个 Config，每项更改立即落盘。
-//
-// 「撤销本次调整」的语义修正
-// ---------------------------------------------------------------------------
-// 旧实现有一个真实缺陷：`undoSession` 用 `restoreAppearance` 回灌进入设置页时
-// 拍下的**整个 appearance 快照**，而点亮按钮的 `changed` 标志由任意一次
-// `config-changed` 事件设置（包含排版改动）。后果是：作者只调了排版、然后点
-// 「撤销本次调整」，主题与纸面会被一起拖回进入时的样子——但按钮承诺的是
-// 「本次调整」，不是「本次会话开始时的全部外观」。
-//
-// 正确语义：「本次调整」= 进入设置页时打的 mark 之后、本会话**真正被改过的
-// 那些字段**。所以这里按字段粒度记账：
-//   1. `mark`   —— 进入时的 appearance 快照，撤销的目标值只从它身上取。
-//   2. `latest` —— 最近一次观察到的 appearance（磁盘上的现值）。
-//   3. `touched`—— 被本会话动过的**字段路径**集合（如 `typography.measure_tenths_em`、
-//                  `theme`、`typography.fonts.latin`），由 mark 与 latest 的
-//                  逐叶子比较累积得出，只增不减。
-// 撤销时，从 `latest` 克隆一份，只把 `touched` 里**当前仍与 mark 不同**的路径
-// 写回 mark 的值，其余字段（作者本次没碰过的主题、纸面、图标……）原样保留，
-// 再作为一个完整的 AppearanceConfig 发出去。于是「只改排版 → 撤销」只回退排版。
-// 同一套记账也让按钮的点亮变得诚实：不再是「来过事件」，而是「确有字段偏离 mark」。
+// Settings share one Config and persist each change immediately.
+// Undo restores only touched leaf paths from the entry mark; untouched current values remain.
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { describe, unwrap } from "../bridge";
@@ -27,7 +8,7 @@ import {
   commands,
   type PreferencesChangeDto,
 } from "../generated/bindings.gen";
-import { divergedPaths, type Leaves, leavesOf, readLeaf, writeLeaf } from "../shell/config-leaves";
+import { divergedPaths, leavesOf, readLeaf, writeLeaf } from "../shell/config-leaves";
 import { IconPicker } from "./IconPicker";
 import { ShortcutsPanel } from "./ShortcutsPanel";
 import { ThemePicker } from "./ThemePicker";

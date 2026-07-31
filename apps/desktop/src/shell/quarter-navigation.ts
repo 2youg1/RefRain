@@ -1,23 +1,4 @@
-/**
- * 键盘按层走：Cmd+1..4 直达四区。
- *
- * 层数少、语义稳，所以这套键位背得下来——这正是把导航做成四个数字而不是
- * 一串助记字母的理由。
- *
- * # Agent 层记得自己上次停在哪
- *
- * 设置、文件、编辑三层各自只有一个去处，Agent 层有三个（批注、派发、连接）。
- * KL9 裁定：**Cmd+4 落在上次用过的那一个**。
- *
- * 这与 `quarters.ts` 的 `persistence` 是同一条思路——层要记得自己的状态，
- * 不该每次从头开始。作者在派发面板里改了一半去看正文，按 Cmd+4 回来时
- * 应该回到派发，而不是被送去批注再自己点一次。那一次多余的点击正是
- * 「重复功能按键」。
- *
- * 另外两个候选各自有说不通的地方，记在这里免得下次重新讨论：
- * 固定落在批注，则派发用户每次都要多点一下；Cmd+4 循环三个面板，则同一个
- * 按键的结果取决于按了几次，作者按下去之前不知道会得到什么。
- */
+/** Cmd+1..4 opens each quarter; Cmd+4 returns to the last Agent destination. */
 
 import { type Quarter, quarterForKey } from "./quarters";
 import type { WorkbenchReference } from "./workbench-state";

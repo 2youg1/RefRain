@@ -159,11 +159,8 @@ mod tests {
     /// 上游写的就是 `<agent-result>`，它整个会作为文本进入下游的请求。不放进
     /// CDATA 的话，下游的扫描器会在别人的产出里读到一个 `<replacement>` 开标签。
     ///
-    /// 断言的写法改过一次，值得记下来：第一版查「CDATA 之前有没有出现
-    /// `<replacement`」，当场变红——而实现是对的。红的原因是 `Verifies` 的说明
-    /// 文字里本来就有「这一轮不接受 `<replacement>`」，那句话在 CDATA 之前且完全
-    /// 正当。**我写的谓词（上游的字节没跑出 CDATA）与执行的谓词（这个词没在前半段
-    /// 出现）是两个命题。** 现在断言的是前者：拿上游那份字节本身去问它在哪。
+    /// The assertion locates the exact upstream bytes inside CDATA; protocol prose may validly
+    /// contain the same tag name outside CDATA.
     #[test]
     fn an_artifact_full_of_tags_stays_text() {
         let hostile = "<agent-result version=\"2\"><replacement scope=\"ch01:b1\">x</replacement></agent-result>";

@@ -36,7 +36,7 @@ if (!(stratum("manuscript") < stratum("lamp") && stratum("lamp") < stratum("quar
   failures.push("光源区必须在正文区之上、四区之下");
 }
 
-// 四、书脊在四区之上。它曾经反过来。
+// 四、书脊在四区之上。
 if (stratum("spine") <= stratum("quarter")) {
   failures.push("多层书脊必须在四区之上");
 }

@@ -839,7 +839,7 @@ pub fn skill_doc() -> String {
 /// This is deliberately **not** part of what rides on every request. An agent
 /// gets no live feedback from the parser: a malformed reply fails the run and
 /// the agent never sees the code. A table it cannot act on costs tokens every
-/// round and changes no decision it makes — KL9's judgement, and correct.
+/// round and changes no decision it makes.
 ///
 /// It stays generated from the parser's own enum, so `refrain skill` and the
 /// documentation gate can still prove the two agree. Someone debugging a
@@ -975,11 +975,7 @@ mod docs_tests {
     /// document cannot be trusted. An absolute path is worse — it resolves
     /// only on the machine it was written on, so every other agent fails.
     ///
-    /// The first version of this test only inspected pieces starting with
-    /// `crates/`, so an absolute path was skipped before the "is it relative"
-    /// assertion could see it: the guard sat on a branch the injection never
-    /// reached. Recognise anything that *looks* like a source path first,
-    /// then judge it.
+    /// Recognise every `.rs` token before checking whether it is relative and exists.
     #[test]
     fn every_source_path_the_contract_names_is_relative_and_exists() {
         let doc = skill_doc();

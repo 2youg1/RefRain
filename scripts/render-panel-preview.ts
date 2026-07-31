@@ -6,8 +6,7 @@ import { chromium } from "playwright";
 import { type LampKind, lampFacing, lampPlacement } from "../apps/desktop/src/shell/lamp";
 
 /*
- * 审阅件写到仓库之外（KL9 2026-07-30：项目文件夹里除 LICENSE 外不放任何 md/html）。
- * 它们是给人看的，不是发布内容；留在仓库里就成了跟着代码漂的第二权威。
+ * 审阅件写到仓库之外，避免成为第二权威。
  */
 const REVIEW_DIR = process.env.REFRAIN_REVIEW_DIR ?? join(import.meta.dir, "..", "..", "review");
 const OUT = join(REVIEW_DIR, "panel-preview");

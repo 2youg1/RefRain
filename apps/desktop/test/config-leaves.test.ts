@@ -1,10 +1,4 @@
-/**
- * 作者在设置里改了什么。
- *
- * 这几十行此前住在 `SettingsSurface.tsx` 里，零测试，而它们决定「撤销本次调整」
- * 到底撤掉哪几项：漏掉一项，作者以为撤销了而它还留着；多算一项，他没动过的东西
- * 被改回去。两种都不该发生。
- */
+/** Field-level Config comparison and undo primitives. */
 
 import { describe, expect, test } from "bun:test";
 

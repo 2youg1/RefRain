@@ -7,8 +7,7 @@
  * against the same bytes, so the corpora become assets: one file per shape,
  * plus a manifest carrying each file's SHA-256.
  *
- * The output is NOT committed (KL9 2026-07-30: nothing but licences ships in the
- * project folder). This file is the authority; the .md files on disk are its
+ * The output is not committed. This file is the authority; the .md files on disk are its
  * product, regenerated before every build and gate run. Rust reads
  * layouts.json at compile time via include_str!, so generation must happen
  * before cargo, not merely before the tests.

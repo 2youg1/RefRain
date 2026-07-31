@@ -207,8 +207,7 @@ export function Workbench(props: WorkbenchProps) {
     karaTick();
     return kara.engaged.value;
   });
-  // Agent 层记得上次停在哪一个面板（KL9 裁定）。不是信号——它只在按下
-  // Cmd+4 的那一刻被读一次，没有任何东西需要因它变化而重绘。
+  // Agent navigation remembers its last panel. It is read only when Cmd+4 runs.
   const quarterMemory = new QuarterMemory();
   const transition = (event: Parameters<typeof reduceWorkbench<never>>[1]): void => {
     setState((current) => reduceWorkbench(current, event));

@@ -283,9 +283,7 @@ mod tests {
     /// the material. That is a real property and not a defect: this design
     /// targets the 100KB reference, where the ratio is what matters.
     ///
-    /// The first version of this test used the small fixture above and failed,
-    /// correctly. Keeping the honest scale here rather than shrinking the
-    /// claim to fit the fixture.
+    /// Use a fixture at the target scale instead of shrinking the claim.
     #[test]
     fn a_listing_costs_a_fraction_of_a_real_material() {
         // A reference of the size the author actually ticks: ~100KB.

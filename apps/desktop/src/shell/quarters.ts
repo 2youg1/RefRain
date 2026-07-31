@@ -1,24 +1,6 @@
 /**
- * 四区。
- *
- * 设置 / 文件 / 编辑 / Agent，自下而上。次序的来由是**使用频率**（KL9 2026-07-30）：
- * 设置很少调整，文件偶尔需要，大部分时候都在自己改稿，而 Agent 会频繁使用。
- *
- * 我最初按依赖推出同一个次序（Agent 引用编辑选中的东西，编辑改文件打开的东西），
- * 但频率论更可靠，差别在后果：依赖论只能说「Agent 需要编辑存在」，频率论说的是
- * **用 Agent 的时候本来就在改稿**——两者同时活跃，不是一个调用另一个。
- *
- * 规矩只有一条，方向不能反：
- *
- *   **上层可以和下层并存，下层不能和上层并存。**
- *
- * 打开 Agent 时编辑留在原处，关掉文件层时其上的编辑与 Agent 一起收走，都由同一条
- * 规矩推出，不是另外加的规则。
- *
- * 频率还决定了每一层在前端怎么活——见 `persistence`，那是这个模块除了层序之外
- * 要回答的第二个问题，也是「常开的东西不能每次重建」这件事的落点。
- *
- * 设计全文见 Memo.md「四区」。
+ * Quarters are ordered by use frequency: settings, files, editing, then Agent.
+ * A higher quarter may coexist with lower quarters. Closing a lower quarter closes those above it.
  */
 
 /** 四区，自下而上。数组次序就是层的次序。 */
@@ -116,14 +98,8 @@ export function persistence(quarter: Quarter): Persistence {
   // 设置很少开。常驻一份从不被看的 DOM，等于让它参与每一帧的样式计算。
   if (quarter === "settings") return "discard";
 
-  // 其余三层都留着，各有各的理由：
-  //
-  // 文件——KL9：「偶尔需要拖文件给 Agent」。拖拽的源必须一直在，否则拖到一半
-  //   面板没了。这是跨层操作，两层都得在场。
-  //
-  // 编辑与 Agent——KL9：「使用 Agent 的时候肯定也需要直接改东西」。两者同时活跃
-  //   是常态而非例外。若挂载 Agent 时卸载编辑器，作者每次来回都要付一次编辑器
-  //   重建：DOM 重挂、选区丢失、滚动归零、代码高亮缓存作废。
+  // Files must persist through cross-quarter drag. Editing and Agent must coexist.
+  // Remounting either loses selection, scroll position, and highlighting caches.
   return "keep";
 }
 
@@ -140,27 +116,7 @@ export function reflowsManuscript(width: "narrow" | "regular" | "full"): boolean
   return width === "full";
 }
 
-/**
- * 哪些场景要占满舞台，正文此刻不在视野里。
- *
- * 设置与逐句裁决曾一起在这里，**那是错的**。四区规矩说设置是第 1 层、正文
- * 在它之上，作者改字号时理应看得见自己的字；而它当时会把正文整行 `display: none`
- * 掉。Memo「四区·边缘情况 5」把这条记为待修，本轮修。
- *
- * 这个判断此前写在组件的 memo 参数里（`kind === "settings" || stage === "review"`），
- * 那是四区的知识落在了渲染代码里：谁占满舞台，取决于层的语义，不取决于谁在渲染。
- *
- * 留下的只有裁决。它不是「一层面板」而是一个场景：作者逐句判断 Agent 的提案时
- * 看不见原文是对的，那正是裁决要做的事——对照的是提案与被提案的那一句，
- * 不是整篇稿子。
- *
- * 注意它与「铺满」不同：铺满是作者选的一档宽度，而这里是场景自身的性质，
- * 作者选不了。
- *
- * `reference` 仍在签名里：调用方问的是「这个场景」而不是「这个 stage」，
- * 而下一个占满舞台的场景很可能由 reference 决定。去掉它会让调用点在那天
- * 改签名，而签名变更要动每一个调用者。
- */
+/** Review owns the stage. Settings and references remain quarters beside the manuscript. */
 export function takesWholeStage(scene: { reference: string | null; stage: string }): boolean {
   return scene.stage === "review";
 }

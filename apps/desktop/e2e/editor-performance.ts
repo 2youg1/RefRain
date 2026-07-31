@@ -26,20 +26,8 @@ const MAX_PARAGRAPHS = 260;
 const MAX_MOUNT_P95_MS = 50;
 const MAX_FOCUS_P95_MS = 50;
 /**
- * 连续阅读时，画一帧的上限。
- *
- * 用 p50 而不是 p95：headless 环境里偶发的调度抖动会把 p95 顶到十几毫秒，那是
- * 机器的噪声不是代码的性质；中位数稳定反映渲染本身。
- *
- * 阈值要能同时容纳两种出帧节拍。启动时拆掉了帧率地板（见 chromium.launch 的
- * 两个开关），空闲机器上实测 1.9ms；但全门禁跑到末尾、系统负载起来之后合成器
- * 退回按显示器节拍出帧，同一份代码读作 16.8ms。**那不是回归，是环境。** 阈值
- * 曾经定在 5ms，于是门禁随负载变红，与被测的渲染路径无关——单独跑五次全绿，
- * 全门禁里连续两次失败。
- *
- * 25ms 高于 60Hz 的 16.7ms 节拍，低于退化路径的量级：注入验证把窗口从三屏放大
- * 到四十屏，无地板时这个数跳到 17.1ms（九倍）；有地板时整窗替换会连续掉帧，
- * 中位数落在两个节拍即 33ms 以上。两种环境下门禁都变红。
+ * Median scroll-frame limit. Headless Chromium measures 1.9ms without a frame floor
+ * and 16.8ms at display cadence. A forty-screen injection exceeds 25ms in both modes.
  */
 const MAX_SCROLL_FRAME_MS = 25;
 

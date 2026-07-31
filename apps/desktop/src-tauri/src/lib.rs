@@ -1799,15 +1799,14 @@ fn doc_slug(path: &str) -> String {
 /// judgments, capped so the stream stays a summary, not a database dump.
 const CHANGES_WINDOW: usize = 20;
 
-/// The carry tier the author picks on the ticket (KL9's context tiers):
+/// The carry tier the author picks on the ticket:
 /// what rides besides the scope and the prompt. Materials always travel
 /// separately and are never part of a tier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum CarryMode {
     /// The verdict stream; a round with no history falls back to the whole
-    /// text, or the agent has nothing to stand on (KL9: never trade output
-    /// quality for tokens).
+    /// text, or the agent has nothing to stand on.
     Diff,
     /// The verdict stream plus the whole manuscript, every round.
     Full,
@@ -1815,7 +1814,7 @@ pub enum CarryMode {
     None,
 }
 
-/// The contract tier for this dispatch (KL9's contract injection): L0's
+/// The contract tier for this dispatch: L0's
 /// channel has no session, so the short contract rides every request; the
 /// full protocol document goes out on the first dispatch in this project and
 /// a pointer line afterwards.
@@ -1891,7 +1890,7 @@ fn compile_package(
         .collect::<Vec<_>>()
         .join("\n\n");
     // The `<changes>` stream (SPEC 8.5): this document's recent verdicts,
-    // capped at the window. The carry tier decides what rides (KL9): Diff is
+    // capped at the window. The carry tier decides what rides: Diff is
     // the default — verdicts, plus the whole text when no history exists;
     // Full adds the manuscript every round; None carries neither.
     let verdicts = store.ledger().for_document(path).map_err(|error| {
@@ -2847,7 +2846,7 @@ fn connection_for_agent(
         })
 }
 
-// ── Agents: a name, a channel, an optional persona (KL9 2026-07-29) ────────
+// ── Agents: a name, a channel, and an optional persona ─────────────────────
 
 /// The persona an AgentProfile carries for this agent id, if any. Injected
 /// into the request right where the compiler renders it: the Context section,

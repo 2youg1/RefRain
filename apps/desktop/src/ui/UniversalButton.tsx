@@ -1,6 +1,4 @@
-import { createSignal, onCleanup, onMount, Show } from "solid-js";
-import { describe } from "../bridge";
-import { commands } from "../generated/bindings.gen";
+import { createSignal, onCleanup, Show } from "solid-js";
 import { universalIcon } from "../shell/universal-icon";
 
 type UniversalButtonProps = {

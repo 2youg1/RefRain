@@ -1115,8 +1115,7 @@ const run = async (): Promise<void> => {
     docxRow.path,
   );
 
-  // Real Word evidence (KL9): Word authors the .docx itself. Gated on the
-  // COM server being present — CI runners have no Office.
+  // Word authors the .docx itself. Run this evidence only when its COM server is present.
   const wordDocxPath = join(sources, "真机.docx");
   const word = spawnSync(
     "powershell",
@@ -1197,8 +1196,7 @@ const run = async (): Promise<void> => {
     rendered.slice(0, 100),
   );
   check("scripts never render either", !rendered.includes("var x"), rendered.slice(0, 60));
-  // The original bytes sit in the project's read-only zone (KL9: the source
-  // never moves).
+  // Original bytes remain in the project's read-only source zone.
   const clonesDir = join(fixture, ".refrain-source", "materials");
   const clones = existsSync(clonesDir) ? readdirSync(clonesDir) : [];
   check(

@@ -2,8 +2,8 @@
 // content, the Config stores only the digest, and the button shows the
 // normalised asset through a data URL (CSP img-src 'self' data:).
 
-import { createSignal, onCleanup, onMount, Show } from "solid-js";
-import { describe, unwrap } from "../bridge";
+import { Show } from "solid-js";
+import { unwrap } from "../bridge";
 import { commands } from "../generated/bindings.gen";
 import { universalIcon } from "../shell/universal-icon";
 

@@ -1,10 +1,4 @@
-/**
- * 层与光。
- *
- * 这两组断言里最要紧的一条是「两盏灯必须不一样」。前两轮我改了两次灯，KL9 两次
- * 说看不出区别，而全部门禁一路绿灯——因为没有任何一条断言问过「side 和 overhead
- * 产生的东西是否不同」。测试通过不代表灯做对了，只代表没人问过这个问题。
- */
+/** Stratum order and distinct side/overhead lamp geometry. */
 
 import { describe, expect, test } from "bun:test";
 

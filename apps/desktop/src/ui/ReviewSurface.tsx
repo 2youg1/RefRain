@@ -9,8 +9,6 @@ import { createMemo, createSignal, type JSX, onMount, Show } from "solid-js";
 import { describe, unwrap } from "../bridge";
 import {
   commands,
-  type ProposalDto,
-  type ReviewSliceDto,
   type ReviewStateDto,
   type VerdictKindName,
   type VerdictRecord,
@@ -19,7 +17,6 @@ import {
   actionLabel,
   clamped,
   decidedCount,
-  type Intent,
   intentOf,
   type Ledger,
   type Notice,
@@ -29,7 +26,6 @@ import {
   restaged,
   type Session,
   type SliceWrite,
-  type Standing,
   standingOf,
   type Unit,
   unitsOf,

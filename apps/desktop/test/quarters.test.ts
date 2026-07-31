@@ -136,8 +136,7 @@ describe("频率决定每一层怎么活", () => {
   });
 
   test("编辑与 Agent 永不销毁——两者同时活跃是常态", () => {
-    // KL9：「使用 Agent 的时候肯定也需要直接改东西」。若挂载 Agent 时卸载编辑器，
-    // 每次来回都要付一次重建：选区丢失、滚动归零、高亮缓存作废。
+    // Editing and Agent coexist. Remounting loses selection, scroll, and highlight caches.
     expect(persistence("editing")).toBe("keep");
     expect(persistence("agent")).toBe("keep");
   });
@@ -174,8 +173,7 @@ describe("谁占满舞台", () => {
   });
 
   test("设置不占满：作者改字号时必须看得见自己的字", () => {
-    // 这是四区规矩的直接推论——设置是第 1 层，正文在它之上。
-    // 曾经它与裁决一起占满舞台，作者调排版时正文整个消失。
+    // Settings must coexist with the manuscript so typography changes remain visible.
     expect(takesWholeStage({ reference: "settings", stage: "writing" })).toBe(false);
   });
 

@@ -37,11 +37,7 @@ export function applyAppearance(root: HTMLElement, appearance: AppearanceConfig)
   root.style.setProperty("--panel-opacity", String(material.opacity));
   root.style.setProperty("--panel-rim", String(material.rim));
 
-  // 夜间灯：先定灯在哪儿，屏幕上的一切再从那个位置推出来。
-  //
-  // 这里曾经只写一个 data-lamp，让样式表自己去调阴影的偏移和模糊。那样两盏灯画的
-  // 是同一个东西上的同一圈影子，换多少参数都还是同一圈影子——KL9 连着两轮说看不出
-  // 区别。现在位置是唯一的输入：亮斑落在哪、影子往哪倒、面板哪条边受光，全部由它推出。
+  // Lamp position is the authority for highlights, shadows, and the lit panel edge.
   const lamp = lampPlacement(appearance.night_lamp ?? "off", motion.side);
   root.dataset.lamp = appearance.night_lamp ?? "off";
   if (lamp) {

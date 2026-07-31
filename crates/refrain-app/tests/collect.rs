@@ -1,8 +1,4 @@
-//! 收取一次派发的产出：那些此前只能开一个 Tauri 窗口才能问的规则。
-//!
-//! 这条流程在 `lib.rs` 里当过 182 行的命令体。它决定的每一件事都是领域规则——
-//! 契约从哪里来、作者动过原文时怎么办、三步写入的顺序——而它们当时都没有一条
-//! 测试，因为构造它们需要一个真实窗口。搬进用例层之后，下面每条各问一次。
+//! Collection rules for contract identity, stale source text, and ordered writes.
 
 use std::fs;
 use std::path::{Path, PathBuf};

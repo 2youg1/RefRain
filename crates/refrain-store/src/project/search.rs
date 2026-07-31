@@ -198,9 +198,8 @@ fn next_rowid(db: &Connection) -> Result<i64, RefrainError> {
 /// Remove one block from the inverted index.
 ///
 /// The text has to be exactly what was inserted. FTS5 re-tokenises it to find
-/// the postings to remove, and anything else corrupts the index silently —
-/// the failure surfaces later as "database disk image is malformed", which is
-/// how the first version of this function was caught.
+/// the postings to remove. Any other text corrupts the index and later reports
+/// "database disk image is malformed".
 fn remove_entry(db: &Connection, entry: &Entry) -> Result<(), RefrainError> {
     db.execute(
         "INSERT INTO block_search(block_search, rowid, path, body)

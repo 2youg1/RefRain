@@ -50,9 +50,7 @@ for (const [source, fact, message] of [
   [workbench, 'when={reference()?.kind === "settings"}', "Settings is not a Reference"],
   [
     quarters,
-    // 只剩裁决。设置曾经也在这里，那是缺陷：四区规矩说设置是第 1 层、正文在
-    // 它之上，而它当时把正文整行 display:none 掉，作者改字号时看不见自己的字。
-    // 2026-07-31 修，探针实测确认设置现在与正文并存（scripts/probe-settings-coexist.ts）。
+    // Review alone owns the whole stage; settings must coexist with the manuscript.
     'return scene.stage === "review";',
     "takesWholeStage no longer names review as the one scene that takes the whole stage",
   ],
@@ -191,15 +189,7 @@ if (/\bgeneration\s*(?::|[,)=])/.test(projectSession)) {
 if (!projectStore.includes("mod catalog;") || !projectStore.includes("pub use catalog::")) {
   failures.push("ProjectStore does not hide its catalog behind the project::catalog module");
 }
-// 目录的 SQL 归目录模块。装配层不认得表名，`ProjectStore` 也不该。
-//
-// `WHERE path LIKE` 曾在这份清单里，2026-07-31 检索改造后它不复存在：搜索从
-// 「路径子串」换成了「FTS5 检索正文 + search_rank 排序」。断言跟着权威走。
-//
-// 换过一次才对：先试了 `FROM documents WHERE path = ?1`，而 `ProjectStore` 的
-// `find_document` 里有逐字相同的一句，于是这条断言会把它读成「目录 SQL 泄漏」。
-// **断言短语必须是被测对象独有的**——`documents_at` 是目录按检索结果取行的
-// 唯一入口，这个名字只在目录里。
+// Catalog SQL belongs to DocumentCatalog. Use signatures unique to that module.
 for (const catalogSql of ["refreshed_documents", "fn documents_at", "LIMIT ?2"]) {
   if (projectStore.includes(catalogSql)) {
     failures.push(`ProjectStore leaks catalog SQL: ${catalogSql}`);

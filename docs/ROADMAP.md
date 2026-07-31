@@ -53,6 +53,6 @@ authors will use, and none of it will be claimed until it has.
 
 ---
 
-- [README.md](README.md) — what RefRain is today
+- [README.md](../README.md) — what RefRain is today
 - [ARCHITECTURE.md](ARCHITECTURE.md) — how it is built
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to propose a change

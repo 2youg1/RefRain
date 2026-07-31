@@ -474,7 +474,7 @@ impl Default for KaraConfig {
     }
 }
 
-/// One Agent the author works with (KL9 2026-07-29): a name, the channel it
+/// One Agent the author works with: a name, the channel it
 /// runs on (`None` = the L0 file channel), and an optional persona — one
 /// Markdown identity injected right after the contract on every round.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]

@@ -1,21 +1,10 @@
 #!/usr/bin/env bun
-/**
- * The gate runner.
- *
- * Prints the scripts it actually ran and how many targets each one scanned,
- * because a gate that scans nothing passes for the wrong reason (SPEC 11.1).
- * A gate reporting zero targets fails the build even when its assertions hold:
- * the most common way a guard dies is a refactor that moves the code out from
- * under a scanner still looking at the old path.
- *
- * Output never goes through a pipe here. `… | head` discards the exit code,
- * which is how a red gate reads green.
- */
+/** Run each selected gate without a pipe and preserve its exit status. */
 
 import { spawnSync } from "node:child_process";
 
 const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
-  // 语料是 freeze-corpora.ts 的产物，不入仓库；Rust 编译期用 include_str! 读它，故第一个跑。
+  // Rust uses these generated corpora at compile time, so generate them first.
   ["corpora", ["bun", "scripts/freeze-corpora.ts"]],
   ["fmt:check", ["bun", "run", "fmt:check"]],
   ["check", ["bun", "run", "check"]],
@@ -96,10 +85,20 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
 ];
 
 const headlessEvidence = new Set(["verify:cross-block-selection", "verify:font-fallback"]);
-const evidenceOnly = process.argv.includes("--headless-evidence-only");
-const selected = stages.filter(([name]) =>
-  evidenceOnly ? headlessEvidence.has(name) : !headlessEvidence.has(name),
-);
+const performanceEvidence = new Set([
+  "verify:project-performance",
+  "verify:large-input-performance",
+]);
+const headlessOnly = process.argv.includes("--headless-evidence-only");
+const performanceOnly = process.argv.includes("--performance-evidence-only");
+if (headlessOnly && performanceOnly) {
+  throw new Error("select one evidence mode");
+}
+const selected = stages.filter(([name]) => {
+  if (headlessOnly) return headlessEvidence.has(name);
+  if (performanceOnly) return performanceEvidence.has(name);
+  return !headlessEvidence.has(name) && !performanceEvidence.has(name);
+});
 const failures: string[] = [];
 
 for (const [name, argv] of selected) {
@@ -117,7 +116,11 @@ for (const [name, argv] of selected) {
   }
 }
 
-const kind = evidenceOnly ? "headless evidence" : "blocking";
+const kind = headlessOnly
+  ? "headless evidence"
+  : performanceOnly
+    ? "performance evidence"
+    : "blocking";
 console.log(`\nran ${selected.length} ${kind} stages, ${failures.length} failed`);
 if (failures.length > 0) {
   console.log(`failed: ${failures.join(", ")}`);

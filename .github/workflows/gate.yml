@@ -53,6 +53,15 @@ jobs:
           sudo apt-get install --yes libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 
       - run: bun install --frozen-lockfile
+
+      - name: Install Playwright Chromium with Linux libraries
+        if: runner.os == 'Linux'
+        run: bun x playwright install --with-deps chromium
+
+      - name: Install Playwright Chromium
+        if: runner.os != 'Linux'
+        run: bun x playwright install chromium
+
       - run: bun run gate
 
       - name: Prove every source gate can fail
@@ -120,10 +129,7 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  # These Linux-headless probes have produced blank, zero-layout Chromium
-  # sessions while their product-failure injections remain deterministic. Keep
-  # the evidence visible, but do not let a browser fixture block Windows release.
-  # The three real-window Windows E2E steps above remain blocking.
+  # Headless browser probes are evidence; the Windows real-window paths above remain blocking.
   headless-evidence:
     name: non-blocking headless evidence
     runs-on: ubuntu-latest
@@ -135,4 +141,23 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - run: bun install --frozen-lockfile
+      - run: bun x playwright install --with-deps chromium
       - run: bun run evidence:headless
+
+  # Shared-runner wall-clock results are non-blocking Windows evidence.
+  performance-evidence:
+    name: non-blocking Windows performance evidence
+    runs-on: windows-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - run: bun install --frozen-lockfile
+      - run: bun run evidence:performance

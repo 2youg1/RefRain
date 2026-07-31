@@ -12,7 +12,7 @@ const rustGlobs = [
 const rustFiles = new Set<string>();
 for (const pattern of rustGlobs) {
   for await (const file of new Bun.Glob(pattern).scan({ cwd: ".", onlyFiles: true })) {
-    rustFiles.add(file);
+    rustFiles.add(file.replaceAll("\\", "/"));
   }
 }
 for (const file of rustFiles) {

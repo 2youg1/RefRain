@@ -1,17 +1,4 @@
-/**
- * 作者在设置里改了什么。
- *
- * 「撤销本次调整」要回答一个具体问题：从他进入设置那一刻到现在，哪几项变了。
- * 配置是一棵嵌套的树，而这个问题是逐项的，所以先把树拍平成叶子路径
- * （`typography.serif` 这样的字符串），再比对两次快照的叶子。
- *
- * 这几十行此前住在 `SettingsSurface.tsx` 里，零测试。它们决定作者点撤销时哪些值会
- * 被改回去——漏掉一项，他以为撤销了而那一项还留着；多算一项，他没动过的东西被改回。
- * 两种都不该发生，而两种都无人可测。
- *
- * 拍平用 JSON 序列化比值，因为叶子可能是数字、布尔、字符串或 null，而作者关心的
- * 只是「跟刚进来时一不一样」。
- */
+/** Flatten nested Config values into comparable leaf paths for field-level undo. */
 
 /** 叶子路径 → 该处取值的序列化形式。 */
 export type Leaves = Map<string, string>;

@@ -1,22 +1,5 @@
 #!/usr/bin/env node
-/**
- * Prepare the exact public installer set for a RefRain release.
- *
- * This program is compiled by ScriptC and run as a native executable on the
- * Windows release runner. It owns the small but consequential policy between
- * "Tauri produced some files" and "these are the files we publish":
- *
- * - the requested version must equal tauri.conf.json;
- * - the NSIS directory must contain exactly one installer;
- * - the output directory must be new or empty;
- * - that installer must be non-empty and begin with the Windows MZ magic;
- * - the public filename is stable;
- * - one machine-readable manifest records the version, name and byte count.
- *
- * Build systems should not restate this policy in PowerShell. Keeping it here
- * gives the rule one implementation, one differential test surface, and one
- * native program that can be exercised before upload.
- */
+/** Own the exact public installer, manifest, and embedded SBOM policy. */
 
 import {
   copyFileSync,
@@ -85,7 +68,67 @@ function verifyInstaller(path: string): number {
   return size;
 }
 
+function embedSbom(manifestPath: string, sbomPath: string): void {
+  let manifest: unknown;
+  let sbom: unknown;
+  let sbomText = "";
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    sbomText = readFileSync(sbomPath, "utf8");
+    sbom = JSON.parse(sbomText);
+  } catch (error: unknown) {
+    fail(`cannot parse release metadata: ${String(error)}`);
+  }
+  if (
+    typeof manifest !== "object" ||
+    manifest === null ||
+    Array.isArray(manifest) ||
+    !("schemaVersion" in manifest) ||
+    !("version" in manifest) ||
+    !("source" in manifest) ||
+    !("asset" in manifest) ||
+    !("bytes" in manifest) ||
+    (manifest as { schemaVersion: unknown }).schemaVersion !== 1 ||
+    typeof (manifest as { version: unknown }).version !== "string" ||
+    typeof (manifest as { source: unknown }).source !== "string" ||
+    (manifest as { asset: unknown }).asset !== PUBLIC_INSTALLER ||
+    typeof (manifest as { bytes: unknown }).bytes !== "number"
+  ) {
+    fail(`${manifestPath} is not a release manifest`);
+  }
+  if (
+    typeof sbom !== "object" ||
+    sbom === null ||
+    Array.isArray(sbom) ||
+    !("spdxVersion" in sbom) ||
+    !("SPDXID" in sbom) ||
+    typeof (sbom as { spdxVersion: unknown }).spdxVersion !== "string" ||
+    !(sbom as { spdxVersion: string }).spdxVersion.startsWith("SPDX-") ||
+    (sbom as { SPDXID: unknown }).SPDXID !== "SPDXRef-DOCUMENT"
+  ) {
+    fail(`${sbomPath} is not an SPDX document`);
+  }
+  const base = manifest as {
+    version: string;
+    source: string;
+    asset: string;
+    bytes: number;
+  };
+  writeFileSync(
+    manifestPath,
+    `{\n  "schemaVersion": 1,\n  "version": ${JSON.stringify(base.version)},\n  "source": ${JSON.stringify(base.source)},\n  "asset": ${JSON.stringify(base.asset)},\n  "bytes": ${base.bytes},\n  "sbom": ${sbomText.trim()}\n}\n`,
+  );
+  process.stdout.write(`embedded ${basename(sbomPath)} in ${basename(manifestPath)}\n`);
+}
+
 function main(args: string[]): void {
+  if (args[0] === "embed-sbom") {
+    if (args.length !== 3 || !args[1] || !args[2]) {
+      fail("usage: release-assets embed-sbom <release-manifest.json> <spdx.json>");
+    }
+    embedSbom(args[1], args[2]);
+    return;
+  }
   if (args.length !== 4) usage();
   const [version, configPath, nsisDirectory, outputDirectory] = args;
   if (!version || !configPath || !nsisDirectory || !outputDirectory) usage();

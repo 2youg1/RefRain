@@ -126,17 +126,8 @@
 }
 
 /*
- * 光源区——工作台的一层，不是画在纸上的一圈影子。
- *
- * 层级见 shell/strata.ts：正文区 < 光源区 < 四区 < 书脊。光在正文之上，所以它照在
- * 字上；在四区之下，所以立在光里的面板会挡住它。这个位置是全部立意所在。
- *
- * 改到这一步之前，光是 .editor-host 上的一组 box-shadow。KL9 连着两轮说两盏灯看不
- * 出区别——他是对的，而问题不在参数：纸和面板是兄弟节点，「面板挡住了光」根本无从
- * 表达，两盏灯画的只能是同一个东西上的同一圈影子，改偏移改模糊都还是同一圈影子。
- *
- * 现在灯只有一个输入：它在哪儿（--lamp-x / --lamp-y，由 shell/lamp.ts 定）。亮斑、
- * 影子的方向、面板受光的边，全部从那个位置推出来，不再各调各的。
+ * The lamp stratum sits above the manuscript and below panels.
+ * shell/lamp.ts supplies its position; highlights, shadows, and lit edges derive from it.
  */
 .lamp-layer {
   position: absolute;
@@ -2366,20 +2357,8 @@ kbd {
 }
 
 /*
- * 面板栈（KL9 2026-07-30 裁定）。
- *
- * 界面是一棵树，打开的是从根到叶的一条路径；屏幕上并排的就是这条路径。
- * 栈只向一侧生长，所以「另一边不出现任何面板」不是靠纪律守住的，
- * 是这个结构本身不允许。
- *
- * 方向、时长、缓动三个值都来自 shell/panel-motion.ts，由那里写进这三个变量。
- * 关掉动画是把 --panel-motion 压到 1ms，不是换一条没有过渡的路径。
- *
- * **身份由 `data-quarter` 声明，不由类名清单枚举。** 这里原本写的是
- * `:is(.dispatch, .connections, .annotations, .panel-layer)`，同一份清单在本文件里
- * 抄了五遍（定位、内缘、铺满、侧灯、顶灯）。加一种面板要改五处，漏掉其中一处
- * 不会有任何东西报错——它只是在某个主题或某盏灯下看起来不对。属性选择器让
- * 「我是四区的一层」成为面板自己声明的事，五处规则自动跟随。
+ * An open panel path forms one stack on one side.
+ * shell/panel-motion.ts owns direction and motion; data-quarter declares membership.
  */
 .stage-row > [data-quarter] {
   position: absolute;
@@ -2473,7 +2452,7 @@ kbd {
   position: absolute;
   inset-block: 0;
   inset-inline-start: var(--spine-offset, 0);
-  /* 书脊在最上面。它曾经是 9、被面板的 10 压着，与「多层书脊在四区之上」相反。 */
+  /* The spine sits above quarter panels. */
   z-index: var(--z-spine);
   width: var(--spine-width, 34px);
   display: flex;

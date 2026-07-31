@@ -13,7 +13,7 @@
 
 import type { PanelSide } from "./panel-stack";
 
-/** 展开一层用多久。KL9 定：约 300ms。 */
+/** Duration of one panel expansion. */
 export const PANEL_MOTION_MS = 300;
 /** 关掉动画后的时长。不是 0——见文件头。 */
 export const PANEL_STILL_MS = 1;

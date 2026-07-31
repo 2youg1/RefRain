@@ -1,5 +1,4 @@
-//! HTML projection on html5gum (KL9: borrow the ultralight agent-native
-//! browser approach, in our language): a spec-shaped tokenizer, not regex.
+//! HTML projection on html5gum: a spec-shaped tokenizer, not regex.
 //! Scripts and styles never become text; block-level tags become line
 //! breaks; everything else streams through with entities decoded.
 

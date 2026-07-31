@@ -180,11 +180,11 @@ Use these words. SPEC §2 requires one word per concept, and
 
 ## The contract, and why it is generated
 
-`SKILL.md` in the repository root is **generated** from
+`docs/SKILL.md` is **generated** from
 `refrain_core::agent_protocol::skill_doc()`. Do not edit it by hand:
 
 ```sh
-cargo run -p refrain-core --example generate_skill_doc -- SKILL.md
+cargo run -p refrain-core --example generate_skill_doc -- docs/SKILL.md
 ```
 
 `verify:skill-doc-current` fails when it drifts. This is not ceremony — a
@@ -207,22 +207,20 @@ only ever receive `Short`.
 
 ## Technology
 
-Taken from the manifests, pinned exactly.
-
 | | |
 |---|---|
-| **Rust** | edition 2024, rust-version 1.97.1 |
-| **Desktop shell** | Tauri 2.11.5 (`tauri-build` 2.6.3, `plugin-dialog` 2.7.2) |
-| **Frontend** | SolidJS 1.9.14, TypeScript 7.0.2, Biome |
-| **Build tooling** | Bun (development and build only — no bytes reach the installer) |
-| **Release policy** | ScriptC 0.0.17 compiles `scripts/release-assets.ts` into the native Windows program that validates and prepares the public installer |
-| **Storage** | rusqlite 0.40.1 (bundled SQLite), FTS5 with `unicode61` plus an application-level bigram tokeniser |
-| **Hashing** | blake3 1.8.3 |
-| **Ids** | uuid 1.24.0, v7 (time-ordered) |
-| **Serialisation** | serde 1.0.229; specta 2.0.0-rc.25 generates the TypeScript bindings |
-| **Scanning** | memchr 2.8.3 |
-| **Errors** | thiserror 2.0.18 |
-| **Highlighting** | Shiki 4.3.1, registered precisely so nothing reaches the network |
+| **Language** | [Rust](https://rust-lang.org) |
+| **Desktop shell** | [Tauri](https://tauri.app) with [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) |
+| **Frontend** | [SolidJS](https://solidjs.com), [TypeScript](https://www.typescriptlang.org), [Biome](https://biomejs.dev) |
+| **Build tooling** | [Bun](https://bun.sh) and [Node.js](https://nodejs.org); build-time only, not bundled |
+| **Release policy** | [ScriptC](https://github.com/vercel-labs/scriptc) compiles `scripts/release-assets.ts` into the native Windows asset validator |
+| **Storage** | [SQLite](https://sqlite.org) through [rusqlite](https://github.com/rusqlite/rusqlite), FTS5 `unicode61`, and an application-level bigram tokeniser |
+| **Hashing** | [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) |
+| **Ids** | [UUID](https://github.com/uuid-rs/uuid), v7 |
+| **Serialisation** | [Serde](https://serde.rs); [Specta](https://github.com/specta-rs/specta) generates TypeScript bindings |
+| **Scanning** | [memchr](https://github.com/BurntSushi/memchr) |
+| **Errors** | [thiserror](https://github.com/dtolnay/thiserror) |
+| **Highlighting** | [Shiki](https://shiki.style), with an explicit offline language and theme set |
 
 ### Why bigram, not trigram or a tokeniser
 
@@ -268,9 +266,9 @@ fail is a gate that has proven nothing — see [CONTRIBUTING.md](CONTRIBUTING.md
 
 ## Related documents
 
-- [README.md](README.md) — what RefRain is, and how to install it
+- [README.md](../README.md) — what RefRain is, and how to install it
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to propose a change
 - [ROADMAP.md](ROADMAP.md) — what is planned
 - [AGENTS.md](AGENTS.md) — working discipline for agents in this repository
 - [SKILL.md](SKILL.md) — the agent protocol (generated)
-- [LICENSE](LICENSE) — MPL 2.0
+- [LICENSE](../LICENSE) — MPL 2.0

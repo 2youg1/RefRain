@@ -1,5 +1,5 @@
-//! PDF projection (KL9: the SumatraPDF approach in our language — a focused,
-//! fast, engine-free component): lopdf parses the document, and we walk each
+//! PDF projection using a focused, engine-free component: lopdf parses the document,
+//! and we walk each
 //! page's content stream ourselves, collecting positioned text fragments and
 //! assembling lines by baseline. No renderer, no browser engine.
 //!

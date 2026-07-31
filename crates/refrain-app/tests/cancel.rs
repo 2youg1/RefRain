@@ -1,8 +1,4 @@
-//! 取消一次 Run：这个 Run 现在能不能被取消。
-//!
-//! 这条判断在 `lib.rs` 里当过 108 行命令体的一半。它决定的是产品要对作者讲的
-//! 事实——正在启动的进程还没有句柄可以打断，已派发而本机没有句柄的要走恢复。
-//! 当时没有一条测试，因为构造它需要一个真实窗口。
+//! Run cancellation rules for launching and detached processes.
 
 use refrain_app::cancel::refuse_cancel_without_handle;
 use refrain_core::ErrorCode;

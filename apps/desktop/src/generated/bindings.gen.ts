@@ -242,7 +242,7 @@ export type AgentDto = {
 };
 
 /**
- *  One Agent the author works with (KL9 2026-07-29): a name, the channel it
+ *  One Agent the author works with: a name, the channel it
  *  runs on (`None` = the L0 file channel), and an optional persona — one
  *  Markdown identity injected right after the contract on every round.
  */
@@ -425,15 +425,14 @@ export type BuiltinTypographyPreset = {
 };
 
 /**
- *  The carry tier the author picks on the ticket (KL9's context tiers):
+ *  The carry tier the author picks on the ticket:
  *  what rides besides the scope and the prompt. Materials always travel
  *  separately and are never part of a tier.
  */
 export type CarryMode =
 /**
  *  The verdict stream; a round with no history falls back to the whole
- *  text, or the agent has nothing to stand on (KL9: never trade output
- *  quality for tokens).
+ *  text, or the agent has nothing to stand on.
  */
 "diff" |
 /**  The verdict stream plus the whole manuscript, every round. */

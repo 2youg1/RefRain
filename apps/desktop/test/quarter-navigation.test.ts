@@ -1,10 +1,4 @@
-/**
- * 层导航：Cmd+1..4。
- *
- * 最要紧的两条是「记得上次」与「没有宾语就不假装」——前者是 KL9 的裁定，
- * 后者决定作者在空工作台上按 Cmd+4 时看到什么（什么都不该发生，而不是
- * 跳进一个空面板）。
- */
+/** Cmd+1..4 navigation remembers the last Agent panel and does nothing without a target. */
 
 import { describe, expect, test } from "bun:test";
 
@@ -62,7 +56,7 @@ describe("没有宾语时不假装", () => {
   });
 });
 
-describe("Agent 层记得上次停在哪（KL9 裁定）", () => {
+describe("Agent 层记得上次停在哪", () => {
   test("从没用过时落在批注——它锚在正文上，最贴近此刻在做的事", () => {
     expect(navigateTo("agent", new QuarterMemory(), true)).toEqual({
       kind: "openReference",

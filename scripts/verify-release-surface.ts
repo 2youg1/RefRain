@@ -53,10 +53,13 @@ for (const [source, fact, failure] of [
 const chooserOwners = new Set(["apps/desktop/src/shell/project-session.ts"]);
 const chooserCallers = new Bun.Glob("apps/desktop/src/**/*.{ts,tsx}");
 for await (const file of chooserCallers.scan(".")) {
-  if (chooserOwners.has(file)) continue;
+  const repositoryFile = file.replaceAll("\\", "/");
+  if (chooserOwners.has(repositoryFile)) continue;
   const text = await Bun.file(file).text();
   if (/commands\.chooseAnd/.test(text)) {
-    failures.push(`${file} opens a native chooser directly; that belongs to ProjectSession`);
+    failures.push(
+      `${repositoryFile} opens a native chooser directly; that belongs to ProjectSession`,
+    );
   }
 }
 

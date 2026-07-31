@@ -143,17 +143,10 @@ impl ShapeAccumulator {
 
 /// 一行字节的显示宽度当量。
 ///
-/// **一处被实测纠正的假设，连同一次被实测淘汰的优化。** 我原以为形状累计是
-/// 「顺手」的，因为边界判定本来就逐字节走过全文。实测 8.59 倍推翻了它：边界
-/// 判定用 `all(is_ascii_whitespace)`，在首个非空白字节就短路——那条循环其实
-/// **不**读每个字节，读全文的是这个函数。
+/// This branchless fold lets each byte independently contribute whether it starts a code point
+/// and whether it starts a wide character. A stateful byte-by-byte match prevents vectorisation.
 ///
-/// 随后我加了「整行纯 ASCII 就取字节数」的快速路径，**实测毫无改善**（8.53 倍）：
-/// 中日文稿件里几乎每行都含非 ASCII，那条捷径根本走不到。定位之后才知道贵的
-/// 是逐字节 `match` 推进——它有数据依赖（下一个下标取决于当前字节），编译器
-/// 无法向量化。
-///
-/// 现在这一行是无分支的：每个字节独立贡献「它是不是一个码位的开头」加上
+/// 每个字节独立贡献「它是不是一个码位的开头」加上
 /// 「它是不是一个宽字符的开头」，可以整批比较。三字节序列多为 CJK 表意文字与
 /// 全角标点，四字节多为 emoji 与扩展汉字，两者各计两个当量。
 ///
@@ -163,7 +156,7 @@ impl ShapeAccumulator {
 /// | 逐字节 match 推进 | 4,168µs |
 /// | **无分支 fold** | **1,568µs** |
 ///
-/// 答案与逐字节推进逐字节相同（`block_shape_scan` 对拍）。
+/// `block_shape_scan` verifies byte-for-byte equivalence with the stateful implementation.
 ///
 /// 走首字节而非 `unicode-width` 的精确查表：实测那张表只跑 1.42 GB/s，比
 /// UTF-8 校验慢 17 倍，而估高本来就要靠一个比例系数校准，精确宽度换不来相应

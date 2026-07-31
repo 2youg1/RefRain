@@ -88,21 +88,24 @@ bun run gate
 
 ## Documentation
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — modules, glossary, and where a problem
+- [ARCHITECTURE.md](docs/ARCHITECTURE.md) — modules, glossary, and where a problem
   most likely lives
-- [CONTRIBUTING.md](CONTRIBUTING.md) — how to propose a change
-- [ROADMAP.md](ROADMAP.md) — what is planned
-- [AGENTS.md](AGENTS.md) — working discipline for agents in this repository
-- [SKILL.md](SKILL.md) — the agent protocol (generated from the parser)
+- [CONTRIBUTING.md](docs/CONTRIBUTING.md) — how to propose a change
+- [ROADMAP.md](docs/ROADMAP.md) — what is planned
+- [AGENTS.md](docs/AGENTS.md) — working discipline for agents in this repository
+- [SKILL.md](docs/SKILL.md) — the agent protocol (generated from the parser)
 
 ## Other
 
-Built with [Tauri](https://tauri.app), [SolidJS](https://solidjs.com) and
-[Rust](https://rust-lang.org). Storage is SQLite through
-[rusqlite](https://github.com/rusqlite/rusqlite), with FTS5 and an
-application-level bigram tokeniser — the reasoning, and the measurements behind
-rejecting the usual advice, are in
-[ARCHITECTURE.md](ARCHITECTURE.md#why-bigram-not-trigram-or-a-tokeniser).
+RefRain uses [Rust](https://rust-lang.org), [Tauri](https://tauri.app),
+[SolidJS](https://solidjs.com), [TypeScript](https://www.typescriptlang.org),
+[Bun](https://bun.sh), [Node.js](https://nodejs.org), [Biome](https://biomejs.dev), and
+[ScriptC](https://github.com/vercel-labs/scriptc). Storage uses
+[SQLite](https://sqlite.org) through
+[rusqlite](https://github.com/rusqlite/rusqlite); source identity uses
+[BLAKE3](https://github.com/BLAKE3-team/BLAKE3); syntax highlighting uses
+[Shiki](https://shiki.style). The search design and measurements are in
+[ARCHITECTURE.md](docs/ARCHITECTURE.md#why-bigram-not-trigram-or-a-tokeniser).
 
 Licensed under [MPL 2.0](LICENSE).
 

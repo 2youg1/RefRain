@@ -107,11 +107,11 @@ careful description is worth a great deal.
 ## Licence
 
 By contributing you agree that your contribution is licensed under
-[MPL 2.0](LICENSE), the same terms as the project.
+[MPL 2.0](../LICENSE), the same terms as the project.
 
 ---
 
-- [README.md](README.md) — what RefRain is
+- [README.md](../README.md) — what RefRain is
 - [ARCHITECTURE.md](ARCHITECTURE.md) — modules, glossary, and where problems live
 - [ROADMAP.md](ROADMAP.md) — what is planned
 - [AGENTS.md](AGENTS.md) — working discipline for agents

@@ -89,11 +89,11 @@ pub struct DispatchInput {
     pub result_path: String,
     /// Byte cap for the artifact body (shown in the short contract).
     pub max_bytes: u64,
-    /// How much protocol the request itself carries (KL9's contract tiers).
+    /// How much protocol the request itself carries.
     pub contract_mode: ContractMode,
 }
 
-/// The contract tier a request carries (§8.4, KL9 2026-07-29): the parser is
+/// The contract tier a request carries (§8.4): the parser is
 /// the only authority; these are presentation frequencies per channel, never
 /// a protocol fork.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
