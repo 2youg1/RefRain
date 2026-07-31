@@ -248,7 +248,7 @@ Measured on 22,410 real files (252MB), not chosen from documentation:
 
 ## Gates
 
-`bun run gate` runs 47 stages over the 41 gate scripts on disk. The Rust checks
+`bun run gate` runs 48 stages over the 42 gate scripts on disk. The Rust checks
 are **not** among them and must be run separately:
 
 ```sh

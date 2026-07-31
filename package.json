@@ -23,6 +23,7 @@
     "evidence:headless": "bun scripts/gate.ts --headless-evidence-only",
     "evidence:performance": "bun scripts/gate.ts --performance-evidence-only",
     "verify:no-spec-upload": "bun scripts/verify-no-spec-upload.ts",
+    "verify:readme-parity": "bun scripts/verify-readme-parity.ts",
     "verify:no-network": "bun scripts/verify-no-network.ts",
     "verify:bridge": "bun scripts/verify-bridge.ts",
     "verify:logo": "bun scripts/verify-logo.ts",

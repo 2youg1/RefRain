@@ -4,80 +4,125 @@
 
 **A local writing workbench for long manuscripts, where an agent may propose and only you may merge.**
 
+[English](README.md) · [简体中文](README.zh-CN.md)
+
 [![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](LICENSE)
+[![Download](https://img.shields.io/github/v/release/kaile9/RefRain?label=Download&color=blue)](https://github.com/kaile9/RefRain/releases/latest)
 
 </div>
 
 ---
 
-RefRain is for people writing something long — a novel, a thesis, a report that
-took two years. Your Markdown files stay yours: the `.md` on disk is the only
-original, and RefRain never becomes the thing you have to export from.
+## The problem
 
-Agents can read your materials, search your manuscript, and propose changes.
-Every proposal waits for you. Nothing enters your text without a click.
+An agent that edits your manuscript directly is fast and unaccountable. You end
+up reading the diff to find out what happened to your own book, and the version
+that made sense is somewhere behind you.
 
-The application makes no network requests.
+An agent that only chats is accountable and useless. You copy text out, paste it
+back, and lose the thread every time.
 
-## Features
+RefRain takes the third position: **the agent proposes, you decide, and the
+record of who decided what is part of the document.**
 
-**Writing**
+## How it works
 
-- The whole manuscript is one editing surface — selection crosses paragraphs
-- A hundred thousand blocks, with about sixty mounted at any moment
-- Frame scheduling synchronised to your display's refresh rate
-- IME composition is never interrupted; saving waits for `compositionend`
-- Three font slots (Latin, Chinese, Japanese) with shared-Han priority
-- Full typographic control: weight, letter and word spacing, measure, indent,
-  paragraph spacing, alignment, baseline grid, display scale
-- Language presets for Chinese, Japanese and English, plus your own
-- Punctuation width suggestions, empty-paragraph cleanup, three-state inline
-  formatting that never leaves `****` behind
-- Headings, quotes and lists as three-state commands
-- Highlights and annotations that ask to be re-anchored rather than guessing
-- When a save fails, you get steps you can act on
+You select the passages an agent may see. RefRain freezes those exact bytes into
+a request — the scopes verbatim, the context, the contract, and a digest — and
+only then dispatches it.
 
-**Working with agents**
+The agent replies with replacements. RefRain checks each one against the
+**frozen** request rather than against the agent's own claims, so a proposal
+that no longer matches your text fails loudly instead of landing on a paragraph
+the agent never read.
 
-- Local harnesses are discovered and connected without you knowing a path
-- Dispatch a work order straight from an annotation
-- The request bytes are frozen as the contract: if you edited a scope after
-  dispatching, the proposal fails honestly instead of landing on text the agent
-  never read
-- Verdict Ledger — accept, accept with edits, or send back, sentence by sentence
-- Multiple agents in one round: independent alternates, sequential follows, or
-  one agent verifying another's work
-- Materials travel as listings, not as text. Three 100KB references cost about
-  1,250 bytes instead of 300,000; the agent fetches what it decides it needs
+You accept, accept with edits, or send it back. That verdict is recorded. Only
+then does your text change.
 
-**Boundaries**
+## Four things this software will not do
 
-- No network from the application process
-- Only a human click merges text
-- Source Backup is never written
-- Deleting moves to the recycle bin
+Each one has a gate that fails the build when it is broken:
 
-**Scale** — measured on this machine, not estimated
+| | |
+|---|---|
+| **It makes no network requests** | The application process opens no sockets. Your manuscript is on your disk and stays there. |
+| **It never merges without your click** | An agent produces proposals. Nothing reaches the text without a recorded decision. |
+| **It never writes your Source Backup** | `.refrain-source/` holds your files as they were when you adopted the folder. Read-only, permanently. |
+| **It never deletes outright** | Removal goes to the recycle bin. |
 
-- 1GB Markdown opens (7.2 million blocks)
-- 11.4MB / 100k-block manuscript, open to JSON: p95 68ms
-- 100MB PDF import parses in 195ms
-- 100k-file project directory, warm: p95 404ms
+## What you get
+
+### Writing
+
+The whole manuscript is one editing surface, so a selection crosses paragraphs
+the way you expect. About sixty blocks are mounted at any moment out of a
+possible hundred thousand, and frame scheduling follows your display's refresh
+rate.
+
+For CJK authors specifically: IME composition is never interrupted, saving waits
+for `compositionend`, and three font slots (Latin, Chinese, Japanese) resolve
+shared Han characters by priority rather than by accident.
+
+Typography is under your control — weight, letter and word spacing, measure,
+indent, paragraph spacing, alignment, baseline grid, display scale — with
+presets for Chinese, Japanese and English, and room for your own. Fenced code is
+syntax-highlighted across eight languages and six palettes, all embedded at
+build time so that highlighting never reaches the network.
+
+Smaller things that matter daily: punctuation width suggestions, empty-paragraph
+cleanup, three-state inline formatting that never leaves `****` behind, headings
+and quotes and lists as three-state commands, annotations that ask to be
+re-anchored rather than guessing, and a failed save that tells you what to do
+next.
+
+### Working with agents
+
+Local harnesses are discovered and connected without you knowing a path. You can
+dispatch a work order straight from an annotation.
+
+Several agents can work one round together: independent **alternates** answering
+the same question, **follows** that read an upstream result, or one agent that
+**verifies** another's work and may report but not propose edits.
+
+Reference documents travel as listings rather than as text. Three 100KB
+references cost about 1,250 bytes instead of 300,000, and the agent fetches what
+it decides it needs — you are not paying to send an agent a library it will not
+open.
+
+Every decision lands in the **Verdict Ledger**: accepted, accepted with edits, or
+sent back, sentence by sentence.
+
+### Scale
+
+Measured on the development machine, not estimated:
+
+| | |
+|---|---|
+| 1GB Markdown | opens — 7.2 million blocks |
+| 11.4MB manuscript, 100k blocks | open to JSON, p95 68ms |
+| 100MB PDF import | parses in 195ms |
+| 100k-file project directory | warm, p95 404ms |
 
 ## Install
 
-Windows installer (NSIS), built with Tauri. A native release-policy program,
-compiled from TypeScript with ScriptC, verifies the exact installer set before
-upload. WebView2 is installed by the bootstrapper if it is missing.
+Download the Windows installer from
+[Releases](https://github.com/kaile9/RefRain/releases/latest). WebView2 is
+installed by the bootstrapper when it is missing.
 
-Building from source requires the Rust toolchain and Bun:
+macOS and Linux are planned but not released: every measurement in this
+repository comes from Linux, and nothing will be claimed for a platform until it
+has been measured there.
+
+### Building from source
+
+Requires the Rust toolchain and [Bun](https://bun.sh):
 
 ```sh
 bun install
 bun x tauri build
 ```
 
-Before committing, all four checks:
+Before committing, all four checks — the Rust ones are not inside `bun run gate`:
 
 ```sh
 cargo fmt --all --check
@@ -88,26 +133,33 @@ bun run gate
 
 ## Documentation
 
-- [ARCHITECTURE.md](docs/ARCHITECTURE.md) — modules, glossary, and where a problem
-  most likely lives
+- [ARCHITECTURE.md](docs/ARCHITECTURE.md) — modules, glossary, and where a problem most likely lives
 - [CONTRIBUTING.md](docs/CONTRIBUTING.md) — how to propose a change
 - [ROADMAP.md](docs/ROADMAP.md) — what is planned
 - [AGENTS.md](docs/AGENTS.md) — working discipline for agents in this repository
-- [SKILL.md](docs/SKILL.md) — the agent protocol (generated from the parser)
+- [SKILL.md](docs/SKILL.md) — the agent protocol, generated from the parser
 
-## Other
+## Technology
 
-RefRain uses [Rust](https://rust-lang.org), [Tauri](https://tauri.app),
-[SolidJS](https://solidjs.com), [TypeScript](https://www.typescriptlang.org),
-[Bun](https://bun.sh), [Node.js](https://nodejs.org), [Biome](https://biomejs.dev), and
-[ScriptC](https://github.com/vercel-labs/scriptc). Storage uses
-[SQLite](https://sqlite.org) through
-[rusqlite](https://github.com/rusqlite/rusqlite); source identity uses
-[BLAKE3](https://github.com/BLAKE3-team/BLAKE3); syntax highlighting uses
-[Shiki](https://shiki.style). The search design and measurements are in
+| | |
+|---|---|
+| **Core** | [Rust](https://rust-lang.org) — the domain, storage, and agent orchestration |
+| **Desktop shell** | [Tauri](https://tauri.app) with [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) |
+| **Surface** | [SolidJS](https://solidjs.com), [TypeScript](https://www.typescriptlang.org) under `strict`, [Biome](https://biomejs.dev) |
+| **Editor kernel** | Framework-free direct DOM; Rust owns the canonical bytes |
+| **Storage** | [SQLite](https://sqlite.org) via [rusqlite](https://github.com/rusqlite/rusqlite); FTS5 `unicode61` with an application-level bigram tokeniser |
+| **Identity** | [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) digests, [UUID](https://github.com/uuid-rs/uuid) v7 |
+| **Bindings** | [Serde](https://serde.rs) and [Specta](https://github.com/specta-rs/specta), which generates the TypeScript types |
+| **Highlighting** | [Shiki](https://shiki.style), entry points registered precisely so nothing reaches the network |
+| **Build and release** | [Bun](https://bun.sh) and [Node.js](https://nodejs.org), build-time only; [ScriptC](https://github.com/vercel-labs/scriptc) compiles the release policy into a native executable |
+
+Why the search index uses bigrams rather than trigrams or a tokeniser — with the
+measurements that decided it — is in
 [ARCHITECTURE.md](docs/ARCHITECTURE.md#why-bigram-not-trigram-or-a-tokeniser).
 
-Licensed under [MPL 2.0](LICENSE).
+## Licence
+
+[MPL 2.0](LICENSE).
 
 ## Acknowledgements
 
@@ -118,10 +170,8 @@ network — the library made that possible rather than fighting it.
 The bundled typefaces, all under the
 [SIL Open Font License 1.1](https://openfontlicense.org):
 
-- **[Noto Sans SC](https://fonts.google.com/noto/specimen/Noto+Sans+SC)** —
-  20,976 Han characters plus kana, the reason a Chinese manuscript shows no tofu
-- **[Zen Kaku Gothic New](https://fonts.google.com/specimen/Zen+Kaku+Gothic+New)**
-  — 6,682 Han characters, for Japanese text
+- **[Noto Sans SC](https://fonts.google.com/noto/specimen/Noto+Sans+SC)** — 20,976 Han characters plus kana, the reason a Chinese manuscript shows no tofu
+- **[Zen Kaku Gothic New](https://fonts.google.com/specimen/Zen+Kaku+Gothic+New)** — 6,682 Han characters, for Japanese text
 - **[Antic Didone](https://fonts.google.com/specimen/Antic+Didone)**
 - **[Jost](https://indestructibletype.com/Jost.html)**
 - **[Courier Prime](https://quoteunquoteapps.com/courierprime/)**

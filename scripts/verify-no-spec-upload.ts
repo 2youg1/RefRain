@@ -21,20 +21,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-
-/**
- * Every Markdown file the repository publishes, and why it exists.
- * Adding a row is a deliberate act: the file becomes public and stays public
- * in the history.
- */
-const PUBLISHED = {
-  "README.md": "what RefRain is, and how to install it",
-  "docs/ARCHITECTURE.md": "modules, glossary, and where problems live",
-  "docs/CONTRIBUTING.md": "how to propose a change",
-  "docs/ROADMAP.md": "what is planned",
-  "docs/AGENTS.md": "working discipline for agents",
-  "docs/SKILL.md": "the agent protocol (generated)",
-} as const satisfies Record<string, string>;
+import { PUBLISHED } from "./published-documents";
 
 const failures: string[] = [];
 
@@ -64,7 +51,7 @@ for (const file of found) {
     failures.push(
       `${file} is tracked but not in the published set — ` +
         "if it is yours, run `git rm --cached` on it; " +
-        "if it belongs to the project, add it to PUBLISHED in this file",
+        "if it belongs to the project, add it to scripts/published-documents.ts",
     );
   }
 }

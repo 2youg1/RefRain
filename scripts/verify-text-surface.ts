@@ -3,15 +3,12 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { Glob } from "bun";
+import { publishedPaths } from "./published-documents";
 
-const approvedDocuments = new Set([
-  "README.md",
-  "docs/AGENTS.md",
-  "docs/ARCHITECTURE.md",
-  "docs/CONTRIBUTING.md",
-  "docs/ROADMAP.md",
-  "docs/SKILL.md",
-]);
+// The published set has one authority: published-documents.ts. This gate and
+// verify:no-spec-upload ask different questions of it — that one checks the
+// git index, this one also scans the working tree and covers .html.
+const approvedDocuments = publishedPaths;
 
 const listed = spawnSync("git", ["ls-files", "*.md", "*.html"], { encoding: "utf8" });
 if (listed.status !== 0) {
