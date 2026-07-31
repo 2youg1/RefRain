@@ -17,6 +17,19 @@
  * (`shiki/core` plus one static import per language) resolves everything at
  * build time. That difference is invisible in the rendered output and shows up
  * only as a request in production, so it is asserted here rather than trusted.
+ *
+ * What this gate forbids is the *dynamic import*, not lazy loading. Measured:
+ * `await import(`@shikijs/langs/${name}`)` survives bundling verbatim and the
+ * grammar bytes never enter the output — the bundler cannot resolve a template
+ * literal, so it gives up rather than inlining. Loading a grammar at runtime is
+ * then a fetch by another name.
+ *
+ * Deferring the *work* is fine and needs no dynamic import: import every
+ * grammar statically into a registry, start the highlighter with `langs: []`,
+ * and call `loadLanguage(registry[name])` when a fence of that language first
+ * appears. Measured at 1.4–2.6 ms per grammar, against 53 ms to compile all
+ * thirty up front. The bytes still ship in the bundle — that is the point — but
+ * the regexes are only built for languages the author actually wrote.
  */
 
 import { report, scan } from "./gate-lib.ts";
