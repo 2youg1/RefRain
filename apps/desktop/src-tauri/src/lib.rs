@@ -1764,6 +1764,7 @@ use refrain_core::context_compiler::{
 };
 use refrain_core::material_ref::{Disclosure, MaterialRef};
 use refrain_host::host::{AgentHost, HostCommand, HostRefusal, ReviewTask, Run, RunProgress};
+use refrain_host::run_edge::RunEdge;
 use refrain_host::staging::DirectoryContext;
 
 /// The built-in L0 agent: a file channel, including copy-paste into a web
@@ -2139,6 +2140,44 @@ fn preview_dispatch(
     })
 }
 
+/// How one run relates to another in the same round, as the front end names
+/// it: a kind and the position it points at.
+///
+/// A position rather than a run id because the runs do not exist yet — the
+/// first authorization mints them. The author picks agents in an order, and
+/// that order is what the edges refer to.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RunEdgeDto {
+    pub kind: RunEdgeKindDto,
+    /// Which agent in `new_agents` this edge points at, counting from zero.
+    pub target: u32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum RunEdgeKindDto {
+    /// Runs after the target and reads its artifact.
+    Follows,
+    /// Reads the target's artifact and may only comment on it.
+    Verifies,
+    /// Answers the same question as the target, without seeing it.
+    Alternates,
+}
+
+impl From<RunEdgeDto> for RunEdge {
+    fn from(dto: RunEdgeDto) -> Self {
+        let target = dto.target as usize;
+        // No catch-all: a new edge kind must force a decision here rather
+        // than silently becoming whichever arm happened to be last.
+        match dto.kind {
+            RunEdgeKindDto::Follows => Self::Follows { upstream: target },
+            RunEdgeKindDto::Verifies => Self::Verifies { subject: target },
+            RunEdgeKindDto::Alternates => Self::Alternates { peer: target },
+        }
+    }
+}
+
 /// The click. Re-compiles from the same inputs; INV-14 refuses a drifted
 /// digest before any Run exists. One command, two shapes: the first
 /// authorization mints the runs; a retry's authorization names queued runs.
@@ -2154,6 +2193,11 @@ pub struct AuthorizeDispatchRequest {
     pub clicked_digest: String,
     pub new_agents: Vec<String>,
     pub retry_run_ids: Vec<String>,
+    /// How the minted runs relate to each other, one entry per `new_agents`
+    /// position. Empty means the ordinary star: every run answers the
+    /// author's question independently.
+    #[serde(default)]
+    pub edges: Vec<Option<RunEdgeDto>>,
     /// The ticket's picked agent, for the contract tier. Retry mints no new
     /// agents, so this cannot be derived from `new_agents`.
     pub agent_id: String,
@@ -2183,6 +2227,7 @@ fn authorize_dispatch(
         clicked_digest,
         new_agents,
         retry_run_ids,
+        edges,
         agent_id,
         carry,
     } = request;
@@ -2212,6 +2257,7 @@ fn authorize_dispatch(
             task_id,
             new_agents: parse_ids(&new_agents, "agent")?,
             retry_runs: parse_ids(&retry_run_ids, "run")?,
+            edges: edges.into_iter().map(|edge| edge.map(Into::into)).collect(),
             package,
             clicked_digest,
             authorized_at: now_millis(),

@@ -352,7 +352,7 @@ impl Database for ProjectDb {
                     // `ordinal` is the block's position in its document: the
                     // handle shared by the index, the agent's citation, and
                     // the bytes on disk. `start_byte` and `bytes` let a
-                    // retrieved fragment prove it is the same text the index
+                    // retrieved block prove it is the same text the index
                     // read, without the index keeping a copy of the words.
                     tx.execute_batch(
                         "DROP TABLE IF EXISTS document_search;

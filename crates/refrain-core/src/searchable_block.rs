@@ -38,7 +38,7 @@ use crate::source_layout::SourceLayout;
 /// 1GB file is a cost the author never asked to pay.
 pub const MAX_INDEXED_BLOCKS: usize = 100_000;
 
-/// One indexable passage: where it is, what kind it is, and its text.
+/// One indexable block: where it is, what kind it is, and its text.
 ///
 /// Borrowed rather than owned. Indexing a 252MB corpus allocates once per
 /// document for the read and then walks it; copying every block's text would
@@ -59,8 +59,8 @@ pub struct SearchableBlock<'source> {
     pub text: &'source str,
     /// Byte offset of `text` within the document.
     ///
-    /// Kept so a caller can seek to the passage without re-scanning, and so a
-    /// retrieved fragment can prove it is the same bytes the index saw.
+    /// Kept so a caller can seek to the block without re-scanning, and so a
+    /// retrieved block can prove it is the same bytes the index saw.
     pub start: usize,
 }
 
@@ -172,7 +172,7 @@ mod tests {
     }
 
     /// Astral characters and CJK must not shift a block's byte offsets: the
-    /// offset is what lets a fragment prove it is the same bytes.
+    /// offset is what lets a retrieved block prove it is the same bytes.
     #[test]
     fn offsets_survive_multibyte_text() {
         let source = "第一段🎈的正文。\n\n第二段。";

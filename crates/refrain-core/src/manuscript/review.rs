@@ -28,7 +28,12 @@ impl EditScope {
     }
 }
 
-/// A deterministic sentence-diff fragment.
+/// Which Review Slice this is: the Proposal it came from, and its position
+/// within that Proposal's sentence diff.
+///
+/// The ordinal here counts slices inside one Proposal. A block's ordinal
+/// (`searchable_block`) counts blocks inside one document. Same word, two
+/// scopes — they are never compared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ReviewSliceId {
     proposal: Id,

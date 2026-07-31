@@ -37,7 +37,7 @@ fn indexed() -> Connection {
     db
 }
 
-fn paths(hits: Vec<refrain_store::project::search::Hit>) -> Vec<String> {
+fn paths(hits: Vec<refrain_store::project::search::IndexedBlock>) -> Vec<String> {
     hits.into_iter().map(|hit| hit.path).collect()
 }
 

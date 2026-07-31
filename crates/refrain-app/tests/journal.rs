@@ -56,6 +56,7 @@ fn a_run(task_id: Id, progress: RunProgress) -> Run {
         workspace: "runs/one".to_string(),
         progress,
         retry_of: None,
+        edge: None,
     }
 }
 
