@@ -50,57 +50,93 @@ span { display: inline-block; padding: 8px; color: black; font-size: 72px; line-
 <span id="kana">ひらがな</span>
 <span id="blank">　　　</span>`;
 
-const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
-const page = await browser.newPage({ viewport: { width: 900, height: 300 }, deviceScaleFactor: 1 });
-await page.route("http://refrain.test/**", async (route) => {
-  const path = new URL(route.request().url()).pathname;
-  if (path === "/") {
-    await route.fulfill({ body: html, contentType: "text/html; charset=utf-8" });
-    return;
-  }
-  const name = path.replace("/fonts/", "");
-  if (!bundled.some((entry) => entry.file === name)) {
-    await route.abort("blockedbyclient");
-    return;
-  }
-  await route.fulfill({
-    body: await readFile(`${FONT_DIR}/${name}`),
-    contentType: "font/woff2",
+interface GlyphState {
+  readonly rendered: boolean;
+  readonly han: string;
+  readonly kana: string;
+  readonly blank: string;
+}
+
+async function renderOnce(): Promise<GlyphState> {
+  const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+  const page = await browser.newPage({
+    viewport: { width: 900, height: 300 },
+    deviceScaleFactor: 1,
   });
-});
+  await page.route("http://refrain.test/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/") {
+      await route.fulfill({ body: html, contentType: "text/html; charset=utf-8" });
+      return;
+    }
+    const name = path.replace("/fonts/", "");
+    if (!bundled.some((entry) => entry.file === name)) {
+      await route.abort("blockedbyclient");
+      return;
+    }
+    await route.fulfill({
+      body: await readFile(`${FONT_DIR}/${name}`),
+      contentType: "font/woff2",
+    });
+  });
+
+  try {
+    await page.goto("http://refrain.test/");
+    await page.evaluate(async (family) => {
+      for (const element of document.querySelectorAll("span")) {
+        (element as HTMLElement).style.fontFamily = family;
+      }
+      await document.fonts.ready;
+    }, stack);
+
+    // Sample until two consecutive frames satisfy the pixel contract. A loaded
+    // FontFace can become ready before headless Chromium has committed its first
+    // glyph paint under CPU pressure. Persistent missing glyphs still fail after
+    // one second; only the transient blank-frame state receives another frame.
+    const shotOf = async (id: string) => sha256(await page.locator(`#${id}`).screenshot());
+    let han = "";
+    let kana = "";
+    let blank = "";
+    let previousValidState: string | null = null;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      han = await shotOf("han");
+      kana = await shotOf("kana");
+      blank = await shotOf("blank");
+      const valid = han !== blank && kana !== blank && han !== kana;
+      const state = `${han}:${kana}:${blank}`;
+      if (valid && state === previousValidState) return { rendered: true, han, kana, blank };
+      previousValidState = valid ? state : null;
+      await page.waitForTimeout(50);
+    }
+    return { rendered: false, han, kana, blank };
+  } finally {
+    await browser.close();
+  }
+}
 
 const failures: string[] = [];
-try {
-  await page.goto("http://refrain.test/");
-  await page.evaluate(async (family) => {
-    for (const element of document.querySelectorAll("span")) {
-      (element as HTMLElement).style.fontFamily = family;
-    }
-    await document.fonts.ready;
-  }, stack);
+if (!stack.includes("Noto Sans SC") || !stack.includes("Zen Kaku Gothic New")) {
+  failures.push(`the stack drops its bundled fallbacks: ${stack}`);
+}
 
-  if (!stack.includes("Noto Sans SC") || !stack.includes("Zen Kaku Gothic New")) {
-    failures.push(`the stack drops its bundled fallbacks: ${stack}`);
-  }
-
-  // 三块像素：汉字、假名，以及一块只有全角空格的对照。
-  // 若汉字那块与空白块相同，说明什么也没画出来——豆腐块或空白。
-  const shotOf = async (id: string) => sha256(await page.locator(`#${id}`).screenshot());
-  const han = await shotOf("han");
-  const kana = await shotOf("kana");
-  const blank = await shotOf("blank");
-
-  if (han === blank) {
+// A wholly blank browser session is a fixture failure seen after many Chromium
+// launches in one WSL process namespace. Start one fresh session; never relax
+// the pixel predicate. A stable product defect returns the same red result.
+let glyphs = await renderOnce();
+if (!glyphs.rendered) glyphs = await renderOnce();
+if (!glyphs.rendered) {
+  if (glyphs.han === glyphs.blank) {
     failures.push("Han rendered as nothing: the stack has no face that carries it");
   }
-  if (kana === blank) {
+  if (glyphs.kana === glyphs.blank) {
     failures.push("kana rendered as nothing: the stack has no face that carries it");
   }
-  if (han === kana) {
+  if (glyphs.han === glyphs.kana) {
     failures.push("Han and kana produced identical pixels; the render is not measuring glyphs");
   }
-} finally {
-  await browser.close();
+  if (failures.length === 0) {
+    failures.push("glyph pixels did not stabilise in two consecutive frames within two sessions");
+  }
 }
 
 if (failures.length > 0) {

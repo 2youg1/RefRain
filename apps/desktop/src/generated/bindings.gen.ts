@@ -378,6 +378,12 @@ export type AuthorizeDispatchRequest = {
 	newAgents: string[],
 	retryRunIds: string[],
 	/**
+	 *  How the minted runs relate to each other, one entry per `new_agents`
+	 *  position. Empty means the ordinary star: every run answers the
+	 *  author's question independently.
+	 */
+	edges?: (RunEdgeDto | null)[],
+	/**
 	 *  The ticket's picked agent, for the contract tier. Retry mints no new
 	 *  agents, so this cannot be derived from `new_agents`.
 	 */
@@ -423,19 +429,19 @@ export type BuiltinTypographyPreset = {
  *  what rides besides the scope and the prompt. Materials always travel
  *  separately and are never part of a tier.
  */
-export type CarryMode = 
+export type CarryMode =
 /**
  *  The verdict stream; a round with no history falls back to the whole
  *  text, or the agent has nothing to stand on (KL9: never trade output
  *  quality for tokens).
  */
-"diff" | 
+"diff" |
 /**  The verdict stream plus the whole manuscript, every round. */
-"full" | 
+"full" |
 /**  Neither verdicts nor manuscript — scope and prompt only. */
 "none";
 
-export type CollectOutcomeDto = 
+export type CollectOutcomeDto =
 /**  No result yet; nothing moved. */
 { kind: "waiting" } | { kind: "completed"; value: {
 	proposals: number,
@@ -496,11 +502,11 @@ export type DocumentPageDto = {
 };
 
 /**  What a Markdown file is to the work. */
-export type DocumentRole = 
+export type DocumentRole =
 /**  A standalone work opened on its own (single-file Root). */
-"document" | 
+"document" |
 /**  Part of a Project's manuscript sequence. */
-"chapter" | 
+"chapter" |
 /**
  *  Reference material: enters the Context picker, never the manuscript
  *  order.
@@ -539,10 +545,10 @@ export type EditorChangeDto = { kind: "replace"; value: {
  *  The single authority for error kinds. `verify:docs-current` enumerates this
  *  type and fails when a document explains fewer codes than it declares.
  */
-export type ErrorCode = "permission-denied" | "illegal-name" | "occupied" | "outside-root" | "source-backup" | "not-a-directory" | "unsupported-format" | "state-unavailable" | "io" | 
+export type ErrorCode = "permission-denied" | "illegal-name" | "occupied" | "outside-root" | "source-backup" | "not-a-directory" | "unsupported-format" | "state-unavailable" | "io" |
 /**
  *  The manuscript moved underneath a Proposal.
- * 
+ *
  *  The Agent froze the text it was reading; the author has since changed
  *  it. Applying the proposal anyway would overwrite words the Agent never
  *  saw, and discarding it silently would throw away the Agent's work —
@@ -646,7 +652,7 @@ export type HostStateDto = {
 
 /**
  *  An opaque, time-ordered identifier for a persistent entity.
- * 
+ *
  *  The type parameter is absent on purpose: a phantom-typed id would multiply
  *  generated TypeScript types without preventing a single real confusion, since
  *  every id crosses the bridge as a string anyway.
@@ -686,44 +692,44 @@ export type KaraEffect = { kind: "engage"; value: {
 } };
 
 /**  Everything that can move the machine. */
-export type KaraEvent = 
+export type KaraEvent =
 /**
  *  A manuscript (`document | chapter`) opened. The event carries whether
  *  this is the first manuscript of the current Project work session;
  *  the composition layer owns work-session boundaries, the machine owns
  *  what an entry costs.
  */
-{ kind: "firstManuscriptOpened"; value: KaraAutoEntry } | 
+{ kind: "firstManuscriptOpened"; value: KaraAutoEntry } |
 /**
  *  A Project, a Material, the welcome screen, or a management page
  *  opened: explicitly *not* a manuscript.
  */
-{ kind: "nonManuscriptOpened" } | 
+{ kind: "nonManuscriptOpened" } |
 /**
  *  `Ctrl+Enter`: the only toggle (D10). During an IME composition the
  *  composition layer registers the request and fires this at
  *  `compositionend`; the machine does not model compositions.
  */
-{ kind: "manualToggle" } | 
+{ kind: "manualToggle" } |
 /**  Entering finished its transition. */
-{ kind: "entered" } | 
+{ kind: "entered" } |
 /**  The author stepped into Review while in KARA. */
-{ kind: "enterReview" } | 
+{ kind: "enterReview" } |
 /**  Review ended, back to the text. */
-{ kind: "exitReview" } | 
+{ kind: "exitReview" } |
 /**  Focus lost for 8s, sleep, or minimize. */
-{ kind: "goneAway" } | 
+{ kind: "goneAway" } |
 /**  The author is back. */
-{ kind: "returned" } | 
+{ kind: "returned" } |
 /**  Leaving's debrief finished (12s or any input). */
-{ kind: "leaveFinished" } | 
+{ kind: "leaveFinished" } |
 /**
  *  The composition layer reports where the author's caret is, so Away can
  *  mark it and Returning can show it. Facts in; decisions out.
  */
-{ kind: "setReturnPoint"; value: ReturnPoint } | 
+{ kind: "setReturnPoint"; value: ReturnPoint } |
 /**  A quiet event: queued for the leaving debrief, never an interruption. */
-{ kind: "quiet"; value: QuietEvent } | 
+{ kind: "quiet"; value: QuietEvent } |
 /**  An interrupting event: surfaces immediately. */
 { kind: "interrupt"; value: InterruptEvent };
 
@@ -806,7 +812,7 @@ export type MaterialDraftRow_Serialize = {
 
 /**
  *  Where the night lamp hangs.
- * 
+ *
  *  `Side` puts it beside the panels, so the light crosses the stage and the
  *  panels themselves stand in its path — which is where their translucency
  *  gets its reason. `Overhead` hangs it above: a soft wash falling from the
@@ -856,7 +862,7 @@ export type OpenDocumentDto_Serialize = {
 
 /**
  *  What a panel is made of: opaque, frosted, or glass with thickness.
- * 
+ *
  *  Three densities of one thing — how much light passes through — not three
  *  skins. The numbers live in the renderer; this only records the choice.
  */
@@ -864,7 +870,7 @@ export type PanelMaterial = "solid" | "acrylic" | "liquid";
 
 /**
  *  Which side the panel stack grows from.
- * 
+ *
  *  The stack is one-directional by construction: panels open outward from this
  *  side and nothing ever appears opposite them. Flipping this mirrors the same
  *  stack; it does not introduce a second layout.
@@ -922,15 +928,15 @@ export type RailWidth = "narrow" | "regular" | "wide";
  *  One thing the author can do about a failure. A step is a domain fact, not a
  *  sentence: the interface renders it, so changing wording never touches here.
  */
-export type RecoveryStep = "retry" | "choose-another-location" | "choose-another-name" | "grant-permission" | "open-settings" | "report-defect" | 
+export type RecoveryStep = "retry" | "choose-another-location" | "choose-another-name" | "grant-permission" | "open-settings" | "report-defect" |
 /**
  *  Read what the Agent was looking at, then decide.
- * 
+ *
  *  The only honest step when a proposal has gone stale: the author is the
  *  one who changed the text, and only they know whether the Agent's
  *  suggestion still applies to what is there now.
  */
-"compare-with-frozen-text" | 
+"compare-with-frozen-text" |
 /**  Ask the Agent again, against the text as it stands. */
 "send-again";
 
@@ -1009,6 +1015,28 @@ export type RunDto = {
 	failure: string | null,
 	retryOf: string | null,
 };
+
+/**
+ *  How one run relates to another in the same round, as the front end names
+ *  it: a kind and the position it points at.
+ *
+ *  A position rather than a run id because the runs do not exist yet — the
+ *  first authorization mints them. The author picks agents in an order, and
+ *  that order is what the edges refer to.
+ */
+export type RunEdgeDto = {
+	kind: RunEdgeKindDto,
+	/**  Which agent in `new_agents` this edge points at, counting from zero. */
+	target: number,
+};
+
+export type RunEdgeKindDto =
+/**  Runs after the target and reads its artifact. */
+"follows" |
+/**  Reads the target's artifact and may only comment on it. */
+"verifies" |
+/**  Answers the same question as the target, without seeing it. */
+"alternates";
 
 /**  What a save became. `ChangedUnderneath` is a Safety surface, not an error. */
 export type SaveOutcomeDto = SaveOutcomeDto_Serialize | SaveOutcomeDto_Deserialize;

@@ -215,6 +215,7 @@ Taken from the manifests, pinned exactly.
 | **Desktop shell** | Tauri 2.11.5 (`tauri-build` 2.6.3, `plugin-dialog` 2.7.2) |
 | **Frontend** | SolidJS 1.9.14, TypeScript 7.0.2, Biome |
 | **Build tooling** | Bun (development and build only — no bytes reach the installer) |
+| **Release policy** | ScriptC 0.0.17 compiles `scripts/release-assets.ts` into the native Windows program that validates and prepares the public installer |
 | **Storage** | rusqlite 0.40.1 (bundled SQLite), FTS5 with `unicode61` plus an application-level bigram tokeniser |
 | **Hashing** | blake3 1.8.3 |
 | **Ids** | uuid 1.24.0, v7 (time-ordered) |

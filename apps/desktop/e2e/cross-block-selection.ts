@@ -70,17 +70,21 @@ try {
     );
   });
 
-  // 等三个块都挂上并且量得出宽度，再开始找落点。
-  //
-  // 这道门禁在全门禁并发负载下失败过三次，形状各不相同（终点落进段落之间、
-  // 起点为 null、二十次重试都找不到落点），共同点是拖拽发生时页面还没准备好，
-  // 而失败消息读起来像产品缺陷。所以先等到一个**可观测的就绪条件**成立，
-  // 再用 elementFromPoint 确认落点，两道都不满足才报错。
+  // Wait until all three text ranges have measurable geometry. Use those ranges
+  // as the mouse coordinates and let the real selection result decide whether
+  // the pointer reached each block. An elementFromPoint preflight duplicated
+  // browser hit-testing and could fail under load before the product assertion
+  // ran, even when all three measured rectangles were valid.
   await page.waitForFunction(
-    () => {
-      const blocks = [...document.querySelectorAll("[data-block-id]")];
-      return blocks.length >= 3 && blocks.every((block) => block.getBoundingClientRect().width > 0);
-    },
+    () =>
+      ["b1", "b3"].every((id) => {
+        const text = document.querySelector(`[data-block-id="${id}"]`)?.firstChild;
+        if (text === null || text === undefined) return false;
+        const range = document.createRange();
+        range.selectNodeContents(text);
+        return range.getBoundingClientRect().width > 0;
+      }),
+    undefined,
     { timeout: 15_000 },
   );
 
@@ -95,46 +99,15 @@ try {
       return { x, y, width, height };
     }, blockId);
 
-  const pointHits = async (x: number, y: number, blockId: string) =>
-    page.evaluate(
-      ({ x, y, id }) => {
-        const element = document.elementFromPoint(x, y);
-        return element?.closest("[data-block-id]")?.getAttribute("data-block-id") === id;
-      },
-      { x, y, id: blockId },
-    );
-
-  let start: { x: number; y: number } | null = null;
-  let end: { x: number; y: number } | null = null;
-  for (let attempt = 0; attempt < 60 && (start === null || end === null); attempt += 1) {
-    const first = await rectOfText("b1");
-    const third = await rectOfText("b3");
-    if (first !== null && third !== null && first.width > 0 && third.width > 0) {
-      const candidateStart = { x: first.x + first.width * 0.2, y: first.y + first.height / 2 };
-      const candidateEnd = { x: third.x + third.width * 0.6, y: third.y + third.height / 2 };
-      if (
-        (await pointHits(candidateStart.x, candidateStart.y, "b1")) &&
-        (await pointHits(candidateEnd.x, candidateEnd.y, "b3"))
-      ) {
-        start = candidateStart;
-        end = candidateEnd;
-        break;
-      }
-    }
-    await page.waitForTimeout(100);
-  }
-  if (start === null || end === null) {
-    const diagnosis = await page.evaluate(() =>
-      [...document.querySelectorAll("[data-block-id]")].map((block) => ({
-        id: block.getAttribute("data-block-id"),
-        rect: block.getBoundingClientRect().toJSON(),
-      })),
-    );
+  const first = await rectOfText("b1");
+  const third = await rectOfText("b3");
+  if (first === null || third === null || first.width <= 0 || third.width <= 0) {
     throw new Error(
-      "the harness never found two points that land on the first and third paragraphs; " +
-        `this is a fixture problem, not a selection problem: ${JSON.stringify(diagnosis)}`,
+      `the editor reported unusable text geometry: ${JSON.stringify({ first, third })}`,
     );
   }
+  const start = { x: first.x + first.width * 0.2, y: first.y + first.height / 2 };
+  const end = { x: third.x + third.width * 0.6, y: third.y + third.height / 2 };
 
   // 用真实鼠标从第一段拖到第三段。
   await page.mouse.move(start.x, start.y);

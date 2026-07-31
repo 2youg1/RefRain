@@ -90,12 +90,19 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["verify:one-word-per-concept", ["bun", "scripts/verify-one-word-per-concept.ts"]],
   ["verify:alternates-isolation", ["bun", "scripts/verify-alternates-isolation.ts"]],
   ["verify:contract-tier-per-task", ["bun", "scripts/verify-contract-tier-per-task.ts"]],
+  ["verify:release-version", ["bun", "scripts/verify-release-version.ts"]],
+  ["verify:release-workflow", ["bun", "scripts/verify-release-workflow.ts"]],
   ["verify:gates-run", ["bun", "scripts/verify-gates-run.ts"]],
 ];
 
+const headlessEvidence = new Set(["verify:cross-block-selection", "verify:font-fallback"]);
+const evidenceOnly = process.argv.includes("--headless-evidence-only");
+const selected = stages.filter(([name]) =>
+  evidenceOnly ? headlessEvidence.has(name) : !headlessEvidence.has(name),
+);
 const failures: string[] = [];
 
-for (const [name, argv] of stages) {
+for (const [name, argv] of selected) {
   const started = Date.now();
   const [command, ...args] = argv;
   if (command === undefined) throw new Error(`stage ${name} has no command`);
@@ -110,7 +117,8 @@ for (const [name, argv] of stages) {
   }
 }
 
-console.log(`\nran ${stages.length} stages, ${failures.length} failed`);
+const kind = evidenceOnly ? "headless evidence" : "blocking";
+console.log(`\nran ${selected.length} ${kind} stages, ${failures.length} failed`);
 if (failures.length > 0) {
   console.log(`failed: ${failures.join(", ")}`);
   process.exit(1);

@@ -119,3 +119,20 @@ jobs:
           path: target/debug/refrain-desktop.exe
           if-no-files-found: error
           retention-days: 3
+
+  # These Linux-headless probes have produced blank, zero-layout Chromium
+  # sessions while their product-failure injections remain deterministic. Keep
+  # the evidence visible, but do not let a browser fixture block Windows release.
+  # The three real-window Windows E2E steps above remain blocking.
+  headless-evidence:
+    name: non-blocking headless evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      - run: bun run evidence:headless
