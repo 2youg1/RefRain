@@ -221,7 +221,12 @@ pub fn short_contract(input: &DispatchInput) -> String {
          - Write the artifact to: {result}\n\
          - The artifact body must not exceed {max} bytes.\n\
          - You are writing a proposal, not the manuscript. A human reads every change\n\
-         \x20 and decides. Nothing you write reaches the text without that decision.",
+         \x20 and decides. Nothing you write reaches the text without that decision.\n\n\
+         Materials listed under \"# Context\" arrive as listings, not as text. To read\n\
+         one, open the file at its path, or search it — the listing's access= says\n\
+         which is permitted, and blocks= says how many blocks it has. Quote a block\n\
+         by its ordinal. Never read `.refrain-source/`: that is the backup taken when\n\
+         the Root was adopted, not what the author is writing now.",
         scopes = scopes,
         result = input.result_path,
         max = input.max_bytes,
@@ -590,6 +595,42 @@ mod tests {
         assert_eq!(contract.matches("<!-- scope ch01:b3 -->").count(), 1);
         assert_eq!(contract.matches("<!-- scope ch01:b4 -->").count(), 1);
         assert!(contract.contains(".refrain/runs/r1/attempts/a1/result.md"));
+    }
+
+    /// 每轮携带的那一份契约，必须说清怎么读材料。
+    ///
+    /// `skill_doc()` 一直说得清，并且有测试守着——但那是 **Full** 档，而每轮请求
+    /// 实际携带的是 **Short**。探针实测发现 Short 里一个字都没有：材料目录给了
+    /// `access=` 与 `blocks=`，Agent 却无从知道怎么把一段原文取回来。
+    ///
+    /// 材料改成目录制的全部立意就是「按需取回」。给了目录不给取法，等于让它
+    /// 要么猜路径、要么放着不读——而两种都不会报错，作者只会觉得这个 Agent
+    /// 没看材料。
+    ///
+    /// 断言逐项对应 Agent 要回答的问题，而不是断言一整段文本相等：后者会在
+    /// 任何一次措辞调整时变红，而它并没有在守任何东西。
+    #[test]
+    fn the_short_contract_says_how_to_reach_a_material() {
+        let package = compile(&input());
+        let contract = package
+            .request_md
+            .split("# Reply format")
+            .nth(1)
+            .expect("reply format");
+
+        // 两条取法都要给：只说一条，Agent 要么猜路径要么永远不打开它本可以读的文件。
+        assert!(contract.contains("open the file"), "没说可以直接打开");
+        assert!(contract.contains("search it"), "没说可以检索");
+        // 目录上那两个属性要能被用起来，否则它们只是占字节。
+        assert!(contract.contains("access="), "没说 access= 决定哪一条可用");
+        assert!(contract.contains("blocks="), "没说 blocks= 是什么");
+        // 取回来之后引用的把手。
+        assert!(contract.contains("ordinal"), "没说用块序号引用");
+        // 备份目录不是依据：读了它就是拿作者早已改过的字去提改写。
+        assert!(
+            contract.contains(".refrain-source/"),
+            "没有把备份目录与实时文件区分开"
+        );
     }
 
     #[test]
