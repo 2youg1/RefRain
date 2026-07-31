@@ -1816,19 +1816,30 @@ pub enum CarryMode {
 }
 
 /// The contract tier for this dispatch (KL9's contract injection): L0's
-/// channel has no session, so the short contract rides every request; a
-/// harness gets the full protocol document on its first round in this
-/// project and a pointer line afterwards.
+/// channel has no session, so the short contract rides every request; the
+/// full protocol document goes out on the first dispatch in this project and
+/// a pointer line afterwards.
+///
+/// The tier is a property of **the project**, not of an agent. It used to ask
+/// whether *this agent* had run before, which quietly broke the hard
+/// constraint in `Stage6-Plan.md` §4.4: dispatch two agents in one Task — the
+/// whole point of `Alternates` — and the one that had run got `Pointer` while
+/// the newcomer got `Full`. Two Runs of one Task then carried different tool
+/// contracts, which is the shape Manus measured as cache-destroying and
+/// hallucination-inducing.
+///
+/// Asking the project instead makes the tier the same for every Run of every
+/// Task in that project, at every moment. `verify:contract-tier-per-task`
+/// keeps it that way.
 fn contract_mode(store: &mut ProjectStore, agent_id: &str) -> Result<ContractMode, RefrainError> {
     if agent_id == l0_file_channel_agent() {
         return Ok(ContractMode::Short);
     }
-    let agent = parse_id(agent_id, "agent")?;
     let host = open_host(store)?;
-    Ok(if host.runs().iter().any(|run| run.agent_id == agent) {
-        ContractMode::Pointer
-    } else {
+    Ok(if host.runs().is_empty() {
         ContractMode::Full
+    } else {
+        ContractMode::Pointer
     })
 }
 
@@ -1960,6 +1971,7 @@ fn compile_package(
         manuscript: manuscript_text,
         changes,
         materials,
+        upstream: Vec::new(),
         request: prompt.to_string(),
         scopes: vec![BeforeScope { scope, text }],
         result_path: format!(

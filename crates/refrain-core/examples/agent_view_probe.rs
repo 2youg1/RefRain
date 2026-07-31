@@ -51,6 +51,7 @@ fn main() {
         manuscript: None,
         changes: Vec::new(),
         materials,
+        upstream: Vec::new(),
         result_path: "runs/probe/attempts/probe/result.md".to_string(),
         max_bytes: 65_536,
         scopes: vec![BeforeScope {
