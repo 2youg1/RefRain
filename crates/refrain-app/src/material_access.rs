@@ -8,8 +8,8 @@
 //! example is exactly this shape — implement `search_logs`, which returns the
 //! relevant lines and their surrounding context, rather than `read_logs`.
 //!
-//! So: `search_materials` to find a passage when the agent does not know where
-//! to look, and `read_material` to fetch a passage it can already name. There
+//! So: `search_materials` to find a block when the agent does not know where
+//! to look, and `read_material` to fetch a block it can already name. There
 //! is deliberately no `list_materials`: the listing already rides on every
 //! request, and a second way to ask the same question is a second authority.
 //!
@@ -20,7 +20,7 @@
 //! this module — it is the cheapest path when the agent already knows which
 //! section it wants, and the listing's headings usually tell it.
 //!
-//! What these actions add is what a bare file read cannot do: rank passages
+//! What these actions add is what a bare file read cannot do: rank blocks
 //! across several materials by relevance, and enforce the author's
 //! `Disclosure`. A file read answers "what does line 400 say"; search answers
 //! "which of these three references discusses the character's job".
@@ -34,16 +34,16 @@
 //! is what the agent reasons with; the second is what it quotes back.
 
 use refrain_core::block_shape::BlockKind;
-use refrain_core::material_ref::MaterialRef;
+use refrain_core::material_listing::MaterialListing;
 use refrain_core::searchable_block::{block_at, blocks_of};
 use refrain_core::{ErrorCode, RefrainError};
 
-/// How many fragments one search returns at most.
+/// How many blocks one search returns at most.
 ///
-/// A search that returns forty passages has handed back the material it was
+/// A search that returns forty blocks has handed back the material it was
 /// supposed to replace. Anthropic's guidance is explicit that a tool response
 /// needs its own token budget.
-pub const MAX_FRAGMENTS: usize = 12;
+pub const MAX_BLOCKS: usize = 12;
 
 /// How many blocks one `read_material` call may return.
 ///
@@ -52,7 +52,7 @@ pub const MAX_FRAGMENTS: usize = 12;
 /// useful than an error telling it to ask again.
 pub const MAX_READ_BLOCKS: usize = 40;
 
-/// One passage handed to an agent.
+/// One block handed to an agent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisclosedBlock {
     /// The material's Root-relative path — the same handle the listing gave.
@@ -66,7 +66,7 @@ pub struct DisclosedBlock {
     pub location: String,
     /// What kind of block it is.
     pub kind: BlockKind,
-    /// The passage itself, verbatim.
+    /// The block itself, verbatim.
     pub text: String,
 }
 
@@ -109,18 +109,18 @@ pub trait MaterialSource {
     /// The materials the author ticked for this round, as the listing has
     /// them. `None` for a path that was not ticked — which is what makes
     /// `UnknownMaterial` different from an empty result.
-    fn material(&self, path: &str) -> Option<&MaterialRef>;
+    fn material(&self, path: &str) -> Option<&MaterialListing>;
     /// Every material of this round, in listing order.
-    fn materials(&self) -> &[MaterialRef];
+    fn materials(&self) -> &[MaterialListing];
     /// The material's current text.
     fn text_of(&self, path: &str) -> Option<String>;
 }
 
-/// Find passages across this round's materials.
+/// Find blocks across this round's materials.
 ///
 /// Searches only what the author ticked, and only what they let the agent
-/// read: a material marked `OutlineOnly` never contributes a fragment, so the
-/// permission is enforced where the text would otherwise leave rather than by
+/// read: a material marked `OutlineOnly` never contributes a block, so the
+/// disclosure is enforced where the text would otherwise leave rather than by
 /// asking the caller to remember.
 pub fn search_materials(
     source: &impl MaterialSource,
@@ -131,14 +131,14 @@ pub fn search_materials(
     if query.is_empty() {
         return Vec::new();
     }
-    let wanted = limit.min(MAX_FRAGMENTS);
+    let wanted = limit.min(MAX_BLOCKS);
     if wanted == 0 {
         return Vec::new();
     }
 
     let mut found = Vec::new();
     for material in source.materials() {
-        if !material.disclosure.allows_passages() {
+        if !material.disclosure.allows_blocks() {
             continue;
         }
         let Some(text) = source.text_of(&material.path) else {
@@ -177,7 +177,7 @@ pub fn read_material(
     let Some(material) = source.material(path) else {
         return Err(FetchRefusal::UnknownMaterial(path.to_string()));
     };
-    if !material.disclosure.allows_passages() {
+    if !material.disclosure.allows_blocks() {
         return Err(FetchRefusal::Forbidden {
             path: path.to_string(),
             access: material.disclosure.as_str(),
@@ -189,7 +189,7 @@ pub fn read_material(
 
     // An out-of-range start is a refusal, not an empty result: an agent citing
     // a block the author has since deleted must learn that the text moved
-    // under it, not that the passage is blank.
+    // under it, not that the block is blank.
     if block_at(&text, from).is_none() {
         return Err(FetchRefusal::NoSuchBlock {
             path: path.to_string(),
@@ -231,7 +231,7 @@ fn locate(title: &str, text: &str, ordinal: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use refrain_core::material_ref::Disclosure;
+    use refrain_core::material_listing::Disclosure;
     use refrain_core::role::DocumentRole;
 
     const PROFILE: &str = "# 人物志\n\n\
@@ -244,13 +244,13 @@ mod tests {
     const TIMELINE: &str = "# 年表\n\n\
         一九八四年，他离开营销部。";
 
-    struct Round(Vec<(MaterialRef, String)>);
+    struct Round(Vec<(MaterialListing, String)>);
 
     impl Round {
         fn new() -> Self {
             Self(vec![
                 (
-                    MaterialRef::describe(
+                    MaterialListing::describe(
                         "资料/人物志.md",
                         "人物志",
                         DocumentRole::Material,
@@ -261,7 +261,7 @@ mod tests {
                     PROFILE.to_string(),
                 ),
                 (
-                    MaterialRef::describe(
+                    MaterialListing::describe(
                         "资料/年表.md",
                         "年表",
                         DocumentRole::Material,
@@ -279,13 +279,13 @@ mod tests {
             self
         }
 
-        fn refs(&self) -> Vec<MaterialRef> {
+        fn refs(&self) -> Vec<MaterialListing> {
             self.0.iter().map(|(entry, _)| entry.clone()).collect()
         }
     }
 
     struct RoundSource {
-        refs: Vec<MaterialRef>,
+        refs: Vec<MaterialListing>,
         texts: Vec<(String, String)>,
     }
 
@@ -303,10 +303,10 @@ mod tests {
     }
 
     impl MaterialSource for RoundSource {
-        fn material(&self, path: &str) -> Option<&MaterialRef> {
+        fn material(&self, path: &str) -> Option<&MaterialListing> {
             self.refs.iter().find(|entry| entry.path == path)
         }
-        fn materials(&self) -> &[MaterialRef] {
+        fn materials(&self) -> &[MaterialListing] {
             &self.refs
         }
         fn text_of(&self, path: &str) -> Option<String> {
@@ -319,45 +319,40 @@ mod tests {
 
     /// 判据 1-3：检索返回的片段能被精确取回，字节相等。
     #[test]
-    fn a_fragment_can_be_read_back_byte_for_byte() {
+    fn a_block_can_be_read_back_byte_for_byte() {
         let source = RoundSource::of(Round::new());
-        let fragments = search_materials(&source, "营销", MAX_FRAGMENTS);
-        assert!(!fragments.is_empty());
+        let blocks = search_materials(&source, "营销", MAX_BLOCKS);
+        assert!(!blocks.is_empty());
 
-        for fragment in &fragments {
-            let read = read_material(
-                &source,
-                &fragment.path,
-                fragment.ordinal,
-                fragment.ordinal + 1,
-            )
-            .expect("片段应能按序号取回");
+        for block in &blocks {
+            let read = read_material(&source, &block.path, block.ordinal, block.ordinal + 1)
+                .expect("片段应能按序号取回");
             assert_eq!(read.len(), 1);
-            assert_eq!(read[0].text, fragment.text, "取回的字节应与检索给的相同");
-            assert_eq!(read[0].ordinal, fragment.ordinal);
+            assert_eq!(read[0].text, block.text, "取回的字节应与检索给的相同");
+            assert_eq!(read[0].ordinal, block.ordinal);
         }
     }
 
     /// 片段带的是人能读的位置，不是一串技术标识符。
     #[test]
-    fn a_fragment_says_where_a_human_would_say_it_is() {
+    fn a_block_says_where_a_human_would_say_it_is() {
         let source = RoundSource::of(Round::new());
-        let fragments = search_materials(&source, "四十二岁", MAX_FRAGMENTS);
-        assert_eq!(fragments.len(), 1);
-        assert_eq!(fragments[0].location, "人物志 · ## 陆沉舟");
+        let blocks = search_materials(&source, "四十二岁", MAX_BLOCKS);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].location, "人物志 · ## 陆沉舟");
     }
 
     /// 作者不放行的材料，一个片段都不给——权限守在文本离开的那个点上。
     #[test]
-    fn a_sealed_material_contributes_no_fragment() {
+    fn a_sealed_material_contributes_no_block() {
         let source = RoundSource::of(Round::new().sealed());
-        let fragments = search_materials(&source, "营销", MAX_FRAGMENTS);
+        let blocks = search_materials(&source, "营销", MAX_BLOCKS);
         assert!(
-            fragments.iter().all(|one| one.path != "资料/人物志.md"),
-            "OutlineOnly 的材料泄漏了片段: {fragments:?}"
+            blocks.iter().all(|one| one.path != "资料/人物志.md"),
+            "OutlineOnly 的材料泄漏了片段: {blocks:?}"
         );
         // 另一份没被封的仍可检索。
-        assert!(fragments.iter().any(|one| one.path == "资料/年表.md"));
+        assert!(blocks.iter().any(|one| one.path == "资料/年表.md"));
     }
 
     /// 直接读一份被封的材料，得到的是具名拒绝，不是空结果。
@@ -405,7 +400,7 @@ mod tests {
             .map(|index| format!("## 第{index}节\n\n这一段里有营销这个词。\n\n"))
             .collect();
         let source = RoundSource {
-            refs: vec![MaterialRef::describe(
+            refs: vec![MaterialListing::describe(
                 "资料/长.md",
                 "长",
                 DocumentRole::Material,
@@ -415,8 +410,8 @@ mod tests {
             )],
             texts: vec![("资料/长.md".to_string(), long)],
         };
-        let fragments = search_materials(&source, "营销", 1000);
-        assert_eq!(fragments.len(), MAX_FRAGMENTS);
+        let blocks = search_materials(&source, "营销", 1000);
+        assert_eq!(blocks.len(), MAX_BLOCKS);
     }
 
     /// 一个宽区间被截断而不是被拒绝：agent 拿到前 40 块，比一句「重问一次」有用。
@@ -426,7 +421,7 @@ mod tests {
             .map(|index| format!("第{index}段正文。\n\n"))
             .collect();
         let source = RoundSource {
-            refs: vec![MaterialRef::describe(
+            refs: vec![MaterialListing::describe(
                 "资料/长.md",
                 "长",
                 DocumentRole::Material,
@@ -443,6 +438,6 @@ mod tests {
     #[test]
     fn an_empty_query_asks_nothing_and_gets_nothing() {
         let source = RoundSource::of(Round::new());
-        assert!(search_materials(&source, "   ", MAX_FRAGMENTS).is_empty());
+        assert!(search_materials(&source, "   ", MAX_BLOCKS).is_empty());
     }
 }

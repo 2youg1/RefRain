@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::digest::content_hex;
-use crate::material_ref::MaterialRef;
+use crate::material_listing::MaterialListing;
 
 /// A token count, three-stated (SPEC 2.3). `Unknown` is a first-class value
 /// and never serialised as zero (INV-3).
@@ -67,12 +67,12 @@ pub struct DispatchInput {
     /// degrades as a context fills, so pasting everything made the agent
     /// worse at the work as well as more expensive.
     ///
-    /// What travels now is `MaterialRef::to_listing` — the author's own
+    /// What travels now is `MaterialListing::to_contract_element` — the author's own
     /// headings, an excerpt of the opening bytes, the size, the digest, and
     /// what the author permits. Nothing is generated, so nothing can be
-    /// wrong the way a summary can be wrong. The agent fetches passages it
+    /// wrong the way a summary can be wrong. The agent fetches blocks it
     /// decides it needs; see `agent_protocol` for the two actions it has.
-    pub materials: Vec<MaterialRef>,
+    pub materials: Vec<MaterialListing>,
     /// The author's request, verbatim.
     pub request: String,
     /// The Edit Scopes, in manuscript order.
@@ -252,7 +252,10 @@ pub fn compile(input: &DispatchInput) -> DispatchPackage {
         context_parts.push(("changes".to_string(), serialize_changes(&input.changes)));
     }
     for material in &input.materials {
-        context_parts.push((format!("material:{}", material.path), material.to_listing()));
+        context_parts.push((
+            format!("material:{}", material.path),
+            material.to_contract_element(),
+        ));
     }
     let context = if context_parts.is_empty() {
         String::new()
@@ -466,13 +469,13 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(which, text)| {
-                MaterialRef::describe(
+                MaterialListing::describe(
                     &format!("资料/第{which}份.md"),
                     &format!("资料{which}"),
                     crate::role::DocumentRole::Material,
                     "digest",
                     text,
-                    crate::material_ref::Disclosure::Retrievable,
+                    crate::material_listing::Disclosure::Retrievable,
                 )
             })
             .collect();
@@ -524,13 +527,13 @@ mod tests {
     #[test]
     fn the_request_states_each_materials_permission() {
         let mut restricted = input();
-        restricted.materials = vec![MaterialRef::describe(
+        restricted.materials = vec![MaterialListing::describe(
             "资料/机密.md",
             "机密",
             crate::role::DocumentRole::Material,
             "d",
             "# 机密\n\n不该被取走的正文。",
-            crate::material_ref::Disclosure::OutlineOnly,
+            crate::material_listing::Disclosure::OutlineOnly,
         )];
         let package = compile(&restricted);
         assert!(package.request_md.contains("access=\"outline-only\""));

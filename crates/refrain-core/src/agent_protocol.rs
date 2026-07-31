@@ -826,7 +826,7 @@ pub fn skill_doc() -> String {
 |---|---|
 | 请求怎么编出来 | `crates/refrain-core/src/context_compiler.rs` |
 | 本契约与解析器 | `crates/refrain-core/src/agent_protocol.rs` |
-| 材料目录怎么生成 | `crates/refrain-core/src/material_ref.rs` |
+| 材料目录怎么生成 | `crates/refrain-core/src/material_listing.rs` |
 | 块边界怎么定 | `crates/refrain-core/src/source_layout.rs` |
 | 检索与取数 | `crates/refrain-app/src/material_access.rs` |
 | Run 与编排 | `crates/refrain-host/src/host.rs` |

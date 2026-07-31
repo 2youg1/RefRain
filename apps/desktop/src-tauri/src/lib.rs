@@ -1762,7 +1762,7 @@ use refrain_core::context_compiler::{
     self, BeforeScope, ChangeEntry, ChangeKind, ContractMode, DispatchInput, DispatchPackage,
     ManifestEntry,
 };
-use refrain_core::material_ref::{Disclosure, MaterialRef};
+use refrain_core::material_listing::{Disclosure, MaterialListing};
 use refrain_host::host::{AgentHost, HostCommand, HostRefusal, ReviewTask, Run, RunProgress};
 use refrain_host::run_edge::RunEdge;
 use refrain_host::staging::DirectoryContext;
@@ -1935,18 +1935,18 @@ fn compile_package(
     //
     // What travels now is the author's own headings, an excerpt of the
     // opening bytes, the size, the digest, and what the author permits. The
-    // agent fetches the passages it decides it needs — it runs on this
-    // machine and can open the file, and `material_access` ranks passages
+    // agent fetches the blocks it decides it needs — it runs on this
+    // machine and can open the file, and `material_access` ranks blocks
     // across materials when it does not yet know where to look.
     //
     // Nothing here is generated: there is no model in this process to
     // summarise with, and a summary would be a second authority on what the
     // material says that goes stale the moment the author edits it.
-    let mut materials: Vec<MaterialRef> = Vec::with_capacity(material_paths.len());
+    let mut materials: Vec<MaterialListing> = Vec::with_capacity(material_paths.len());
     for material_path in material_paths {
         let opened = store.open_document(material_path).map_err(into_domain)?;
         let text = String::from_utf8_lossy(&opened.bytes);
-        materials.push(MaterialRef::describe(
+        materials.push(MaterialListing::describe(
             material_path,
             &doc_slug(material_path),
             DocumentRole::Material,

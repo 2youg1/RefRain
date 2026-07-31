@@ -17,7 +17,7 @@ pub mod health;
 pub mod id;
 pub mod kara;
 pub mod manuscript;
-pub mod material_ref;
+pub mod material_listing;
 pub mod role;
 pub mod search_rank;
 pub mod searchable_block;

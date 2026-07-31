@@ -11,6 +11,7 @@ use refrain_app::collect::{Collected, collect_attempt};
 use refrain_core::context_compiler::DispatchPackage;
 use refrain_core::{Id, Lineage, Manuscript, SourceSnapshot};
 use refrain_host::host::{AgentHost, HostCommand, Run, RunProgress, TaskProgress};
+use refrain_host::run_edge::RunEdge;
 use refrain_store::project::{ProjectStore, RootLocator};
 use refrain_store::root::RootKind;
 use refrain_store::schema::{AppDb, Database};
@@ -73,6 +74,19 @@ fn replacement(text: &str) -> String {
 
 /// 在 host 里造出一个已经发出去、正在等结果的 Run。
 fn dispatched_run(store: &mut ProjectStore, workspace: &str) -> Id {
+    dispatched_run_with_edge(store, workspace, None)
+}
+
+/// 同上，但这个 Run 与同 Task 的第一个 Run 之间带一条边。
+///
+/// 边在授权时才解析成 id（那是 id 存在的时刻），所以这里必须授权两个 agent
+/// 再把边挂到第二个上——不能凭空造一个 `ResolvedEdge`，那样测的就是夹具而不是
+/// host 真正会写下的东西。
+fn dispatched_run_with_edge(
+    store: &mut ProjectStore,
+    workspace: &str,
+    edge: Option<RunEdge>,
+) -> Id {
     let context = refrain_host::staging::DirectoryContext::new(store.layout().state_dir.clone());
     let mut host = AgentHost::open(refrain_app::journal::StoreJournal { store }, context).unwrap();
     let baseline = Id::new();
@@ -85,11 +99,16 @@ fn dispatched_run(store: &mut ProjectStore, workspace: &str) -> Id {
     .unwrap();
     let task_id = host.tasks()[0].id;
     let agent = Id::new();
+    // 有边时要两个 Run：边指向的对象必须真实存在，否则解析不出 id。
+    let (new_agents, edges) = match &edge {
+        None => (vec![agent], Vec::new()),
+        Some(edge) => (vec![Id::new(), agent], vec![None, Some(*edge)]),
+    };
     host.execute(HostCommand::AuthorizeDispatch {
         task_id,
-        new_agents: vec![agent],
+        new_agents,
         retry_runs: vec![],
-        edges: Vec::new(),
+        edges,
         package: DispatchPackage {
             request_md: String::new(),
             manifest: vec![],
@@ -100,7 +119,29 @@ fn dispatched_run(store: &mut ProjectStore, workspace: &str) -> Id {
         authorized_at: 1,
     })
     .unwrap();
-    let run_id = host.runs()[0].id;
+    // 有边时，上游必须先走到终态：`Verifies` 需要有东西可验，`Follows` 需要上游的
+    // 产出。host 会拒绝在此之前启动（`UpstreamNotTerminal`）——那条约束正是判据
+    // 2-5 的前半，这里顺着它走，而不是绕过它。
+    if edge.is_some() {
+        let upstream = host.runs()[0].id;
+        host.execute(HostCommand::LaunchRun {
+            run_id: upstream,
+            workspace: format!("{workspace}-upstream"),
+        })
+        .unwrap();
+        host.execute(HostCommand::CompleteDispatch {
+            run_id: upstream,
+            receipt: "upstream-receipt".to_string(),
+        })
+        .unwrap();
+        host.execute(HostCommand::FailRun {
+            run_id: upstream,
+            failure: "upstream finished for the fixture".to_string(),
+            at: 1,
+        })
+        .unwrap();
+    }
+    let run_id = host.runs().last().unwrap().id;
     host.execute(HostCommand::LaunchRun {
         run_id,
         workspace: workspace.to_string(),
@@ -292,4 +333,129 @@ fn a_failed_collect_is_written_to_the_run_not_only_returned() {
         host.tasks()[0].progress,
         TaskProgress::Open { .. } | TaskProgress::Draft
     ));
+}
+
+/// 判据 2-3：验证者出了改写，整份产出被拒。
+///
+/// `Verifies` 的全部意思是「这一轮读另一份产出并报告」。一个给了改写的验证者
+/// 做的是作者没有授权的那件事。
+///
+/// 三条测试合起来才说清这条规则，单独任何一条都不够：
+///
+/// 1. 这一条——验证者出改写 → 失败；
+/// 2. 下一条——**同样的产出**换成没有边的 Run → 成功。没有它，一个「永远拒绝
+///    改写」的实现会全绿，而规则就退化成了「改写一律不许」；
+/// 3. 第三条——被拒时批注也没有留下。丢掉改写、留下批注等于替作者裁掉了他会
+///    想看到的东西，也让下一轮的验证者以为越界是可以的。
+#[test]
+fn a_verifier_that_proposes_an_edit_is_refused_whole() {
+    let root = scratch();
+    let (_app, mut store) = store_at(&root);
+    let state_dir = store.layout().state_dir.clone();
+    let run_id = dispatched_run_with_edge(
+        &mut store,
+        "runs/one",
+        Some(RunEdge::Verifies { subject: 0 }),
+    );
+    stage(
+        &state_dir,
+        "runs/one",
+        run_id,
+        FIRST,
+        &replacement("验证者不该给的改写。"),
+    );
+    let manuscripts = [(CHAPTER.to_string(), manuscript_of(&root))]
+        .into_iter()
+        .collect();
+
+    collect_attempt(&mut store, &manuscripts, run_id, 10).unwrap();
+
+    // 改写没有落进提案：被拒的是整份产出。
+    assert_eq!(store.proposals_for(CHAPTER).unwrap().len(), 0);
+
+    let context = refrain_host::staging::DirectoryContext::new(state_dir);
+    let host = AgentHost::open(
+        refrain_app::journal::StoreJournal { store: &mut store },
+        context,
+    )
+    .unwrap();
+    let run: &Run = host.runs().iter().find(|run| run.id == run_id).unwrap();
+    match &run.progress {
+        RunProgress::Failed { failure } => {
+            assert_eq!(
+                failure, "verifier-proposed-edit",
+                "失败要说出是越界，不是别的"
+            );
+        }
+        other => panic!("越界的验证者应当失败，实际是 {other:?}"),
+    }
+}
+
+/// 同一份产出，换成没有边的 Run —— 必须成功。
+///
+/// 这是上一条的反向。没有这一条，「改写一律拒绝」也能让上一条全绿，而那不是
+/// 规则说的事：规则限制的是**验证者**，不是改写本身。
+#[test]
+fn the_same_edit_from_a_run_without_an_edge_is_accepted() {
+    let root = scratch();
+    let (_app, mut store) = store_at(&root);
+    let state_dir = store.layout().state_dir.clone();
+    let run_id = dispatched_run(&mut store, "runs/one");
+    stage(
+        &state_dir,
+        "runs/one",
+        run_id,
+        FIRST,
+        &replacement("验证者不该给的改写。"),
+    );
+    let manuscripts = [(CHAPTER.to_string(), manuscript_of(&root))]
+        .into_iter()
+        .collect();
+
+    let collected = collect_attempt(&mut store, &manuscripts, run_id, 10).unwrap();
+
+    assert_eq!(
+        collected,
+        Collected::Completed {
+            proposals: 1,
+            memos: 0,
+            drafts: 0,
+        },
+        "同样的改写，没有 Verifies 边时应当照常成为提案"
+    );
+}
+
+/// 越界时批注也不留下。
+///
+/// 产出是一份整体：作者授权的是「读并报告」，而这一份既报告又改写。把改写丢掉、
+/// 把批注留下，等于替作者做了他没有做的裁决。
+#[test]
+fn a_refused_verifier_leaves_no_memo_either() {
+    let root = scratch();
+    let (_app, mut store) = store_at(&root);
+    let state_dir = store.layout().state_dir.clone();
+    let run_id = dispatched_run_with_edge(
+        &mut store,
+        "runs/one",
+        Some(RunEdge::Verifies { subject: 0 }),
+    );
+    let both = "<agent-result version=\"2\"><memo scope=\"ch01:b1\"><![CDATA[这里的时序有问题。]]></memo>\
+         <replacement scope=\"ch01:b1\"><![CDATA[越界的改写。]]></replacement></agent-result>";
+    stage(&state_dir, "runs/one", run_id, FIRST, both);
+    let manuscripts = [(CHAPTER.to_string(), manuscript_of(&root))]
+        .into_iter()
+        .collect();
+
+    let collected = collect_attempt(&mut store, &manuscripts, run_id, 10).unwrap();
+
+    // 返回值直接说清「一份都没收下」：不是批注 1 改写 0，而是整份被拒。
+    match collected {
+        Collected::Failed { code, .. } => assert_eq!(code, "verifier-proposed-edit"),
+        other => panic!("越界应当整份被拒，实际是 {other:?}"),
+    }
+    assert_eq!(
+        store.proposals_for(CHAPTER).unwrap().len(),
+        0,
+        "改写不该留下"
+    );
 }

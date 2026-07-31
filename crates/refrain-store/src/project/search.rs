@@ -21,9 +21,9 @@
 //!
 //! # Why a row is a block, not a document
 //!
-//! A document-level index answers "which file" and never "which passage". An
+//! A document-level index answers "which file" and never "which block". An
 //! agent that receives an outline instead of 100KB of prose has to be able to
-//! retrieve a passage and cite it, and "chapter three is relevant" gives it
+//! retrieve a block and cite it, and "chapter three is relevant" gives it
 //! nothing to cite. It also improves ranking on its own terms: bm25's notion
 //! of document length becomes the block's length, so a short paragraph that
 //! is *about* the query stops losing to a long chapter that mentions it.
@@ -113,7 +113,7 @@ fn kind_of(name: &str) -> BlockKind {
         "heading" => BlockKind::Heading,
         "fence" => BlockKind::Fence,
         // A row written by a newer build carrying a kind this one does not
-        // know reads as prose. That is the honest floor: it ranks the passage
+        // know reads as prose. That is the honest floor: it ranks the block
         // by its words rather than claiming structure this build cannot see.
         _ => BlockKind::Paragraph,
     }
@@ -245,7 +245,7 @@ pub fn forget_document(db: &Connection, path: &str) -> Result<bool, RefrainError
 
 /// One block that matched, with everything needed to cite and re-read it.
 ///
-/// The ordinal is what an agent quotes back to fetch the passage; the byte
+/// The ordinal is what an agent quotes back to fetch the block; the byte
 /// range is what proves the fetched text is the text the index saw.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IndexedBlock {

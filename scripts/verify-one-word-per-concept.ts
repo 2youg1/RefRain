@@ -29,6 +29,19 @@ interface Rule {
   readonly canonical: string;
   /** 同义词，出现即失败。 */
   readonly synonyms: readonly string[];
+  /**
+   * 只在**类型名位置**才算漂移的同义词。
+   *
+   * 有些词同时是正当的动词或算法名：检索模块里 `Matching a query`、`the
+   * subsequence matcher`、`characters that matched` 全都是在说「怎么匹配」，
+   * 而不是在给「命中」起第二个名字。一条不分词性的规则会在这里报 30 条误报，
+   * 而误报会把真漂移埋掉——本轮实测：那 30 条一度盖住了 9 条真的
+   * （`Passage` 5 处、`Permission` 4 处）。
+   *
+   * 所以这些词只在 `struct X` / `enum X` / `type X` / `: X` 这类**命名**位置
+   * 才失败，散文与动词放行。
+   */
+  readonly typeNameOnly?: readonly string[];
   /** 只在这些路径下检查（前缀匹配）。 */
   readonly scope: readonly string[];
   /** 这些路径豁免：那里的同名词是别的概念。 */
@@ -44,7 +57,7 @@ const RULES: readonly Rule[] = [
     synonyms: ["Fragment", "Passage", "Snippet", "Chunk", "Segment"],
     scope: [
       "crates/refrain-core/src/searchable_block.rs",
-      "crates/refrain-core/src/material_ref.rs",
+      "crates/refrain-core/src/material_listing.rs",
       "crates/refrain-store/src/project/",
       "crates/refrain-app/src/material_access.rs",
     ],
@@ -52,7 +65,8 @@ const RULES: readonly Rule[] = [
   {
     concept: "检索命中",
     canonical: "SearchHit（交出去的）/ ScoredHit（打分中间态，借用索引）",
-    synonyms: ["Match", "Found", "Result"],
+    synonyms: [],
+    typeNameOnly: ["Match", "Found", "Result"],
     scope: ["crates/refrain-store/src/files/search.rs"],
     except: ["PathMatch"],
     note: "PathMatch 是排序信号的名字，不是命中本身",
@@ -60,20 +74,39 @@ const RULES: readonly Rule[] = [
   {
     concept: "Run 之间的关系",
     canonical: "RunEdge（未绑定 id）/ ResolvedEdge（已绑定）",
-    synonyms: ["Link", "Dependency", "Relation"],
+    synonyms: ["Link", "Dependency"],
+    typeNameOnly: ["Relation"],
     scope: ["crates/refrain-host/src/run_edge.rs", "crates/refrain-host/src/host.rs"],
   },
   {
     concept: "作者对一份材料的开放范围",
     canonical: "Disclosure",
     synonyms: ["Visibility", "Permission", "AccessLevel"],
-    scope: ["crates/refrain-core/src/material_ref.rs", "crates/refrain-app/src/material_access.rs"],
+    scope: [
+      "crates/refrain-core/src/material_listing.rs",
+      "crates/refrain-app/src/material_access.rs",
+    ],
   },
 ];
 
 const files: string[] = [];
-for await (const file of new Glob("{crates,apps}/**/*.rs").scan({ cwd: "." })) {
-  files.push(file.split(/[/\\]/).join("/"));
+// 扫描面覆盖两种语言，而不是只有 `.rs`。
+//
+// 今天四条规则的作用域全在 `crates/` 下，因为这些概念还没有跨过桥：实测
+// `document_search` 返回的是 `DocumentRow`（文档级），块级命中止于 Rust 层，
+// 于是前端 132 个文件 22,701 行里，Fragment / Snippet / Match / Hit / Disclosure
+// 各出现 **0** 次。前端没有这些词不是漏检，是它还没有这个概念可谈。
+//
+// 但扫描面写死成 `.rs` 是**沉默的**：块级命中接线到前端的那一天，前端可以自由
+// 地把它叫成 `Match`，而这道门禁一个字都不会说。所以扫描面跟随概念的实际位置，
+// 而不是跟随今天恰好的位置——判据是写法，不是漏网名单。
+//
+// 这不会立出一条永远不触发的规则：作用域仍然只写概念现在住的地方，扩到前端的
+// 那一步是加一条作用域路径，不是改这里。
+for await (const file of new Glob("{crates,apps,packages}/**/*.{rs,ts,tsx}").scan({ cwd: "." })) {
+  const normalised = file.split(/[/\\]/).join("/");
+  if (normalised.includes("node_modules/") || normalised.includes("/target/")) continue;
+  files.push(normalised);
 }
 
 const failures: string[] = [];
@@ -99,13 +132,38 @@ for (const rule of RULES) {
     const text = await Bun.file(file).text();
     const lines = text.split("\n");
     for (const synonym of rule.synonyms) {
-      const pattern = new RegExp(`\\b${synonym}\\b`);
+      // 大小写都要查。同义词表写的是类型名（`Fragment`），而漂移最先发生在
+      // **注释、局部变量、测试函数名**里——那些地方是小写。实测：术语收敛那一轮
+      // 之后，`material_access.rs` 仍留着 `MAX_FRAGMENTS`、`allows_passages`、
+      // 一句说 `OutlineOnly never contributes a fragment` 的文档注释，以及三个
+      // `a_fragment_…` 的测试名，而这道门禁全程绿着——它只认大写。
+      //
+      // 词首字母大小写不敏感，其余保持原样：这样 `Fragment` 与 `fragment` 都咬，
+      // 而 `defragment` 不会（`\b` 管住了词界）。
+      const head = `[${synonym[0]!.toUpperCase()}${synonym[0]!.toLowerCase()}]`;
+      const pattern = new RegExp(`\\b${head}${synonym.slice(1)}`);
       lines.forEach((line, index) => {
         if (!pattern.test(line)) return;
         if (rule.except?.some((allowed) => line.includes(allowed))) return;
         failures.push(
           `${file}:${index + 1}  「${rule.concept}」只用 ${rule.canonical}，` +
             `这里出现了同义词 ${synonym}\n      ${line.trim()}`,
+        );
+      });
+    }
+    // 只在命名位置才算漂移的那一类。
+    for (const synonym of rule.typeNameOnly ?? []) {
+      const naming = new RegExp(
+        `(?:struct|enum|type|trait)\\s+\\w*${synonym}\\b` +
+          `|:\\s*\\w*${synonym}\\b` +
+          `|->\\s*\\w*${synonym}\\b`,
+      );
+      lines.forEach((line, index) => {
+        if (!naming.test(line)) return;
+        if (rule.except?.some((allowed) => line.includes(allowed))) return;
+        failures.push(
+          `${file}:${index + 1}  「${rule.concept}」只用 ${rule.canonical}，` +
+            `这里用 ${synonym} 命名了一个类型\n      ${line.trim()}`,
         );
       });
     }

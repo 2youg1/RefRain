@@ -568,7 +568,7 @@ impl ProjectStore {
             .map(|row| {
                 // A document is represented by its best-matching block. The
                 // retriever returns blocks in bm25 order, so the first hit for
-                // a path is that document's strongest passage — and its kind
+                // a path is that document's strongest block — and its kind
                 // is now a fact the index recorded rather than a guess. Before
                 // block-level indexing this had to claim `Paragraph` for
                 // everything, which threw away the `HEADING` signal entirely.

@@ -3,7 +3,7 @@
 //! # Why this exists
 //!
 //! The index used to hold one row per document: a query could answer *which
-//! file*, never *which passage*. That is enough for a sidebar and not enough
+//! file*, never *which block*. That is enough for a sidebar and not enough
 //! for an agent, which needs to read a paragraph rather than a chapter — the
 //! whole point of handing it an outline instead of 100KB of prose.
 //!
