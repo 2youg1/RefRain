@@ -66,8 +66,9 @@ The application makes no network requests.
 
 ## Install
 
-Windows installer (NSIS), built with Tauri. WebView2 is installed by the
-bootstrapper if it is missing.
+Windows installer (NSIS), built with Tauri. A native release-policy program,
+compiled from TypeScript with ScriptC, verifies the exact installer set before
+upload. WebView2 is installed by the bootstrapper if it is missing.
 
 Building from source requires the Rust toolchain and Bun:
 
