@@ -42,7 +42,11 @@ const DEBT: Readonly<Record<string, { readonly lines: number; readonly errors: n
   inject_fixture_proposal: { lines: 71, errors: 4 },
   list_harnesses: { lines: 66, errors: 2 },
   upsert_agent: { lines: 62, errors: 5 },
-  authorize_dispatch: { lines: 61, errors: 1 },
+  // 63：编排的边。两行——解构里一行，命令构造里一行 DTO→领域的翻译。
+  // 试过把翻译收进 `AuthorizeDispatchRequest` 自己（`update_preferences`
+  // 走的就是这条路），结果是 61→64：解构必须先取值再消耗 request，多出的
+  // 一行比省下的多。棘轮的意义是让每次上调写下理由，不是把行数挪到别处。
+  authorize_dispatch: { lines: 63, errors: 1 },
   agent_reading_ledger: { lines: 57, errors: 0 },
   // 24：DTO→领域的翻译搬进 `PreferencesChangeDto::into_change`。它本来就是
   // DTO 自己的事，留在命令体里只是让「加一个偏好」看起来像在动装配层。

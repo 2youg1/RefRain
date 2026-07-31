@@ -248,7 +248,7 @@ pub fn forget_document(db: &Connection, path: &str) -> Result<bool, RefrainError
 /// The ordinal is what an agent quotes back to fetch the passage; the byte
 /// range is what proves the fetched text is the text the index saw.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Hit {
+pub struct IndexedBlock {
     pub path: String,
     /// Which block of that document, counting from zero.
     pub ordinal: u32,
@@ -269,7 +269,7 @@ pub struct Hit {
 ///
 /// For when the author remembers the words. See `search_with` for the other
 /// state an author can be in.
-pub fn search(db: &Connection, query: &str, limit: u32) -> Result<Vec<Hit>, RefrainError> {
+pub fn search(db: &Connection, query: &str, limit: u32) -> Result<Vec<IndexedBlock>, RefrainError> {
     search_with(db, query, Precision::Exact, limit)
 }
 
@@ -299,7 +299,7 @@ pub fn search_with(
     query: &str,
     precision: Precision,
     limit: u32,
-) -> Result<Vec<Hit>, RefrainError> {
+) -> Result<Vec<IndexedBlock>, RefrainError> {
     let Some(expression) = match_expression_with(query, precision) else {
         return Ok(Vec::new());
     };
@@ -324,7 +324,7 @@ pub fn search_with(
     let rows = statement
         .query_map(params![expression, limit], |row| {
             let kind: String = row.get(2)?;
-            Ok(Hit {
+            Ok(IndexedBlock {
                 path: row.get(0)?,
                 ordinal: row.get(1)?,
                 kind: kind_of(&kind),
@@ -337,6 +337,6 @@ pub fn search_with(
         })
         .map_err(|cause| store_failure("run search", cause))?;
 
-    rows.collect::<rusqlite::Result<Vec<Hit>>>()
+    rows.collect::<rusqlite::Result<Vec<IndexedBlock>>>()
         .map_err(|cause| store_failure("read search results", cause))
 }

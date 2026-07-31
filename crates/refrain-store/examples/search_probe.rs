@@ -6,7 +6,7 @@
 //! 用法：cargo run -p refrain-store --example search_probe -- <目录>
 
 use refrain_store::Database;
-use refrain_store::project::search::{Hit, index_document, search};
+use refrain_store::project::search::{IndexedBlock, index_document, search};
 use refrain_store::schema::{ProjectDb, open_in_memory};
 use std::time::Instant;
 
@@ -107,7 +107,7 @@ fn main() {
     println!("── 检索 ──");
     for query in queries {
         let start = Instant::now();
-        let hits: Vec<Hit> = search(&db, query, 5).unwrap();
+        let hits: Vec<IndexedBlock> = search(&db, query, 5).unwrap();
         let micros = start.elapsed().as_micros();
         let top = hits
             .iter()

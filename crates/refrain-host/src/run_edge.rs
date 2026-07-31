@@ -172,7 +172,7 @@ pub fn resolve_order(edges: &[Option<RunEdge>]) -> Result<Vec<usize>, EdgeRefusa
         colour[start] = Colour::Grey;
         while let Some(&node) = path.last() {
             let next = edges[node]
-                .filter(RunEdge::waits_for_target)
+                .filter(|edge| edge.waits_for_target())
                 .map(RunEdge::target);
             match next {
                 Some(target) if colour[target] == Colour::Grey => {
@@ -422,8 +422,14 @@ mod tests {
         ];
         let resolved = resolve_edges(&edges, &ids);
         assert_eq!(resolved[0], None);
-        assert_eq!(resolved[1], Some(ResolvedEdge::Follows { upstream: ids[0] }));
-        assert_eq!(resolved[2], Some(ResolvedEdge::Verifies { subject: ids[1] }));
+        assert_eq!(
+            resolved[1],
+            Some(ResolvedEdge::Follows { upstream: ids[0] })
+        );
+        assert_eq!(
+            resolved[2],
+            Some(ResolvedEdge::Verifies { subject: ids[1] })
+        );
     }
 
     /// 一条很长的链不能把真实调用栈压垮——十万个 Run 也要干净地给出次序。

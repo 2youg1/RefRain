@@ -18,6 +18,7 @@ use refrain_core::Manuscript;
 use refrain_core::manuscript::{EditScope, Proposal};
 use refrain_core::{ErrorCode, Id, RefrainError, agent_protocol, digest::content_hex};
 use refrain_host::host::{AgentHost, HostCommand};
+use refrain_host::run_edge::ResolvedEdge;
 use refrain_host::staging::DirectoryContext;
 use refrain_store::project::ProjectStore;
 
@@ -132,6 +133,32 @@ pub fn collect_attempt(
                 return fail(&mut host, run_id, error.code.as_str(), &error.detail, now);
             }
         };
+
+        // 判据 2-3：验证者只出批注，不出改写。
+        //
+        // `Verifies` 的全部意思是「这一轮读另一份产出并报告」。一个给了
+        // 改写的验证者做的是作者没有授权的那件事，所以整份产出被拒——
+        // 不是留下批注、丢掉改写。丢掉等于替作者裁掉了他会想看到的东西，
+        // 也让下一轮的验证者以为越界是可以的。
+        //
+        // 依据是 Run 上的边，不是产出自己的声称：产出说自己是什么，从来
+        // 不构成它是什么的证据（与契约永远取自冻结请求同一条理由）。
+        if matches!(run.edge, Some(ResolvedEdge::Verifies { .. }))
+            && !artifact.replacements.is_empty()
+        {
+            let scopes: Vec<&str> = artifact
+                .replacements
+                .iter()
+                .map(|replacement| replacement.scope.as_str())
+                .collect();
+            return fail(
+                &mut host,
+                run_id,
+                "verifier-proposed-edit",
+                &scopes.join(", "),
+                now,
+            );
+        }
 
         let task = host
             .tasks()

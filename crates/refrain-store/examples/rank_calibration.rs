@@ -14,7 +14,7 @@ use std::path::PathBuf;
 
 use refrain_core::block_shape::BlockKind;
 use refrain_store::Database;
-use refrain_store::project::search::{Hit, index_document, search_with};
+use refrain_store::project::search::{IndexedBlock, index_document, search_with};
 use refrain_store::schema::{ProjectDb, open_in_memory};
 use rusqlite::Connection;
 
@@ -78,7 +78,7 @@ fn report(db: &Connection, queries: &[&str]) {
         "查询", "命中", "bm25最小", "bm25中位", "bm25最大"
     );
     for query in queries {
-        let hits: Vec<Hit> = search_with(db, query, Precision::Exact, 500).unwrap();
+        let hits: Vec<IndexedBlock> = search_with(db, query, Precision::Exact, 500).unwrap();
         if hits.is_empty() {
             println!("{query:<16} {:>7}", 0);
             continue;

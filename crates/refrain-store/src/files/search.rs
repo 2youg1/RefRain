@@ -21,7 +21,7 @@ use super::index::{Entry, Kind};
 
 /// A matched entry and why it ranked where it did.
 #[derive(Debug, Clone)]
-pub struct Hit<'a> {
+pub struct ScoredHit<'a> {
     pub entry: &'a Entry,
     pub score: i32,
     /// Character offsets into `entry.name` that matched, for highlighting.
@@ -104,13 +104,13 @@ fn subsequence(needle: &str, haystack: &str) -> Option<(i32, Vec<usize>)> {
 }
 
 /// Run `query` over `entries` and return hits, best first.
-pub fn matches<'a>(entries: &'a [Entry], query: &str, limit: usize) -> Vec<Hit<'a>> {
+pub fn matches<'a>(entries: &'a [Entry], query: &str, limit: usize) -> Vec<ScoredHit<'a>> {
     let query = query.trim();
     if query.is_empty() {
         return entries
             .iter()
             .take(limit)
-            .map(|entry| Hit {
+            .map(|entry| ScoredHit {
                 entry,
                 score: 0,
                 positions: Vec::new(),
@@ -121,7 +121,7 @@ pub fn matches<'a>(entries: &'a [Entry], query: &str, limit: usize) -> Vec<Hit<'
     let folded = query.to_lowercase();
     let finder = memmem::Finder::new(folded.as_bytes());
 
-    let score_one = |entry: &'a Entry| -> Option<Hit<'a>> {
+    let score_one = |entry: &'a Entry| -> Option<ScoredHit<'a>> {
         // Substring first: it is both the common case and the cheaper one.
         if let Some(byte_offset) = finder.find(entry.name_folded.as_bytes()) {
             let start = entry.name_folded[..byte_offset].chars().count();
@@ -139,7 +139,7 @@ pub fn matches<'a>(entries: &'a [Entry], query: &str, limit: usize) -> Vec<Hit<'
             if entry.manuscript {
                 score += weight::MANUSCRIPT;
             }
-            return Some(Hit {
+            return Some(ScoredHit {
                 entry,
                 score,
                 positions,
@@ -150,14 +150,14 @@ pub fn matches<'a>(entries: &'a [Entry], query: &str, limit: usize) -> Vec<Hit<'
         if entry.manuscript {
             score += weight::MANUSCRIPT;
         }
-        Some(Hit {
+        Some(ScoredHit {
             entry,
             score,
             positions,
         })
     };
 
-    let mut hits: Vec<Hit<'a>> = if entries.len() >= 4096 {
+    let mut hits: Vec<ScoredHit<'a>> = if entries.len() >= 4096 {
         entries.par_iter().filter_map(score_one).collect()
     } else {
         entries.iter().filter_map(score_one).collect()
@@ -175,7 +175,7 @@ pub fn matches<'a>(entries: &'a [Entry], query: &str, limit: usize) -> Vec<Hit<'
 }
 
 /// Directories only, for a move destination picker.
-pub fn directories<'a>(entries: &'a [Entry], query: &str, limit: usize) -> Vec<Hit<'a>> {
+pub fn directories<'a>(entries: &'a [Entry], query: &str, limit: usize) -> Vec<ScoredHit<'a>> {
     matches(entries, query, entries.len())
         .into_iter()
         .filter(|hit| matches!(hit.entry.kind, Kind::Directory))

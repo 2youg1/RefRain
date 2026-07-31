@@ -38,6 +38,19 @@ use refrain_core::Id;
 use refrain_core::context_compiler::DispatchPackage;
 use serde::{Deserialize, Serialize};
 
+use crate::run_edge::{self, EdgeRefusal, ResolvedEdge, RunEdge};
+
+/// Pad or truncate an edge list to one entry per minted Run.
+///
+/// A caller that does not orchestrate passes an empty vector, and every
+/// caller that predates edges does exactly that. Reading short as "no edges"
+/// rather than refusing keeps those callers correct without a migration.
+fn normalise_edges(edges: Vec<Option<RunEdge>>, runs: usize) -> Vec<Option<RunEdge>> {
+    let mut edges = edges;
+    edges.resize(runs, None);
+    edges
+}
+
 /// Which Runs an authorization covers.
 ///
 /// Minted Runs are new and open their Task; retried Runs already exist and
@@ -103,6 +116,13 @@ pub struct Run {
     pub workspace: String,
     pub progress: RunProgress,
     pub retry_of: Option<Id>,
+    /// How this Run relates to another Run of the same Task.
+    ///
+    /// Resolved to ids at authorization, because that is when the ids exist.
+    /// `None` is the ordinary case: a Run that answers the author's question
+    /// on its own.
+    #[serde(default)]
+    pub edge: Option<ResolvedEdge>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -209,6 +229,15 @@ pub enum HostCommand {
         task_id: Id,
         new_agents: Vec<Id>,
         retry_runs: Vec<Id>,
+        /// How the minted Runs relate to each other, one entry per agent in
+        /// `new_agents`. `None` means that Run stands alone, which is what
+        /// every caller produced before edges existed and remains the
+        /// ordinary case.
+        ///
+        /// Positions rather than ids: the Runs do not exist yet. An empty
+        /// vector is read as "no edges at all", so a caller that does not
+        /// care about orchestration passes nothing.
+        edges: Vec<Option<RunEdge>>,
         package: DispatchPackage,
         clicked_digest: String,
         authorized_at: u64,
@@ -283,6 +312,29 @@ pub enum HostRefusal {
     Journal(String),
     #[error("context: {0}")]
     Context(String),
+    /// The proposed edges cannot be authorized.
+    ///
+    /// Decided before the authorization record exists, because
+    /// `DispatchAuthorization` is immutable (INV-14): a record holding a
+    /// cycle could never be withdrawn, only refused again at every launch —
+    /// a statically decidable error left to run time.
+    #[error("edges: {0}")]
+    Edges(#[from] EdgeRefusal),
+    /// A Run whose edge waits on another was authorized before that other
+    /// reached a terminal state.
+    ///
+    /// `Follows` needs the upstream's artifact; `Verifies` needs something to
+    /// verify. Both are meaningless against a Run still in flight.
+    #[error("run {run} waits on run {upstream}, which is not terminal")]
+    UpstreamNotTerminal { run: Id, upstream: Id },
+    /// A verifier proposed a rewrite.
+    ///
+    /// The whole meaning of `Verifies` is that this Run reads another's work
+    /// and reports on it. A replacement from a verifier is a different Run
+    /// than the one the author authorized, so the artifact is refused whole
+    /// rather than partly kept.
+    #[error("run {0} verifies another run and may only comment, but proposed a rewrite")]
+    VerifierProposedEdit(Id),
 }
 
 /// The whole orchestration state, journal-backed.
@@ -474,6 +526,7 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                 task_id,
                 new_agents,
                 retry_runs,
+                edges,
                 package,
                 clicked_digest,
                 authorized_at,
@@ -490,6 +543,14 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                 let task_index = self.task_index(task_id)?;
                 let authorized =
                     self.runs_to_authorize(task_id, task_index, &new_agents, &retry_runs)?;
+
+                // Edges are checked before anything is written down. An
+                // authorization is immutable, so a cycle inside one could
+                // never be withdrawn — only refused at every subsequent
+                // launch, which turns a statically decidable error into a
+                // permanent runtime one.
+                let edges = normalise_edges(edges, new_agents.len());
+                run_edge::resolve_order(&edges)?;
 
                 // §8.2-1: stage first — manifest snapshot and one frozen
                 // request per Run, producer-invisible. Each request carries
@@ -527,8 +588,13 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                 // the same for both, and is written once.
                 let runs: Vec<Run> = match &authorized {
                     Authorized::Minted(run_ids) => {
+                        // Positions become ids only now, which is why edges
+                        // were expressed positionally in the first place.
+                        let bound = run_edge::resolve_edges(&edges, run_ids);
                         let mut minted = Vec::with_capacity(new_agents.len());
-                        for (run_id, agent_id) in run_ids.iter().zip(new_agents.iter()) {
+                        for (index, (run_id, agent_id)) in
+                            run_ids.iter().zip(new_agents.iter()).enumerate()
+                        {
                             minted.push(Run {
                                 id: *run_id,
                                 task_id,
@@ -539,6 +605,7 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                                     request_digest: digest_for(*run_id)?,
                                 },
                                 retry_of: None,
+                                edge: bound.get(index).copied().flatten(),
                             });
                         }
                         self.tasks[task_index].progress = TaskProgress::Open {
@@ -578,6 +645,36 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
             }
             HostCommand::LaunchRun { run_id, workspace } => {
                 let run_index = self.run_index(run_id)?;
+                // A Run that waits on another may not start before that other
+                // is terminal. `Follows` needs the upstream's artifact and
+                // `Verifies` needs something to verify; both are meaningless
+                // against a Run still in flight. Checked at launch rather than
+                // at authorization because the author authorizes the whole
+                // round in one click — the waiting is about execution order,
+                // not about what was permitted.
+                if let Some(edge) = self.runs[run_index].edge {
+                    let upstream = match edge {
+                        ResolvedEdge::Follows { upstream } => Some(upstream),
+                        ResolvedEdge::Verifies { subject } => Some(subject),
+                        // Alternates deliberately imposes no order: that is
+                        // the whole of what makes it the star-shaped default.
+                        ResolvedEdge::Alternates { .. } => None,
+                    };
+                    if let Some(upstream) = upstream {
+                        let waited = self.run_index(upstream)?;
+                        if !matches!(
+                            self.runs[waited].progress,
+                            RunProgress::Completed { .. }
+                                | RunProgress::Failed { .. }
+                                | RunProgress::Cancelled
+                        ) {
+                            return Err(HostRefusal::UpstreamNotTerminal {
+                                run: run_id,
+                                upstream,
+                            });
+                        }
+                    }
+                }
                 let request_digest = match &self.runs[run_index].progress {
                     RunProgress::Authorized { request_digest } => request_digest.clone(),
                     _ => return Err(HostRefusal::RunNotAuthorized(run_id)),
@@ -699,6 +796,11 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                     workspace: format!("{}-retry", run.workspace),
                     progress: RunProgress::Queued,
                     retry_of: Some(run_id),
+                    // A retry stands in the same place in the orchestration
+                    // as the Run it replaces: an agent retried after its
+                    // upstream still follows that upstream, and a verifier
+                    // retried still verifies the same subject.
+                    edge: run.edge,
                 };
                 self.journal
                     .append_run(&retry)
@@ -883,16 +985,228 @@ mod tests {
     }
 
     fn authorize(host: &mut AgentHost<VecJournal, MapContext>, task_id: Id, agents: &[Id]) {
+        authorize_with_edges(host, task_id, agents, Vec::new());
+    }
+
+    fn authorize_with_edges(
+        host: &mut AgentHost<VecJournal, MapContext>,
+        task_id: Id,
+        agents: &[Id],
+        edges: Vec<Option<RunEdge>>,
+    ) {
+        try_authorize_with_edges(host, task_id, agents, edges).unwrap();
+    }
+
+    fn try_authorize_with_edges(
+        host: &mut AgentHost<VecJournal, MapContext>,
+        task_id: Id,
+        agents: &[Id],
+        edges: Vec<Option<RunEdge>>,
+    ) -> Result<(), HostRefusal> {
         let package = package();
         host.execute(HostCommand::AuthorizeDispatch {
             task_id,
             new_agents: agents.to_vec(),
             retry_runs: vec![],
+            edges,
             clicked_digest: package.digest.clone(),
             package,
             authorized_at: 1_000,
         })
+    }
+
+    /// 判据 2-2：环在**授权**时被拒，而且是在写下任何东西**之前**。
+    ///
+    /// 授权是不可变记录（INV-14）。一份含环的授权一旦落账就撤不掉，只能靠
+    /// 每次启动反复拒绝兜底——那等于把一个静态可判定的错误留到运行时。
+    ///
+    /// 「之前」这个词是断言的一半，起初我漏了：只断言 Run 与授权为空时，
+    /// 把环检测挪到 stage 之后仍然全绿，因为内存夹具在抛错后不留痕迹。
+    /// 真实的 staging 会写盘并 fsync，那些字节不会因为后一步失败而消失。
+    /// 所以这里连 `staged` 一起断言——它是「有没有东西已经落地」的证据。
+    #[test]
+    fn a_cycle_is_refused_before_anything_is_staged_or_written() {
+        let (mut host, _package, task_id) = host_with_draft();
+        let agents = vec![Id::new(), Id::new()];
+        let refusal = try_authorize_with_edges(
+            &mut host,
+            task_id,
+            &agents,
+            vec![
+                Some(RunEdge::Follows { upstream: 1 }),
+                Some(RunEdge::Follows { upstream: 0 }),
+            ],
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            refusal,
+            HostRefusal::Edges(EdgeRefusal::Cycle { .. })
+        ));
+        // 冻结的请求一个都没落地：这是「检测在 staging 之前」的证据。
+        assert!(
+            host.context.staged.is_empty(),
+            "含环的授权已经冻结了请求：环检测排在 staging 之后"
+        );
+        // 也没有 Run、没有授权，Task 仍是 Draft。
+        assert!(host.runs().is_empty(), "含环的授权铸出了 Run");
+        assert!(host.authorizations().is_empty(), "含环的授权落了账");
+        assert!(matches!(host.tasks()[0].progress, TaskProgress::Draft));
+    }
+
+    /// 指向不存在的位置同样在授权时被拒。
+    #[test]
+    fn an_edge_past_the_end_is_refused_at_authorization() {
+        let (mut host, _package, task_id) = host_with_draft();
+        let refusal = try_authorize_with_edges(
+            &mut host,
+            task_id,
+            &[Id::new()],
+            vec![Some(RunEdge::Follows { upstream: 5 })],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            refusal,
+            HostRefusal::Edges(EdgeRefusal::OutOfRange { .. })
+        ));
+        assert!(host.runs().is_empty());
+    }
+
+    /// 边绑到铸出的 Run 上：位置在此刻才变成 id。
+    #[test]
+    fn edges_are_bound_to_the_runs_that_were_minted() {
+        let (mut host, _package, task_id) = host_with_draft();
+        let agents = vec![Id::new(), Id::new()];
+        authorize_with_edges(
+            &mut host,
+            task_id,
+            &agents,
+            vec![None, Some(RunEdge::Follows { upstream: 0 })],
+        );
+        let runs = host.runs();
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].edge, None);
+        assert_eq!(
+            runs[1].edge,
+            Some(ResolvedEdge::Follows {
+                upstream: runs[0].id
+            })
+        );
+    }
+
+    /// 判据 2-5 的执行力：上游未终态时下游启动不了。
+    #[test]
+    fn a_follower_cannot_launch_before_its_upstream_is_terminal() {
+        let (mut host, _package, task_id) = host_with_draft();
+        let agents = vec![Id::new(), Id::new()];
+        authorize_with_edges(
+            &mut host,
+            task_id,
+            &agents,
+            vec![None, Some(RunEdge::Follows { upstream: 0 })],
+        );
+        let upstream = host.runs()[0].id;
+        let follower = host.runs()[1].id;
+
+        let refusal = host
+            .execute(HostCommand::LaunchRun {
+                run_id: follower,
+                workspace: "runs/two".to_string(),
+            })
+            .unwrap_err();
+        assert_eq!(
+            refusal,
+            HostRefusal::UpstreamNotTerminal {
+                run: follower,
+                upstream
+            }
+        );
+
+        // 上游自己可以立刻启动。
+        host.execute(HostCommand::LaunchRun {
+            run_id: upstream,
+            workspace: "runs/one".to_string(),
+        })
         .unwrap();
+        host.execute(HostCommand::CompleteDispatch {
+            run_id: upstream,
+            receipt: "receipt".to_string(),
+        })
+        .unwrap();
+        host.execute(HostCommand::CollectAttempt {
+            run_id: upstream,
+            artifact_digest: "artifact".to_string(),
+            at: 2_000,
+        })
+        .unwrap();
+
+        // 上游终态后下游解锁。
+        host.execute(HostCommand::LaunchRun {
+            run_id: follower,
+            workspace: "runs/two".to_string(),
+        })
+        .unwrap();
+    }
+
+    /// 判据 2-7：星形不回归。并列的 Run 谁都不等谁。
+    #[test]
+    fn alternates_launch_without_waiting_for_each_other() {
+        let (mut host, _package, task_id) = host_with_draft();
+        let agents = vec![Id::new(), Id::new()];
+        authorize_with_edges(
+            &mut host,
+            task_id,
+            &agents,
+            vec![
+                Some(RunEdge::Alternates { peer: 1 }),
+                Some(RunEdge::Alternates { peer: 0 }),
+            ],
+        );
+        // 两条都能立刻启动，顺序任意。
+        for (index, workspace) in ["runs/one", "runs/two"].iter().enumerate() {
+            let run_id = host.runs()[index].id;
+            host.execute(HostCommand::LaunchRun {
+                run_id,
+                workspace: (*workspace).to_string(),
+            })
+            .unwrap();
+        }
+    }
+
+    /// 重试继承原 Run 的边：它站在编排里的同一个位置。
+    #[test]
+    fn a_retry_keeps_the_edge_of_the_run_it_replaces() {
+        let (mut host, _package, task_id) = host_with_draft();
+        let agents = vec![Id::new(), Id::new()];
+        authorize_with_edges(
+            &mut host,
+            task_id,
+            &agents,
+            vec![None, Some(RunEdge::Verifies { subject: 0 })],
+        );
+        let verifier = host.runs()[1].id;
+        let edge = host.runs()[1].edge;
+
+        host.execute(HostCommand::LaunchRun {
+            run_id: host.runs()[0].id,
+            workspace: "runs/one".to_string(),
+        })
+        .unwrap();
+        host.execute(HostCommand::FailRun {
+            run_id: verifier,
+            failure: "boom".to_string(),
+            at: 2_000,
+        })
+        .unwrap();
+        host.execute(HostCommand::RetryRun { run_id: verifier })
+            .unwrap();
+
+        let retry = host
+            .runs()
+            .iter()
+            .find(|run| run.retry_of == Some(verifier))
+            .expect("retry run");
+        assert_eq!(retry.edge, edge, "重试应站在编排里的同一位置");
     }
 
     #[test]
@@ -960,6 +1274,7 @@ mod tests {
                 task_id,
                 new_agents: vec![Id::new()],
                 retry_runs: vec![],
+                edges: Vec::new(),
                 package: package(),
                 clicked_digest: "tampered".to_string(),
                 authorized_at: 1_000,
@@ -1032,6 +1347,7 @@ mod tests {
             task_id,
             new_agents: vec![],
             retry_runs: vec![retry.id],
+            edges: Vec::new(),
             clicked_digest: package().digest,
             package: package(),
             authorized_at: 1_200,
@@ -1070,6 +1386,7 @@ mod tests {
                 task_id,
                 new_agents: vec![],
                 retry_runs: vec![run_id],
+                edges: Vec::new(),
                 clicked_digest: package().digest,
                 package: package(),
                 authorized_at: 1_200,
@@ -1087,6 +1404,7 @@ mod tests {
                 task_id,
                 new_agents: vec![Id::new()],
                 retry_runs: vec![],
+                edges: Vec::new(),
                 clicked_digest: package().digest,
                 package: package(),
                 authorized_at: 2_000,

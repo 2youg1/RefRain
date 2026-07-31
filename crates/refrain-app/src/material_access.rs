@@ -25,12 +25,12 @@
 //! `Disclosure`. A file read answers "what does line 400 say"; search answers
 //! "which of these three references discusses the character's job".
 //!
-//! # Why a fragment carries both a human location and a machine handle
+//! # Why a disclosed block carries both a human location and a machine handle
 //!
 //! Measured by Anthropic: "resolving arbitrary alphanumeric UUIDs to more
 //! semantically meaningful and interpretable language … significantly improves
 //! Claude's precision in retrieval tasks by reducing hallucinations." A
-//! fragment therefore says both 「人物志 · 第 2 节」 and `ordinal=7`. The first
+//! block therefore says both 「人物志 · 第 2 节」 and `ordinal=7`. The first
 //! is what the agent reasons with; the second is what it quotes back.
 
 use refrain_core::block_shape::BlockKind;
@@ -54,7 +54,7 @@ pub const MAX_READ_BLOCKS: usize = 40;
 
 /// One passage handed to an agent.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Fragment {
+pub struct DisclosedBlock {
     /// The material's Root-relative path — the same handle the listing gave.
     pub path: String,
     /// Which block, counting from zero. What the agent quotes back.
@@ -122,7 +122,11 @@ pub trait MaterialSource {
 /// read: a material marked `OutlineOnly` never contributes a fragment, so the
 /// permission is enforced where the text would otherwise leave rather than by
 /// asking the caller to remember.
-pub fn search_materials(source: &impl MaterialSource, query: &str, limit: usize) -> Vec<Fragment> {
+pub fn search_materials(
+    source: &impl MaterialSource,
+    query: &str,
+    limit: usize,
+) -> Vec<DisclosedBlock> {
     let query = query.trim();
     if query.is_empty() {
         return Vec::new();
@@ -144,7 +148,7 @@ pub fn search_materials(source: &impl MaterialSource, query: &str, limit: usize)
             if !block.text.contains(query) {
                 continue;
             }
-            found.push(Fragment {
+            found.push(DisclosedBlock {
                 path: material.path.clone(),
                 ordinal: block.ordinal,
                 location: locate(&material.title, &text, block.ordinal),
@@ -169,7 +173,7 @@ pub fn read_material(
     path: &str,
     from: u32,
     to: u32,
-) -> Result<Vec<Fragment>, FetchRefusal> {
+) -> Result<Vec<DisclosedBlock>, FetchRefusal> {
     let Some(material) = source.material(path) else {
         return Err(FetchRefusal::UnknownMaterial(path.to_string()));
     };
@@ -198,7 +202,7 @@ pub fn read_material(
         .take(MAX_READ_BLOCKS)
         .filter_map(|ordinal| {
             let block = block_at(&text, ordinal)?;
-            Some(Fragment {
+            Some(DisclosedBlock {
                 path: path.to_string(),
                 ordinal,
                 location: locate(&material.title, &text, ordinal),

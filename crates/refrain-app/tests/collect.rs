@@ -89,6 +89,7 @@ fn dispatched_run(store: &mut ProjectStore, workspace: &str) -> Id {
         task_id,
         new_agents: vec![agent],
         retry_runs: vec![],
+        edges: Vec::new(),
         package: DispatchPackage {
             request_md: String::new(),
             manifest: vec![],

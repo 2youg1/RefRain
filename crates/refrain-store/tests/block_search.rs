@@ -11,7 +11,7 @@
 use refrain_core::block_shape::BlockKind;
 use refrain_core::searchable_block::block_at;
 use refrain_store::Database;
-use refrain_store::project::search::{Hit, forget_document, index_document, search};
+use refrain_store::project::search::{IndexedBlock, forget_document, index_document, search};
 use refrain_store::schema::{ProjectDb, open_in_memory};
 use rusqlite::Connection;
 
@@ -79,7 +79,7 @@ fn every_hit_seeks_back_to_the_exact_bytes_it_matched() {
 fn one_document_yields_one_hit_per_matching_block() {
     let db = indexed();
     let hits = search(&db, "营销", 20).unwrap();
-    let chapter: Vec<&Hit> = hits.iter().filter(|hit| hit.path == "第三章.md").collect();
+    let chapter: Vec<&IndexedBlock> = hits.iter().filter(|hit| hit.path == "第三章.md").collect();
 
     // 「营销」在第三章出现两次：一次在围栏里，一次在最后一段。
     assert_eq!(chapter.len(), 2, "应是两条独立的块级命中: {chapter:?}");

@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "packageManager": "bun@1.3.14",
-  "license": "GPL-3.0-only",
+  "license": "MPL-2.0",
   "workspaces": [
     "apps/desktop",
     "packages/editor"
@@ -59,6 +59,7 @@
     "verify:legacy-parity": "bun scripts/verify-legacy-parity.ts",
     "verify:text-surface": "bun scripts/verify-text-surface.ts",
     "verify:skill-doc-current": "bun scripts/verify-skill-doc-current.ts",
+    "verify:one-word-per-concept": "bun scripts/verify-one-word-per-concept.ts",
     "verify:gates-run": "bun scripts/verify-gates-run.ts",
     "make:icon": "bun scripts/make-app-icon.ts",
     "e2e:app": "bun apps/desktop/e2e/writing-slice.ts target/debug/refrain-desktop.exe",
