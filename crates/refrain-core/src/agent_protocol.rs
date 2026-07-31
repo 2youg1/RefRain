@@ -701,69 +701,155 @@ mod tests {
 /// document can never explain fewer codes than the parser rejects.
 #[must_use]
 pub fn skill_doc() -> String {
-    let mut doc = String::from(
-        r#"# RefRain Agent 协议（v2，由 schema 运行时生成）
+    String::from(
+        r#"# RefRain Agent 协议 v2
 
-你写的是提案，不是正文。你的每一个字都要经过那个人点一次鼠标才会进入手稿。没有自动接受，没有后台合并。
+你写提案。人点鼠标，文字才进手稿。没有自动合并。
 
-## 一分钟版本
-
-1. 只回一个 `<agent-result version="2">` 元素，前后不能有任何字。
-2. scope id 从 `# Before` 里逐字照抄。
-3. 一个 scope 最多一个 `<replacement>`，重复即整轮失败。
-4. 不想改就别写 `<replacement>`；只写 `<comment>` 是合法的。
-5. `<material-draft>` 只成草稿——它永远不直接进手稿。
-
-## 请求怎么来
+## 架构
 
 ```
-# Before      ← 应用生成：带 scope 注释的原文
-# Context     ← 应用生成：Persona、手稿或变更、上一轮 <changes>、勾选的材料
-# Request     ← 应用生成：作者的要求原文
-# Reply format← 应用生成：本轮的短契约（本文件的精简版）
-# Agent reply ← 你的：只有你的
+作者的 .md 文件            ← 唯一正本。你改的是它的 scope
+  ├─ .refrain/            ← 应用状态。你的请求与产出在这里
+  │    └─ <workspace>/
+  │         ├─ request.md    ← 发给你的请求
+  │         └─ result.md     ← 你写产出到这里
+  └─ .refrain-source/     ← 备份原件。永不写入，也不要读它作依据
 ```
 
-稳定的在前，每轮变的在后：harness 按前缀逐字节匹配缓存。
+**改写依据只用 `# Before` 里的原文。** 那是应用从正本取的当前字节。
+不要去读 `.refrain-source/`：它是旧副本，与正本可能已不同。
 
-## 你必须怎么回
+## 请求结构
 
-一个 `<agent-result version="2">` 元素，含以下子元素（每个都可省）：
+```
+# Before        带 scope 注释的原文。改写的对象
+# Context       Persona、手稿或 <changes>、材料目录
+# Request       作者的要求
+# Reply format  本契约
+# Agent reply   你写在这里
+```
 
-- `<replacement scope="SCOPE-ID">改写后文本</replacement>`——一个 scope 至多一条；空元素表示删除该 scope。
-- `<comments><comment target="SCOPE-ID">只留话，不改动</comment></comments>`——comment 用 target= 不用 scope=，且必须包在 comments 里。
-- `<memo topic="可选标签">写给下一轮（可能是压缩后的你）的工作备忘</memo>`——打开手稿能看见的别写。
-- `<material-draft kind="KIND" title="TITLE"><basis ref="DOCUMENT@REVISION" /><body><![CDATA[草稿正文]]></body></material-draft>`——kind 为 chapter-synopsis / character-profile / concept-explanation / custom 之一；basis ref 必须来自本轮发给你的文档；body 是唯一可带标记的通道（CDATA）。
+前面的段每轮相同。harness 按前缀匹配缓存。
 
-version 必须是 "2"。被测过的多数失败恰好是模型的默认行为：裸散文、包代码块、客套开头、漏 version、猜错元素名。
+## 材料
 
-## 人会看到什么
+`# Context` 给目录，不给全文：
 
-你的回复被冻结成提案，按句切成评审切片（相邻删+增在呈现上合并为一个评审单元，账本仍记原粒度）。作者逐片裁决：接受 / 拒绝 / 改后接受，可附理由；同题竞争的提案并排呈现，选一份不删另一份。全部判完再点一次合并，文字才真正进入手稿。
+```xml
+<material path="资料/人物志.md" digest="…" bytes="104857" blocks="212" access="retrievable">
+  <title>人物志</title>
+  <outline><h># 人物志</h><h>## 陆沉舟</h></outline>
+  <excerpt>开篇的原文…</excerpt>
+</material>
+```
 
-## 你会收到什么反馈
+`<outline>` 是作者写的标题，逐字。`<excerpt>` 是开头的原文。
+应用不联网、不带模型，因此它不概括材料。目录里没有生成的内容。
 
-下一轮请求的 `# Context` 里可能有 `<changes>`：
+`access` 是作者的授权：
+
+| access | 允许 |
+|---|---|
+| `outline-only` | 只有目录。不给正文 |
+| `retrievable` | 取片段、按块区间读 |
+| `full` | 取整篇 |
+
+取材料有两条路：
+
+1. **打开文件。** `path` 是相对 Root 的路径。你在作者机器上跑，可以直接读。
+2. **检索。** 你不知道读哪里时用。给词，应用回块：路径、块序号、原文、位置。
+
+块 = 按空行切开的一段。序号从 0 开始。引用材料用「路径 + 块序号」。
+
+不要要求整篇材料。目录加按需取更准。
+
+## 回复
+
+写一个 `<agent-result version="2">` 元素。元素外不要写字。
+
+```xml
+<agent-result version="2">
+  <replacement scope="SCOPE-ID">改写后的文本</replacement>
+  <comments>
+    <comment target="SCOPE-ID">只留话，不改</comment>
+  </comments>
+  <memo topic="标签">下一轮要记住的事</memo>
+  <material-draft kind="KIND" title="TITLE">
+    <basis ref="DOCUMENT@REVISION" />
+    <body><![CDATA[草稿]]></body>
+  </material-draft>
+</agent-result>
+```
+
+规则：
+
+- scope id 从 `# Before` 逐字抄。
+- 一个 scope 至多一个 `<replacement>`。
+- 空的 `<replacement>` 删除该 scope。
+- `<comment>` 用 `target=`，放在 `<comments>` 里。
+- 不改就不写 `<replacement>`。只写 `<comment>` 合法。
+- `<memo>` 写打开手稿看不到的事：作者的偏好、已定的决定。
+- `<material-draft>` 只成草稿。`kind` 取 chapter-synopsis、character-profile、
+  concept-explanation 或 custom。`basis ref` 取本轮给你的文档。
+
+## 你的产出如何呈现
+
+应用冻结你的回复成提案，按句切成评审切片。
+作者逐片裁决：接受、拒绝、改后接受。作者可以附理由。
+并列方案并排显示。作者选一份，另一份保留。
+作者裁决完再点合并。此时文字进手稿。
+
+一次回复里部分句子被采纳，部分不被采纳。这是设计。
+
+## 反馈
+
+下一轮 `# Context` 可能含 `<changes>`：
 
 ```xml
 <changes>
 <verdict n="1" ref="p7.s2" kind="accept"><reason>这句改得对</reason></verdict>
 <verdict n="2" ref="p7.s5" kind="reject"><reason>不要用设问句结尾</reason></verdict>
-<verdict n="3" ref="p7.s8" kind="accept-modified"><final><![CDATA[他最后采用的版本]]></final><reason>意思对，但太长</reason></verdict>
+<verdict n="3" ref="p7.s8" kind="accept-modified"><final><![CDATA[采用的版本]]></final></verdict>
 </changes>
 ```
 
-reject+理由是规则不是意见；accept-modified 的 final 是他真正想要的；ref 指向切片不是 scope。
+`reject` 带的理由是规则。不要再犯同样的错。
+`accept-modified` 的 `<final>` 是作者要的样子。对照你写的那版。
+`ref` 指切片，不指 scope。
 
-## 三件这个软件不会做的事
+## 源码
 
-不联网（模型调用只发生在用户自己的 harness）；不替你算钱（token 按 harness 原样转述，报不出就显示未知）；不自动合并（没有 YOLO 模式）。
+要读实现时，从 RefRain 仓库根按相对路径找：
 
-## 错误码表（从解析器枚举生成，与实现逐项一致）
-
-| 错误码 | 你做错了 |
+| 你想知道 | 读 |
 |---|---|
+| 请求怎么编出来 | `crates/refrain-core/src/context_compiler.rs` |
+| 本契约与解析器 | `crates/refrain-core/src/agent_protocol.rs` |
+| 材料目录怎么生成 | `crates/refrain-core/src/material_ref.rs` |
+| 块边界怎么定 | `crates/refrain-core/src/source_layout.rs` |
+| 检索与取数 | `crates/refrain-app/src/material_access.rs` |
+| Run 与编排 | `crates/refrain-host/src/host.rs` |
 "#,
+    )
+}
+
+/// The error table, for the reference document rather than the request.
+///
+/// This is deliberately **not** part of what rides on every request. An agent
+/// gets no live feedback from the parser: a malformed reply fails the run and
+/// the agent never sees the code. A table it cannot act on costs tokens every
+/// round and changes no decision it makes — KL9's judgement, and correct.
+///
+/// It stays generated from the parser's own enum, so `refrain skill` and the
+/// documentation gate can still prove the two agree. Someone debugging a
+/// failed run reads it; the agent doing the work does not.
+#[must_use]
+pub fn error_reference() -> String {
+    let mut doc = String::from(
+        "## 错误码（从解析器枚举生成，与实现逐项一致）\n\n\
+         这张表给排查问题的人看。Agent 拿不到实时的解析反馈，所以它不随请求走。\n\n\
+         | 错误码 | 含义 |\n|---|---|\n",
     );
     for code in ArtifactErrorCode::ALL {
         let meaning = match code {
@@ -776,7 +862,7 @@ reject+理由是规则不是意见；accept-modified 的 final 是他真正想�
             ArtifactErrorCode::UnknownElement => "用了协议之外的标签名",
             ArtifactErrorCode::MissingScope => "<replacement> 少了 scope=",
             ArtifactErrorCode::DuplicateReplacement => "同一个 scope 写了两次 <replacement>",
-            ArtifactErrorCode::Malformed => "标签没闭合——逐字检查每个 >",
+            ArtifactErrorCode::Malformed => "标签没闭合",
             ArtifactErrorCode::TooDeep => "嵌套超过 8 层",
             ArtifactErrorCode::UnknownScope => "scope 不在本轮发给你的 # Before 里",
             ArtifactErrorCode::UnknownBasis => "basis ref 不在本轮发给你的文档里",
@@ -785,7 +871,6 @@ reject+理由是规则不是意见；accept-modified 的 final 是他真正想�
         };
         doc.push_str(&format!("| `{}` | {} |\n", code.as_str(), meaning));
     }
-    doc.push_str("\n出错时整个 run 作废，那一轮的 token 白花。回复之前把你写的最后一个字符看一遍——它必须是 `<agent-result>` 的那个 `>`。\n");
     doc
 }
 
@@ -793,13 +878,25 @@ reject+理由是规则不是意见；accept-modified 的 final 是他真正想�
 mod docs_tests {
     use super::*;
 
-    /// INV-16: the generated document covers every error code and every
-    /// element the parser enforces. `verify:docs-current` runs this target.
+    /// INV-16: every element the parser enforces is explained where the agent
+    /// will read it, and every error code is explained where a human debugging
+    /// a failed run will read it. `verify:docs-current` runs this target.
+    ///
+    /// The split is deliberate. The error table used to ride on every request,
+    /// and it bought nothing: an agent gets no live parser feedback, so a
+    /// malformed reply fails the run and the agent never sees the code it
+    /// tripped. Tokens spent every round on a table that changes no decision.
+    /// It is still generated from the same enum, so the two cannot drift.
     #[test]
     fn docs_current_covers_every_code_and_element() {
         let doc = skill_doc();
+        let errors = error_reference();
         for code in ArtifactErrorCode::ALL {
-            assert!(doc.contains(code.as_str()), "doc misses {}", code.as_str());
+            assert!(
+                errors.contains(code.as_str()),
+                "error reference misses {}",
+                code.as_str()
+            );
         }
         for element in [
             "agent-result",
@@ -814,5 +911,107 @@ mod docs_tests {
             assert!(doc.contains(element), "doc misses <{element}>");
         }
         assert!(doc.contains("version=\"2\""));
+    }
+
+    /// The per-request contract must not carry what the agent cannot act on.
+    ///
+    /// Two things were cut here and must stay cut: the error table (no live
+    /// feedback reaches the agent) and the "three things this software will
+    /// not do" section (a statement of principle for a human reader, which
+    /// changes no action the agent takes).
+    #[test]
+    fn the_contract_carries_nothing_the_agent_cannot_act_on() {
+        let doc = skill_doc();
+        for code in ArtifactErrorCode::ALL {
+            assert!(
+                !doc.contains(code.as_str()),
+                "error code {} is back in the per-request contract",
+                code.as_str()
+            );
+        }
+        assert!(!doc.contains("不会做的事"));
+        assert!(!doc.contains("YOLO"));
+    }
+
+    /// The material listing is what this generation of the protocol is for,
+    /// so the contract has to explain how to reach a material's text.
+    #[test]
+    fn the_contract_explains_how_to_reach_a_materials_text() {
+        let doc = skill_doc();
+        assert!(doc.contains("<material path="));
+        for access in ["outline-only", "retrievable", "full"] {
+            assert!(doc.contains(access), "contract misses access={access}");
+        }
+        // Both ways of fetching. An agent told only one will either guess at
+        // paths or never open a file it could have read.
+        assert!(doc.contains("打开文件"));
+        assert!(doc.contains("检索"));
+        // The handle it quotes back.
+        assert!(doc.contains("块序号"));
+        // Why the listing can be trusted: nothing in it was generated.
+        assert!(doc.contains("不概括材料"));
+    }
+
+    /// The agent must not mistake the backup for the author's live file.
+    ///
+    /// `.refrain-source/` is never written to, so it holds whatever the file
+    /// was when the Root was adopted. An agent that reads it as the basis for
+    /// a rewrite proposes changes against text the author already moved past.
+    #[test]
+    fn the_contract_separates_the_live_file_from_the_backup() {
+        let doc = skill_doc();
+        assert!(doc.contains(".refrain-source/"));
+        assert!(doc.contains(".refrain/"));
+        assert!(
+            doc.contains("不要去读 `.refrain-source/`"),
+            "契约必须说明备份目录不是依据"
+        );
+    }
+
+    /// Every source path the contract offers must exist, and must be relative.
+    ///
+    /// A pointer into the codebase is a promise an agent will act on: it will
+    /// open that path. A stale path costs it a failed read and teaches it the
+    /// document cannot be trusted. An absolute path is worse — it resolves
+    /// only on the machine it was written on, so every other agent fails.
+    ///
+    /// The first version of this test only inspected pieces starting with
+    /// `crates/`, so an absolute path was skipped before the "is it relative"
+    /// assertion could see it: the guard sat on a branch the injection never
+    /// reached. Recognise anything that *looks* like a source path first,
+    /// then judge it.
+    #[test]
+    fn every_source_path_the_contract_names_is_relative_and_exists() {
+        let doc = skill_doc();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("repository root");
+
+        let mut checked = 0;
+        for line in doc.lines() {
+            for piece in line.split('`') {
+                // Anything ending in .rs is a source pointer, however it
+                // begins. That is the whole point: the malformed shapes are
+                // the ones that do not begin the way the good ones do.
+                if !piece.ends_with(".rs") {
+                    continue;
+                }
+                assert!(
+                    !piece.starts_with('/') && !piece.contains(":\\"),
+                    "{piece} is absolute; it resolves only on one machine"
+                );
+                assert!(
+                    piece.starts_with("crates/") || piece.starts_with("apps/"),
+                    "{piece} is not anchored at the repository root"
+                );
+                assert!(
+                    root.join(piece).exists(),
+                    "contract points at {piece}, which does not exist"
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked >= 5, "只核到 {checked} 条路径，扫描没生效");
     }
 }

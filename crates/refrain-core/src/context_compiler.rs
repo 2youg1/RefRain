@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::digest::content_hex;
+use crate::material_ref::MaterialRef;
 
 /// A token count, three-stated (SPEC 2.3). `Unknown` is a first-class value
 /// and never serialised as zero (INV-3).
@@ -58,8 +59,20 @@ pub struct DispatchInput {
     pub manuscript: Option<String>,
     /// Previous rounds' verdicts, in decision order.
     pub changes: Vec<ChangeEntry>,
-    /// Material contents the author ticked for this round.
-    pub materials: Vec<(String, String)>,
+    /// The materials the author ticked for this round.
+    ///
+    /// Listings, not texts. A material used to enter the request whole —
+    /// three 100KB references came to roughly 153,600 tokens by this
+    /// project's own estimate, and the cost was not only money: recall
+    /// degrades as a context fills, so pasting everything made the agent
+    /// worse at the work as well as more expensive.
+    ///
+    /// What travels now is `MaterialRef::to_listing` — the author's own
+    /// headings, an excerpt of the opening bytes, the size, the digest, and
+    /// what the author permits. Nothing is generated, so nothing can be
+    /// wrong the way a summary can be wrong. The agent fetches passages it
+    /// decides it needs; see `agent_protocol` for the two actions it has.
+    pub materials: Vec<MaterialRef>,
     /// The author's request, verbatim.
     pub request: String,
     /// The Edit Scopes, in manuscript order.
@@ -238,8 +251,8 @@ pub fn compile(input: &DispatchInput) -> DispatchPackage {
     if !input.changes.is_empty() {
         context_parts.push(("changes".to_string(), serialize_changes(&input.changes)));
     }
-    for (name, content) in &input.materials {
-        context_parts.push((format!("material:{name}"), content.clone()));
+    for material in &input.materials {
+        context_parts.push((format!("material:{}", material.path), material.to_listing()));
     }
     let context = if context_parts.is_empty() {
         String::new()
@@ -421,6 +434,112 @@ mod tests {
         }
     }
 
+    /// 判据 1-2：token 账真实下降，读数取自 manifest 自己记的 bytes。
+    ///
+    /// Stage6-Plan 明确要求这一项是**实测对拍**而非公式估算，理由是本项目
+    /// 已经栽过同类跟头：建索引 22 秒的真因不在任何一段，而在段与段之间的
+    /// 提交语义。所以这里不写「按每 token 2 字节算能省多少」，而是编两份
+    /// 请求——一份把材料整篇塞进去（改造前的形状），一份走目录表——
+    /// 然后读 `ManifestEntry.bytes`，那是应用自己记的账。
+    #[test]
+    fn materials_travel_as_listings_and_the_manifest_shows_the_saving() {
+        // 三份真实尺度的资料：作者一次勾选三份 100KB 参考并不罕见。
+        let bodies: Vec<String> = (0..3)
+            .map(|which| {
+                let mut text = format!("# 资料{which}\n\n");
+                for section in 0..50 {
+                    text.push_str(&format!("## 第{section}节\n\n"));
+                    text.push_str(&"这是一段足够长的正文，用来把这份资料撑到真实尺度。".repeat(30));
+                    text.push_str("\n\n");
+                }
+                text
+            })
+            .collect();
+        let whole_text_bytes: usize = bodies.iter().map(String::len).sum();
+        assert!(
+            whole_text_bytes > 250_000,
+            "三份资料应达到真实尺度: {whole_text_bytes}"
+        );
+
+        let mut with_listings = input();
+        with_listings.materials = bodies
+            .iter()
+            .enumerate()
+            .map(|(which, text)| {
+                MaterialRef::describe(
+                    &format!("资料/第{which}份.md"),
+                    &format!("资料{which}"),
+                    crate::role::DocumentRole::Material,
+                    "digest",
+                    text,
+                    crate::material_ref::Disclosure::Retrievable,
+                )
+            })
+            .collect();
+
+        let package = compile(&with_listings);
+        let material_bytes: u32 = package
+            .manifest
+            .iter()
+            .filter(|entry| entry.source.starts_with("material:"))
+            .map(|entry| entry.bytes)
+            .sum();
+
+        assert_eq!(
+            package
+                .manifest
+                .iter()
+                .filter(|entry| entry.source.starts_with("material:"))
+                .count(),
+            3,
+            "三份资料应各记一行账"
+        );
+
+        // 改造前这一节的字节数就是三份全文之和。
+        assert!(
+            (material_bytes as usize) < whole_text_bytes / 20,
+            "材料节应降到全文的 5% 以下：实测 {material_bytes} vs 全文 {whole_text_bytes}（{:.1}%）",
+            material_bytes as f64 / whole_text_bytes as f64 * 100.0
+        );
+
+        // 而且请求里确实没有材料正文——只有目录。
+        for text in &bodies {
+            let body_line = "这是一段足够长的正文，用来把这份资料撑到真实尺度。".repeat(30);
+            assert!(
+                !package.request_md.contains(&body_line),
+                "材料正文不应出现在请求里"
+            );
+            assert!(text.contains(&body_line));
+        }
+        // 目录本身要在。
+        assert!(
+            package
+                .request_md
+                .contains("<material path=\"资料/第0份.md\"")
+        );
+        assert!(package.request_md.contains("## 第0节"));
+    }
+
+    /// 作者不许取正文的材料，其权限必须写在目录里，不靠一句说明文字。
+    #[test]
+    fn the_request_states_each_materials_permission() {
+        let mut restricted = input();
+        restricted.materials = vec![MaterialRef::describe(
+            "资料/机密.md",
+            "机密",
+            crate::role::DocumentRole::Material,
+            "d",
+            "# 机密\n\n不该被取走的正文。",
+            crate::material_ref::Disclosure::OutlineOnly,
+        )];
+        let package = compile(&restricted);
+        assert!(package.request_md.contains("access=\"outline-only\""));
+        assert!(
+            !package.request_md.contains("不该被取走的正文"),
+            "OutlineOnly 的材料正文不得进入请求"
+        );
+    }
+
     #[test]
     fn the_four_sections_hold_in_stable_order() {
         let package = compile(&input());
@@ -482,8 +601,12 @@ mod tests {
         let mut full_input = input();
         full_input.contract_mode = ContractMode::Full;
         let full = compile(&full_input);
-        // The full tier is the generated protocol document, error table and all.
-        assert!(full.request_md.contains("unsupported-version"));
+        // The full tier is the generated protocol document. Its evidence is
+        // what only that document carries — the material listing shape and
+        // the draft element — not the error table, which was removed from
+        // every tier: an agent gets no live parser feedback, so a code it
+        // cannot read changes no decision it makes.
+        assert!(full.request_md.contains("<material path="));
         assert!(full.request_md.contains("<material-draft>"));
 
         let mut pointer_input = input();
