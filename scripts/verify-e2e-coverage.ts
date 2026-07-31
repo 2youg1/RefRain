@@ -1,17 +1,17 @@
 #!/usr/bin/env bun
+import { readFileSync } from "node:fs";
 
-export {};
-
-const writing = await Bun.file("apps/desktop/e2e/writing-slice.ts").text();
-const review = await Bun.file("apps/desktop/e2e/review-loop.ts").text();
-const dispatch = await Bun.file("apps/desktop/e2e/dispatch-loop.ts").text();
-const editorPerformance = await Bun.file("apps/desktop/e2e/editor-performance.ts").text();
-const projectPerformance = await Bun.file(
+const writing = readFileSync("apps/desktop/e2e/writing-slice.ts", "utf8");
+const review = readFileSync("apps/desktop/e2e/review-loop.ts", "utf8");
+const dispatch = readFileSync("apps/desktop/e2e/dispatch-loop.ts", "utf8");
+const editorPerformance = readFileSync("apps/desktop/e2e/editor-performance.ts", "utf8");
+const projectPerformance = readFileSync(
   "crates/refrain-store/tests/project_performance.rs",
-).text();
-const largeInput = await Bun.file("crates/refrain-store/tests/large_input_performance.rs").text();
-const logoGate = await Bun.file("scripts/verify-logo.ts").text();
-const workflow = await Bun.file(".github/workflows/gate.yml").text();
+  "utf8",
+);
+const largeInput = readFileSync("crates/refrain-store/tests/large_input_performance.rs", "utf8");
+const logoGate = readFileSync("scripts/verify-logo.ts", "utf8");
+const workflow = readFileSync(".github/workflows/gate.yml", "utf8");
 const failures: string[] = [];
 
 const requireFacts = (source: string, scope: string, facts: readonly string[]): void => {

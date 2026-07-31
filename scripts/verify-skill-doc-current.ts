@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,16 +16,14 @@ const generated = spawnSync(
 
 if (generated.status !== 0) {
   console.error("FAIL  verify:skill-doc-current: cannot generate the protocol document");
-  console.error(generated.stderr.trim());
+  console.error((generated.stderr ?? generated.error?.message ?? "cargo did not run").trim());
   rmSync(scratch, { recursive: true, force: true });
   process.exit(1);
 }
 
-const expected = await Bun.file(generatedPath).text();
+const expected = readFileSync(generatedPath, "utf8");
 rmSync(scratch, { recursive: true, force: true });
-const committed = await Bun.file(committedPath)
-  .text()
-  .catch(() => null);
+const committed = existsSync(committedPath) ? readFileSync(committedPath, "utf8") : null;
 
 if (committed === null) {
   console.error(`FAIL  verify:skill-doc-current: ${committedPath} is missing`);

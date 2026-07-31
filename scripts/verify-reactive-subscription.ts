@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { readFileSync } from "node:fs";
 /**
  * 「读一次纯为订阅」那行不能被当成死代码删掉。
  *
@@ -36,7 +37,7 @@ import { collect } from "./gate-lib.ts";
 const SHELL_SOURCES = ["apps/desktop/src/shell/*.tsx", "apps/desktop/src/shell/*.ts"];
 
 const failures: string[] = [];
-const files = await collect(SHELL_SOURCES);
+const files = collect(SHELL_SOURCES);
 if (files.length === 0) {
   console.error("FAIL  verify:reactive-subscription: 扫到 0 个外壳文件 — 扫描面指错了地方");
   process.exit(1);
@@ -46,7 +47,7 @@ let tickSignals = 0;
 let subscribingMemos = 0;
 
 for (const file of files) {
-  const text = await Bun.file(file).text();
+  const text = readFileSync(file, "utf8");
 
   // —— 分支 2：每个 tick 信号都必须有人读 ——
   // 声明形如 `const [panelTick, setPanelTick] = createSignal(0);`

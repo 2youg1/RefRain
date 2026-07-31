@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { existsSync } from "node:fs";
 /**
  * The local design baseline never reaches the repository.
  *
@@ -31,7 +32,7 @@ if (ignored.status !== 0) {
   process.exit(1);
 }
 
-const present = await Bun.file("SPEC.md").exists();
+const present = existsSync("SPEC.md");
 console.log(
   present
     ? "PASS  verify:no-spec-upload  (local SPEC.md present, ignored, untracked)"

@@ -1,12 +1,13 @@
 #!/usr/bin/env bun
 
 import { spawnSync } from "node:child_process";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 
-const rust = await Bun.file("apps/desktop/src-tauri/src/lib.rs").text();
-const bindings = await Bun.file("apps/desktop/src/generated/bindings.gen.ts").text();
-const debugBridge = await Bun.file("apps/desktop/src/e2e/debug-bridge.ts").text();
+const rust = readFileSync("apps/desktop/src-tauri/src/lib.rs", "utf8");
+const bindings = readFileSync("apps/desktop/src/generated/bindings.gen.ts", "utf8");
+const debugBridge = readFileSync("apps/desktop/src/e2e/debug-bridge.ts", "utf8");
 // 「取得一个项目」搬进了 ProjectSession：选择器归 Rust 这条事实的权威随之移位。
-const projectSession = await Bun.file("apps/desktop/src/shell/project-session.ts").text();
+const projectSession = readFileSync("apps/desktop/src/shell/project-session.ts", "utf8");
 const failures: string[] = [];
 
 for (const [source, fact, failure] of [
@@ -51,11 +52,22 @@ for (const [source, fact, failure] of [
 // 选择器只能有一个入口。上面几条证明 ProjectSession 用了它，这一条证明别人没有
 // 绕过它自己开一个——单一入口才是这条不变量真正想要的东西。
 const chooserOwners = new Set(["apps/desktop/src/shell/project-session.ts"]);
-const chooserCallers = new Bun.Glob("apps/desktop/src/**/*.{ts,tsx}");
-for await (const file of chooserCallers.scan(".")) {
-  const repositoryFile = file.replaceAll("\\", "/");
+const walkFiles = (root: string, out: string[] = []): string[] => {
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const full = `${root}/${entry.name}`;
+    if (entry.isDirectory()) walkFiles(full, out);
+    else out.push(full);
+  }
+  return out;
+};
+
+const chooserRoot = "apps/desktop/src";
+for (const found of walkFiles(chooserRoot)) {
+  const repositoryFile = found.replaceAll("\\", "/");
+  if (!/\.(ts|tsx)$/.test(repositoryFile)) continue;
+  if (!statSync(repositoryFile).isFile()) continue;
   if (chooserOwners.has(repositoryFile)) continue;
-  const text = await Bun.file(file).text();
+  const text = readFileSync(repositoryFile, "utf8");
   if (/commands\.chooseAnd/.test(text)) {
     failures.push(
       `${repositoryFile} opens a native chooser directly; that belongs to ProjectSession`,

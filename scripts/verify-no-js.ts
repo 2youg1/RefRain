@@ -14,7 +14,7 @@ import { collect } from "./gate-lib.ts";
 
 const ALLOWED = /(^|\/)(vite|biome|tauri)\.config\.js$|(^|\/)src\/generated\//;
 
-const files = await collect([
+const files = collect([
   "apps/**/*.{js,jsx,cjs,mjs}",
   "crates/**/*.{js,jsx,cjs,mjs}",
   "packages/**/*.{js,jsx,cjs,mjs}",

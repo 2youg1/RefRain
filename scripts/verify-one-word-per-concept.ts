@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { readFileSync } from "node:fs";
 /** Enforce one scoped canonical term per concept. */
 
 import { Glob } from "bun";
@@ -83,7 +84,7 @@ for (const rule of RULES) {
   const inScope = files.filter((file) => rule.scope.some((prefix) => file.startsWith(prefix)));
   for (const file of inScope) {
     checked += 1;
-    const text = await Bun.file(file).text();
+    const text = readFileSync(file, "utf8");
     const lines = text.split("\n");
     for (const synonym of rule.synonyms) {
       // Match either initial case at a word boundary.

@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { readFileSync } from "node:fs";
 /** Keeps the rejected editor kernel out of runtime code and dependencies. */
 
 import { createHash } from "node:crypto";
@@ -18,9 +19,9 @@ interface BoundaryProbe {
 }
 
 const failures: string[] = [];
-const manifests = await collect(["package.json", "apps/*/package.json", "packages/*/package.json"]);
+const manifests = collect(["package.json", "apps/*/package.json", "packages/*/package.json"]);
 for (const file of manifests) {
-  const manifest = (await Bun.file(file).json()) as PackageManifest;
+  const manifest = JSON.parse(readFileSync(file, "utf8")) as PackageManifest;
   for (const group of [
     manifest.dependencies,
     manifest.devDependencies,
@@ -33,19 +34,23 @@ for (const file of manifests) {
   }
 }
 
-const sources = (
-  await collect(["apps/**/*.{ts,tsx,vue}", "packages/**/*.{ts,tsx,vue}", "scripts/**/*.ts"])
-).filter(
+const sources = collect([
+  "apps/**/*.{ts,tsx,vue}",
+  "packages/**/*.{ts,tsx,vue}",
+  "scripts/**/*.ts",
+]).filter(
   (file) => file !== "scripts/verify-editor-kernel.ts" && file !== "scripts/prove-gates-bite.ts",
 );
 for (const file of sources) {
-  if (/\bprosemirror(?:-|\b)/i.test(await Bun.file(file).text())) {
+  if (/\bprosemirror(?:-|\b)/i.test(readFileSync(file, "utf8"))) {
     failures.push(`${file}: rejected ProseMirror runtime reference`);
   }
 }
 
-const probe = (await Bun.file("probe-results/editor-boundaries.json").json()) as BoundaryProbe;
-const oracle = Buffer.from(await Bun.file(probe.sourceOracle.file).arrayBuffer());
+const probe = JSON.parse(
+  readFileSync("probe-results/editor-boundaries.json", "utf8"),
+) as BoundaryProbe;
+const oracle = Buffer.from(readFileSync(probe.sourceOracle.file));
 const oracleHash = createHash("sha256").update(oracle).digest("hex");
 if (probe.decision !== "direct-dom") failures.push("boundary probe does not select direct-dom");
 if (probe.mismatched < 1) failures.push("boundary probe records no falsifying corpus");

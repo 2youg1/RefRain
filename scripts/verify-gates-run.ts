@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { readFileSync } from "node:fs";
 /**
  * Everything that can fail must have a path that runs it.
  *
@@ -32,8 +33,8 @@ if (onDisk.length === 0) {
 }
 
 // What actually invokes a gate: the runner, and the package manifest.
-const runner = await Bun.file("scripts/gate.ts").text();
-const manifest = await Bun.file("package.json").text();
+const runner = readFileSync("scripts/gate.ts", "utf8");
+const manifest = readFileSync("package.json", "utf8");
 const invocations = `${runner}\n${manifest}`;
 
 const orphans = onDisk.filter(

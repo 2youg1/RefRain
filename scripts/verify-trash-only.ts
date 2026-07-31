@@ -16,7 +16,7 @@ import { report, scan } from "./gate-lib.ts";
 const PERMANENT_DELETE =
   /\b(fs::remove_file|fs::remove_dir_all|remove_dir_all\s*\(|unlinkSync|rmSync|rm\s+-rf)\b/;
 
-const result = await scan(
+const result = scan(
   [
     "crates/**/src/**/*.rs",
     "apps/desktop/src-tauri/src/**/*.rs",

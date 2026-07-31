@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
 /** Longest component body we accept from a surface that only projects state. */
 const BODY_CEILING = 200;
@@ -69,7 +69,7 @@ for (const root of roots) {
   for (const entry of readdirSync(root)) {
     if (!entry.endsWith(".tsx")) continue;
     checked += 1;
-    const { body, bridge } = measure(await Bun.file(`${root}/${entry}`).text());
+    const { body, bridge } = measure(readFileSync(`${root}/${entry}`, "utf8"));
 
     const bodyAllowance = BODY_DEBT[entry] ?? BODY_CEILING;
     if (body > bodyAllowance) {

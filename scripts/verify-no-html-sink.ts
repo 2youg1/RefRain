@@ -31,7 +31,7 @@ import { report, scan } from "./gate-lib.ts";
 const HTML_SINK =
   /\b(innerHTML|outerHTML|insertAdjacentHTML|document\.write|createContextualFragment)\b/;
 
-const result = await scan(
+const result = scan(
   ["apps/desktop/src/**/*.{ts,tsx}", "packages/*/src/**/*.ts", "packages/*/src/**/*.tsx"],
   HTML_SINK,
   {

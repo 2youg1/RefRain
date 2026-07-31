@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { readFileSync } from "node:fs";
 /**
  * INV-2: only a Text Action mutates the manuscript.
  *
@@ -16,7 +17,7 @@ import { collect } from "./gate-lib.ts";
 
 const AUTHORISED = ["apply_editor_action", "commit_decision_batch"] as const;
 
-const files = await collect(["apps/desktop/src-tauri/src/**/*.rs"]);
+const files = collect(["apps/desktop/src-tauri/src/**/*.rs"]);
 if (files.length === 0) {
   console.error(
     "FAIL  verify:write-path: scanned 0 files — the scan is looking in the wrong place",
@@ -28,7 +29,7 @@ if (files.length === 0) {
 // by hand: a list kept by hand is exactly what stops matching reality.
 const commands: string[] = [];
 for (const file of files) {
-  const text = await Bun.file(file).text();
+  const text = readFileSync(file, "utf8");
   for (const match of text.matchAll(/#\[tauri::command\][\s\S]{0,200}?fn\s+(\w+)/g)) {
     if (match[1] !== undefined) commands.push(match[1]);
   }

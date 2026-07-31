@@ -1,14 +1,15 @@
 #!/usr/bin/env bun
+import { readFileSync } from "node:fs";
 
-export {};
-
-const chrome = await Bun.file("apps/desktop/src/ui/WindowChrome.tsx").text();
-const workbench = await Bun.file("apps/desktop/src/shell/Workbench.tsx").text();
-const display = await Bun.file("apps/desktop/src-tauri/src/display.rs").text();
-const scheduler = await Bun.file("apps/desktop/src/frame-scheduler.ts").text();
-const capability = await Bun.file("apps/desktop/src-tauri/capabilities/default.json").json();
-const config = await Bun.file("apps/desktop/src-tauri/tauri.conf.json").json();
-const windowsE2e = await Bun.file("apps/desktop/e2e/writing-slice.ts").text();
+const chrome = readFileSync("apps/desktop/src/ui/WindowChrome.tsx", "utf8");
+const workbench = readFileSync("apps/desktop/src/shell/Workbench.tsx", "utf8");
+const display = readFileSync("apps/desktop/src-tauri/src/display.rs", "utf8");
+const scheduler = readFileSync("apps/desktop/src/frame-scheduler.ts", "utf8");
+const capability = JSON.parse(
+  readFileSync("apps/desktop/src-tauri/capabilities/default.json", "utf8"),
+);
+const config = JSON.parse(readFileSync("apps/desktop/src-tauri/tauri.conf.json", "utf8"));
+const windowsE2e = readFileSync("apps/desktop/e2e/writing-slice.ts", "utf8");
 const permissions = new Set<string>(capability.permissions);
 const failures: string[] = [];
 

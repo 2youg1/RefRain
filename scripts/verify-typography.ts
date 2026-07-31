@@ -1,37 +1,36 @@
 #!/usr/bin/env bun
+import { readFileSync } from "node:fs";
 
-export {};
-
-const config = await Bun.file("crates/refrain-store/src/config.rs").text();
-const fonts = await Bun.file("apps/desktop/src-tauri/src/fonts.rs").text();
-const bridge = await Bun.file("apps/desktop/src-tauri/src/lib.rs").text();
-const bindings = await Bun.file("apps/desktop/src/generated/bindings.gen.ts").text();
-const app = await Bun.file("apps/desktop/src/App.tsx").text();
-const appearance = await Bun.file("apps/desktop/src/shell/appearance.ts").text();
-const projection = await Bun.file("apps/desktop/src/typography.ts").text();
-const panel = await Bun.file("apps/desktop/src/ui/TypographyPanel.tsx").text();
+const config = readFileSync("crates/refrain-store/src/config.rs", "utf8");
+const fonts = readFileSync("apps/desktop/src-tauri/src/fonts.rs", "utf8");
+const bridge = readFileSync("apps/desktop/src-tauri/src/lib.rs", "utf8");
+const bindings = readFileSync("apps/desktop/src/generated/bindings.gen.ts", "utf8");
+const app = readFileSync("apps/desktop/src/App.tsx", "utf8");
+const appearance = readFileSync("apps/desktop/src/shell/appearance.ts", "utf8");
+const projection = readFileSync("apps/desktop/src/typography.ts", "utf8");
+const panel = readFileSync("apps/desktop/src/ui/TypographyPanel.tsx", "utf8");
 // The panel became a projection: it renders a view and emits intents, while the
 // bridge calls moved to the session that owns the manuscript setting. The four
 // facts below are still facts about "Settings can do X" — they just have a new
 // owner, so they are read there. Checking the panel would now check nothing.
-const typographySession = await Bun.file("apps/desktop/src/shell/typography-session.ts").text();
-const configTests = await Bun.file("crates/refrain-store/tests/config.rs").text();
-const windowsE2e = await Bun.file("apps/desktop/e2e/writing-slice.ts").text();
+const typographySession = readFileSync("apps/desktop/src/shell/typography-session.ts", "utf8");
+const configTests = readFileSync("crates/refrain-store/tests/config.rs", "utf8");
+const windowsE2e = readFileSync("apps/desktop/e2e/writing-slice.ts", "utf8");
 // The Solid rewrite moved component `<style>` blocks into one stylesheet, so
 // the editor's typography authority is now the component plus that sheet.
 // Checking only the component would silently stop checking anything — but
 // searching the whole sheet would be weaker than the old scoped `<style>`
 // block, since any unrelated rule could satisfy the assertion. Read the sheet
 // per selector so `.editor-host` facts must appear on `.editor-host` rules.
-const stylesheet = await Bun.file("apps/desktop/src/styles/surfaces.css").text();
+const stylesheet = readFileSync("apps/desktop/src/styles/surfaces.css", "utf8");
 const cssRulesFor = (selectorFragment: string): string =>
   [...stylesheet.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
     .filter((rule) => rule[1]?.includes(selectorFragment))
     .map((rule) => rule[0])
     .join("\n");
 const editorHost =
-  (await Bun.file("apps/desktop/src/ui/EditorHost.tsx").text()) + cssRulesFor(".editor-host");
-const editor = await Bun.file("packages/editor/src/index.ts").text();
+  readFileSync("apps/desktop/src/ui/EditorHost.tsx", "utf8") + cssRulesFor(".editor-host");
+const editor = readFileSync("packages/editor/src/index.ts", "utf8");
 const failures: string[] = [];
 
 for (const [source, fact, failure] of [

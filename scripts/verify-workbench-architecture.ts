@@ -1,20 +1,19 @@
 #!/usr/bin/env bun
+import { existsSync, readFileSync } from "node:fs";
 
-export {};
-
-const workbench = await Bun.file("apps/desktop/src/shell/Workbench.tsx").text();
-const quarters = await Bun.file("apps/desktop/src/shell/quarters.ts").text();
-const reducer = await Bun.file("apps/desktop/src/shell/workbench-state.ts").text();
-const panels = await Bun.file("apps/desktop/src/shell/panel-stack.ts").text();
-const settings = await Bun.file("apps/desktop/src/ui/SettingsSurface.tsx").text();
-const iconPicker = await Bun.file("apps/desktop/src/ui/IconPicker.tsx").text();
-const icon = await Bun.file("apps/desktop/src/shell/universal-icon.ts").text();
-const storeConfig = await Bun.file("crates/refrain-store/src/config.rs").text();
-const bridge = await Bun.file("apps/desktop/src-tauri/src/lib.rs").text();
-const bindings = await Bun.file("apps/desktop/src/generated/bindings.gen.ts").text();
-const projectSession = await Bun.file("apps/desktop/src/shell/project-session.ts").text();
-const projectStore = await Bun.file("crates/refrain-store/src/project.rs").text();
-const projectCatalog = await Bun.file("crates/refrain-store/src/project/catalog.rs").text();
+const workbench = readFileSync("apps/desktop/src/shell/Workbench.tsx", "utf8");
+const quarters = readFileSync("apps/desktop/src/shell/quarters.ts", "utf8");
+const reducer = readFileSync("apps/desktop/src/shell/workbench-state.ts", "utf8");
+const panels = readFileSync("apps/desktop/src/shell/panel-stack.ts", "utf8");
+const settings = readFileSync("apps/desktop/src/ui/SettingsSurface.tsx", "utf8");
+const iconPicker = readFileSync("apps/desktop/src/ui/IconPicker.tsx", "utf8");
+const icon = readFileSync("apps/desktop/src/shell/universal-icon.ts", "utf8");
+const storeConfig = readFileSync("crates/refrain-store/src/config.rs", "utf8");
+const bridge = readFileSync("apps/desktop/src-tauri/src/lib.rs", "utf8");
+const bindings = readFileSync("apps/desktop/src/generated/bindings.gen.ts", "utf8");
+const projectSession = readFileSync("apps/desktop/src/shell/project-session.ts", "utf8");
+const projectStore = readFileSync("crates/refrain-store/src/project.rs", "utf8");
+const projectCatalog = readFileSync("crates/refrain-store/src/project/catalog.rs", "utf8");
 const failures: string[] = [];
 
 // Vue SFCs carried their own `<style>` block, so the layout facts below used to
@@ -23,7 +22,7 @@ const failures: string[] = [];
 // assertions as narrow as they were, read the stylesheet per *selector* rather
 // than as one flat string — a rule that matches anywhere in the sheet would be
 // a weaker check than the old per-component one.
-const stylesheet = await Bun.file("apps/desktop/src/styles/surfaces.css").text();
+const stylesheet = readFileSync("apps/desktop/src/styles/surfaces.css", "utf8");
 const cssRulesFor = (selectorFragment: string): string =>
   [...stylesheet.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
     .filter((rule) => rule[1]?.includes(selectorFragment))
@@ -141,7 +140,7 @@ for (const bypass of [
 ]) {
   if (bypass.test(workbench)) failures.push(`Workbench bypasses the state reducer: ${bypass}`);
 }
-if (await Bun.file("apps/desktop/src/shell/workbench-surface.ts").exists()) {
+if (existsSync("apps/desktop/src/shell/workbench-surface.ts")) {
   failures.push("the retired flat surface reducer still exists");
 }
 
@@ -208,8 +207,7 @@ for (const retired of [
   "apps/desktop/src/shell/document-search-session.ts",
   "apps/desktop/test/document-search-session.test.ts",
 ]) {
-  if (await Bun.file(retired).exists())
-    failures.push(`retired catalog carrier still exists: ${retired}`);
+  if (existsSync(retired)) failures.push(`retired catalog carrier still exists: ${retired}`);
 }
 
 // `class="rail-foot"` is identical in Vue templates and Solid JSX, so the

@@ -1,18 +1,5 @@
 #!/usr/bin/env bun
-/**
- * Every public version surface must name one release.
- *
- * The release workflow already rejects a tag that differs from the Rust
- * package, but that is only one seam: Tauri names the installer, the desktop
- * and editor packages name the web workspaces, and both lockfiles preserve
- * resolved workspace metadata. Before this gate, all of them still said
- * 0.2.0 while the body of work and planned release were v0.2.1.
- *
- * Keep one authority: Cargo `[workspace.package].version`. Every other surface
- * must equal it; none may guess a version independently.
- */
-
-export {};
+import { readFileSync } from "node:fs";
 
 const files = {
   cargo: "Cargo.toml",
@@ -53,7 +40,7 @@ function requireJsonVersion(text: string, file: string): string {
   return "<missing>";
 }
 
-const cargo = await Bun.file(files.cargo).text();
+const cargo = readFileSync(files.cargo, "utf8");
 const authority = requireMatch(
   cargo,
   /\[workspace\.package\][\s\S]*?\nversion\s*=\s*"([^"]+)"/,
@@ -63,12 +50,12 @@ const authority = requireMatch(
 
 const surfaces: Array<[string, string]> = [];
 for (const file of [files.tauri, files.desktop, files.editor] as const) {
-  surfaces.push([file, requireJsonVersion(await Bun.file(file).text(), file)]);
+  surfaces.push([file, requireJsonVersion(readFileSync(file, "utf8"), file)]);
 }
 
 // bun.lock is JSONC (trailing commas), so parse the two workspace records by
 // their exact names rather than pretending JSON.parse accepts its grammar.
-const bunLock = await Bun.file(files.bunLock).text();
+const bunLock = readFileSync(files.bunLock, "utf8");
 for (const [path, name] of [
   ["apps/desktop", "@refrain/desktop"],
   ["packages/editor", "@refrain/editor"],
@@ -85,7 +72,7 @@ for (const [path, name] of [
 
 // Cargo.lock can contain unrelated dependencies at any version. Only the five
 // local workspace package records are relevant.
-const cargoLock = await Bun.file(files.cargoLock).text();
+const cargoLock = readFileSync(files.cargoLock, "utf8");
 for (const name of [
   "refrain-core",
   "refrain-store",

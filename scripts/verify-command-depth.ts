@@ -1,20 +1,5 @@
 #!/usr/bin/env bun
-
-// The composition layer says of itself: "Every command here is a one-line
-// mapping onto a named use case. No business state lives in this crate, and no
-// domain rule is decided here (SPEC 6.2)."
-//
-// That sentence was written after an earlier convergence and is now false.
-// `collect_attempt` runs 182 lines and decides domain rules: that a contract
-// comes from the frozen request bytes rather than the artifact's own claims
-// (SPEC 8.4), that an edited scope fails rather than guesses, and that
-// validation precedes completion precedes freezing proposals (SPEC 8.4b).
-//
-// This gate exists because that is what happens to an invariant nobody
-// measures: it survives as a comment. A command body that stays small cannot
-// hold a rule; one that grows will, whatever the module docs claim.
-
-export {};
+import { readFileSync } from "node:fs";
 
 const SOURCE = "apps/desktop/src-tauri/src/lib.rs";
 
@@ -112,7 +97,7 @@ function commands(source: string): readonly Command[] {
   return found;
 }
 
-const found = commands(await Bun.file(SOURCE).text());
+const found = commands(readFileSync(SOURCE, "utf8"));
 const failures: string[] = [];
 
 for (const command of found) {

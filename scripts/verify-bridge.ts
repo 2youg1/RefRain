@@ -14,13 +14,9 @@ import { report, scan } from "./gate-lib.ts";
 
 const HAND_WRITTEN = /\binvoke\s*\(|\b__TAURI__\b|@tauri-apps\/api\/core/;
 
-const result = await scan(
-  ["apps/desktop/src/**/*.{ts,vue}", "packages/**/src/**/*.ts"],
-  HAND_WRITTEN,
-  {
-    ignoreLine: (line) => /^\s*(\/\/|\/\*|\*)/.test(line),
-  },
-);
+const result = scan(["apps/desktop/src/**/*.{ts,vue}", "packages/**/src/**/*.ts"], HAND_WRITTEN, {
+  ignoreLine: (line) => /^\s*(\/\/|\/\*|\*)/.test(line),
+});
 
 // Only the Specta output and the one explicit E2E bridge may call raw invoke.
 // The E2E bridge names debug-only Rust commands; verify:release-surface pins

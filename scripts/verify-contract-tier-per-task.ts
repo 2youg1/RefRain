@@ -33,12 +33,12 @@
 //!
 //! 被检查的符号消失时必须报错，而不是落进「没找到就算通过」的分支。
 
-export {};
+import { readFileSync } from "node:fs";
 
 const BRIDGE = "apps/desktop/src-tauri/src/lib.rs";
 
 const failures: string[] = [];
-const source = await Bun.file(BRIDGE).text();
+const source = readFileSync(BRIDGE, "utf8");
 
 /** 缺席即失败：找不到检查对象，这道门禁就什么也没检查。 */
 function locate(needle: string): number {

@@ -1,18 +1,30 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 
 const failures: string[] = [];
 const digestOwner = "crates/refrain-core/src/digest.rs";
-const rustGlobs = [
-  "crates/refrain-core/src/**/*.rs",
-  "crates/refrain-host/src/**/*.rs",
-  "crates/refrain-store/src/**/*.rs",
-  "crates/refrain-app/src/**/*.rs",
-  "apps/desktop/src-tauri/src/**/*.rs",
+const rustRoots = [
+  "crates/refrain-core/src",
+  "crates/refrain-host/src",
+  "crates/refrain-store/src",
+  "crates/refrain-app/src",
+  "apps/desktop/src-tauri/src",
 ] as const;
+const walkFiles = (root: string, out: string[] = []): string[] => {
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const full = `${root}/${entry.name}`;
+    if (entry.isDirectory()) walkFiles(full, out);
+    else out.push(full);
+  }
+  return out;
+};
+
 const rustFiles = new Set<string>();
-for (const pattern of rustGlobs) {
-  for await (const file of new Bun.Glob(pattern).scan({ cwd: ".", onlyFiles: true })) {
-    rustFiles.add(file.replaceAll("\\", "/"));
+for (const root of rustRoots) {
+  if (!existsSync(root)) continue;
+  for (const found of walkFiles(root)) {
+    const file = found.replaceAll("\\", "/");
+    if (!file.endsWith(".rs")) continue;
+    rustFiles.add(file);
   }
 }
 for (const file of rustFiles) {

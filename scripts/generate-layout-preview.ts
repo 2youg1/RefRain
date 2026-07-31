@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { writeFileSync } from "node:fs";
 /**
  * 版面对比页：把几套候选版面放在同一张纸上，让人用眼睛裁决。
  *
@@ -240,5 +241,5 @@ ${LAYOUTS.map(
 </html>
 `;
 
-await Bun.write(OUT, page);
+writeFileSync(OUT, page);
 console.log(`wrote ${OUT} (${LAYOUTS.length} layouts x ${THEMES.length} themes)`);

@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
 
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
-const ingest = await Bun.file("crates/refrain-store/src/ingest.rs").text();
-const office = await Bun.file("crates/refrain-store/src/ingest/office.rs").text();
-const pdf = await Bun.file("crates/refrain-store/src/ingest/pdf.rs").text();
-const materials = await Bun.file("crates/refrain-store/src/materials.rs").text();
+const ingest = readFileSync("crates/refrain-store/src/ingest.rs", "utf8");
+const office = readFileSync("crates/refrain-store/src/ingest/office.rs", "utf8");
+const pdf = readFileSync("crates/refrain-store/src/ingest/pdf.rs", "utf8");
+const materials = readFileSync("crates/refrain-store/src/materials.rs", "utf8");
 const failures: string[] = [];
 
 for (const [source, fact, failure] of [

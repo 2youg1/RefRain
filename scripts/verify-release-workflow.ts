@@ -1,12 +1,10 @@
 #!/usr/bin/env bun
-/** Verify the boundary between the main quality workflow and tag publication. */
-
-export {};
+import { readFileSync } from "node:fs";
 
 const WORKFLOW = ".github/workflows/release.yml";
 const GATE_WORKFLOW = ".github/workflows/gate.yml";
-const text = await Bun.file(WORKFLOW).text();
-const gateText = await Bun.file(GATE_WORKFLOW).text();
+const text = readFileSync(WORKFLOW, "utf8");
+const gateText = readFileSync(GATE_WORKFLOW, "utf8");
 const failures: string[] = [];
 
 function requireText(needle: string, reason: string): void {

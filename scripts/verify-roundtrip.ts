@@ -15,6 +15,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 
 interface Entry {
   readonly name: string;
@@ -24,13 +25,12 @@ interface Entry {
 }
 
 const manifestPath = "tests/corpora/manifest.json";
-const manifestFile = Bun.file(manifestPath);
-if (!(await manifestFile.exists())) {
+if (!existsSync(manifestPath)) {
   console.error(`FAIL  verify:roundtrip: ${manifestPath} is missing — nothing was checked`);
   process.exit(1);
 }
 
-const { corpora } = (await manifestFile.json()) as { corpora: Entry[] };
+const { corpora } = JSON.parse(readFileSync(manifestPath, "utf8")) as { corpora: Entry[] };
 
 if (corpora.length === 0) {
   console.error("FAIL  verify:roundtrip: the manifest lists zero corpora");
@@ -40,13 +40,13 @@ if (corpora.length === 0) {
 const failures: string[] = [];
 
 for (const entry of corpora) {
-  const file = Bun.file(`tests/corpora/${entry.file}`);
-  if (!(await file.exists())) {
+  const corpusPath = `tests/corpora/${entry.file}`;
+  if (!existsSync(corpusPath)) {
     failures.push(`${entry.file}: missing`);
     continue;
   }
 
-  const bytes = Buffer.from(await file.arrayBuffer());
+  const bytes = readFileSync(corpusPath);
   const digest = createHash("sha256").update(bytes).digest("hex");
 
   if (digest !== entry.sha256) {

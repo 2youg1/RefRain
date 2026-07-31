@@ -15,7 +15,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 
 const BINARY = "target/debug/refrain-desktop";
 const EVIDENCE = "probe-results/window-health.json";
@@ -63,7 +63,7 @@ try {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline && !existsSync(EVIDENCE)) {
     if (application.exitCode !== null) break;
-    await Bun.sleep(250);
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
 
   if (!existsSync(EVIDENCE)) {
@@ -73,7 +73,7 @@ try {
     process.exit(1);
   }
 
-  const evidence = await Bun.file(EVIDENCE).json();
+  const evidence = JSON.parse(readFileSync(EVIDENCE, "utf8"));
   console.log(JSON.stringify(evidence, null, 2));
   console.log("\nPROBE GREEN: a real window completed the health round trip");
 } finally {

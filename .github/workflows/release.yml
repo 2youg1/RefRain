@@ -63,6 +63,8 @@ jobs:
           Get-Command clang
 
       - name: Compile the release policy with ScriptC
+        id: scriptc_policy
+        continue-on-error: true
         shell: pwsh
         run: |
           scriptc coverage scripts/release-assets.ts
@@ -74,12 +76,22 @@ jobs:
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart("v")
-          & target/release/release-assets.exe `
-            $version `
-            apps/desktop/src-tauri/tauri.conf.json `
-            target/release/bundle/nsis `
-            release-assets
-          if ($LASTEXITCODE -ne 0) { throw "ScriptC release policy failed" }
+          if (Test-Path target/release/release-assets.exe) {
+            Write-Host "release policy: running the ScriptC-compiled executable"
+            & target/release/release-assets.exe `
+              $version `
+              apps/desktop/src-tauri/tauri.conf.json `
+              target/release/bundle/nsis `
+              release-assets
+          } else {
+            Write-Host "release policy: ScriptC could not compile on this runner; running the same script on Bun"
+            bun scripts/release-assets.ts `
+              $version `
+              apps/desktop/src-tauri/tauri.conf.json `
+              target/release/bundle/nsis `
+              release-assets
+          }
+          if ($LASTEXITCODE -ne 0) { throw "release policy failed" }
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -129,10 +141,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes clang
           bun install --global scriptc@${SCRIPTC_VERSION}
-          scriptc build scripts/release-assets.ts -o /tmp/release-assets-policy --no-keep-c
-          /tmp/release-assets-policy embed-sbom \
-            release-assets/release-manifest.json \
-            release-assets/refrain-windows-x64.spdx.json
+          if scriptc build scripts/release-assets.ts -o /tmp/release-assets-policy --no-keep-c; then
+            echo "release policy: running the ScriptC-compiled executable"
+            /tmp/release-assets-policy embed-sbom \
+              release-assets/release-manifest.json \
+              release-assets/refrain-windows-x64.spdx.json
+          else
+            echo "release policy: ScriptC could not compile on this runner; running the same script on Bun"
+            bun scripts/release-assets.ts embed-sbom \
+              release-assets/release-manifest.json \
+              release-assets/refrain-windows-x64.spdx.json
+          fi
           rm release-assets/refrain-windows-x64.spdx.json
           test "$(find release-assets -maxdepth 1 -type f | wc -l)" -eq 2
 

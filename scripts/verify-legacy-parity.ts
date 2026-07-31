@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { existsSync, readFileSync } from "node:fs";
 
 import { Glob } from "bun";
 
@@ -18,7 +19,7 @@ const OWNERS = new Set([
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const raw: unknown = await Bun.file("tests/legacy-parity.json").json();
+const raw: unknown = JSON.parse(readFileSync("tests/legacy-parity.json", "utf8"));
 if (!isRecord(raw) || raw.schemaVersion !== 1 || !Array.isArray(raw.entries)) {
   console.error("FAIL  verify:legacy-parity: invalid ledger envelope");
   process.exit(1);
@@ -27,7 +28,7 @@ if (!isRecord(raw) || raw.schemaVersion !== 1 || !Array.isArray(raw.entries)) {
 const current: string[] = [];
 // At v0.2.0 the oracle is gone: a missing legacy/ tree maps to zero files,
 // and every entry must already be owned or retired (enforced below).
-if (await Bun.file("legacy").exists()) {
+if (existsSync("legacy")) {
   for await (const file of new Glob("**/*.test.ts").scan({ cwd: "legacy" })) {
     current.push(`legacy/${file.split(/[/\\]/).join("/")}`);
   }
@@ -66,19 +67,14 @@ for (const [index, value] of raw.entries.entries()) {
     ) {
       failures.push(`${legacy} has invalid checkpoint ${String(disposition.checkpoint)}`);
     }
-    if (!(await Bun.file(legacy).exists()))
-      failures.push(`${legacy} was deleted while still blocked`);
+    if (!existsSync(legacy)) failures.push(`${legacy} was deleted while still blocked`);
   } else if (disposition.kind === "owned-by") {
     counts.owned += 1;
     if (!Array.isArray(disposition.tests) || disposition.tests.length === 0) {
       failures.push(`${legacy} claims ownership without final tests`);
     } else {
       for (const test of disposition.tests) {
-        if (
-          typeof test !== "string" ||
-          test.startsWith("legacy/") ||
-          !(await Bun.file(test).exists())
-        ) {
+        if (typeof test !== "string" || test.startsWith("legacy/") || !existsSync(test)) {
           failures.push(`${legacy} names missing or legacy test ${String(test)}`);
         }
       }

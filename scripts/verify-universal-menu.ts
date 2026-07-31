@@ -1,17 +1,16 @@
 #!/usr/bin/env bun
+import { readFileSync } from "node:fs";
 
-export {};
-
-const workbench = await Bun.file("apps/desktop/src/shell/Workbench.tsx").text();
-const button = await Bun.file("apps/desktop/src/ui/UniversalButton.tsx").text();
+const workbench = readFileSync("apps/desktop/src/shell/Workbench.tsx", "utf8");
+const button = readFileSync("apps/desktop/src/ui/UniversalButton.tsx", "utf8");
 const menu =
-  (await Bun.file("apps/desktop/src/ui/UniversalMenu.tsx").text()) +
-  (await Bun.file("apps/desktop/src/styles/surfaces.css").text());
-const catalog = await Bun.file("apps/desktop/src/shell/workbench-commands.ts").text();
-const shortcuts = await Bun.file("apps/desktop/src/shell/shortcuts.ts").text();
-const focus = await Bun.file("apps/desktop/src/shell/command-focus.ts").text();
-const icon = await Bun.file("apps/desktop/src/shell/universal-icon.ts").text();
-const picker = await Bun.file("apps/desktop/src/ui/IconPicker.tsx").text();
+  readFileSync("apps/desktop/src/ui/UniversalMenu.tsx", "utf8") +
+  readFileSync("apps/desktop/src/styles/surfaces.css", "utf8");
+const catalog = readFileSync("apps/desktop/src/shell/workbench-commands.ts", "utf8");
+const shortcuts = readFileSync("apps/desktop/src/shell/shortcuts.ts", "utf8");
+const focus = readFileSync("apps/desktop/src/shell/command-focus.ts", "utf8");
+const icon = readFileSync("apps/desktop/src/shell/universal-icon.ts", "utf8");
+const picker = readFileSync("apps/desktop/src/ui/IconPicker.tsx", "utf8");
 const failures: string[] = [];
 
 for (const [source, fact, failure] of [

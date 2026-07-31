@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -39,8 +39,8 @@ describe("release asset policy", () => {
     const item = fixture();
     const result = run(["0.2.1", item.config, item.nsis, item.output]);
     expect(result.status).toBe(0);
-    expect(await Bun.file(join(item.output, "refrain-windows-x64-setup.exe")).exists()).toBe(true);
-    expect(await Bun.file(item.manifest).json()).toEqual({
+    expect(existsSync(join(item.output, "refrain-windows-x64-setup.exe"))).toBe(true);
+    expect(JSON.parse(readFileSync(item.manifest, "utf8"))).toEqual({
       schemaVersion: 1,
       version: "0.2.1",
       source: "Refrain_0.2.1_x64-setup.exe",
@@ -57,7 +57,7 @@ describe("release asset policy", () => {
 
     const result = run(["embed-sbom", item.manifest, sbom]);
     expect(result.status).toBe(0);
-    expect(await Bun.file(item.manifest).json()).toMatchObject({
+    expect(JSON.parse(readFileSync(item.manifest, "utf8"))).toMatchObject({
       schemaVersion: 1,
       version: "0.2.1",
       sbom: {

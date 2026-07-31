@@ -24,7 +24,7 @@ import { report, scan } from "./gate-lib.ts";
 const OUTBOUND =
   /\b(fetch|XMLHttpRequest|WebSocket|EventSource|navigator\.sendBeacon)\s*\(|\breqwest::|\bureq::|\bhyper::Client|https?:\/\/(?!localhost|127\.0\.0\.1|schema\.tauri\.app|biomejs\.dev)/;
 
-const result = await scan(
+const result = scan(
   [
     "apps/desktop/src/**/*.{ts,vue}",
     "apps/desktop/src-tauri/src/**/*.rs",
@@ -41,7 +41,7 @@ const result = await scan(
 
 // Shiki must be reached through the precise entry only.
 const SHIKI_SOURCES = ["apps/desktop/src/**/*.{ts,tsx}", "packages/**/src/**/*.ts"];
-const convenience = await scan(SHIKI_SOURCES, /from\s+["']shiki["']/, {
+const convenience = scan(SHIKI_SOURCES, /from\s+["']shiki["']/, {
   ignoreLine: (line) => /^\s*(\/\/|\/\*|\*|#)/.test(line),
 });
 if (convenience.findings.length > 0) {
@@ -57,7 +57,7 @@ if (convenience.findings.length > 0) {
 }
 
 // And every language must arrive as a static import, never `await import(...)`.
-const lazyLang = await scan(SHIKI_SOURCES, /import\s*\(\s*["']@shikijs\//, {
+const lazyLang = scan(SHIKI_SOURCES, /import\s*\(\s*["']@shikijs\//, {
   ignoreLine: (line) => /^\s*(\/\/|\/\*|\*|#)/.test(line),
 });
 if (lazyLang.findings.length > 0) {

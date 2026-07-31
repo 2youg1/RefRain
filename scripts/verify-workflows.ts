@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { readFileSync } from "node:fs";
 
 import { Glob } from "bun";
 
@@ -38,13 +39,13 @@ const required = new Map<string, readonly string[]>([
 const failures: string[] = [];
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-const packageManifest: unknown = await Bun.file("package.json").json();
+const packageManifest: unknown = JSON.parse(readFileSync("package.json", "utf8"));
 const packageManager = isRecord(packageManifest) ? packageManifest.packageManager : undefined;
 const bunVersion =
   typeof packageManager === "string" ? packageManager.match(/^bun@(.+)$/)?.[1] : undefined;
 if (bunVersion === undefined) failures.push("package.json has no exact Bun packageManager");
 
-const cargoManifest = await Bun.file("Cargo.toml").text();
+const cargoManifest = readFileSync("Cargo.toml", "utf8");
 const rustVersion = cargoManifest.match(/^rust-version = "([^"]+)"$/m)?.[1];
 if (rustVersion === undefined) failures.push("Cargo.toml has no workspace rust-version");
 
@@ -59,7 +60,7 @@ if (files.sort().join("\n") !== expectedNames.join("\n")) {
 }
 
 for (const path of WORKFLOWS) {
-  const text = await Bun.file(path).text();
+  const text = readFileSync(path, "utf8");
   for (const token of required.get(path) ?? []) {
     if (!text.includes(token)) failures.push(`${path} does not run or declare: ${token}`);
   }

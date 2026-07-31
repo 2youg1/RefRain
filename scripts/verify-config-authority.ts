@@ -18,23 +18,19 @@
 
 import { report, scan } from "./gate-lib.ts";
 
-const schema = await scan(["crates/refrain-store/src/*.rs"], /preferences/i, {
+const schema = scan(["crates/refrain-store/src/*.rs"], /preferences/i, {
   ignoreLine: (line) => line.trimStart().startsWith("//") || line.trimStart().startsWith("!"),
 });
 
-const renderer = await scan(
-  ["apps/desktop/src/**/*.ts", "apps/desktop/src/**/*.tsx"],
-  /localStorage/,
-  {
-    ignoreLine: (line) =>
-      // Comments explain the rule; they do not break it.
-      /^\s*(\/\/|\/\*|\*)/.test(line) ||
-      // The `refrain.e2e.` prefix names a test seam (the picker answer the
-      // WebDriver harness plants), never a setting. It is the only page-global
-      // use the renderer may have, and it is read in exactly one file.
-      line.includes("refrain.e2e."),
-  },
-);
+const renderer = scan(["apps/desktop/src/**/*.ts", "apps/desktop/src/**/*.tsx"], /localStorage/, {
+  ignoreLine: (line) =>
+    // Comments explain the rule; they do not break it.
+    /^\s*(\/\/|\/\*|\*)/.test(line) ||
+    // The `refrain.e2e.` prefix names a test seam (the picker answer the
+    // WebDriver harness plants), never a setting. It is the only page-global
+    // use the renderer may have, and it is read in exactly one file.
+    line.includes("refrain.e2e."),
+});
 
 const findings = [...schema.findings, ...renderer.findings];
 report(

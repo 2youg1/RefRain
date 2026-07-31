@@ -1,15 +1,13 @@
 #!/usr/bin/env bun
-/** Verify that alternate Runs launch only their own request frozen at authorization. */
-
-export {};
+import { readFileSync } from "node:fs";
 
 const HOST = "crates/refrain-host/src/host.rs";
 const STAGING = "crates/refrain-host/src/staging.rs";
 
 const failures: string[] = [];
 
-const host = await Bun.file(HOST).text();
-const staging = await Bun.file(STAGING).text();
+const host = readFileSync(HOST, "utf8");
+const staging = readFileSync(STAGING, "utf8");
 
 /** 缺席即失败：被检查的对象不在了，这道门禁就什么也没检查。 */
 function locate(text: string, needle: string, file: string): number {

@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { readFileSync } from "node:fs";
 /**
  * unsafe 的范围是一个决定，不是一个现状。
  *
@@ -48,13 +49,13 @@ const ALLOWED: Readonly<Record<string, number>> = {
 const failures: string[] = [];
 
 // —— 分支 1：纯 crate 的 forbid 还在不在 ——
-const libFiles = await collect(PURE_CRATE_ROOTS);
+const libFiles = collect(PURE_CRATE_ROOTS);
 if (libFiles.length === 0) {
   console.error("FAIL  verify:unsafe-surface: 没有扫到任何 crate 根模块 — 扫描面指错了地方");
   process.exit(1);
 }
 for (const file of libFiles) {
-  const text = await Bun.file(file).text();
+  const text = readFileSync(file, "utf8");
   // 装配层不在这个清单里（它是 apps/ 下的 bin crate），故此处一律要求 forbid。
   if (!/^#!\[forbid\(unsafe_code\)\]$/m.test(text)) {
     failures.push(`${file}: 缺少 #![forbid(unsafe_code)]，unsafe 可以悄悄进来`);
@@ -62,7 +63,7 @@ for (const file of libFiles) {
 }
 
 // —— 分支 2/3：装配层逐行扫，只认登记过的 ——
-const assemblyFiles = await collect(ASSEMBLY_SOURCES);
+const assemblyFiles = collect(ASSEMBLY_SOURCES);
 if (assemblyFiles.length === 0) {
   console.error("FAIL  verify:unsafe-surface: 没有扫到装配层源码 — 扫描面指错了地方");
   process.exit(1);
@@ -70,7 +71,7 @@ if (assemblyFiles.length === 0) {
 
 const counted: Record<string, number> = {};
 for (const file of assemblyFiles) {
-  const text = await Bun.file(file).text();
+  const text = readFileSync(file, "utf8");
   text.split("\n").forEach((line, index) => {
     if (/^\s*(\/\/|\/\*|\*)/.test(line)) return;
     // `unsafe {` 与 `unsafe fn`/`unsafe impl` 都算。`unsafe_font_names` 这类

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { Glob } from "bun";
 
 const approvedDocuments = new Set([
@@ -36,7 +37,7 @@ for (const expected of approvedDocuments) {
   if (!tracked.has(expected)) failures.push(`missing approved document: ${expected}`);
 }
 for (const licence of ["LICENSE", "LICENSE-THIRD-PARTY"]) {
-  if (!(await Bun.file(licence).exists())) failures.push(`missing licence file: ${licence}`);
+  if (!existsSync(licence)) failures.push(`missing licence file: ${licence}`);
 }
 
 const localSpecIsIgnored =

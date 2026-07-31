@@ -7,9 +7,10 @@
  * 在任何一处都读不出来，只有把十五个数字排成一列才看得见。这道门禁保证它们不再散开。
  */
 
+import { readFileSync } from "node:fs";
 import { STRATA, strataDeclarations, stratum } from "../apps/desktop/src/shell/strata";
 
-const css = await Bun.file("apps/desktop/src/styles/surfaces.css").text();
+const css = readFileSync("apps/desktop/src/styles/surfaces.css", "utf8");
 
 const failures: string[] = [];
 
@@ -42,7 +43,7 @@ if (stratum("spine") <= stratum("quarter")) {
 }
 
 // 五、光源区必须真的是 DOM 里的一层，而不是画在别的东西上。
-const workbench = await Bun.file("apps/desktop/src/shell/Workbench.tsx").text();
+const workbench = readFileSync("apps/desktop/src/shell/Workbench.tsx", "utf8");
 if (!workbench.includes('class="lamp-layer"')) {
   failures.push("Workbench 里没有光源区这一层；光又被画回到别的元素上了");
 }

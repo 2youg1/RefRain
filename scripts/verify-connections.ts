@@ -1,16 +1,15 @@
 #!/usr/bin/env bun
+import { readFileSync } from "node:fs";
 
-export {};
-
-const rust = await Bun.file("apps/desktop/src-tauri/src/lib.rs").text();
-const boundary = await Bun.file("apps/desktop/src-tauri/src/harnesses.rs").text();
-const adapters = await Bun.file("crates/refrain-host/src/adapters.rs").text();
-const processOwner = await Bun.file("crates/refrain-host/src/process.rs").text();
-const bindings = await Bun.file("apps/desktop/src/generated/bindings.gen.ts").text();
-const connections = await Bun.file("apps/desktop/src/ui/ConnectionsSurface.tsx").text();
+const rust = readFileSync("apps/desktop/src-tauri/src/lib.rs", "utf8");
+const boundary = readFileSync("apps/desktop/src-tauri/src/harnesses.rs", "utf8");
+const adapters = readFileSync("crates/refrain-host/src/adapters.rs", "utf8");
+const processOwner = readFileSync("crates/refrain-host/src/process.rs", "utf8");
+const bindings = readFileSync("apps/desktop/src/generated/bindings.gen.ts", "utf8");
+const connections = readFileSync("apps/desktop/src/ui/ConnectionsSurface.tsx", "utf8");
 // 票据的领域层搬进了 session；组件只做投影。这条事实的权威随之移位。
-const dispatch = await Bun.file("apps/desktop/src/shell/dispatch-session.ts").text();
-const e2e = await Bun.file("apps/desktop/e2e/dispatch-loop.ts").text();
+const dispatch = readFileSync("apps/desktop/src/shell/dispatch-session.ts", "utf8");
+const e2e = readFileSync("apps/desktop/e2e/dispatch-loop.ts", "utf8");
 const failures: string[] = [];
 
 for (const [source, fact, failure] of [

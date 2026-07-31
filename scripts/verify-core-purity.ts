@@ -15,7 +15,7 @@ import { report, scan } from "./gate-lib.ts";
 const FORBIDDEN =
   /^\s*use\s+(tauri|rusqlite|std::fs|std::process|std::net|std::path::PathBuf)\b|\bstd::fs::(write|create|remove|rename|copy|File::create)\b/;
 
-const result = await scan(["crates/refrain-core/src/**/*.rs"], FORBIDDEN, {
+const result = scan(["crates/refrain-core/src/**/*.rs"], FORBIDDEN, {
   ignoreLine: (line) => /^\s*(\/\/|\/\*|\*)/.test(line),
 });
 
@@ -27,7 +27,7 @@ const result = await scan(["crates/refrain-core/src/**/*.rs"], FORBIDDEN, {
 //
 // Injection proof: add `use tauri::State;` to any module under
 // crates/refrain-app/src and this exits 1 naming the file and line.
-const appResult = await scan(["crates/refrain-app/src/**/*.rs"], /^\s*use\s+tauri\b/, {
+const appResult = scan(["crates/refrain-app/src/**/*.rs"], /^\s*use\s+tauri\b/, {
   ignoreLine: (line) => /^\s*(\/\/|\/\*|\*)/.test(line),
 });
 
