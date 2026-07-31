@@ -30,6 +30,62 @@ If you cannot explain part of it, say so in the description. "I do not fully
 understand why this fixes it" is useful information. A confident explanation of
 something you did not verify is not.
 
+## Before you push: look at what you are about to publish
+
+RefRain is a writing tool. The files it touches are manuscripts, notes, and
+research — the most private things on an author's disk. A contributor debugging
+a real problem is usually debugging it against **their own writing**, and that
+is exactly when a stray file gets committed.
+
+Run this before every push:
+
+```sh
+git status --short          # anything untracked you did not mean to add?
+git diff --cached --stat    # what is actually staged?
+git diff --cached           # read it — every line
+```
+
+Then ask three questions about the diff:
+
+1. **Is any of this my own text?** A manuscript, a note, a paragraph pasted into
+   a fixture. Test fixtures must be written for the test, not lifted from real
+   writing.
+2. **Does any of it name a real path?** `/Users/yourname/...`,
+   `C:\Users\...`, a project folder, a client's name in a filename. Absolute
+   paths leak both your identity and your directory layout, and they only
+   resolve on the machine that wrote them.
+3. **Is there a credential, token, or key?** Including in a screenshot, a log
+   excerpt, or a pasted error message.
+
+A commit is not the last chance to catch this. **Git history keeps what you
+remove in a later commit**, so a file deleted in the next commit is still
+published. If you have already pushed something private, say so immediately —
+rewriting history and rotating a leaked credential both work, and both work far
+better within the hour.
+
+What must never enter the repository:
+
+| Never commit | Why |
+|---|---|
+| Your own manuscripts, notes, or research | They are yours; a fixture should be written for the test |
+| `.refrain/` or `.refrain-source/` from a real project | Application state and the untouched backup of someone's writing |
+| Absolute paths from your machine | Leaks your identity and layout, and resolves nowhere else |
+| Tokens, keys, passwords | Including inside logs, screenshots, and error output |
+| Any Markdown not in the published set | `verify:no-spec-upload` is an allowlist; a new `.md` fails until someone adds it deliberately |
+| Local design or planning documents | `SPEC.md`, memos, audit notes — the most common case of the row above |
+| Generated review artifacts | Preview pages and screenshots. The script that rebuilds them belongs in the repository; the output does not |
+
+The `.gitignore` covers the known cases, and `verify:no-spec-upload` enforces
+the rest as an **allowlist**: every Markdown file in the repository must be
+named in that gate's `PUBLISHED` list. A document you did not mean to add fails
+the gate rather than reaching the history — you do not have to remember the
+rule, and neither does a reviewer.
+
+That allowlist is the reason a contributor cannot publish a manuscript by
+accident. What it cannot catch is private text pasted *inside* a file that is
+already published — a real paragraph used as a test fixture, a real path in an
+error message. That part is the reading above, and it cannot be automated.
+
 ## What good looks like here
 
 Read [ARCHITECTURE.md](ARCHITECTURE.md) first — it names the modules and, more

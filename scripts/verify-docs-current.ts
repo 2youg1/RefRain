@@ -23,8 +23,15 @@ const result = spawnSync("cargo", ["test", "-p", "refrain-core", "docs_current"]
   encoding: "utf8",
 });
 if (result.status !== 0) {
-  process.stdout.write(result.stdout);
-  process.stderr.write(result.stderr);
+  // spawnSync reports a missing executable through `error`, leaving stdout and
+  // stderr null. Writing null to a stream throws, which would hide the actual
+  // reason this gate could not run.
+  if (result.stdout !== null) process.stdout.write(result.stdout);
+  if (result.stderr !== null) process.stderr.write(result.stderr);
+  if (result.error !== undefined) {
+    console.error(`FAIL  verify:docs-current: cargo did not run — ${result.error.message}`);
+    process.exit(1);
+  }
   console.error("FAIL  verify:docs-current: generated protocol docs drifted from the schema");
   process.exit(result.status ?? 1);
 }

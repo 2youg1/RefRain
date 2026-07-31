@@ -62,12 +62,12 @@ be true everywhere.
 
 | Crate | Modules | Lines | Owns |
 |---|---:|---:|---|
-| `refrain-core` | 26 | 7,601 | The domain: manuscripts, blocks, the agent protocol, ranking |
-| `refrain-store` | 25 | 9,880 | SQLite, the file catalogue, ingestion, search indexes |
+| `refrain-core` | 27 | 7,862 | The domain: manuscripts, blocks, the agent protocol, ranking |
+| `refrain-store` | 25 | 10,009 | SQLite, the file catalogue, ingestion, search indexes |
 | `refrain-host` | 6 | 3,579 | Agents, Runs, orchestration edges, staging |
 | `refrain-app` | 8 | 1,532 | Use cases that need more than one of the above |
-| `apps/desktop/src-tauri` | — | 4,158 | The command bridge |
-| `apps/desktop/src`, `packages/editor` | — | 12,820 | The surface (22,701 including tests) |
+| `apps/desktop/src-tauri` | — | 4,169 | The command bridge |
+| `apps/desktop/src`, `packages/editor` | — | 12,679 | The surface |
 
 ---
 
@@ -191,13 +191,16 @@ cargo run -p refrain-core --example generate_skill_doc -- docs/SKILL.md
 hand-kept copy once taught agents to write `version="1"` while the parser
 required `"2"`, so every agent that followed the documentation was rejected.
 
-The contract ships in three tiers, chosen per round:
+The contract ships in three tiers, chosen per round. The enum is
+`ContractMode` in `refrain-core/src/context_compiler.rs`; the parser in
+`agent_protocol.rs` stays the only authority, so a tier changes what a round
+carries, never the protocol itself:
 
 | Tier | Content |
 |---|---|
-| `Short` | The reply shape, the scope rules, how to reach a material. What every round carries. |
-| `Full` | The whole protocol document |
-| `Pointer` | One line, for agents that already know the format |
+| `Short` | The reply shape, the scope rules, how to reach a material. The default, and what a channel without a session carries every round. |
+| `Full` | The whole generated protocol document. A harness's first round. |
+| `Pointer` | One line, for later rounds on a harness that already holds the full text |
 
 **A guard on the contract belongs on the tier that is actually delivered.** A
 test asserting that `Full` explains something reads like coverage while agents
@@ -213,7 +216,7 @@ only ever receive `Short`.
 | **Desktop shell** | [Tauri](https://tauri.app) with [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) |
 | **Frontend** | [SolidJS](https://solidjs.com), [TypeScript](https://www.typescriptlang.org), [Biome](https://biomejs.dev) |
 | **Build tooling** | [Bun](https://bun.sh) and [Node.js](https://nodejs.org); build-time only, not bundled |
-| **Release policy** | [ScriptC](https://github.com/vercel-labs/scriptc) compiles `scripts/release-assets.ts` into the native Windows asset validator |
+| **Release policy** | [ScriptC](https://github.com/vercel-labs/scriptc) compiles `scripts/release-assets.ts` into the native Windows asset validator. When ScriptC cannot compile on a runner, the workflow runs the same script on Bun; both paths were measured to produce a byte-identical manifest. |
 | **Storage** | [SQLite](https://sqlite.org) through [rusqlite](https://github.com/rusqlite/rusqlite), FTS5 `unicode61`, and an application-level bigram tokeniser |
 | **Hashing** | [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) |
 | **Ids** | [UUID](https://github.com/uuid-rs/uuid), v7 |
@@ -245,8 +248,8 @@ Measured on 22,410 real files (252MB), not chosen from documentation:
 
 ## Gates
 
-`bun run gate` runs 48 stages. The Rust checks are **not** among them and must
-be run separately:
+`bun run gate` runs 47 stages over the 41 gate scripts on disk. The Rust checks
+are **not** among them and must be run separately:
 
 ```sh
 cargo fmt --all --check
