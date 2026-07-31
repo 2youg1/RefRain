@@ -108,6 +108,34 @@ mod cap {
 /// and by the time a chapter is a season old it contributes almost nothing.
 const RECENCY_HALF_LIFE_DAYS: f64 = 14.0;
 
+/// The bm25 value at which the body signal reaches half its ceiling.
+///
+/// Measured, and the measurement is the whole point. `squash` is a hyperbola,
+/// so it discriminates only near its half-value point and flattens out past
+/// it. Which bm25 values are "near" depends entirely on the corpus statistics
+/// bm25 is computed from — and block-level indexing changed those statistics,
+/// because bm25's notion of document length became the *block's* length.
+///
+/// Before: document-level bm25 ran near 1.2, and the implicit half-value point
+/// of 1.0 sat right in the middle of the distribution.
+///
+/// After (4,000 documents / 196,543 blocks of the real workspace, via
+/// `examples/rank_calibration.rs`): the median is 5.74 and the quartiles run
+/// 3.31 to 12.47. Against a half-value point of 1.0 that whole range squashes
+/// into 76.8%–92.6% of the ceiling — every candidate scoring near full marks,
+/// which is a signal that has stopped signalling. Half the corpus and the
+/// other half become indistinguishable on the one axis that reads the words.
+///
+/// (An earlier version of this comment claimed the old scale also inverted
+/// `_ORDERED`, letting a heading beat a title match. That was an arithmetic
+/// error on my part — the title-matching candidate carries a body score too,
+/// so it wins under either scale, 8.56 to 6.67. The real cost is the lost
+/// discrimination above, which is what the calibration buys back.)
+///
+/// Set to the measured median: half the hits land below half the ceiling and
+/// half above, which is what "this signal discriminates" means.
+const BODY_HALF_VALUE_BM25: f64 = 5.74;
+
 /// The score for one candidate. Larger is better.
 ///
 /// The BM25 contribution is squashed into `cap::BODY` rather than added
@@ -132,7 +160,7 @@ pub fn score(candidate: &Candidate) -> f64 {
         BlockKind::Paragraph => 0.0,
     };
 
-    let body = squash(candidate.bm25.max(0.0), cap::BODY);
+    let body = squash(candidate.bm25.max(0.0) / BODY_HALF_VALUE_BM25, cap::BODY);
     let recency = cap::RECENCY * 0.5_f64.powf(candidate.days_since_edit / RECENCY_HALF_LIFE_DAYS);
 
     path + structure + body + recency
@@ -306,6 +334,81 @@ mod tests {
         ];
         rank(&mut found);
         assert_eq!(found[0].path, "营销");
+    }
+
+    /// 判据 1-4：作者选的标题胜过文档内部结构，块级量纲下依然成立。
+    ///
+    /// 说明一处我算错又更正的地方，免得下一位重复：起初我以为旧半值点
+    /// 会让「标题块(4.0) + 近满额正文(2.67) = 6.67」压过「路径命中(6.0)」。
+    /// **算错了**——路径命中的那个候选自己也有正文分，实际是 8.56 对 6.67，
+    /// 两个半值点下作者的标题都稳赢。所以这条测试对标定值的改动不敏感，
+    /// 它守的是 `cap::_ORDERED` 那条次序本身，而不是标定。
+    /// 标定的实际收益由 `the_body_signal_still_discriminates_across_the_measured_range`
+    /// 守着，那一条对半值点的两个方向都会变红。
+    #[test]
+    fn a_title_the_author_chose_outranks_a_heading_inside_a_document() {
+        // 实测分位数，来自 examples/rank_calibration.rs 对 196,543 块的测量。
+        const MEASURED_P75: f64 = 7.96;
+        const MEASURED_P50: f64 = 5.74;
+
+        let mut found = vec![
+            // 文档内的一个标题块，正文相关度处在实测的高分位。
+            Candidate {
+                path_match: PathMatch::None,
+                block: BlockKind::Heading,
+                bm25: MEASURED_P75,
+                ..candidate("第七章-某个很长的章节")
+            },
+            // 作者给文件起的名字里含查询词，正文相关度只是中位。
+            Candidate {
+                path_match: PathMatch::Contains,
+                block: BlockKind::Paragraph,
+                bm25: MEASURED_P50,
+                ..candidate("资料-营销人物志")
+            },
+        ];
+        rank(&mut found);
+        assert_eq!(
+            found[0].path, "资料-营销人物志",
+            "作者选的标题应排在文档内部标题之前: {found:?}"
+        );
+    }
+
+    /// 正文信号必须真的能区分——上限没用满，也没有挤在顶端。
+    ///
+    /// 一个恒定输出接近上限的信号等于没有信号。这条断言直接对着标定值：
+    /// 把 `BODY_HALF_VALUE_BM25` 改回 1.0，实测分位数会全部挤进 76%–93%，
+    /// 断言当场变红。
+    #[test]
+    fn the_body_signal_still_discriminates_across_the_measured_range() {
+        let at = |bm25: f64| {
+            score(&Candidate {
+                bm25,
+                ..candidate("同一份")
+            })
+        };
+        // 实测的 p25 / p50 / p95。
+        let low = at(3.31);
+        let middle = at(5.74);
+        let high = at(12.47);
+
+        assert!(low < middle && middle < high, "{low} {middle} {high}");
+
+        // 中位数应落在上限的一半附近——这正是「半值点」的定义。
+        let ratio = middle / cap::BODY;
+        assert!(
+            (0.40..=0.60).contains(&ratio),
+            "中位命中应占正文上限的约一半，实为 {:.1}%",
+            ratio * 100.0
+        );
+
+        // 四分位跨度必须有实质差别，而不是都贴着上限。
+        let spread = (high - low) / cap::BODY;
+        assert!(
+            spread > 0.20,
+            "p25 到 p95 的跨度只有上限的 {:.1}%，这个信号已经不区分了",
+            spread * 100.0
+        );
     }
 
     #[test]

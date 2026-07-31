@@ -19,6 +19,7 @@ pub mod kara;
 pub mod manuscript;
 pub mod role;
 pub mod search_rank;
+pub mod searchable_block;
 pub mod source_layout;
 
 pub use agent_protocol::{

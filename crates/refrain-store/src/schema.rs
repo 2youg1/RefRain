@@ -324,6 +324,76 @@ impl Database for ProjectDb {
                     )
                 },
             },
+            Migration {
+                version: SchemaVersion(8),
+                name: "block-level-search",
+                apply: |tx| {
+                    // One index row per *block*, not per document.
+                    //
+                    // v7 held a document per row, so a query could answer
+                    // "which file" and never "which passage". An agent handed
+                    // an outline instead of 100KB of prose needs the second:
+                    // it retrieves a passage and cites it, and a document-
+                    // level hit gives it nothing to cite.
+                    //
+                    // Doing this by reading the whole document back and
+                    // searching it again in Rust was considered and rejected:
+                    // it re-reads exactly the bytes this design exists to stop
+                    // sending, and bm25 would still be scoring *documents*, so
+                    // ranking quality would not improve at all.
+                    //
+                    // v7's tables are dropped rather than kept alongside. Two
+                    // granularities of the same fact are two authorities, and
+                    // the stale one answers queries nobody meant to ask. The
+                    // index is a derived artifact — dropping it costs a
+                    // rebuild on the next search, which `ensure_indexed`
+                    // already performs lazily.
+                    //
+                    // `ordinal` is the block's position in its document: the
+                    // handle shared by the index, the agent's citation, and
+                    // the bytes on disk. `start_byte` and `bytes` let a
+                    // retrieved fragment prove it is the same text the index
+                    // read, without the index keeping a copy of the words.
+                    tx.execute_batch(
+                        "DROP TABLE IF EXISTS document_search;
+                         DROP TABLE IF EXISTS document_search_state;
+                         CREATE VIRTUAL TABLE block_search USING fts5(
+                             path,
+                             body,
+                             content='',
+                             tokenize='unicode61 remove_diacritics 2',
+                             detail=full
+                         );
+                         CREATE TABLE block_search_state (
+                             rowid_of      INTEGER PRIMARY KEY,
+                             document      TEXT NOT NULL,
+                             ordinal       INTEGER NOT NULL,
+                             kind          TEXT NOT NULL,
+                             start_byte    INTEGER NOT NULL,
+                             bytes         INTEGER NOT NULL,
+                             -- Exactly the text handed to FTS5, per block.
+                             -- Deleting from an external-content table means
+                             -- replaying what was inserted; a document now
+                             -- owns N postings instead of one, so getting
+                             -- this wrong corrupts N times as much.
+                             indexed_path  TEXT NOT NULL,
+                             indexed_body  TEXT NOT NULL,
+                             UNIQUE(document, ordinal)
+                         ) STRICT;
+                         CREATE INDEX block_search_document
+                             ON block_search_state(document);
+                         -- One row per indexed document: the digest its blocks
+                         -- were built from. Freshness is a document-level
+                         -- question even though the index is block-level, so
+                         -- answering it reads one row rather than counting
+                         -- blocks.
+                         CREATE TABLE document_index_state (
+                             document      TEXT PRIMARY KEY,
+                             digest        TEXT NOT NULL
+                         ) STRICT;",
+                    )
+                },
+            },
         ]
     }
 }
