@@ -38,9 +38,18 @@ const localSpecIsIgnored =
  * 从 `agent_protocol::skill_doc()` 生成，而那正是编译器给 agent 的同一份契约。
  * 手写副本漂移过：它教 agent 写 version="1"（解析器要 "2"，照做的 agent 每轮被拒），
  * 且完全没提 <material-draft>。`verify:skill-doc-current` 守着这份生成关系。
+ * CONTRIBUTING 与 ARCHITECTURE 是 KL9 2026-07-31 加入的第五、六份，理由与前四份
+ * 同类而非例外：它们是**面向仓库外部的人与 agent** 的门面，不是设计文档。
+ * CONTRIBUTING 说的是「怎么提一个改动」（PR 三段式、注入验证的义务、四件检查），
+ * ARCHITECTURE 说的是「问题最可能在哪个模块、模块之间怎么连、这个项目用哪些词」——
+ * 后者内含 Glossary，正是为了让 agent 不再造出与本项目不同的术语。
+ *
+ * 它们不构成第二权威的判据是可检查的：里面的每个数字与版本号都取自代码与
+ * manifest，且门禁 `verify:one-word-per-concept` 守着术语本身。设计过程、
+ * 色表、预览页仍然一律写到仓库之外。
  */
 const allowed = (file: string): boolean =>
-  /^(README|AGENTS|ROADMAP|SKILL)\.md$/.test(file) ||
+  /^(README|AGENTS|ROADMAP|SKILL|CONTRIBUTING|ARCHITECTURE)\.md$/.test(file) ||
   file === "apps/desktop/index.html" ||
   /^tests\/corpora\/[^/]+\.md$/.test(file) ||
   /^probe-results\/[^/]+\.md$/.test(file) ||
