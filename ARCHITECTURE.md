@@ -214,7 +214,7 @@ Taken from the manifests, pinned exactly.
 | **Rust** | edition 2024, rust-version 1.97.1 |
 | **Desktop shell** | Tauri 2.11.5 (`tauri-build` 2.6.3, `plugin-dialog` 2.7.2) |
 | **Frontend** | SolidJS 1.9.14, TypeScript 7.0.2, Biome |
-| **Runtime** | ScriptC |
+| **Build tooling** | Bun (development and build only — no bytes reach the installer) |
 | **Storage** | rusqlite 0.40.1 (bundled SQLite), FTS5 with `unicode61` plus an application-level bigram tokeniser |
 | **Hashing** | blake3 1.8.3 |
 | **Ids** | uuid 1.24.0, v7 (time-ordered) |
