@@ -10,12 +10,6 @@ else. Items are removed when they ship, or when measurement kills them.
 part of the design, not a setting: sandboxed, no scripts, no network. This is a
 new capability rather than a fix, which is why it is not further along.
 
-**Syntax highlighting in the preview.** Shiki, registered through `shiki/core`
-with exact entry points so that nothing reaches the network. Measured: the pure
-JavaScript engine covering six languages is 94KB gzipped, against 297KB for the
-WASM build covering three — the smaller, network-free path is also the more
-capable one here.
-
 **Precision as a visible choice.** Search already has `Exact` and `Loose`, and
 `Exact` falls back automatically. Whether the author should ever see that
 control is undecided: measurement showed the two modes return identical results
@@ -41,8 +35,8 @@ question is whether the directory reconciliation stays honest at that size.
 
 ## Under consideration
 
-**Binary size.** 17.34MB in release, with `strip`, `lto` and
-`codegen-units = 1` already on. `panic = "abort"` and dependency pruning (571
+**Binary size.** 22.08MB in release on Linux, with `strip`, `lto` and
+`codegen-units = 1` already on. `panic = "abort"` and dependency pruning (605
 crates) are unexplored. `opt-level = "z"` is **not** planned: it trades away the
 performance work this project has already banked.
 

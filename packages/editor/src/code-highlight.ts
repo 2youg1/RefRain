@@ -90,6 +90,21 @@ export function isHighlightable(lang: string): boolean {
 }
 
 /**
+ * 围栏声明的语言；声明为空或本构建没内嵌它时返回 null。
+ *
+ * 信息串是开栏反引号之后的整行，其中只有第一个词是语言，其余是别的工具用的
+ * 元数据（`rust ignore no_run`）。不认得的语言退化成纯文本——语法定义全部在
+ * 构建期内嵌，运行期不会为了一个陌生语言去取任何东西。
+ */
+export function fenceLanguage(text: string): string | null {
+  const breakAt = text.indexOf("\n");
+  const firstLine = breakAt === -1 ? text : text.slice(0, breakAt);
+  const info = firstLine.replace(/^[`~]+/, "").trim();
+  const language = info.split(/\s+/)[0] ?? "";
+  return language !== "" && isHighlightable(language) ? language : null;
+}
+
+/**
  * 一段着了色的代码。
  *
  * 给的是 token 而不是 HTML 字符串：这个编辑器里 DOM 由 `packages/editor` 独家拥有，

@@ -1,5 +1,6 @@
 import { BlockHeightIndex } from "./block-height-index";
 import { applyBlockPrefix, type BlockPrefix } from "./block-prefix";
+import { type CodeTheme, fenceLanguage, tokenizeCode } from "./code-highlight";
 import { applyInlineMark } from "./inline-mark";
 import type {
   Block,
@@ -204,6 +205,11 @@ export class VirtualManuscriptView {
   #selectionListeners: ((measure: SelectionMeasure | null) => void)[] = [];
   #contextSelection: ContextSelection | null = null;
   #interaction: InteractionState = { kind: "idle" };
+  /**
+   * The palette fences are coloured with. Set by the shell when the author
+   * changes theme; `forgetHighlights` clears the token cache at the same time.
+   */
+  #codeTheme: CodeTheme = "vitesse-light";
   #bottomPinned = false;
   #destroyed = false;
   #pendingLayoutForce = false;
@@ -523,6 +529,65 @@ export class VirtualManuscriptView {
     paragraph.style.whiteSpace = "pre-wrap";
     paragraph.style.outline = "none";
     return paragraph;
+  }
+
+  /**
+   * The language a fence declares, or null when it declares none this
+   * highlighter knows.
+   *
+   * The info string is whatever follows the opening backticks. Only the first
+   * word is the language; the rest is metadata other tools use.
+   *
+   * Exported as a free function so a test can call the code that ships rather
+   * than a copy of it: a transcribed assertion only ever proves the transcript.
+   */
+  #fenceLanguage(block: Block): string | null {
+    return block.isFence === true ? fenceLanguage(block.text) : null;
+  }
+
+  /**
+   * Colours a fence in place, replacing its single text node with one span per
+   * token.
+   *
+   * Three conditions guard the write, and each one exists because breaking it
+   * is visible to the author:
+   *
+   * - The caret must not be in this paragraph. Its DOM text is the in-flight
+   *   edit, ahead of the projection.
+   * - No composition may be in flight, because replacing nodes under an IME
+   *   drops the pre-edit string.
+   * - The text must not have changed while the highlighter was awaited.
+   *   Tokenising is async; the author keeps typing during it.
+   *
+   * Caret offsets survive the replacement: `placeCaret` walks text nodes and
+   * accumulates their lengths, so it never assumed a single node.
+   */
+  async #highlightFence(paragraph: HTMLElement, block: Block): Promise<void> {
+    const language = this.#fenceLanguage(block);
+    if (language === null) return;
+
+    const before = block.text;
+    const lines = await tokenizeCode(before, language, this.#codeTheme);
+    if (lines.length === 0) return;
+
+    if (this.#interaction.kind === "composing") return;
+    if (paragraph !== this.#paragraphAtCaret() && paragraph.textContent === before) {
+      const document_ = paragraph.ownerDocument;
+      const fragment = document_.createDocumentFragment();
+      lines.forEach((tokens, index) => {
+        if (index > 0) fragment.appendChild(document_.createTextNode("\n"));
+        for (const token of tokens) {
+          const span = document_.createElement("span");
+          span.textContent = token.text;
+          if (token.color !== "") span.style.color = token.color;
+          if (token.italic) span.style.fontStyle = "italic";
+          fragment.appendChild(span);
+        }
+      });
+      paragraph.textContent = "";
+      paragraph.appendChild(fragment);
+      paragraph.dataset.highlighted = before;
+    }
   }
 
   /**
@@ -898,6 +963,18 @@ export class VirtualManuscriptView {
         // author's in-flight edit, ahead of the projection.
         if (paragraph !== activeParagraph && paragraph.textContent !== block.text) {
           paragraph.textContent = block.text;
+          delete paragraph.dataset.highlighted;
+        }
+        // A fence the author is not inside gets coloured. The caret's own
+        // paragraph stays plain text: spans under an active caret are what
+        // makes an editor fight its author.
+        if (paragraph === activeParagraph) {
+          if (paragraph.dataset.highlighted !== undefined) {
+            paragraph.textContent = block.text;
+            delete paragraph.dataset.highlighted;
+          }
+        } else if (block.isFence === true && paragraph.dataset.highlighted !== block.text) {
+          void this.#highlightFence(paragraph, block);
         }
         this.#byId.set(block.id, paragraph);
         ordered.push(paragraph);
