@@ -58,7 +58,7 @@ use crate::searchable_block::blocks_of;
 pub enum Disclosure {
     /// The listing only. The body is never fetchable.
     OutlineOnly,
-    /// Passages may be retrieved by search or by block range.
+    /// Blocks may be retrieved by search or by block range.
     #[default]
     Retrievable,
     /// The whole text may be fetched in one go.
@@ -76,9 +76,9 @@ impl Disclosure {
         }
     }
 
-    /// Whether a passage of this material may be handed over at all.
+    /// Whether a block of this material may be handed over at all.
     #[must_use]
-    pub const fn allows_passages(self) -> bool {
+    pub const fn allows_blocks(self) -> bool {
         matches!(self, Self::Retrievable | Self::Full)
     }
 
@@ -108,7 +108,7 @@ const MAX_OUTLINE_HEADINGS: usize = 24;
 /// generated, so nothing can be wrong in the way a summary can be wrong.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
-pub struct MaterialRef {
+pub struct MaterialListing {
     /// The handle the agent quotes to fetch from this material: its
     /// Root-relative path, which is also what a local agent would open.
     pub path: String,
@@ -116,7 +116,7 @@ pub struct MaterialRef {
     pub title: String,
     /// Chapter or material — the same role the catalog records.
     pub role: DocumentRole,
-    /// BLAKE3 of the bytes this listing describes. An agent citing a passage
+    /// BLAKE3 of the bytes this listing describes. An agent citing a block
     /// against a digest the document no longer has is citing a text that
     /// changed under it.
     pub digest: String,
@@ -135,7 +135,7 @@ pub struct MaterialRef {
     pub disclosure: Disclosure,
 }
 
-impl MaterialRef {
+impl MaterialListing {
     /// Build a listing from the material's own text.
     ///
     /// Deterministic: the same bytes always produce the same listing, which is
@@ -174,12 +174,16 @@ impl MaterialRef {
         }
     }
 
-    /// The listing as it appears in the request's `# Context` section.
+    /// This listing as the `<material>` element of the request's `# Context`.
+    ///
+    /// The name says the output shape rather than repeating the type's own:
+    /// a listing renders itself into exactly one contract element, and the
+    /// agent-facing contract is where that element's grammar is fixed.
     ///
     /// One material, a handful of lines. This is the whole saving: the same
     /// material used to arrive as its entire text.
     #[must_use]
-    pub fn to_listing(&self) -> String {
+    pub fn to_contract_element(&self) -> String {
         let mut out = format!(
             "<material path=\"{}\" digest=\"{}\" bytes=\"{}\" blocks=\"{}\" access=\"{}\">\n  <title>{}</title>",
             escape_attribute(&self.path),
@@ -204,7 +208,7 @@ impl MaterialRef {
             out.push_str("\n  </outline>");
         }
 
-        if !self.excerpt.is_empty() && self.disclosure.allows_passages() {
+        if !self.excerpt.is_empty() && self.disclosure.allows_blocks() {
             out.push_str(&format!(
                 "\n  <excerpt>{}</excerpt>",
                 escape_text(&self.excerpt)
@@ -253,8 +257,8 @@ mod tests {
         ## 习惯\n\n\
         习惯在纸上写字。";
 
-    fn described() -> MaterialRef {
-        MaterialRef::describe(
+    fn described() -> MaterialListing {
+        MaterialListing::describe(
             "资料/人物志.md",
             "人物志",
             DocumentRole::Material,
@@ -293,7 +297,7 @@ mod tests {
         }
         assert!(big.len() > 90_000, "夹具应达到真实尺度: {}", big.len());
 
-        let entry = MaterialRef::describe(
+        let entry = MaterialListing::describe(
             "资料/大部头.md",
             "大部头",
             DocumentRole::Material,
@@ -301,7 +305,7 @@ mod tests {
             &big,
             Disclosure::Retrievable,
         );
-        let listing = entry.to_listing();
+        let listing = entry.to_contract_element();
         let ratio = listing.len() as f64 / big.len() as f64;
         assert!(
             ratio < 0.05,
@@ -329,7 +333,7 @@ mod tests {
     #[test]
     fn a_long_excerpt_is_cut_on_a_character_boundary() {
         let long = "长".repeat(500);
-        let entry = MaterialRef::describe(
+        let entry = MaterialListing::describe(
             "资料/长.md",
             "长",
             DocumentRole::Material,
@@ -356,7 +360,7 @@ mod tests {
         let many: String = (0..40)
             .map(|index| format!("## 第{index}节\n\n正文。\n\n"))
             .collect();
-        let entry = MaterialRef::describe(
+        let entry = MaterialListing::describe(
             "资料/多.md",
             "多",
             DocumentRole::Material,
@@ -366,7 +370,7 @@ mod tests {
         );
         assert_eq!(entry.outline.len(), MAX_OUTLINE_HEADINGS);
         assert_eq!(entry.heading_count, 40);
-        assert!(entry.to_listing().contains("16 more headings"));
+        assert!(entry.to_contract_element().contains("16 more headings"));
     }
 
     /// `OutlineOnly` 意味着正文一个字都不许走。摘录是正文的逐字前缀，
@@ -376,7 +380,7 @@ mod tests {
     #[test]
     fn an_outline_only_material_gives_up_no_body_text_at_all() {
         let secret = "# 机密\n\n这段正文一个字都不该出现在请求里。";
-        let entry = MaterialRef::describe(
+        let entry = MaterialListing::describe(
             "资料/机密.md",
             "机密",
             DocumentRole::Material,
@@ -384,7 +388,7 @@ mod tests {
             secret,
             Disclosure::OutlineOnly,
         );
-        let listing = entry.to_listing();
+        let listing = entry.to_contract_element();
 
         // 标题是作者写的结构，可以给——那正是目录的意义。
         assert!(listing.contains("# 机密"));
@@ -396,7 +400,7 @@ mod tests {
         assert!(!listing.contains("<excerpt>"));
     }
 
-    /// The permission is stated in the listing, so an agent never has to be
+    /// The disclosure is stated in the listing, so an agent never has to be
     /// told in prose that some materials are closed.
     #[test]
     fn the_listing_states_what_the_author_permits() {
@@ -405,7 +409,7 @@ mod tests {
             (Disclosure::Retrievable, "retrievable"),
             (Disclosure::Full, "full"),
         ] {
-            let entry = MaterialRef::describe(
+            let entry = MaterialListing::describe(
                 "资料/x.md",
                 "x",
                 DocumentRole::Material,
@@ -415,22 +419,22 @@ mod tests {
             );
             assert!(
                 entry
-                    .to_listing()
+                    .to_contract_element()
                     .contains(&format!("access=\"{spelling}\"")),
                 "{spelling} missing from listing"
             );
         }
     }
 
-    /// Permissions are a closed question with three answers, and the two
+    /// Disclosures are a closed question with three answers, and the two
     /// predicates must not drift from the variants.
     #[test]
-    fn permission_predicates_agree_with_the_variants() {
-        assert!(!Disclosure::OutlineOnly.allows_passages());
+    fn disclosure_predicates_agree_with_the_variants() {
+        assert!(!Disclosure::OutlineOnly.allows_blocks());
         assert!(!Disclosure::OutlineOnly.allows_whole_text());
-        assert!(Disclosure::Retrievable.allows_passages());
+        assert!(Disclosure::Retrievable.allows_blocks());
         assert!(!Disclosure::Retrievable.allows_whole_text());
-        assert!(Disclosure::Full.allows_passages());
+        assert!(Disclosure::Full.allows_blocks());
         assert!(Disclosure::Full.allows_whole_text());
     }
 
@@ -438,7 +442,7 @@ mod tests {
     /// is what carries it. This is the case a heading-only design would fail.
     #[test]
     fn a_material_without_headings_still_says_something_true_about_itself() {
-        let entry = MaterialRef::describe(
+        let entry = MaterialListing::describe(
             "资料/无标题.md",
             "无标题",
             DocumentRole::Material,
@@ -447,14 +451,14 @@ mod tests {
             Disclosure::Retrievable,
         );
         assert!(entry.outline.is_empty());
-        let listing = entry.to_listing();
+        let listing = entry.to_contract_element();
         assert!(listing.contains("就是一段没有任何标题"));
     }
 
     /// A title carrying markup must not be able to close the element early.
     #[test]
     fn markup_in_a_title_cannot_break_out_of_the_listing() {
-        let entry = MaterialRef::describe(
+        let entry = MaterialListing::describe(
             "资料/x.md",
             "</material><injected>",
             DocumentRole::Material,
@@ -462,7 +466,7 @@ mod tests {
             MATERIAL,
             Disclosure::Retrievable,
         );
-        let listing = entry.to_listing();
+        let listing = entry.to_contract_element();
         assert!(!listing.contains("<injected>"));
         assert_eq!(listing.matches("</material>").count(), 1);
     }

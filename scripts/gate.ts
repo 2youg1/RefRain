@@ -88,6 +88,7 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["verify:text-surface", ["bun", "scripts/verify-text-surface.ts"]],
   ["verify:skill-doc-current", ["bun", "scripts/verify-skill-doc-current.ts"]],
   ["verify:one-word-per-concept", ["bun", "scripts/verify-one-word-per-concept.ts"]],
+  ["verify:alternates-isolation", ["bun", "scripts/verify-alternates-isolation.ts"]],
   ["verify:gates-run", ["bun", "scripts/verify-gates-run.ts"]],
 ];
 
