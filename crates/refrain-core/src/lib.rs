@@ -22,6 +22,7 @@ pub mod role;
 pub mod search_rank;
 pub mod searchable_block;
 pub mod source_layout;
+pub mod upstream_work;
 
 pub use agent_protocol::{
     AgentComment, AgentMemo, AgentReplacement, ArtifactContract, ArtifactError, ArtifactErrorCode,

@@ -14,6 +14,7 @@ use specta::Type;
 
 use crate::digest::content_hex;
 use crate::material_listing::MaterialListing;
+use crate::upstream_work::UpstreamWork;
 
 /// A token count, three-stated (SPEC 2.3). `Unknown` is a first-class value
 /// and never serialised as zero (INV-3).
@@ -73,6 +74,13 @@ pub struct DispatchInput {
     /// wrong the way a summary can be wrong. The agent fetches blocks it
     /// decides it needs; see `agent_protocol` for the two actions it has.
     pub materials: Vec<MaterialListing>,
+    /// 这一轮要读的上游产出，若这个 Run 带 `Follows` 或 `Verifies` 的边。
+    ///
+    /// 边只排出执行次序，内容要靠这里流过来：一个排在后面却什么也没读到的 Run，
+    /// 与一个没有边的 Run 做的是同一件事。整份逐字进入，不截断（判据 2-5）——
+    /// 一个被截断的产出会让验证者对它没读到的部分保持沉默，而那种沉默读起来与
+    /// 「没有问题」完全一样。
+    pub upstream: Vec<UpstreamWork>,
     /// The author's request, verbatim.
     pub request: String,
     /// The Edit Scopes, in manuscript order.
@@ -262,6 +270,11 @@ pub fn compile(input: &DispatchInput) -> DispatchPackage {
             material.to_contract_element(),
         ));
     }
+    // 上游产出排在材料之后：材料是作者给的背景，上游是这一轮真正要处理的东西，
+    // 挨着 `# Request` 更容易被读到。
+    for work in &input.upstream {
+        context_parts.push((format!("upstream:{}", work.run), work.to_contract_element()));
+    }
     let context = if context_parts.is_empty() {
         String::new()
     } else {
@@ -408,7 +421,9 @@ pub fn narrate_changes(changes: &[ChangeEntry]) -> Narration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Id;
     use crate::agent_protocol::{ArtifactContract, parse};
+    use crate::upstream_work::{UpstreamRelation, UpstreamWork};
 
     fn scopes() -> Vec<BeforeScope> {
         vec![
@@ -434,6 +449,7 @@ mod tests {
                 final_text: None,
             }],
             materials: vec![],
+            upstream: Vec::new(),
             request: "把这两段的语气改得更克制。".to_string(),
             scopes: scopes(),
             result_path: ".refrain/runs/r1/attempts/a1/result.md".to_string(),
@@ -631,6 +647,74 @@ mod tests {
             contract.contains(".refrain-source/"),
             "没有把备份目录与实时文件区分开"
         );
+    }
+
+    /// 判据 2-5 后半：`Follows` 的下游请求里，上游产出一个字节都不少。
+    ///
+    /// 断言的是**字节相等**，不是「包含开头一段」或「长度差不多」。理由是这条
+    /// 判据要防的正是「差不多」：一个被截断的产出会让下游对它没读到的部分保持
+    /// 沉默，而那种沉默读起来与「读过了，没有问题」完全一样——作者无从区分。
+    ///
+    /// 语料刻意取一份大到会诱使任何人加上限的产出（20 万字节量级）。这条测试
+    /// 因此真正守的是「将来有人在这条路径上加 max_bytes 时会当场变红」。
+    #[test]
+    fn a_follows_request_carries_the_whole_upstream_artifact() {
+        let artifact = "他握着剑，没有说话。".repeat(8_000);
+        let mut with_upstream = input();
+        with_upstream.upstream = vec![UpstreamWork {
+            run: Id::new(),
+            relation: UpstreamRelation::Follows,
+            artifact: artifact.clone(),
+        }];
+
+        let package = compile(&with_upstream);
+
+        assert!(
+            package.request_md.contains(&artifact),
+            "上游产出必须逐字出现在下游请求里"
+        );
+        // 逐字包含还不够：出现两次半段也能满足 contains。数一遍字节。
+        let opened = package.request_md.find("<body><![CDATA[").unwrap() + "<body><![CDATA[".len();
+        let closed = package.request_md[opened..].find("]]></body>").unwrap();
+        assert_eq!(
+            closed,
+            artifact.len(),
+            "请求里那一节的字节数必须等于上游产出全长"
+        );
+    }
+
+    /// 两种边在请求里长得不一样。
+    ///
+    /// 同一份字节配错措辞，就是让验证者去续写、让续写者去挑错。这条测试问的是
+    /// 「配错了会不会被发现」。
+    #[test]
+    fn a_verifier_is_told_it_is_reviewing_not_continuing() {
+        let mut verifying = input();
+        verifying.upstream = vec![UpstreamWork {
+            run: Id::new(),
+            relation: UpstreamRelation::Verifies,
+            artifact: "他握着刀。".to_string(),
+        }];
+        let package = compile(&verifying);
+
+        assert!(package.request_md.contains("<under-review"));
+        assert!(package.request_md.contains("报告问题"));
+        assert!(
+            package.request_md.contains("不接受 <replacement>"),
+            "验证者必须被告知这一轮不接受改写——领域层会拒绝它，请求里就该说清楚"
+        );
+    }
+
+    /// 没有边的一轮，请求里不该多出任何一节。
+    ///
+    /// 与上面两条配对：只测「有上游时它在」的话，一个无条件插入空节的实现也会
+    /// 全绿，而那会让每个普通工单都多付几十字节并多一段读不懂的话。
+    #[test]
+    fn a_round_without_an_edge_carries_no_upstream_section() {
+        let package = compile(&input());
+
+        assert!(!package.request_md.contains("<under-review"));
+        assert!(!package.request_md.contains("<upstream"));
     }
 
     #[test]
