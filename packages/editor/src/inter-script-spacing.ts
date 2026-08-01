@@ -54,19 +54,43 @@
  * 的 1/4 是**上界**不是规范值），日文按 JIS 用 1/4 em。
  */
 
-import { measure, presetOf, type TypesetPreset } from "@refrain/typeset";
+import {
+  type AdjustedChar,
+  measure,
+  optimizedLineStarts,
+  presetOf,
+  type TypesetPreset,
+} from "@refrain/typeset";
 
 /** 间距元素带的类名。渲染与门禁都引用这一个常量。 */
 export const GAP_CLASS = "cjk-gap";
 
 /**
- * 一段文本按混排边界切开的结果。
+ * 断行元素带的类名。
+ *
+ * 与间距元素同族：空元素、`contenteditable="false"`、对 `textContent` 透明。
+ * 实测（`e2e/probe-forced-break.ts`）`display: block` 的空元素能强制换行而
+ * `textContent` 与光标坐标系逐字不变。
+ *
+ * **不用 `<br>`**，虽然它同样通过了那三项实测。理由是所有权：`<br>` 是真实
+ * 节点，浏览器在 contenteditable 里会自行增删它（空段落的占位、Enter 的默认
+ * 行为），于是「哪些是我们画的、哪些是浏览器加的」需要额外区分，而区分错了
+ * 的表现是段落里多一个看不见的换行。一个我们独有的类名没有这个问题。
+ */
+export const BREAK_CLASS = "cjk-break";
+
+/**
+ * 一段文本按混排边界与**断行**切开的结果。
  *
  * `gapAfter` 是这一段之后要插入的间距（em）；最后一段是 0。**可以是负数**
  * ——那是标点挤压：连续两个全角标点各自的内白挨在一起，中间形成一个可见的
  * 空洞，CLREQ §6.3.2 要求把这一对压到 1.5 字宽。切分本身不改变任何字符——
  * 把所有 `text` 顺序拼起来必须逐字等于原文，这条由
  * `packages/editor/test/inter-script-spacing.test.ts` 守着。
+ *
+ * `breakAfter` 为真表示这一段之后要换行。间距与断行由**同一份 `measure`
+ * 结果**驱动：断行位置取决于挤压后的宽度（挤压会改变换行位置，这是 CLREQ
+ * 明文的处理顺序，第 3 步早于第 5 步），各测一次必然漂开。
  *
  * 引擎那边记的是 `spaceBefore`（这个字符**之前**的空白），这里转成
  * 「这一段之后」。方向不同不是随意选的：引擎记在之前，才问得出「行首要不
@@ -76,13 +100,14 @@ export const GAP_CLASS = "cjk-gap";
 export interface SpacedRun {
   readonly text: string;
   readonly gapAfter: number;
+  readonly breakAfter: boolean;
 }
 
 /**
- * 按预设把一段文本切成若干段，并标出每段之后的混排间距与标点挤压量。
+ * 按预设把一段文本切成若干段，标出每段之后的混排间距、标点挤压量与换行。
  *
- * 没有任何调整时返回单元素数组，调用方据此走「一个文本节点」的快路径——
- * 纯中文或纯英文的段落是多数，不该为它们建一串 DOM 节点。
+ * 没有任何调整且不需要换行时返回单元素数组，调用方据此走「一个文本节点」的
+ * 快路径——纯中文或纯英文的短段落是多数，不该为它们建一串 DOM 节点。
  *
  * **正负都要收**。第一版只收 `spaceBefore > 0`，于是引擎算出来的挤压量被
  * 整个丢在这一层，而且不报错——探针实测 `「引用」，然后……` 引擎给出净调整
@@ -91,27 +116,50 @@ export interface SpacedRun {
  *
  * 这是「引擎有、接线无」的典型形态：`packages/typeset` 的单元测试断言的是
  * `measure()` 的返回值，它一直是对的；没有任何测试问过那些数字有没有被画出来。
+ * 断行是同一个形态的第二次——`optimizedLineStarts` 写完之后同样零调用。
+ *
+ * `measureEm` 为 0 或负数时不断行，只切间距：那表示调用方还不知道版心多宽
+ * （元素尚未进 DOM、宽度尚未测出），此时按 0 宽断行会把每个字断成一行。
  */
-export function spacedRuns(text: string, preset: TypesetPreset): readonly SpacedRun[] {
-  if (text === "") return [{ text: "", gapAfter: 0 }];
+export function spacedRuns(
+  text: string,
+  preset: TypesetPreset,
+  measureEm = 0,
+): readonly SpacedRun[] {
+  if (text === "") return [{ text: "", gapAfter: 0, breakAfter: false }];
 
   // `measure` 按**码位**返回，每项自带 text。不要用下标去 slice 原串：
   // emoji 与增补平面汉字在 UTF-16 里占两格，按码位下标切会切进代理对中间，
   // 得到两个坏字符。累加 `character.text.length` 才是对的。
   const adjusted = measure(text, preset);
+  // 断行下标是**码位**下标，与 adjusted 的下标同一个坐标系。
+  const starts = measureEm > 0 ? new Set(optimizedLineStarts(adjusted, preset, measureEm)) : null;
   const runs: SpacedRun[] = [];
   let pending = "";
 
-  for (const character of adjusted) {
-    // spaceBefore 记在「这个字符之前」，所以看到它就意味着**上一段到此为止**。
-    if (character.spaceBefore !== 0 && pending !== "") {
-      runs.push({ text: pending, gapAfter: character.spaceBefore });
+  adjusted.forEach((character, index) => {
+    // 行首意味着**上一段到此为止**，且那一段之后要换行。
+    //
+    // 不写 `index > 0` 的守卫：`optimizedLineStarts` 恒把 0 作为第一个行首，
+    // 但 index 0 处 `pending` 还是空串，已经被下面那道 `pending !== ""` 挡住
+    // ——注入实测（去掉守卫后逐 run 对拍）输出**逐字相同**。一条删掉后行为
+    // 不变的守卫什么也没防，却会让下一个人以为「段首那一下」是靠它挡住的。
+    const startsLine = starts?.has(index) === true;
+    // spaceBefore 记在「这个字符之前」，所以看到它也意味着上一段到此为止。
+    if ((startsLine || character.spaceBefore !== 0) && pending !== "") {
+      runs.push({
+        text: pending,
+        // 换行处的间距不画：那段空白会挂在行尾，把行推出版心。JLREQ §3.1.9
+        // 的行尾空白是另一回事（它是标点自带的后置空白，不是混排间距）。
+        gapAfter: startsLine ? 0 : character.spaceBefore,
+        breakAfter: startsLine,
+      });
       pending = "";
     }
     pending += character.text;
-  }
+  });
 
-  runs.push({ text: pending, gapAfter: 0 });
+  runs.push({ text: pending, gapAfter: 0, breakAfter: false });
   return runs;
 }
 
@@ -119,12 +167,23 @@ export function spacedRuns(text: string, preset: TypesetPreset): readonly Spaced
  * 把切分结果画进一个已有的元素，替换它现有的内容。
  *
  * 调用方保证 `element` 此刻显示的就是 `text`——这个函数不读它，只写。
+ *
+ * `measureEm` 是版心宽度（em）。给了正值就接管折行：段落的 `white-space`
+ * 必须同时是 `pre`，否则浏览器会在我们的断行之外**再**自己折一次，两套断点
+ * 叠加，而屏幕上看起来只是「行短了一点」。这个配对关系由
+ * `verify:linebreak-takeover` 守着。
  */
-export function paintSpacedText(element: HTMLElement, text: string, language: string): void {
+export function paintSpacedText(
+  element: HTMLElement,
+  text: string,
+  language: string,
+  measureEm = 0,
+): void {
   const preset = presetOf(language);
-  const runs = spacedRuns(text, preset);
+  const runs = spacedRuns(text, preset, measureEm);
 
-  // 快路径：没有混排边界就是一个文本节点，与不开这个功能时完全一样。
+  // 快路径：没有混排边界也不需要换行，就是一个文本节点，与不开这个功能时
+  // 完全一样。
   if (runs.length === 1) {
     element.textContent = text;
     return;
@@ -153,6 +212,17 @@ export function paintSpacedText(element: HTMLElement, text: string, language: st
       // 位置——而它在屏幕上是空白，看不出为什么。
       gap.contentEditable = "false";
       fragment.appendChild(gap);
+    }
+    if (run.breakAfter) {
+      const lineBreak = document_.createElement("span");
+      lineBreak.className = BREAK_CLASS;
+      // `display: block` 且高度为零：块级元素强制它前后的内容分行，而零高度
+      // 让它自己不占任何垂直空间。实测三个候选里只有这一个与 `<br>` 同时
+      // 满足「断行生效 + textContent 逐字不变 + 光标坐标系一致」。
+      lineBreak.style.display = "block";
+      lineBreak.style.height = "0";
+      lineBreak.contentEditable = "false";
+      fragment.appendChild(lineBreak);
     }
   }
   element.textContent = "";

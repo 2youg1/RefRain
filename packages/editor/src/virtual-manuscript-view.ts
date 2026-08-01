@@ -489,7 +489,12 @@ export class VirtualManuscriptView {
    * 对 JIS 的 1/4 em。没有任何 `lang` 时 `presetOf` 落到简中。
    */
   #paintText(paragraph: HTMLElement, text: string): void {
-    paintSpacedText(paragraph, text, this.#declaredLanguage(paragraph));
+    const measureEm = this.#measureEm();
+    paintSpacedText(paragraph, text, this.#declaredLanguage(paragraph), measureEm);
+    // 记下这一段是按哪个版心断的行。文本没变但版心变了（窗口缩放、字号、
+    // 版心设置）时，行必须重断——而只比对文本的重画条件看不见这件事，
+    // 表现是换完窗口大小之后行还留在旧断点上，直到作者碰了那一段才更新。
+    paragraph.dataset.measureEm = String(measureEm);
   }
 
   /**
@@ -815,7 +820,11 @@ export class VirtualManuscriptView {
     // leaves it — the author watches the selection stop at the block edge.
     this.#paintText(paragraph, block.text);
     paragraph.style.minHeight = "1em";
-    paragraph.style.whiteSpace = "pre-wrap";
+    // `pre` 而不是 `pre-wrap`：折行由 `optimizedLineStarts` 决定，画成断行
+    // 元素（见 inter-script-spacing.ts）。留着 `pre-wrap` 浏览器会在我们的
+    // 断点之外**再**折一次，两套断点叠加，屏幕上只表现为「行短了一点」，
+    // 而没有任何东西会报错。`verify:linebreak-takeover` 守住这个配对。
+    paragraph.style.whiteSpace = "pre";
     paragraph.style.outline = "none";
     return paragraph;
   }
@@ -1154,6 +1163,21 @@ export class VirtualManuscriptView {
     return Math.max(1, Math.floor((width / fontSize) * 2));
   }
 
+  /**
+   * 版心宽度，em。断行引擎按 em 算宽，所以这是它要的那个数。
+   *
+   * 从 `#lineUnits()` 派生而不是另算一遍 `width / fontSize`：一个显示宽度当量
+   * 是半个 em（见上），两处各自读 `getComputedStyle` 会在字号变化的那一帧读到
+   * 不同的值，于是高度预测与实际断行用两个版心，而版面上看不出是哪一个错了。
+   *
+   * 宽度尚未测出时返回 0，`paintSpacedText` 据此不断行——那时断行会把每个字
+   * 断成一行。
+   */
+  #measureEm(): number {
+    const width = this.#measuredWidth > 0 ? this.#measuredWidth : this.#element.clientWidth;
+    return width > 0 ? this.#lineUnits() / 2 : 0;
+  }
+
   #rebuildHeightIndex(): void {
     const rebuilt = BlockHeightIndex.uniform(this.#blocks.length, this.#heightIndex.estimate);
     // Predict from each block's own shape before anything is measured. Blocks
@@ -1287,8 +1311,17 @@ export class VirtualManuscriptView {
         const paragraph = previous.get(block.id) ?? this.#paragraphFor(block);
         // Never overwrite the paragraph holding the caret: its DOM text is the
         // author's in-flight edit, ahead of the projection.
-        if (paragraph !== activeParagraph && paragraph.textContent !== block.text) {
-          paragraph.textContent = block.text;
+        //
+        // 走 `#paintText` 而不是直接写 `textContent`：间距、挤压与断行都在那
+        // 一处产生。这里曾经直接赋值，于是滚动进窗口的块拿不到间距，而已在
+        // 窗口里改文本的块拿得到——同一份稿子的新旧块两套排版，且只有滚到
+        // 未渲染区域才看得出来。
+        if (
+          paragraph !== activeParagraph &&
+          (paragraph.textContent !== block.text ||
+            paragraph.dataset.measureEm !== String(this.#measureEm()))
+        ) {
+          this.#paintText(paragraph, block.text);
           delete paragraph.dataset.highlighted;
         }
         // A fence the author is not inside gets coloured. The caret's own
