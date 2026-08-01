@@ -26,10 +26,6 @@ import python from "@shikijs/langs/python";
 import rust from "@shikijs/langs/rust";
 import toml from "@shikijs/langs/toml";
 import typescript from "@shikijs/langs/typescript";
-import githubDark from "@shikijs/themes/github-dark";
-import githubLight from "@shikijs/themes/github-light";
-import minDark from "@shikijs/themes/min-dark";
-import minLight from "@shikijs/themes/min-light";
 import vitesseDark from "@shikijs/themes/vitesse-dark";
 import vitesseLight from "@shikijs/themes/vitesse-light";
 import { createHighlighterCore, type HighlighterCore } from "shiki/core";
@@ -38,16 +34,36 @@ import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 /** 手稿里出现得起的语言。加一种就是加一份体积，所以这张表是有意短的。 */
 const LANGS = [bash, css, json, markdown, python, rust, toml, typescript];
 
-/** 内嵌的代码配色。一套约 3–6 KB：主题只是色彩映射表，不含语法定义。 */
-const THEMES = [vitesseLight, vitesseDark, githubLight, githubDark, minLight, minDark];
+/**
+ * The two embedded code palettes: one for day, one for night.
+ *
+ * Vitesse wins because its low-saturation print-like colours sit inside a
+ * serif manuscript without shouting, and its dark variant is a true sibling
+ * of the light one — switching day/night recolours the fence instead of
+ * restyling it. One theme is 3–6 KB; more than two would be weight without
+ * a reason (the renderer is reworked in v0.2.3 anyway).
+ */
+const THEMES = [vitesseLight, vitesseDark];
 
-export type CodeTheme =
-  | "vitesse-light"
-  | "vitesse-dark"
-  | "github-light"
-  | "github-dark"
-  | "min-light"
-  | "min-dark";
+export type CodeTheme = "vitesse-light" | "vitesse-dark";
+
+/**
+ * Resolve the stored preference into one of the two palettes.
+ *
+ * Config written by older versions may name a retired theme; anything with a
+ * dark suffix folds into the night palette, everything else into the day
+ * one. With no stored preference the code palette follows the interface
+ * theme, so a fence never looks pasted in from another application.
+ */
+export function normalizeCodeTheme(
+  stored: string | null | undefined,
+  interfaceTheme: string,
+): CodeTheme {
+  if (stored !== null && stored !== undefined && stored !== "") {
+    return stored.endsWith("-dark") ? "vitesse-dark" : "vitesse-light";
+  }
+  return codeThemeFor(interfaceTheme);
+}
 
 /**
  * 作者没选过代码配色时，按界面主题挑一套。

@@ -37,41 +37,6 @@ export function lampPlacement(kind: LampKind, side: PanelSide): LampPlacement | 
   return { x: side === "left" ? -0.05 : 1.05, y: 0.42, reach: 0.82, power: 0.9 };
 }
 
-/**
- * 光投在纸上的影子往哪边倒，以及倒多远。
- *
- * 影子背着灯走。侧灯几乎全是横向位移，顶灯几乎全是纵向——这个差别是两盏灯在
- * 屏幕上最容易被读出来的东西，比亮斑还容易，因为影子有边界而光晕没有。
- *
- * 返回值单位是像素，按舞台宽度换算。
- */
-export function shadowThrow(place: LampPlacement, stageWidth: number): { x: number; y: number } {
-  // 纸大致在舞台正中。灯离得越远，影子越长。
-  const dx = 0.5 - place.x;
-  const dy = 0.5 - place.y;
-  const distance = Math.hypot(dx, dy);
-  // 归一化后乘一个尺度：影子最长约为舞台宽度的十二分之一，再长就不像影子像污渍。
-  const scale = (stageWidth / 12) * place.power;
-  return {
-    x: Math.round((dx / distance) * scale),
-    y: Math.round((dy / distance) * scale),
-  };
-}
-
-/**
- * 一块立在光里的东西，朝灯的那条边被照亮多少。
- *
- * `at` 是这块东西在舞台里的横向位置（0 到 1）。离灯越近越亮，这让多层书脊自动
- * 呈现出前亮后暗的层次，而不必为每一层写一个值。
- */
-export function rimIntensity(place: LampPlacement, at: number): number {
-  const distance = Math.abs(at - place.x);
-  if (distance >= place.reach) return 0;
-  const near = 1 - distance / place.reach;
-  // 平方衰减：贴着灯的那一层明显亮，后面几层迅速暗下去，符合一盏灯而非一片天光。
-  return Number((near * near * place.power).toFixed(3));
-}
-
 /** 灯朝向哪一边（-1 左，1 右，0 无侧向）。样式表用它翻转方向，不必写第二套规则。 */
 export function lampFacing(place: LampPlacement): number {
   if (place.x < 0) return 1;

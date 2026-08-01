@@ -240,10 +240,26 @@ describe("DispatchSession 的发出与授权", () => {
 
   test("要几份就派几路", async () => {
     const { session, recorder } = await ready();
-    session.chooseCopies(3);
+    session.chooseArrangement("parallel3");
     await session.send();
     await session.authorize();
     expect(recorder.authorized[0]?.newAgents).toEqual(["a1", "a1", "a1"]);
+  });
+
+  test("接力把边挂到第二路：它读第一路的产出", async () => {
+    const { session, recorder } = await ready();
+    session.chooseArrangement("relay");
+    await session.send();
+    await session.authorize();
+    expect(recorder.authorized[0]?.edges).toEqual([null, { kind: "follows", target: 0 }]);
+  });
+
+  test("校验的第二路只许挑毛病", async () => {
+    const { session, recorder } = await ready();
+    session.chooseArrangement("verify");
+    await session.send();
+    await session.authorize();
+    expect(recorder.authorized[0]?.edges).toEqual([null, { kind: "verifies", target: 0 }]);
   });
 
   test("授权之后每一路都真的启动了", async () => {

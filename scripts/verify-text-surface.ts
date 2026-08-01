@@ -2,7 +2,6 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { Glob } from "bun";
 import { publishedPaths } from "./published-documents";
 
 // The published set has one authority: published-documents.ts. This gate and
@@ -22,11 +21,21 @@ const tracked = new Set(
     .map((file) => file.trim())
     .filter((file) => file !== ""),
 );
+// The working-tree scan must honour .gitignore: an ignored generated page
+// (e2e/ime/page/editor.html, local mock-ups) is not repository prose, and
+// flagging it would punish every local build. `git ls-files -co
+// --exclude-standard` is exactly "tracked + untracked but not ignored".
+const onDisk = spawnSync("git", ["ls-files", "-co", "--exclude-standard", "*.md", "*.html"], {
+  encoding: "utf8",
+});
+if (onDisk.status !== 0) {
+  console.error(`FAIL  verify:text-surface: git ls-files failed: ${onDisk.stderr.trim()}`);
+  process.exit(1);
+}
 const files = new Set(tracked);
-const excluded = /(^|\/)(\.git|node_modules|target|dist)(\/|$)/;
-for await (const file of new Glob("**/*.{md,html}").scan({ cwd: ".", dot: true })) {
-  const normalised = file.replaceAll("\\", "/");
-  if (!excluded.test(normalised)) files.add(normalised);
+for (const file of onDisk.stdout.split("\n")) {
+  const normalised = file.trim();
+  if (normalised !== "") files.add(normalised);
 }
 
 const failures: string[] = [];

@@ -39,7 +39,7 @@ const OUTBOUND =
 
 const result = scan(
   [
-    "apps/desktop/src/**/*.{ts,vue}",
+    "apps/desktop/src/**/*.{ts,tsx}",
     "apps/desktop/src-tauri/src/**/*.rs",
     "crates/**/src/**/*.rs",
     "packages/**/src/**/*.ts",

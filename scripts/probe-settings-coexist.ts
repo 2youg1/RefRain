@@ -16,6 +16,9 @@
  */
 
 import { chromium } from "playwright";
+import { ensureNodeDriver } from "./pw-chromium.ts";
+
+ensureNodeDriver(import.meta.url);
 
 const build = Bun.spawnSync(["bun", "run", "build:web"], { stdout: "pipe", stderr: "pipe" });
 if (build.exitCode !== 0) {

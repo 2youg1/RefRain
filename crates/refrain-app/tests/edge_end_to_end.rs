@@ -175,7 +175,6 @@ fn run_to_completion(
         ],
         env: vec![],
         cwd: state_dir.join(workspace),
-        stdin_piped: false,
     })
     .expect("the producer must actually start");
     let outcome = handle.wait().expect("waiting on the producer");
@@ -216,6 +215,8 @@ fn alternates_both_run_and_neither_waits() {
         2,
         "两个并列 Run 的提案都应当在"
     );
+    // Windows 上文件句柄不解就删目录会吃到 code 32；先放掉现场再清。
+    drop(store);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -261,6 +262,8 @@ fn follows_refuses_before_the_upstream_is_terminal_and_runs_after() {
         matches!(downstream, Collected::Completed { memos: 1, .. }),
         "上游终态之后下游应当跑通，实际是 {downstream:?}"
     );
+    // Windows 上文件句柄不解就删目录会吃到 code 32；先放掉现场再清。
+    drop(store);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -294,5 +297,7 @@ fn a_verifier_that_only_comments_is_collected() {
         ),
         "只出批注的验证者应当被收下且不产生提案，实际是 {verifier:?}"
     );
+    // Windows 上文件句柄不解就删目录会吃到 code 32；先放掉现场再清。
+    drop(store);
     fs::remove_dir_all(root).unwrap();
 }

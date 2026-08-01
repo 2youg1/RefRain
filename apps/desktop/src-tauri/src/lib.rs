@@ -496,7 +496,7 @@ async fn choose_and_create_project(
 }
 
 /// Return one bounded page from an already reconciled project index.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn document_page(
     state: tauri::State<'_, AppState>,
@@ -514,25 +514,38 @@ fn document_page(
     })
 }
 
+/// How literal a search is: every query part must appear, or any part may.
+#[derive(Debug, Clone, Copy, Deserialize, Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum SearchPrecision {
+    Exact,
+    Loose,
+}
+
 /// Search the complete project index. Request ordering belongs to the caller.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn document_search(
     state: tauri::State<'_, AppState>,
     root_id: String,
     query: String,
+    precision: SearchPrecision,
 ) -> Result<Vec<DocumentRow>, RefrainError> {
+    let precision = match precision {
+        SearchPrecision::Exact => refrain_core::chinese_index::Precision::Exact,
+        SearchPrecision::Loose => refrain_core::chinese_index::Precision::Loose,
+    };
     state.with_project(&root_id, |_state, entry| {
         entry
             .store
-            .search_documents(&query, MAX_DOCUMENT_SEARCH_RESULTS)
+            .search_documents_with(&query, precision, MAX_DOCUMENT_SEARCH_RESULTS)
     })
 }
 
 /// Open a document: bytes from disk, blocks from the byte-authoritative
 /// layout, the persisted revision chain resumed, and any journaled actions
 /// replayed through the same validation (SPEC 7.2).
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn open_document(
     state: tauri::State<'_, AppState>,
@@ -549,7 +562,7 @@ fn open_document(
 }
 
 /// Create a document in the Root and open it (SPEC 9.5).
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn create_document(
     state: tauri::State<'_, AppState>,
@@ -595,7 +608,13 @@ fn open_in_entry(
     } else {
         None
     };
-    let snapshot = SourceSnapshot::read(opened.bytes.clone());
+    // A file the catalogue lists by extension may still not be UTF-8 (GBK
+    // manuscripts are common). Refuse it as a fact the author can act on;
+    // `SourceSnapshot::read` would panic the whole process instead.
+    let snapshot = SourceSnapshot::read_checked(opened.bytes.clone()).map_err(|error| {
+        RefrainError::new(ErrorCode::UnsupportedFormat, "open a document", path)
+            .with_detail(format!("not UTF-8 text: {error}"))
+    })?;
     let block_count = snapshot.block_count();
 
     // Resume the persisted chain only when the digest on disk is the one the
@@ -696,7 +715,7 @@ pub struct SessionDocumentDto {
     pub blocks: Vec<BlockDto>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn current_document(
     state: tauri::State<'_, AppState>,
@@ -726,7 +745,7 @@ fn current_document(
 /// The one manuscript write path (INV-2): journaled first, executed through
 /// the domain, cleared on confirmation. A kill between journal and execute
 /// replays on the next open.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn apply_editor_action(
     state: tauri::State<'_, AppState>,
@@ -840,7 +859,7 @@ fn persist_in_entry(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn persist_revision(
     state: tauri::State<'_, AppState>,
@@ -890,7 +909,7 @@ fn to_domain_action(dto: EditorActionDto) -> Result<EditorAction, RefrainError> 
 
 /// One KARA event in, one transition out (SPEC 9.3). The machine is the only
 /// state owner; the renderer projects the transition it gets back.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn kara_event(
     state: tauri::State<'_, AppState>,
@@ -950,7 +969,7 @@ fn icon_assets_dir(state: &AppState) -> PathBuf {
 
 /// Pick an icon for the Universal Button. The pipeline judges by content
 /// (SPEC 9.8); the digest is all the Config ever stores.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn set_universal_icon(
     app: tauri::AppHandle,
@@ -979,7 +998,7 @@ fn set_universal_icon(
 
 /// The stored icon, for the data-URL projection. Absent is a value, not an
 /// empty string (INV-3's discipline).
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn universal_icon(state: tauri::State<'_, AppState>) -> Option<Vec<u8>> {
     let store = state.config.as_ref()?;
@@ -1074,7 +1093,7 @@ impl PreferencesChangeDto {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn update_preferences(
     app: tauri::AppHandle,
@@ -1102,7 +1121,7 @@ fn update_preferences(
 }
 
 /// The effective Config, or the refusal the Settings surface must show.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn read_config(
     state: tauri::State<'_, AppState>,
@@ -1188,7 +1207,7 @@ fn annotation_dto(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn list_annotations(
     state: tauri::State<'_, AppState>,
@@ -1215,7 +1234,7 @@ fn list_annotations(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn upsert_annotation(
     state: tauri::State<'_, AppState>,
@@ -1294,7 +1313,7 @@ fn upsert_annotation(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn delete_annotation(
     state: tauri::State<'_, AppState>,
@@ -1345,6 +1364,7 @@ macro_rules! refrain_commands {
         list_proposals,
         record_verdict,
         set_review_batch,
+        revert_verdicts,
         review_state,
         commit_decision_batch,
         draft_review_task,
@@ -1353,7 +1373,6 @@ macro_rules! refrain_commands {
         list_harnesses,
         authorize_dispatch,
         launch_run,
-        harness_dispatch,
         host_state,
         cancel_run,
         retry_run,
@@ -1365,8 +1384,6 @@ macro_rules! refrain_commands {
         remove_harness_connection,
         probe_connection,
         choose_and_import_material,
-        choose_and_import_manuscript,
-        confirm_and_import_dropped,
         list_agents,
         upsert_agent,
         remove_agent,
@@ -1583,7 +1600,7 @@ fn inject_fixture_proposal(
 }
 
 /// Every candidate for a document, newest last, for the review surface.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn list_proposals(
     state: tauri::State<'_, AppState>,
@@ -1603,7 +1620,7 @@ fn list_proposals(
 
 /// Record one judgment. It lands in the ledger the moment it is made (SPEC
 /// 9.7: 判即写穿 staging).
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn record_verdict(
     state: tauri::State<'_, AppState>,
@@ -1649,7 +1666,7 @@ fn record_verdict(
 
 /// Stage the batch and the cursor (SPEC 9.7: cursor and batch persist with
 /// every change, not at commit time).
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn set_review_batch(
     state: tauri::State<'_, AppState>,
@@ -1670,8 +1687,26 @@ fn set_review_batch(
     })
 }
 
+/// Recall staged verdicts to unread （工单信箱的回溯）. Only verdicts still in
+/// the batch pass — anything already merged into the text stays history.
+#[tauri::command(async)]
+#[specta::specta]
+fn revert_verdicts(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    path: String,
+    verdict_ids: Vec<String>,
+) -> Result<u32, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        let forgotten =
+            refrain_app::decide::revert_verdicts(&mut entry.store, &path, &verdict_ids)?;
+        #[allow(clippy::cast_possible_truncation)]
+        Ok(forgotten as u32)
+    })
+}
+
 /// The recovered review session: candidates, judgments so far, cursor, batch.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn review_state(
     state: tauri::State<'_, AppState>,
@@ -1713,7 +1748,7 @@ fn review_state(
 
 /// The one commit path: staged judgments become one Text Action (SPEC 7.4).
 /// The batch and cursor clear; candidates stay for the audit.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn commit_decision_batch(
     state: tauri::State<'_, AppState>,
@@ -2073,7 +2108,7 @@ fn parse_ids(raw: &[String], what: &str) -> Result<Vec<Id>, RefrainError> {
 }
 
 /// Draft the collaboration: prompt, document, and the head it pins (Q27).
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn draft_review_task(
     state: tauri::State<'_, AppState>,
@@ -2110,7 +2145,7 @@ fn draft_review_task(
 }
 
 /// The manifest the author reads before the click (SPEC 9.6: 逐块字节清单).
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
 fn preview_dispatch(
@@ -2222,7 +2257,7 @@ fn l0_file_channel_agent() -> String {
     L0_FILE_CHANNEL_AGENT.to_string()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn authorize_dispatch(
     state: tauri::State<'_, AppState>,
@@ -2290,7 +2325,15 @@ fn authorize_dispatch(
 
 /// Launch one authorized run. L0's dispatch is the file becoming visible;
 /// the receipt says so. Real adapters take this seam over in C11.
-#[tauri::command]
+/// A run looked up by id: the last entry is only the newest run, not
+/// necessarily the one asked for (a task may hold several runs).
+fn find_run(runs: &[Run], run_id: Id) -> Result<&Run, RefrainError> {
+    runs.iter()
+        .find(|run| run.id == run_id)
+        .ok_or_else(|| into_domain_host(HostRefusal::UnknownRun(run_id)))
+}
+
+#[tauri::command(async)]
 #[specta::specta]
 fn launch_run(
     app: tauri::AppHandle,
@@ -2304,35 +2347,35 @@ fn launch_run(
     // background.
     let agent = state.with_project(&root_id, |_state, entry| {
         let host = open_host(&mut entry.store)?;
-        let run = host
-            .runs()
-            .iter()
-            .find(|run| run.id == run_id)
-            .ok_or_else(|| into_domain_host(HostRefusal::UnknownRun(run_id)))?;
-        Ok(run.agent_id.to_string())
+        Ok(find_run(host.runs(), run_id)?.agent_id.to_string())
     })?;
     if connection_for_agent(&state, &agent)?.is_some() {
         return harness_dispatch_inner(&app, &state, &root_id, &agent, run_id);
     }
     state.with_project(&root_id, |_state, entry| {
-        let mut host = open_host(&mut entry.store)?;
         let workspace = format!("runs/{run_id}");
-        host.execute(HostCommand::LaunchRun {
-            run_id,
-            workspace: workspace.clone(),
-        })
-        .map_err(into_domain_host)?;
+        {
+            let mut host = open_host(&mut entry.store)?;
+            host.execute(HostCommand::LaunchRun {
+                run_id,
+                workspace: workspace.clone(),
+            })
+            .map_err(into_domain_host)?;
+        }
+        refrain_app::upstream::feed_upstream(&mut entry.store, run_id)?;
+        let mut host = open_host(&mut entry.store)?;
         host.execute(HostCommand::CompleteDispatch {
             run_id,
             receipt: format!("l0:request-visible@{workspace}"),
         })
         .map_err(into_domain_host)?;
-        Ok(run_dto(&host.runs()[host.runs().len() - 1]))
+        let launched = find_run(host.runs(), run_id)?;
+        Ok(run_dto(launched))
     })
 }
 
 /// The orchestration world as the surface renders it.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn host_state(
     state: tauri::State<'_, AppState>,
@@ -2378,7 +2421,7 @@ pub struct AgentReadingDto {
     pub stale: bool,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn agent_reading_ledger(
     state: tauri::State<'_, AppState>,
@@ -2440,7 +2483,7 @@ fn agent_reading_ledger(
 
 /// Cancel a run that has not reached a terminal state. A live producer must
 /// exit first; only then may the journal say `Cancelled`.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn cancel_run(
     state: tauri::State<'_, AppState>,
@@ -2505,7 +2548,7 @@ fn cancel_run(
 
 /// Retry is a new Run, queued, pointing at the old one (§8.4b). Its
 /// authorization is a fresh click through `authorize_dispatch`.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn retry_run(
     state: tauri::State<'_, AppState>,
@@ -2523,7 +2566,7 @@ fn retry_run(
 
 /// Collect a dispatched run's result: validate against the frozen contract,
 /// complete the run, and freeze the proposals the artifact carries.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn collect_attempt(
     state: tauri::State<'_, AppState>,
@@ -2590,7 +2633,7 @@ pub struct HarnessDto {
 pub struct RunSettledDto {
     pub root_id: String,
     pub run_id: String,
-    /// "landed" | "failed:<reason>" — the run's own journal has the truth.
+    /// "landed" | "cancelled" | "failed:<reason>" — the run's own journal has the truth.
     pub outcome: String,
 }
 
@@ -2605,7 +2648,7 @@ fn tier_label(tier: refrain_host::Tier) -> &'static str {
 /// List the two adapter implementations this build can really dispatch.
 /// Discovery runs fixed, version-only probes for known program names. The
 /// renderer cannot add another name or path to this search space.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn list_harnesses(state: tauri::State<'_, AppState>) -> Result<Vec<HarnessDto>, RefrainError> {
     let store = state.config.as_ref().ok_or_else(|| {
@@ -2676,7 +2719,7 @@ fn list_harnesses(state: tauri::State<'_, AppState>) -> Result<Vec<HarnessDto>, 
 
 /// Register one fixed PATH candidate. The renderer supplies a stable ID, not
 /// a program or path; Rust discovers, verifies, and canonicalizes it again.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn upsert_harness_connection(
     app: tauri::AppHandle,
@@ -2726,7 +2769,7 @@ fn upsert_harness_connection(
 
 /// Remove a connection by id (SPEC 6.5). Trust evidence in app.db is not the
 /// author's parameter and is not touched here (Q24).
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn remove_harness_connection(
     app: tauri::AppHandle,
@@ -2751,7 +2794,7 @@ fn remove_harness_connection(
 }
 
 /// Re-check an existing Config connection. No path crosses the bridge.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn probe_connection(
     state: tauri::State<'_, AppState>,
@@ -2878,7 +2921,7 @@ pub struct AgentDto {
     pub version: String,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn list_agents(state: tauri::State<'_, AppState>) -> Vec<AgentDto> {
     let Some(store) = state.config.as_ref() else {
@@ -2938,7 +2981,7 @@ fn list_agents(state: tauri::State<'_, AppState>) -> Vec<AgentDto> {
 
 /// Create or update one Agent (SPEC 6.5: typed changes only). A connection
 /// reference must name an existing connection; `None` is the L0 channel.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn upsert_agent(
     app: tauri::AppHandle,
@@ -3003,7 +3046,7 @@ fn upsert_agent(
     Ok(snapshot)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn remove_agent(
     app: tauri::AppHandle,
@@ -3062,6 +3105,8 @@ fn harness_dispatch_inner(
             workspace: workspace.clone(),
         })
         .map_err(into_domain_host)?;
+        // Follows/Verifies 的另一半：下游的请求里真的有上游写下的全部字节。
+        refrain_app::upstream::feed_upstream(&mut entry.store, run_id)?;
         let request = context
             .read_workspace_request(&workspace)
             .map_err(|error| {
@@ -3265,32 +3310,10 @@ fn harness_dispatch_inner(
     Ok(dto)
 }
 
-/// The command form for the UI's harness dispatch (launch_run branches here
-/// for harness agents; this stays a command for the e2e seam).
-#[tauri::command]
-#[specta::specta]
-fn harness_dispatch(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    root_id: String,
-    run_id: String,
-) -> Result<RunDto, RefrainError> {
-    let run_id = parse_id(&run_id, "run")?;
-    let agent = state.with_project(&root_id, |_state, entry| {
-        let host = open_host(&mut entry.store)?;
-        host.runs()
-            .iter()
-            .find(|run| run.id == run_id)
-            .map(|run| run.agent_id.to_string())
-            .ok_or_else(|| into_domain_host(HostRefusal::UnknownRun(run_id)))
-    })?;
-    harness_dispatch_inner(&app, &state, &root_id, &agent, run_id)
-}
-
 // ── C12: materials — drafts review and the Human Material Action (SPEC 8.7) ──
 
 /// Every unresolved material draft, for the ticket's materials panel.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn list_material_drafts(
     state: tauri::State<'_, AppState>,
@@ -3409,7 +3432,7 @@ fn create_material_with_body(
 /// Action). Save writes the body through the same text path as the editor —
 /// create, insert, confirm — never a direct file write. Dismiss keeps the
 /// artifact on disk in the run workspace and removes only the draft row.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 fn commit_material_action(
     state: tauri::State<'_, AppState>,
@@ -3592,67 +3615,6 @@ async fn import_manuscript_at(
     state.with_project(&root_id, |state, entry| {
         create_material_with_body(state, entry, &title, &text, DocumentRole::Chapter)
     })
-}
-
-#[tauri::command]
-#[specta::specta]
-async fn choose_and_import_manuscript(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    root_id: String,
-) -> Result<Option<DocumentRow>, RefrainError> {
-    use tauri_plugin_dialog::DialogExt as _;
-    let selected = app
-        .dialog()
-        .file()
-        .set_title("选择手稿")
-        .add_filter("Manuscript", &["md", "markdown", "mdown", "txt"])
-        .blocking_pick_file();
-    let Some(selected) = selected else {
-        return Ok(None);
-    };
-    let path = selected.into_path().map_err(|error| {
-        RefrainError::new(ErrorCode::Io, "use a chosen source", error.to_string())
-    })?;
-    import_manuscript_at(state, root_id, path).await.map(Some)
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
-#[serde(rename_all = "kebab-case")]
-pub enum DroppedImportKind {
-    Manuscript,
-    Material,
-}
-
-/// A dropped path remains renderer-supplied, so Rust binds it to one explicit
-/// native confirmation before reading a byte.
-#[tauri::command]
-#[specta::specta]
-async fn confirm_and_import_dropped(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    root_id: String,
-    source_path: String,
-    kind: DroppedImportKind,
-) -> Result<Option<DocumentRow>, RefrainError> {
-    use tauri_plugin_dialog::{DialogExt as _, MessageDialogButtons};
-    let path = chosen_file(PathBuf::from(source_path))?;
-    let approved = app
-        .dialog()
-        .message(format!("导入这份文件？\n{}", path.display()))
-        .title("确认导入")
-        .buttons(MessageDialogButtons::OkCancelCustom(
-            "导入".to_string(),
-            "取消".to_string(),
-        ))
-        .blocking_show();
-    if !approved {
-        return Ok(None);
-    }
-    match kind {
-        DroppedImportKind::Manuscript => import_manuscript_at(state, root_id, path).await.map(Some),
-        DroppedImportKind::Material => import_material_at(state, root_id, path).await.map(Some),
-    }
 }
 
 #[cfg(all(debug_assertions, not(feature = "generate-bindings")))]

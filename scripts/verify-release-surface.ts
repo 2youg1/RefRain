@@ -20,7 +20,6 @@ for (const [source, fact, failure] of [
   [rust, "choose_and_adopt_root", "Rust has no native Root chooser"],
   [rust, "choose_and_create_project", "Rust has no native project-parent chooser"],
   [rust, "choose_and_import_material", "Rust has no native material chooser"],
-  [rust, "confirm_and_import_dropped", "dropped paths have no native confirmation"],
   [rust, "open_registered_document(&path)", "open_document does not require a registered row"],
   [bindings, "chooseAndAdoptRoot: (kind: RootKind)", "release bindings have no Root chooser"],
   [bindings, "chooseAndCreateProject: (name: string)", "release bindings have no project chooser"],
@@ -29,7 +28,6 @@ for (const [source, fact, failure] of [
     "chooseAndImportMaterial: (rootId: string)",
     "release bindings have no material chooser",
   ],
-  [bindings, "confirmAndImportDropped", "release bindings have no confirmed drop path"],
   [
     projectSession,
     "commands.chooseAndAdoptRoot",
@@ -116,7 +114,7 @@ for (const privateOwner of [
   const at = rust.indexOf(`fn ${privateOwner}`);
   const prefix = at < 0 ? "" : rust.slice(Math.max(0, at - 120), at);
   if (at < 0) failures.push(`private path owner is missing: ${privateOwner}`);
-  if (prefix.includes("#[tauri::command]")) {
+  if (/#\[tauri::command(\(async\))?\]/.test(prefix)) {
     failures.push(`private path owner is exposed as IPC: ${privateOwner}`);
   }
 }

@@ -150,7 +150,6 @@ export function useKara() {
     },
     apply,
     toggle: () => send({ kind: "manualToggle" }),
-    setReturnPoint: (point: ReturnPoint) => send({ kind: "setReturnPoint", value: point }),
     /**
      * 记下作者此刻写到哪里。KARA 没engage 时什么也不做——返回卡片只在离开
      * 之后才有意义，让调用者去判断这件事等于把 KARA 的状态机漏出去。
@@ -162,10 +161,6 @@ export function useKara() {
       if (!engaged.value || caret === null || caret === undefined) return;
       void send({ kind: "setReturnPoint", value: returnPointAt(caret, blockText) });
     },
-    leaveFinished: () => send({ kind: "leaveFinished" }),
     quiet: (event: QuietEvent) => send({ kind: "quiet", value: event }),
-    interrupt: (
-      event: "save-failed" | "disk-unwritable" | "root-identity-changed" | "external-conflict",
-    ) => send({ kind: "interrupt", value: event }),
   };
 }

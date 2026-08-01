@@ -147,6 +147,19 @@ impl<'a> VerdictLedger<'a> {
             .collect()
     }
 
+    /// Forget judgments by id: the recall path （已处理 → 未读）. Only rows
+    /// that never reached a commit should pass through here — the caller owns
+    /// that check, because the ledger cannot see batches.
+    pub fn forget(&self, ids: &[String]) -> Result<usize, StoreError> {
+        let mut forgotten = 0;
+        for id in ids {
+            forgotten += self
+                .db
+                .execute("DELETE FROM verdicts WHERE id = ?1", params![id])?;
+        }
+        Ok(forgotten)
+    }
+
     /// Full-text-free fragment search over the author's stated reasons. The
     /// fragment is escaped so its wildcards are characters.
     pub fn search(&self, fragment: &str) -> Result<Vec<VerdictRecord>, StoreError> {

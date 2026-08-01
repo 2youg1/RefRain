@@ -51,16 +51,11 @@ group("订阅与取值的顺序", () => {
     expect(source).toContain("onCleanup(");
   });
 
-  test("两个组件都不再自己订阅配置事件", () => {
-    // 它们曾各自 listen 一次、各自维护 UnlistenFn 与 disposed。
+  test("图标组件不再自己订阅配置事件", () => {
+    // 它曾自己 listen 一次、自己维护 UnlistenFn 与 disposed。
     const fs = require("node:fs") as typeof import("node:fs");
-    for (const file of [
-      "apps/desktop/src/ui/UniversalButton.tsx",
-      "apps/desktop/src/ui/IconPicker.tsx",
-    ]) {
-      const source = fs.readFileSync(file, "utf8");
-      expect(source).not.toContain('listen("config-changed"');
-      expect(source).toContain("universalIcon()");
-    }
+    const source = fs.readFileSync("apps/desktop/src/ui/IconPicker.tsx", "utf8");
+    expect(source).not.toContain('listen("config-changed"');
+    expect(source).toContain("universalIcon()");
   });
 });

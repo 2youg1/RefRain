@@ -1,7 +1,7 @@
 //! The KARA state machine (SPEC 9.3, D10, D18).
 //!
 //! Six states as a discriminated union, one transition function, and named
-//! effects — Vue projects, it never re-derives (INV-10). The rules the tests
+//! effects — the shell projects, it never re-derives (INV-10). The rules the tests
 //! below pin down:
 //!
 //! - KARA is never the default. Application start, opening a Project, and

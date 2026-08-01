@@ -26,6 +26,8 @@ function press(
     composing: () => false,
     save: () => calls.push("save"),
     toggleCommandMenu: () => calls.push("command-menu"),
+    toggleKara: () => calls.push("kara"),
+    focusSearch: () => calls.push("search"),
     menuOpen: () => false,
     closeMenu: () => calls.push("close-menu"),
     panelDepth: () => 0,
@@ -42,9 +44,11 @@ function press(
 }
 
 describe("handleShortcut", () => {
-  test("Ctrl+S 保存，Ctrl+K 开合命令面板", () => {
+  test("Ctrl+S 保存，Ctrl+K 命令面板，Ctrl+Enter KARA，Ctrl+F 搜索", () => {
     expect(press({ key: "s", ctrl: true }).calls).toEqual(["save"]);
     expect(press({ key: "k", ctrl: true }).calls).toEqual(["command-menu"]);
+    expect(press({ key: "Enter", ctrl: true }).calls).toEqual(["kara"]);
+    expect(press({ key: "f", ctrl: true }).calls).toEqual(["search"]);
   });
 
   test("大写也认——按住 Shift 的手不该被当成没按", () => {

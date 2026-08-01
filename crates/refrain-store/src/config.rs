@@ -154,7 +154,7 @@ impl Default for TypographyConfig {
             line_height_percent: 190,
             letter_spacing_thousandths_em: 10,
             word_spacing_thousandths_em: 0,
-            measure_tenths_em: 300,
+            measure_tenths_em: 346,
             first_line_indent_tenths_em: 0,
             paragraph_spacing_percent: 100,
             alignment: TextAlignment::Left,

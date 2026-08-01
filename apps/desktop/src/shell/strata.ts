@@ -27,11 +27,6 @@ export const STRATA: readonly Stratum[] = Object.keys(ORDER).sort(
   (a, b) => ORDER[a as Stratum] - ORDER[b as Stratum],
 ) as Stratum[];
 
-/** `a` 是否在 `b` 之上。让「书脊盖不盖得住菜单」成为一个可回答的问题。 */
-export function above(a: Stratum, b: Stratum): boolean {
-  return ORDER[a] > ORDER[b];
-}
-
 /** 层的 CSS 自定义属性名，样式表只引用它，不写数字。 */
 export function stratumVar(name: Stratum): string {
   return `--z-${name}`;

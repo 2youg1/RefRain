@@ -12,7 +12,7 @@ use refrain_core::{DocumentRole, ErrorCode, Id, RefrainError, digest};
 use rusqlite::{OptionalExtension, params};
 
 use super::{ProjectFailure, ProjectStore, infer_role};
-use crate::files::{ScanOptions, index::scan_checked};
+use crate::files::index::{ScanOptions, scan_checked};
 use crate::root::RootKind;
 
 /// Name one scanned set by its paths and inferred roles.

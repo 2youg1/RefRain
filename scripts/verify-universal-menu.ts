@@ -2,7 +2,6 @@
 import { readFileSync } from "node:fs";
 
 const workbench = readFileSync("apps/desktop/src/shell/Workbench.tsx", "utf8");
-const button = readFileSync("apps/desktop/src/ui/UniversalButton.tsx", "utf8");
 const menu =
   readFileSync("apps/desktop/src/ui/UniversalMenu.tsx", "utf8") +
   readFileSync("apps/desktop/src/styles/surfaces.css", "utf8");
@@ -14,7 +13,6 @@ const picker = readFileSync("apps/desktop/src/ui/IconPicker.tsx", "utf8");
 const failures: string[] = [];
 
 for (const [source, fact, failure] of [
-  [workbench, "<UniversalButton", "Workbench does not mount the Universal Button"],
   [workbench, "<UniversalMenu", "Workbench does not mount the Universal Menu"],
   // 快捷键的分发已归 shortcuts.ts：断言写在权威那一侧，不写在外壳的字面上。
   [shortcuts, 'key === "k"', "Ctrl+K does not open the menu"],
@@ -27,16 +25,10 @@ for (const [source, fact, failure] of [
   ],
   [shortcuts, "isComposing", "Ctrl+K can intercept IME composition"],
   [workbench, "new CommandFocus(", "the menu does not route focus through CommandFocus"],
-  // 焦点归还归 CommandFocus，并且它必须知道热区那条规矩：把焦点还给热区
   // 会让作者被关进开合循环。断言写在权威那一侧，不是外壳的变量名上。
   [focus, "isConnected", "focus can be returned to a node that already left the DOM"],
-  [focus, "universal-button-zone", "returning focus to the hot zone can trap the author in a loop"],
   [workbench, "onChoose={executeCommand}", "the menu bypasses Workbench action ownership"],
-  // 取图标已归 shell/universal-icon.ts；按钮向它要，不再自己跨桥。
-  [button, "universalIcon()", "the button does not consume the stored icon"],
   [icon, "commands.universalIcon()", "the icon owner no longer reads the stored icon"],
-  [button, "universal-hot-zone", "the button has no top-edge hot zone"],
-  [button, "}, 240);", "the button does not use the 240 ms leave delay"],
   [menu, "width: min(520px", "the menu exceeds its declared width"],
   [menu, "padding: 12vh 24px", "the menu does not use the declared top offset"],
   [menu, "max-height: 62vh", "the menu exceeds its declared height"],
@@ -46,7 +38,6 @@ for (const [source, fact, failure] of [
   [catalog, "先打开一篇手稿", "unavailable document actions have no next step"],
   [icon, "export function iconDataUrl", "the icon projection has no shared owner"],
   [picker, 'from "../shell/universal-icon"', "Settings duplicates the icon projection"],
-  [button, 'from "../shell/universal-icon"', "the top-edge button duplicates the icon projection"],
 ] as const) {
   if (!source.includes(fact)) failures.push(failure);
 }
@@ -76,6 +67,6 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log(
-  "PASS  verify:universal-menu  (6 files, shared icon, top-edge trigger, Ctrl+K, fixed catalog)",
-);
+// 顶缘热区（UniversalButton）已删：隐形热区违反「入口必须可见」，命令面板的
+// 入口是 Ctrl+K 与栏脚。命令入口放进栏脚是场所树重写（ToDo 5）的一部分。
+console.log("PASS  verify:universal-menu  (shared icon, Ctrl+K, fixed catalog)");

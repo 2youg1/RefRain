@@ -56,7 +56,7 @@ pub enum RunEdge {
     Follows { upstream: usize },
     /// This Run reads another's output and may only comment on it.
     ///
-    /// Anthropic's Fable 5 guidance: "Separate, fresh-context verifier
+    /// The standing guidance: "Separate, fresh-context verifier
     /// subagents tend to outperform self-critique." Their Opus 5 guidance
     /// says the opposite — do not use subagents to verify your own work.
     /// That is not a contradiction but a difference between models, which is

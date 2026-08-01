@@ -16,6 +16,12 @@ export type StatusLineProps = {
   path: string | null;
   /** How much is selected right now, or null when nothing is. */
   selection?: { characters: number; blocks: number } | null;
+  /**
+   * What is happening right now as one sentence (正在导入资料 / Agent 在途),
+   * or null when the line should stay empty. Compiled by the shell from the
+   * sessions' working states and the RunWatch; this component infers nothing.
+   */
+  activity?: string | null;
 };
 
 export function StatusLine(props: StatusLineProps): JSX.Element {
@@ -28,7 +34,7 @@ export function StatusLine(props: StatusLineProps): JSX.Element {
       case "saving":
         return "保存中…";
       case "failed":
-        return `保存失败:${props.state.reason ?? "未知原因"}`;
+        return `保存失败：${props.state.reason ?? "未知原因"}`;
     }
   });
 
@@ -38,6 +44,16 @@ export function StatusLine(props: StatusLineProps): JSX.Element {
         <span class="dot" aria-hidden="true" />
         {text()}
       </span>
+      {/* Work in progress: one sentence over a breathing ink line. The sweep
+          is the progress — work of unknown duration must not fake a percent. */}
+      <Show when={props.activity}>
+        {(line) => (
+          <span class="activity" role="status">
+            <span class="activity-ink" aria-hidden="true" />
+            {line()}
+          </span>
+        )}
+      </Show>
       {/* Only on failure, and only when the domain named a way out. A save
           that failed with no recovery says so and stops there rather than
           inventing advice. */}

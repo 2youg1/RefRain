@@ -22,7 +22,7 @@ import {
   writesOf,
 } from "../src/shell/review-verdicts";
 
-const slice = (id: string) => ({ id }) as unknown as Unit["slices"][number];
+const slice = (id: string, kind = "insert") => ({ id, kind }) as unknown as Unit["slices"][number];
 
 const unit = (kind: Unit["kind"], ...sliceIds: string[]): Unit =>
   ({
@@ -31,7 +31,11 @@ const unit = (kind: Unit["kind"], ...sliceIds: string[]): Unit =>
     before: "旧",
     after: "新",
     kind,
-    slices: sliceIds.map(slice),
+    // replace 单元：一片删除、一片插入，插入是改后接受的落点；
+    // delete 单元全是删除片，没有可落文本的位置。
+    slices: sliceIds.map((id, index) =>
+      slice(id, kind === "delete" || (kind === "replace" && index === 0) ? "delete" : "insert"),
+    ),
     competing: false,
   }) as Unit;
 
@@ -106,6 +110,10 @@ describe("一次裁决写哪几行", () => {
     const writes = writesOf(unit("replace", "s1", "s2"), "reject", null);
     expect(writes.every((write) => write.kind === "reject")).toBe(true);
     expect(writes.every((write) => write.finalText === null)).toBe(true);
+  });
+
+  test("纯删除单元不能改后接受——本地拒绝，不把文本写到删除行上", () => {
+    expect(writesOf(unit("delete", "s1"), "accept-modified", "改好的句子")).toBeNull();
   });
 
   test("裁决种类原样传下去，不被改写", () => {

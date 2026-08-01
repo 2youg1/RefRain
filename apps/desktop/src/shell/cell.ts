@@ -4,10 +4,10 @@
  *
  * The domain modules (project catalog, document session, KARA projection) must
  * not import a UI framework — that is what lets them be tested without a DOM
- * and what made replacing Vue a bounded job rather than a rewrite. They still
+ * and what made replacing the old shell a bounded job rather than a rewrite. They still
  * need to say "this changed"; that is all this file provides.
  *
- * `.value` is deliberately the same shape the Vue refs had, so migrating a
+ * `.value` is deliberately the same shape the old refs had, so migrating a
  * module is an import change rather than a rewrite of every read.
  */
 

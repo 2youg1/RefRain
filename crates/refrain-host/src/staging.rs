@@ -80,6 +80,13 @@ impl DirectoryContext {
         }
     }
 
+    /// Overwrite the promoted request (feeding an upstream section at launch).
+    /// The frozen staged bytes are untouched — the freeze check already ran
+    /// against them before promotion.
+    pub fn write_workspace_request(&self, workspace: &str, contents: &str) -> io::Result<()> {
+        fs::write(self.state_dir.join(workspace).join("request.md"), contents)
+    }
+
     /// A result the producer left in this Run's attempt directory, if any.
     /// One attempt per Run in v0.2: a retry is a new Run with a new attempt.
     pub fn read_result(&self, workspace: &str, run_id: Id) -> io::Result<Option<Vec<u8>>> {

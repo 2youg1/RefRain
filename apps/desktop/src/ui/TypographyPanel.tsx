@@ -262,7 +262,7 @@ export function TypographyPanel() {
                     step="5"
                     value={config().text_size_tenths_px}
                     disabled={busy()}
-                    onChange={(event) => setNumber("text_size_tenths_px", numberFrom(event))}
+                    onInput={(event) => setNumber("text_size_tenths_px", numberFrom(event))}
                   />
                 </label>
                 <label class="control">
@@ -270,19 +270,20 @@ export function TypographyPanel() {
                     <b>字重</b>
                     <output>{config().font_weight}</output>
                   </span>
-                  <select
-                    value={config().font_weight}
+                  {/* 在字体真实的档位上拖——档位就是可调极限，中间值不存在。 */}
+                  <input
+                    type="range"
+                    min="0"
+                    max={availableWeights().length - 1}
+                    step="1"
+                    value={Math.max(0, availableWeights().indexOf(config().font_weight))}
                     disabled={busy()}
-                    onChange={(event) => setNumber("font_weight", numberFrom(event))}
-                  >
-                    <For each={availableWeights()}>
-                      {(weight) => (
-                        <option value={weight} selected={weight === config().font_weight}>
-                          {weight}
-                        </option>
-                      )}
-                    </For>
-                  </select>
+                    onInput={(event) => {
+                      const weight =
+                        availableWeights()[Number((event.currentTarget as HTMLInputElement).value)];
+                      if (weight !== undefined) setNumber("font_weight", weight);
+                    }}
+                  />
                 </label>
                 <label class="control">
                   <span>
@@ -296,7 +297,7 @@ export function TypographyPanel() {
                     step="5"
                     value={config().line_height_percent}
                     disabled={busy()}
-                    onChange={(event) => setNumber("line_height_percent", numberFrom(event))}
+                    onInput={(event) => setNumber("line_height_percent", numberFrom(event))}
                   />
                 </label>
                 <label class="control">
@@ -311,7 +312,7 @@ export function TypographyPanel() {
                     step="5"
                     value={config().letter_spacing_thousandths_em}
                     disabled={busy()}
-                    onChange={(event) =>
+                    onInput={(event) =>
                       setNumber("letter_spacing_thousandths_em", numberFrom(event))
                     }
                   />
@@ -328,9 +329,7 @@ export function TypographyPanel() {
                     step="10"
                     value={config().word_spacing_thousandths_em}
                     disabled={busy()}
-                    onChange={(event) =>
-                      setNumber("word_spacing_thousandths_em", numberFrom(event))
-                    }
+                    onInput={(event) => setNumber("word_spacing_thousandths_em", numberFrom(event))}
                   />
                 </label>
                 <label class="control">
@@ -345,7 +344,7 @@ export function TypographyPanel() {
                     step="5"
                     value={config().zoom_percent}
                     disabled={busy()}
-                    onChange={(event) => setNumber("zoom_percent", numberFrom(event))}
+                    onInput={(event) => setNumber("zoom_percent", numberFrom(event))}
                   />
                 </label>
               </div>
@@ -371,7 +370,7 @@ export function TypographyPanel() {
                     step="10"
                     value={config().measure_tenths_em}
                     disabled={busy()}
-                    onChange={(event) => setNumber("measure_tenths_em", numberFrom(event))}
+                    onInput={(event) => setNumber("measure_tenths_em", numberFrom(event))}
                   />
                 </label>
                 <label class="control">
@@ -386,9 +385,7 @@ export function TypographyPanel() {
                     step="5"
                     value={config().first_line_indent_tenths_em}
                     disabled={busy()}
-                    onChange={(event) =>
-                      setNumber("first_line_indent_tenths_em", numberFrom(event))
-                    }
+                    onInput={(event) => setNumber("first_line_indent_tenths_em", numberFrom(event))}
                   />
                 </label>
                 <label class="control">
@@ -403,7 +400,7 @@ export function TypographyPanel() {
                     step="5"
                     value={config().paragraph_spacing_percent}
                     disabled={busy()}
-                    onChange={(event) => setNumber("paragraph_spacing_percent", numberFrom(event))}
+                    onInput={(event) => setNumber("paragraph_spacing_percent", numberFrom(event))}
                   />
                 </label>
                 <label class="control segmented">
@@ -452,9 +449,7 @@ export function TypographyPanel() {
                     step="5"
                     value={config().page_top_padding_tenths_rem}
                     disabled={busy()}
-                    onChange={(event) =>
-                      setNumber("page_top_padding_tenths_rem", numberFrom(event))
-                    }
+                    onInput={(event) => setNumber("page_top_padding_tenths_rem", numberFrom(event))}
                   />
                 </label>
                 <label class="control">
@@ -469,7 +464,7 @@ export function TypographyPanel() {
                     step="50"
                     value={config().page_bottom_padding_tenths_vh}
                     disabled={busy()}
-                    onChange={(event) =>
+                    onInput={(event) =>
                       setNumber("page_bottom_padding_tenths_vh", numberFrom(event))
                     }
                   />

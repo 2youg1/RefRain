@@ -16,14 +16,16 @@ import {
 
 import { describe } from "../bridge";
 import type { BlockDto, CarryMode, DocumentRow } from "../generated/bindings.gen";
+import { noticeText, workingText } from "../shell/activity-text";
 import {
+  type Arrangement,
   browserDispatchGateway,
-  type Copies,
   type DispatchMaterial,
   DispatchSession,
   editingDraftId,
 } from "../shell/dispatch-session";
 import { runStatusLabel, terminal, tokenLabel } from "../shell/dispatch-wording";
+import type { RunWatch } from "../shell/run-watch";
 
 export type { DispatchMaterial } from "../shell/dispatch-session";
 
@@ -35,7 +37,13 @@ export type DispatchSurfaceProps = {
   /** Block ids planted by the editor's context menu (派发此段 / 加入派发). */
   seed?: string[];
   /** A persisted author-comment packet converted into a normal dispatch ticket. */
-  initialPrompt?: string;
+  initialPrompt?: string | undefined;
+  /**
+   * The global run watcher. With it, this panel stops polling on its own —
+   * one clock drives the whole app. Without it (test fixtures) the panel
+   * falls back to its own.
+   */
+  runWatch?: RunWatch;
   onCollected?: (count: number) => void;
   onMaterialSaved?: (row: DocumentRow) => void;
   onClosed?: () => void;
@@ -43,6 +51,115 @@ export type DispatchSurfaceProps = {
 
 /** 在途单子的回看间隔。够快让作者察觉，够慢不至于让一份摊开的稿子一直在过桥。 */
 const POLL_INTERVAL_MS = 2_500;
+
+const ARRANGEMENTS = [
+  { id: "single", label: "×1" },
+  { id: "parallel2", label: "并行 ×2" },
+  { id: "parallel3", label: "并行 ×3" },
+  { id: "relay", label: "接力 ×2" },
+  { id: "verify", label: "校验 ×2" },
+] as const satisfies readonly { id: Arrangement; label: string }[];
+
+type RunRow = ReturnType<DispatchSession["view"]>["runs"][number];
+
+/** 在途与终态的单子：状态、工作区、以及这一刻被允许的三个动作。 */
+function RunsList(props: {
+  runs: readonly RunRow[];
+  busy: boolean;
+  onCollect: (run: RunRow) => void;
+  onRetry: (run: RunRow) => void;
+  onCancel: (run: RunRow) => void;
+}): JSX.Element {
+  return (
+    <div class="runs">
+      <For each={props.runs}>
+        {(run) => (
+          <div class="run-row">
+            <span class="status">{runStatusLabel(run)}</span>
+            <Show when={run.workspace}>
+              <code class="workspace">{run.workspace}</code>
+            </Show>
+            <span class="run-actions">
+              <Show when={run.progress === "dispatched"}>
+                <button
+                  class="dispatch-collect"
+                  type="button"
+                  disabled={props.busy}
+                  onClick={() => props.onCollect(run)}
+                >
+                  收取
+                </button>
+              </Show>
+              <Show when={run.progress === "failed" || run.progress === "cancelled"}>
+                <button
+                  class="dispatch-retry"
+                  type="button"
+                  disabled={props.busy}
+                  onClick={() => props.onRetry(run)}
+                >
+                  重试
+                </button>
+              </Show>
+              <Show when={!terminal(run)}>
+                <button type="button" disabled={props.busy} onClick={() => props.onCancel(run)}>
+                  取消
+                </button>
+              </Show>
+            </span>
+          </div>
+        )}
+      </For>
+    </div>
+  );
+}
+
+type ManifestPhase = NonNullable<ReturnType<DispatchSession["view"]>["manifest"]>;
+
+/** 冻结清单：这一单到底带了什么，给授权前的作者过目。 */
+function ManifestPanel(props: {
+  phase: ManifestPhase;
+  busy: boolean;
+  onAuthorize: () => void;
+  onBack: () => void;
+  onToggleReveal: () => void;
+}): JSX.Element {
+  const phase = () => props.phase;
+  return (
+    <div class="manifest">
+      <p class="manifest-title">清单 · {phase().preview.digest.slice(0, 12)}</p>
+      <For each={phase().preview.manifest}>
+        {(entry) => (
+          <div class="manifest-row">
+            <span class="section">
+              {entry.section} · {entry.source}
+            </span>
+            <span class="bytes">{entry.bytes} B</span>
+            <span class="tokens">{tokenLabel(entry.tokens)}</span>
+          </div>
+        )}
+      </For>
+      <button type="button" class="dispatch-expand" onClick={props.onToggleReveal}>
+        {phase().reveal.kind === "request" ? "收" : "原文"}
+      </button>
+      <Show when={phase().reveal.kind === "request"}>
+        <pre class="request-md">{phase().preview.requestMd}</pre>
+      </Show>
+      <div class="actions">
+        <button
+          class="primary dispatch-authorize"
+          type="button"
+          disabled={props.busy}
+          onClick={props.onAuthorize}
+        >
+          授权
+        </button>
+        <button type="button" disabled={props.busy} onClick={props.onBack}>
+          返回
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function DispatchSurface(props: DispatchSurfaceProps): JSX.Element {
   const session = new DispatchSession(
@@ -71,10 +188,10 @@ export function DispatchSurface(props: DispatchSurfaceProps): JSX.Element {
   const manifest = () => view().manifest;
   const draftBody = () => view().draftBody;
   const busy = () => view().activity.kind === "working";
-  const noticeText = createMemo<string | null>(() => {
-    const activity = view().activity;
-    return activity.kind === "reported" || activity.kind === "failed" ? activity.text : null;
-  });
+  // Progress speaks too ("正在授权并启动"), not only success and failure.
+  const activityText = createMemo<string | null>(
+    () => workingText(view().activity) ?? noticeText(view().activity),
+  );
 
   // 稿子换了：票据换对象，已选的块 id 不再指向任何东西。
   createEffect(() => {
@@ -98,6 +215,16 @@ export function DispatchSurface(props: DispatchSurfaceProps): JSX.Element {
 
   onMount(() => {
     void session.start();
+    // With the global watcher there is one clock for the whole app: the run
+    // list refreshes on the same tick the status line does.
+    if (props.runWatch !== undefined) {
+      onCleanup(
+        props.runWatch.onChanged(() => {
+          void session.refresh();
+        }),
+      );
+      return;
+    }
     onCleanup(
       session.watchInFlight(POLL_INTERVAL_MS, (ms, task) => {
         const handle = window.setInterval(task, ms);
@@ -105,6 +232,11 @@ export function DispatchSurface(props: DispatchSurfaceProps): JSX.Element {
       }),
     );
   });
+
+  /** After a dispatch or a retry, the global watcher starts watching at once. */
+  const pokeRuns = (action: Promise<void>): void => {
+    void action.then(() => props.runWatch?.poke());
+  };
 
   return (
     <section class="dispatch" data-quarter="agent" aria-label="派发">
@@ -136,7 +268,7 @@ export function DispatchSurface(props: DispatchSurfaceProps): JSX.Element {
           </button>
         </div>
       </header>
-      <Show when={noticeText()}>{(text) => <p class="notice">{text()}</p>}</Show>
+      <Show when={activityText()}>{(text) => <p class="notice">{text()}</p>}</Show>
 
       <Show when={model().phase.kind === "editing"}>
         <div class="blocks">
@@ -207,16 +339,16 @@ export function DispatchSurface(props: DispatchSurfaceProps): JSX.Element {
             </Show>
             <span class="copies">
               <select
-                class="dispatch-copies"
-                aria-label="份数"
-                value={String(model().copies)}
+                class="dispatch-arrangement"
+                aria-label="编排"
+                value={model().arrangement}
                 onChange={(event) =>
-                  session.chooseCopies(Number.parseInt(event.currentTarget.value, 10) as Copies)
+                  session.chooseArrangement(event.currentTarget.value as Arrangement)
                 }
               >
-                <option value="1">×1</option>
-                <option value="2">并行 ×2</option>
-                <option value="3">并行 ×3</option>
+                <For each={ARRANGEMENTS}>
+                  {(entry) => <option value={entry.id}>{entry.label}</option>}
+                </For>
               </select>
             </span>
             <select
@@ -301,82 +433,24 @@ export function DispatchSurface(props: DispatchSurfaceProps): JSX.Element {
 
       <Show when={manifest()}>
         {(phase) => (
-          <div class="manifest">
-            <p class="manifest-title">清单 · {phase().preview.digest.slice(0, 12)}</p>
-            <For each={phase().preview.manifest}>
-              {(entry) => (
-                <div class="manifest-row">
-                  <span class="section">
-                    {entry.section} · {entry.source}
-                  </span>
-                  <span class="bytes">{entry.bytes} B</span>
-                  <span class="tokens">{tokenLabel(entry.tokens)}</span>
-                </div>
-              )}
-            </For>
-            <button type="button" class="dispatch-expand" onClick={() => session.toggleReveal()}>
-              {phase().reveal.kind === "request" ? "收" : "原文"}
-            </button>
-            <Show when={phase().reveal.kind === "request"}>
-              <pre class="request-md">{phase().preview.requestMd}</pre>
-            </Show>
-            <div class="actions">
-              <button
-                class="primary dispatch-authorize"
-                type="button"
-                disabled={busy()}
-                onClick={() => void session.authorize()}
-              >
-                授权
-              </button>
-              <button type="button" disabled={busy()} onClick={() => session.newTask()}>
-                返回
-              </button>
-            </div>
-          </div>
+          <ManifestPanel
+            phase={phase()}
+            busy={busy()}
+            onAuthorize={() => pokeRuns(session.authorize())}
+            onBack={() => session.newTask()}
+            onToggleReveal={() => session.toggleReveal()}
+          />
         )}
       </Show>
 
       <Show when={runs().length > 0}>
-        <div class="runs">
-          <For each={runs()}>
-            {(run) => (
-              <div class="run-row">
-                <span class="status">{runStatusLabel(run)}</span>
-                <Show when={run.workspace}>
-                  <code class="workspace">{run.workspace}</code>
-                </Show>
-                <span class="run-actions">
-                  <Show when={run.progress === "dispatched"}>
-                    <button
-                      class="dispatch-collect"
-                      type="button"
-                      disabled={busy()}
-                      onClick={() => session.collect(run)}
-                    >
-                      收取
-                    </button>
-                  </Show>
-                  <Show when={run.progress === "failed" || run.progress === "cancelled"}>
-                    <button
-                      class="dispatch-retry"
-                      type="button"
-                      disabled={busy()}
-                      onClick={() => session.retry(run)}
-                    >
-                      重试
-                    </button>
-                  </Show>
-                  <Show when={!terminal(run)}>
-                    <button type="button" disabled={busy()} onClick={() => session.cancel(run)}>
-                      取消
-                    </button>
-                  </Show>
-                </span>
-              </div>
-            )}
-          </For>
-        </div>
+        <RunsList
+          runs={runs()}
+          busy={busy()}
+          onCollect={(run) => session.collect(run)}
+          onRetry={(run) => pokeRuns(session.retry(run))}
+          onCancel={(run) => session.cancel(run)}
+        />
       </Show>
 
       <button type="button" class="dispatch-close" onClick={() => props.onClosed?.()}>

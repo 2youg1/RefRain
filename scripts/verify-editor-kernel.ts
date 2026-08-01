@@ -34,11 +34,7 @@ for (const file of manifests) {
   }
 }
 
-const sources = collect([
-  "apps/**/*.{ts,tsx,vue}",
-  "packages/**/*.{ts,tsx,vue}",
-  "scripts/**/*.ts",
-]).filter(
+const sources = collect(["apps/**/*.{ts,tsx}", "packages/**/*.{ts,tsx}", "scripts/**/*.ts"]).filter(
   (file) => file !== "scripts/verify-editor-kernel.ts" && file !== "scripts/prove-gates-bite.ts",
 );
 for (const file of sources) {

@@ -20,8 +20,10 @@ import {
   type HostStateDto,
   type MaterialDraftRow_Serialize,
   type RunDto,
+  type RunEdgeDto,
   type TaskDto,
 } from "../generated/bindings.gen";
+import { inFlight } from "./dispatch-wording";
 import { type Activity, type DescribeError, Session } from "./session";
 
 export type DispatchMaterial = { path: string; label: string };
@@ -65,7 +67,43 @@ export type Journal = { kind: "unread" } | { kind: "read"; host: HostStateDto };
 
 export type AgentChoice = { id: string; label: string };
 
-export type Copies = 1 | 2 | 3;
+/**
+ * 编排：一单出去几个 Run、它们之间什么关系。
+ * ×1 单独作答；并行互不相同地答同一题；接力接着上一轮的产出做；校验只读产出挑毛病。
+ */
+export type Arrangement = "single" | "parallel2" | "parallel3" | "relay" | "verify";
+
+/** 编排 → 造几个 Run、边怎么挂。边按 new_agents 的位置指人。 */
+export function arrangementRuns(arrangement: Arrangement): {
+  agents: number;
+  edges: (RunEdgeDto | null)[];
+} {
+  switch (arrangement) {
+    case "parallel2":
+      return {
+        agents: 2,
+        edges: [
+          { kind: "alternates", target: 1 },
+          { kind: "alternates", target: 0 },
+        ],
+      };
+    case "parallel3":
+      return {
+        agents: 3,
+        edges: [
+          { kind: "alternates", target: 1 },
+          { kind: "alternates", target: 2 },
+          { kind: "alternates", target: 0 },
+        ],
+      };
+    case "relay":
+      return { agents: 2, edges: [null, { kind: "follows", target: 0 }] };
+    case "verify":
+      return { agents: 2, edges: [null, { kind: "verifies", target: 0 }] };
+    default:
+      return { agents: 1, edges: [] };
+  }
+}
 
 export type DispatchModel = {
   selected: readonly string[];
@@ -73,7 +111,7 @@ export type DispatchModel = {
   prompt: string;
   agentId: string | null;
   agents: readonly AgentChoice[];
-  copies: Copies;
+  arrangement: Arrangement;
   carry: CarryMode;
   phase: Phase;
   journal: Journal;
@@ -89,7 +127,7 @@ function initialModel(): DispatchModel {
     prompt: "",
     agentId: null,
     agents: [],
-    copies: 1,
+    arrangement: "single",
     carry: "diff",
     phase: { kind: "editing" },
     journal: { kind: "unread" },
@@ -178,12 +216,8 @@ function readingOf(
   return ledger.find((row) => row.agentId === agentId && row.document === path) ?? null;
 }
 
-const IN_FLIGHT: readonly string[] = ["authorized", "launching", "dispatched"];
-
 function settling(journal: Journal): boolean {
-  return (
-    journal.kind === "read" && journal.host.runs.some((run) => IN_FLIGHT.includes(run.progress))
-  );
+  return journal.kind === "read" && journal.host.runs.some((run) => inFlight(run));
 }
 
 export function editingDraftId(edit: DraftEdit): string | null {
@@ -223,6 +257,7 @@ function authorizeRequestOf(
   clickedDigest: string,
   newAgents: string[],
   retryRunIds: string[],
+  edges: (RunEdgeDto | null)[],
 ): AuthorizeDispatchRequest {
   return {
     rootId: ticket.rootId,
@@ -234,6 +269,7 @@ function authorizeRequestOf(
     clickedDigest,
     newAgents,
     retryRunIds,
+    edges,
     agentId: ticket.agentId,
     carry: ticket.carry,
   };
@@ -423,8 +459,8 @@ export class DispatchSession extends Session<DispatchOperation> {
     this.#patch({ agentId });
   }
 
-  chooseCopies(copies: Copies): void {
-    this.#patch({ copies });
+  chooseArrangement(arrangement: Arrangement): void {
+    this.#patch({ arrangement });
   }
 
   chooseCarry(carry: CarryMode): void {
@@ -551,13 +587,15 @@ export class DispatchSession extends Session<DispatchOperation> {
       const agentId = this.#model.agentId;
       if (phase.kind !== "previewing" || agentId === null) return null;
       const ticket = ticketOf(this.context, this.#model, agentId);
+      const shape = arrangementRuns(this.#model.arrangement);
       const runs = await this.gateway.authorizeDispatch(
         authorizeRequestOf(
           ticket,
           phase.taskId,
           phase.preview.digest,
-          Array.from({ length: this.#model.copies }, () => ticket.agentId),
+          Array.from({ length: shape.agents }, () => ticket.agentId),
           [],
+          shape.edges,
         ),
       );
       // 授权与启动是两步：授权把单子记下来，启动才真的把它交出去。分开做，
@@ -593,7 +631,7 @@ export class DispatchSession extends Session<DispatchOperation> {
       // 当初读过的那一份。
       const again = await this.gateway.previewDispatch(ticket);
       await this.gateway.authorizeDispatch(
-        authorizeRequestOf(ticket, queued.taskId, again.digest, [], [queued.id]),
+        authorizeRequestOf(ticket, queued.taskId, again.digest, [], [queued.id], []),
       );
       await this.gateway.launchRun(ticket.rootId, queued.id);
       await this.#reload();

@@ -61,22 +61,6 @@ describe("CommandFocus", () => {
     expect(fellBack).toBe(0);
   });
 
-  test("原处是热区时落回手稿，不把作者关进开合循环", async () => {
-    const { element, focusCount } = makeElement({ inHotZone: true });
-    let fellBack = 0;
-    const focus = new CommandFocus(
-      () => undefined,
-      () => {
-        fellBack += 1;
-      },
-    );
-    withActive(asElement(element), () => focus.show());
-    focus.hide();
-    await settle();
-    expect(focusCount()).toBe(0);
-    expect(fellBack).toBe(1);
-  });
-
   test("原处已从 DOM 上下来时落回手稿", async () => {
     const { element, focusCount } = makeElement({ connected: false });
     let fellBack = 0;

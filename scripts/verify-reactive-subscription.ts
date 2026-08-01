@@ -90,7 +90,12 @@ for (const file of files) {
 // 9：新增 `selectedAnnotations`（作者勾了哪些批注要派发）。
 // 已确认它确实需要 tick——`AnnotationSelection` 是 framework-free 的会话对象，
 // 与另外五个同形，不是把一个已经响应式的值多包一层。
-const EXPECTED_SUBSCRIBING_MEMOS = 9;
+// 12：新增三处，同样读 framework-free 会话，确实需要 tick——
+// `runsInFlight`（RunWatch 广播）、`karaEngaged`（KARA 机器）、
+// `activityLine`/`projectBusy`（ProjectSession 视图，与既有 memo 共享 projectTick）。
+// 14：饭盒工厂 createBentoState 的两处——`unjudged` 与 `anchors`，读的是
+// TicketMailbox（framework-free 会话）经 mailTick 转达的变化。
+const EXPECTED_SUBSCRIBING_MEMOS = 14;
 if (subscribingMemos !== EXPECTED_SUBSCRIBING_MEMOS) {
   failures.push(
     subscribingMemos < EXPECTED_SUBSCRIBING_MEMOS

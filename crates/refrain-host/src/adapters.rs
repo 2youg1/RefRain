@@ -5,7 +5,7 @@
 //! `cancel` stops the tree. The artifact the producer wrote is validated by
 //! the host's collect path, never here — process exit is not completion.
 //!
-//! Detection follows one rule (r1 调研/orca 借鉴）: probe is version-only and
+//! Detection follows one rule: probe is version-only and
 //! never touches the model — `kimi --version` answers; no probe burns a turn.
 
 use std::io::{self, BufRead, BufReader, Read};
@@ -161,9 +161,9 @@ fn version_of(program: &std::path::Path, identity: &str) -> io::Result<String> {
         args: vec!["--version".to_string()],
         env: vec![],
         cwd: std::env::temp_dir(),
-        stdin_piped: false,
     })?
-    .wait()?;
+    // A version probe is one line of output; ten seconds is already generous.
+    .wait_timeout(std::time::Duration::from_secs(10))?;
     validate_version(program, identity, outcome)
 }
 
@@ -295,7 +295,6 @@ impl HarnessAdapter for KimiPrint {
             ],
             env: self.env.clone(),
             cwd: spec.workspace.clone(),
-            stdin_piped: false,
         })?;
         let receipt = format!("kimi-l1:pid={}", handle.pid());
         Ok(DispatchReceipt { receipt, handle })
@@ -544,7 +543,6 @@ mod tests {
             args: vec!["--definitely-not-a-flag".to_string()],
             env: vec![],
             cwd: std::env::temp_dir(),
-            stdin_piped: false,
         })
         .unwrap();
         let outcome = handle.wait().unwrap();
@@ -766,7 +764,6 @@ impl HarnessAdapter for ClaudePrint {
             ],
             env: self.env.clone(),
             cwd: spec.workspace.clone(),
-            stdin_piped: false,
         })?;
         let receipt = format!("claude-l1:pid={}", handle.pid());
         Ok(DispatchReceipt { receipt, handle })

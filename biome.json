@@ -9,7 +9,8 @@
       "!legacy",
       "!apps/desktop/src/generated",
       "!apps/desktop/src-tauri/gen",
-      "!tests/corpora"
+      "!tests/corpora",
+      "!probe-results"
     ]
   },
   "formatter": {
@@ -29,7 +30,6 @@
   },
   "overrides": [
     {
-      "includes": ["**/*.vue"],
       "linter": {
         "rules": {
           "correctness": {

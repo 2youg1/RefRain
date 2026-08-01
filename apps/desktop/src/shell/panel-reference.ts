@@ -26,9 +26,9 @@ export function canOpen(reference: WorkbenchReference, hasDocument: boolean): bo
 /**
  * 设置面板此刻停在哪一节。
  *
- * 不在设置层时给「外观」——设置页要有一个起点，而这个起点是设置自己的默认值，
- * 不是每个调用方各猜一次。
+ * 不在设置层时给「排版」——那是作者最常回到设置页的理由（外观选一次就定了），
+ * 也是设置页自己的默认落点。起点只在这里说一次，调用方不各猜一次。
  */
 export function settingsSection(reference: WorkbenchReference | null): SettingsSection {
-  return reference?.kind === "settings" ? reference.section : "appearance";
+  return reference?.kind === "settings" ? reference.section : "typography";
 }

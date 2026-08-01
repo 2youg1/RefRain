@@ -51,8 +51,6 @@ pub struct LaunchSpec {
     /// The Run workspace; the child may write here and nowhere else the host
     /// cares about (SPEC 6.2).
     pub cwd: PathBuf,
-    /// Keep stdin piped for protocols spoken over stdio (Codex app-server).
-    pub stdin_piped: bool,
 }
 
 /// The child's captured output and final status.
@@ -107,11 +105,6 @@ impl ProcessHandle {
         self.child().ok()?.stderr.take()
     }
 
-    /// Take the stdin pipe for stdio protocols (Codex app-server).
-    pub fn stdin(&mut self) -> Option<std::process::ChildStdin> {
-        self.child().ok()?.stdin.take()
-    }
-
     /// Block until exit and drain whatever pipes remain. Output is decoded
     /// lossily: a harness emitting non-UTF-8 is reported, not crashed.
     pub fn wait(mut self) -> io::Result<ProcessOutcome> {
@@ -124,6 +117,49 @@ impl ProcessHandle {
             pipe.read_to_end(&mut stderr)?;
         }
         let status = self.child()?.wait()?;
+        Ok(ProcessOutcome {
+            code: status.code(),
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        })
+    }
+
+    /// Block until exit, or kill the child and fail once `timeout` has passed.
+    ///
+    /// For bounded probes like `--version`, whose whole answer is a line: a
+    /// child that has not replied in time is hung (a slow antivirus scan, a
+    /// shim waiting on input), and the caller must not wait forever — this
+    /// used to freeze the entire window when it ran on the UI thread.
+    pub fn wait_timeout(mut self, timeout: std::time::Duration) -> io::Result<ProcessOutcome> {
+        let deadline = std::time::Instant::now() + timeout;
+        let status = loop {
+            if let Some(status) = self.child()?.try_wait()? {
+                break status;
+            }
+            if std::time::Instant::now() >= deadline {
+                self.child()?.kill()?;
+                // Reap so no zombie is left behind, then report the timeout.
+                let _ = self.child()?.wait();
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!(
+                        "the process did not answer within {}ms",
+                        timeout.as_millis()
+                    ),
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        // The child has exited; drain what it already wrote (bounded for a
+        // probe) without taking the pipes through `wait`.
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        if let Some(mut pipe) = self.stdout() {
+            pipe.read_to_end(&mut stdout)?;
+        }
+        if let Some(mut pipe) = self.stderr() {
+            pipe.read_to_end(&mut stderr)?;
+        }
         Ok(ProcessOutcome {
             code: status.code(),
             stdout: String::from_utf8_lossy(&stdout).into_owned(),
@@ -226,11 +262,7 @@ pub fn launch(spec: &LaunchSpec) -> io::Result<ProcessHandle> {
     command
         .args(&spec.args)
         .current_dir(&spec.cwd)
-        .stdin(if spec.stdin_piped {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env_clear();
@@ -293,7 +325,6 @@ mod tests {
             args: args.iter().map(|s| (*s).to_string()).collect(),
             env: vec![("REFRAIN_MARKER".to_string(), "present".to_string())],
             cwd: std::env::temp_dir(),
-            stdin_piped: false,
         })
     }
 

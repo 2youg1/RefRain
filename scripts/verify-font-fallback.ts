@@ -11,6 +11,9 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { chromium } from "playwright";
+import { ensureNodeDriver } from "./pw-chromium.ts";
+
+ensureNodeDriver(import.meta.url);
 
 const FONT_DIR = "apps/desktop/src/fonts";
 const sha256 = (data: Buffer): string => createHash("sha256").update(data).digest("hex");

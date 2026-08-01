@@ -75,7 +75,7 @@ for (const [source, fact, failure] of [
   [windowsE2e, 'invoke("list_fonts")', "the Windows E2E never enumerates real system fonts"],
   [windowsE2e, 'clickButton("撤销本次调整")', "Settings entry undo has no real-window test"],
   [windowsE2e, 'clickButton("恢复本页默认")', "Settings page reset has no real-window test"],
-  [windowsE2e, 'pressKey("")', "Settings Escape has no real-window test"],
+  [windowsE2e, 'pressKey("")', "Settings Escape has no real-window test"],
   [editorHost, "var(--manuscript-weight", "the editor drops font weight"],
   [editorHost, "var(--manuscript-measure", "the editor drops manuscript measure"],
   [editorHost, "var(--paragraph-gap", "the editor drops paragraph spacing"],

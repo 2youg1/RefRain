@@ -4,7 +4,7 @@
 //!
 //! Materials used to enter a request whole. Three 100KB references come to
 //! roughly 153,600 tokens by this project's own estimate, and the cost is not
-//! merely money — Anthropic's measurement is that recall *degrades* as the
+//! merely money — recall *degrades* as the
 //! context grows ("context rot"), so pasting everything makes the agent worse
 //! at the job, not just more expensive.
 //!
@@ -50,7 +50,7 @@ use crate::searchable_block::blocks_of;
 ///
 /// The enum is itself the documentation: an agent reading `OutlineOnly` in a
 /// listing knows not to try fetching that body, with no prose telling it so.
-/// Anthropic's guidance for this model generation is explicit that expressive
+/// The guidance for current model generations is explicit that expressive
 /// parameters beat worked examples, because examples narrow the space an
 /// agent will explore.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Type)]

@@ -1,6 +1,9 @@
 #!/usr/bin/env bun
 
 import { chromium } from "playwright";
+import { ensureNodeDriver } from "./pw-chromium.ts";
+
+ensureNodeDriver(import.meta.url);
 
 const source = await Bun.file("apps/desktop/src/assets/mark.svg").text();
 const compact = await Bun.file("apps/desktop/src/assets/mark-16.svg").text();

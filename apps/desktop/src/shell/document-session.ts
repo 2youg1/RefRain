@@ -246,7 +246,7 @@ export class DocumentSession extends Session {
         this.#stamp = outcome.value.stamp;
         this.#save = { kind: "clean" };
         if (outcome.value.recoveryEvidence) {
-          this.notices.notice(`恢复了一份中断的写入:${outcome.value.recoveryEvidence}`);
+          this.notices.notice(`恢复了一份中断的写入：${outcome.value.recoveryEvidence}`);
         }
       } else {
         // The author's side is the confirmed session text, not the bytes the

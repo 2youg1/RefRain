@@ -7,7 +7,6 @@ mod byte_sequence;
 mod decision;
 mod materialize;
 mod review;
-mod undo;
 
 pub use block_sequence::BlockSequence;
 pub use block_text::BlockText;
@@ -249,7 +248,6 @@ impl EditorAction {
 pub enum TextCommand {
     Editor(EditorAction),
     CommitDecisionBatch(DecisionBatch),
-    SelectiveUndo { action: Id },
 }
 
 /// One minimal replacement over canonical source bytes.
@@ -506,17 +504,6 @@ pub enum TextRefusal {
     MissingBoundary { block: Id },
     #[error("an editor action must contain at least one change")]
     NothingChanged,
-    #[error("text action {action} does not exist")]
-    UnknownAction { action: Id },
-    #[error("text action {action} has no manuscript effect to undo")]
-    ActionHasNoTextEffect { action: Id },
-    #[error("a later action changed block {block}")]
-    LaterActionIntersects {
-        block: Id,
-        before: String,
-        after: String,
-        current: String,
-    },
     #[error("block {block} has no surviving lineage boundary")]
     LineageGone { block: Id },
     #[error("a Decision Batch must contain at least one staged Verdict")]
@@ -666,14 +653,13 @@ impl Manuscript {
     pub fn execute(&mut self, command: TextCommand) -> Result<TextTransition, TextRefusal> {
         let local = match &command {
             TextCommand::Editor(editor) => local_replacement(editor, &self.block_at),
-            TextCommand::CommitDecisionBatch(_) | TextCommand::SelectiveUndo { .. } => None,
+            TextCommand::CommitDecisionBatch(_) => None,
         };
         let (head, action) = match command {
             TextCommand::Editor(editor) => {
                 action::apply_editor_indexed(&self.head, &editor, &self.block_at)?
             }
             TextCommand::CommitDecisionBatch(batch) => decision::apply(&self.head, &batch)?,
-            TextCommand::SelectiveUndo { action } => undo::selective(self, action)?,
         };
         let byte_patch = if let Some(index) = local {
             self.replace_materialized_block(index, &head)?

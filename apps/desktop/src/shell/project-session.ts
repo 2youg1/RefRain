@@ -5,6 +5,7 @@ import {
   type DocumentPageDto,
   type DocumentRow,
   type ProjectOpenedDto,
+  type SearchPrecision,
 } from "../generated/bindings.gen";
 import { e2ePickedPath } from "./pick";
 import { type Activity, type DescribeError, Session } from "./session";
@@ -19,7 +20,11 @@ export type ProjectOperation =
 
 export interface ProjectCatalogPort {
   page(rootId: string, after: string): Promise<DocumentPageDto>;
-  search(rootId: string, query: string): Promise<readonly DocumentRow[]>;
+  search(
+    rootId: string,
+    query: string,
+    precision: SearchPrecision,
+  ): Promise<readonly DocumentRow[]>;
 }
 
 /**
@@ -61,7 +66,8 @@ type ProjectState =
       readonly catalog: CatalogState;
     };
 
-const browserDelay: DelayPort = {
+/** 一只挂在墙上的钟。run-watch 与这里共用同一个实现，别各写一份。 */
+export const browserDelay: DelayPort = {
   after(milliseconds, task) {
     const handle = window.setTimeout(task, milliseconds);
     return () => window.clearTimeout(handle);
@@ -108,8 +114,8 @@ const productionCatalog: ProjectCatalogPort = {
   async page(rootId, after) {
     return unwrap(commands.documentPage(rootId, after));
   },
-  async search(rootId, query) {
-    return unwrap(commands.documentSearch(rootId, query));
+  async search(rootId, query, precision) {
+    return unwrap(commands.documentSearch(rootId, query, precision));
   },
 };
 
@@ -141,6 +147,8 @@ export class ProjectSession extends Session<ProjectOperation> {
   readonly #catalog: ProjectCatalogPort;
   readonly #delay: DelayPort;
   readonly #report: (error: unknown) => void;
+  // 默认精确：词里的每一部分都要出现。模糊是作者主动要的宽松。
+  #precision: SearchPrecision = "exact";
   #request = 0;
   #cancelDelay: (() => void) | null = null;
 
@@ -159,6 +167,19 @@ export class ProjectSession extends Session<ProjectOperation> {
         ? state.project.documents
         : [];
   }
+  get precision(): SearchPrecision {
+    return this.#precision;
+  }
+
+  /** 切换精确/模糊。当前有搜索词时立即用它重搜。 */
+  setPrecision(next: SearchPrecision): void {
+    if (next === this.#precision) return;
+    this.#precision = next;
+    const current = this.query;
+    if (current !== "") this.setQuery(current);
+    this.emit();
+  }
+
   get query(): string {
     const state = this.#state;
     if (state.kind !== "open") return "";
@@ -409,7 +430,7 @@ export class ProjectSession extends Session<ProjectOperation> {
     }
     this.#set({ ...state, catalog: { kind: "searching", query } });
     try {
-      const documents = await this.#catalog.search(rootId, query);
+      const documents = await this.#catalog.search(rootId, query, this.#precision);
       const live = this.#state;
       if (
         live.kind !== "open" ||

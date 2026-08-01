@@ -104,31 +104,6 @@ fn unjudged_and_rejected_slices_keep_the_authors_exact_whitespace() {
 }
 
 #[test]
-fn a_verdict_only_action_has_no_text_effect_to_undo() {
-    let mut manuscript = open("原文。  ");
-    let block = manuscript.head().block_ids()[0];
-    let proposal = proposal(&manuscript, refrain_core::Id::new(), vec![block], "改写。");
-    let rejected = verdicts(&proposal, VerdictKind::Reject);
-    let transition = manuscript
-        .execute(TextCommand::CommitDecisionBatch(DecisionBatch::new(
-            manuscript.head().id(),
-            vec![proposal],
-            rejected,
-        )))
-        .unwrap();
-    let unchanged = manuscript.head().clone();
-
-    assert!(matches!(
-        manuscript.execute(TextCommand::SelectiveUndo {
-            action: transition.action().id(),
-        }),
-        Err(TextRefusal::ActionHasNoTextEffect { action })
-            if action == transition.action().id()
-    ));
-    assert_eq!(manuscript.head(), &unchanged);
-}
-
-#[test]
 fn modified_wording_is_valid_only_for_an_inserted_slice() {
     let manuscript = open("原文。");
     let block = manuscript.head().block_ids()[0];

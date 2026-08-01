@@ -53,7 +53,6 @@ const DEBT: Readonly<Record<string, { readonly lines: number; readonly errors: n
   read_config: { lines: 22, errors: 3 },
   remove_harness_connection: { lines: 21, errors: 2 },
   remove_agent: { lines: 21, errors: 2 },
-  choose_and_import_manuscript: { lines: 20, errors: 1 },
   set_review_batch: { lines: 18, errors: 1 },
   list_fonts: { lines: 14, errors: 1 },
   kara_state: { lines: 10, errors: 1 },
@@ -77,7 +76,9 @@ function commands(source: string): readonly Command[] {
   const found: Command[] = [];
 
   for (let index = 0; index < lines.length; index += 1) {
-    if (!lines[index]?.startsWith("#[tauri::command]")) continue;
+    // 两种形态都要认：`#[tauri::command]` 与 `#[tauri::command(async)]`（重 I/O
+    // 命令移出 UI 主线程的那批）。只认前者会让 async 命令从每个门禁里蒸发。
+    if (!/^#\[tauri::command(\(async\))?\]/.test(lines[index] ?? "")) continue;
 
     let signature = index;
     while (signature < lines.length && !/^(pub )?(async )?fn /.test(lines[signature] ?? "")) {

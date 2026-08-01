@@ -29,7 +29,7 @@ export const commands = {
 	/**  Return one bounded page from an already reconciled project index. */
 	documentPage: (rootId: string, after: string | null) => typedError<DocumentPageDto, RefrainError>(__TAURI_INVOKE("document_page", { rootId, after })),
 	/**  Search the complete project index. Request ordering belongs to the caller. */
-	documentSearch: (rootId: string, query: string) => typedError<DocumentRow[], RefrainError>(__TAURI_INVOKE("document_search", { rootId, query })),
+	documentSearch: (rootId: string, query: string, precision: SearchPrecision) => typedError<DocumentRow[], RefrainError>(__TAURI_INVOKE("document_search", { rootId, query, precision })),
 	/**
 	 *  Open a document: bytes from disk, blocks from the byte-authoritative
 	 *  layout, the persisted revision chain resumed, and any journaled actions
@@ -93,6 +93,11 @@ export const commands = {
 	 *  every change, not at commit time).
 	 */
 	setReviewBatch: (rootId: string, path: string, cursor: number, batch: string[]) => typedError<null, RefrainError>(__TAURI_INVOKE("set_review_batch", { rootId, path, cursor, batch })),
+	/**
+	 *  Recall staged verdicts to unread （工单信箱的回溯）. Only verdicts still in
+	 *  the batch pass — anything already merged into the text stays history.
+	 */
+	revertVerdicts: (rootId: string, path: string, verdictIds: string[]) => typedError<number, RefrainError>(__TAURI_INVOKE("revert_verdicts", { rootId, path, verdictIds })),
 	/**  The recovered review session: candidates, judgments so far, cursor, batch. */
 	reviewState: (rootId: string, path: string) => typedError<ReviewStateDto_Serialize, RefrainError>(__TAURI_INVOKE("review_state", { rootId, path })),
 	/**
@@ -113,16 +118,7 @@ export const commands = {
 	 */
 	listHarnesses: () => typedError<HarnessDto[], RefrainError>(__TAURI_INVOKE("list_harnesses")),
 	authorizeDispatch: (request: AuthorizeDispatchRequest) => typedError<RunDto[], RefrainError>(__TAURI_INVOKE("authorize_dispatch", { request })),
-	/**
-	 *  Launch one authorized run. L0's dispatch is the file becoming visible;
-	 *  the receipt says so. Real adapters take this seam over in C11.
-	 */
 	launchRun: (rootId: string, runId: string) => typedError<RunDto, RefrainError>(__TAURI_INVOKE("launch_run", { rootId, runId })),
-	/**
-	 *  The command form for the UI's harness dispatch (launch_run branches here
-	 *  for harness agents; this stays a command for the e2e seam).
-	 */
-	harnessDispatch: (rootId: string, runId: string) => typedError<RunDto, RefrainError>(__TAURI_INVOKE("harness_dispatch", { rootId, runId })),
 	/**  The orchestration world as the surface renders it. */
 	hostState: (rootId: string) => typedError<HostStateDto, RefrainError>(__TAURI_INVOKE("host_state", { rootId })),
 	/**
@@ -185,30 +181,6 @@ export const commands = {
 	currentHead: string | null,
 	headBlockIds: string | null,
 } | null, RefrainError>(__TAURI_INVOKE("choose_and_import_material", { rootId })),
-	chooseAndImportManuscript: (rootId: string) => typedError<{
-	id: Id,
-	/**  Portable identity inside the Root: the relative path, `/`-joined. */
-	path: string,
-	role: DocumentRole,
-	digest: string | null,
-	/**  The confirmed revision id and lineage paired with the digest. */
-	currentHead: string | null,
-	headBlockIds: string | null,
-} | null, RefrainError>(__TAURI_INVOKE("choose_and_import_manuscript", { rootId })),
-	/**
-	 *  A dropped path remains renderer-supplied, so Rust binds it to one explicit
-	 *  native confirmation before reading a byte.
-	 */
-	confirmAndImportDropped: (rootId: string, sourcePath: string, kind: DroppedImportKind) => typedError<{
-	id: Id,
-	/**  Portable identity inside the Root: the relative path, `/`-joined. */
-	path: string,
-	role: DocumentRole,
-	digest: string | null,
-	/**  The confirmed revision id and lineage paired with the digest. */
-	currentHead: string | null,
-	headBlockIds: string | null,
-} | null, RefrainError>(__TAURI_INVOKE("confirm_and_import_dropped", { rootId, sourcePath, kind })),
 	listAgents: () => __TAURI_INVOKE<AgentDto[]>("list_agents"),
 	/**
 	 *  Create or update one Agent (SPEC 6.5: typed changes only). A connection
@@ -523,8 +495,6 @@ export type DocumentRow = {
 	currentHead: string | null,
 	headBlockIds: string | null,
 };
-
-export type DroppedImportKind = "manuscript" | "material";
 
 /**  The editor's settled input, as it crosses the bridge. */
 export type EditorActionDto = {
@@ -1057,6 +1027,9 @@ export type SaveOutcomeDto_Serialize = { kind: "saved"; value: {
 	onDisk: string,
 	stamp: FileStamp_Serialize,
 } };
+
+/**  How literal a search is: every query part must appear, or any part may. */
+export type SearchPrecision = "exact" | "loose";
 
 /**
  *  The session's current view of an open document: the confirmed head, no

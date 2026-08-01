@@ -30,17 +30,7 @@ const RULES: readonly Rule[] = [
       "crates/refrain-core/src/searchable_block.rs",
       "crates/refrain-core/src/material_listing.rs",
       "crates/refrain-store/src/project/",
-      "crates/refrain-app/src/material_access.rs",
     ],
-  },
-  {
-    concept: "检索命中",
-    canonical: "SearchHit（交出去的）/ ScoredHit（打分中间态，借用索引）",
-    synonyms: [],
-    typeNameOnly: ["Match", "Found", "Result"],
-    scope: ["crates/refrain-store/src/files/search.rs"],
-    except: ["PathMatch"],
-    note: "PathMatch 是排序信号的名字，不是命中本身",
   },
   {
     concept: "Run 之间的关系",
@@ -53,10 +43,7 @@ const RULES: readonly Rule[] = [
     concept: "作者对一份材料的开放范围",
     canonical: "Disclosure",
     synonyms: ["Visibility", "Permission", "AccessLevel"],
-    scope: [
-      "crates/refrain-core/src/material_listing.rs",
-      "crates/refrain-app/src/material_access.rs",
-    ],
+    scope: ["crates/refrain-core/src/material_listing.rs"],
   },
 ];
 

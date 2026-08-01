@@ -1,4 +1,4 @@
-/* Surface styles migrated from the retired Vue shell. */
+/* 表面样式：每个表面一节，按组件归位。 */
 
 /*
  * 工作台的层。数字的唯一权威是 shell/strata.ts，这里只是把它抄成 CSS 变量，
@@ -28,14 +28,14 @@
   --lamp-facing: 0;
 }
 
-/* ── src/App.vue ─────────────────────────── */
+/* ── src/App.tsx ─────────────────────────── */
 .shell {
   min-height: 100vh;
   background: var(--paper);
   color: var(--ink);
 }
 
-/* ── src/editor-host/EditorHost.vue ─────────────────────────── */
+/* ── src/ui/EditorHost.tsx ─────────────────────────── */
 .editor-wrap {
   position: relative;
   height: 100%;
@@ -69,7 +69,7 @@
   }
 }
 
-/* 版心三档（SPEC 9.8，data-paper 由 App.vue 从 Config 投影）：
+/* 版心三档（SPEC 9.8，data-paper 由 App.tsx 从 Config 投影）：
  * 无 —— Web 模式，无边缘，只留文字下的行线；
  * 细边 —— 默认，发丝边界，无影；
  * 纸张 —— 边框加影，给从 Word 来的作者一张看得见的纸。 */
@@ -202,7 +202,7 @@
   );
 }
 
-/* ── src/shell/AnnotationSurface.vue ─────────────────────────── */
+/* ── src/ui/AnnotationSurface.tsx ─────────────────────────── */
 .annotations {
   width: min(380px, 38vw);
   min-width: 300px;
@@ -212,7 +212,11 @@
   padding: 20px;
 }
 
-header,
+.annotations header,
+.connections header,
+.review-surface header,
+.settings-hero,
+.dispatch .ticket-head,
 .actions {
   display: flex;
   align-items: center;
@@ -220,30 +224,40 @@ header,
   gap: 12px;
 }
 
-h2 {
+.annotations h2,
+.connections h2,
+.settings-heading h2,
+.safety h2,
+.command-menu h2 {
   margin: 2px 0 0;
   font-family: var(--serif);
   font-size: 18px;
   font-weight: 500;
 }
 
-ol {
+.annotations ol,
+.connections ol {
   list-style: none;
   margin: 18px 0;
   padding: 0;
 }
 
-li {
+.annotations li,
+.connections li,
+.stale-proposal li {
   border-top: 1px solid var(--rule);
   padding: 14px 0;
 }
 
-li.drifted {
+.annotations li.drifted,
+.connections li.drifted {
   border-left: 2px solid var(--seal);
   padding-left: 10px;
 }
 
-blockquote {
+.annotations blockquote,
+.stale-proposal blockquote,
+.type-specimen blockquote {
   margin: 8px 0;
   color: var(--ink-soft);
 }
@@ -253,16 +267,18 @@ blockquote {
   font-size: 12px;
 }
 
-.empty,
-small {
+.annotations small,
+.connections small,
+.settings small,
+.command-menu small {
   color: var(--ink-faint);
 }
 
-.dispatch {
+.annotations .dispatch {
   width: 100%;
 }
 
-/* ── src/shell/ConflictDialog.vue ─────────────────────────── */
+/* ── src/ui/ConflictDialog.tsx ─────────────────────────── */
 .safety {
   position: fixed;
   inset: 10vh 10vw;
@@ -296,7 +312,7 @@ small {
   font-size: 13px;
 }
 
-/* ── src/shell/ConnectionsSurface.vue ─────────────────────────── */
+/* ── src/ui/ConnectionsSurface.tsx ─────────────────────────── */
 .connections {
   border-left: 1px solid var(--rule);
   background: var(--paper-raised);
@@ -337,7 +353,7 @@ small {
   color: var(--ink-faint);
 }
 
-.notice {
+.safety .notice {
   color: var(--pending);
   background: color-mix(in oklab, var(--pending) 8%, transparent);
   border-left: 2px solid var(--pending);
@@ -527,15 +543,34 @@ small {
   }
 }
 
-/* ── src/shell/DispatchSurface.vue ─────────────────────────── */
-.dispatch {
-  border-left: 1px solid var(--rule);
-  background: var(--paper-raised);
-  padding: 12px 16px;
+/* ── src/ui/DispatchSurface.tsx ─────────────────────────── */
+/* 工单台是全屏半透明表面：正文在它下面虚化可读，不离开写作现场。
+ * 78% 纸色 + blur 14px——读得出下面有稿子，读不清字，注意力留在台上。 */
+.stage-row > .dispatch {
+  position: fixed;
+  z-index: var(--z-overlay);
+  inset: 0;
+  display: grid;
+  align-content: start;
+  justify-content: center;
+  gap: 14px;
+  border: none;
+  background: color-mix(in oklab, var(--paper) 78%, transparent);
+  backdrop-filter: blur(14px);
+  padding: 48px 24px;
   font-size: 13px;
-  max-width: 520px;
-  min-width: 360px;
   overflow-y: auto;
+  animation: composer-in 400ms var(--ease) backwards;
+}
+
+.stage-row > .dispatch > * {
+  width: min(680px, calc(100vw - 48px));
+}
+
+@keyframes composer-in {
+  from {
+    opacity: 0;
+  }
 }
 
 .ticket {
@@ -592,7 +627,7 @@ small {
   cursor: default;
 }
 
-.notice {
+.dispatch .notice {
   color: var(--pending);
 }
 
@@ -767,11 +802,6 @@ small {
   border-top: 1px solid var(--rule);
 }
 
-.runs-title {
-  font-size: 12px;
-  color: var(--ink-faint);
-}
-
 .run-row {
   display: flex;
   gap: 8px;
@@ -798,7 +828,7 @@ small {
   color: var(--ink-faint);
 }
 
-/* ── src/shell/EditorContextMenu.vue ─────────────────────────── */
+/* ── src/ui/EditorContextMenu.tsx ─────────────────────────── */
 .context-menu {
   position: fixed;
   /* 右键菜单盖得住书脊——脊只是退到后面的面板留下的痕迹。 */
@@ -838,34 +868,7 @@ small {
   inset: 0;
 }
 
-/* ── src/shell/HealthProbe.vue ─────────────────────────── */
-.probe {
-  font-family: system-ui, sans-serif;
-  line-height: 1.6;
-}
-
-h1 {
-  font-weight: 500;
-  letter-spacing: 0.02em;
-}
-
-dl {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.25rem 1.5rem;
-  margin: 0;
-}
-
-dt {
-  opacity: 0.55;
-}
-
-dd {
-  margin: 0;
-  font-variant-numeric: tabular-nums;
-}
-
-/* ── src/shell/IconPicker.vue ─────────────────────────── */
+/* ── src/ui/IconPicker.tsx ─────────────────────────── */
 .icon-picker {
   padding: 0;
   display: flex;
@@ -897,7 +900,40 @@ dd {
   max-width: 180px;
 }
 
-/* ── src/shell/KaraSurface.vue ─────────────────────────── */
+/* ── src/ui/KaraSurface.tsx ─────────────────────────── */
+/* KARA 滤镜：屏幕最上端 ~20% 的渐透明层，不透明度 100% → 50%，
+ * 其余一切不受影响。环境淡入 ≤800ms；离场 400ms 向外加速。 */
+.kara-veil {
+  position: fixed;
+  inset: 0 0 78% 0;
+  z-index: calc(var(--z-lamp) + 5);
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    var(--paper) 0%,
+    color-mix(in oklab, var(--paper) 82%, transparent) 55%,
+    color-mix(in oklab, var(--paper) 50%, transparent) 100%
+  );
+  animation: kara-veil-in 700ms var(--ease) backwards;
+}
+
+.kara-veil.leaving {
+  animation: kara-veil-out 400ms var(--ease-in) forwards;
+}
+
+@keyframes kara-veil-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes kara-veil-out {
+  to {
+    opacity: 0;
+    transform: translateY(-8%);
+  }
+}
+
 .kara-chrome {
   pointer-events: none;
   position: fixed;
@@ -938,23 +974,13 @@ dd {
   font-size: 13px;
 }
 
-.card-enter-active,
-.card-leave-active {
-  transition: opacity 0.2s;
-}
-
-.card-enter-from,
-.card-leave-to {
-  opacity: 0;
-}
-
-/* ── src/shell/LogoMark.vue ─────────────────────────── */
+/* ── src/ui/LogoMark.tsx ─────────────────────────── */
 .logo-mark {
   display: block;
   flex: none;
 }
 
-/* ── src/shell/ReviewSurface.vue ─────────────────────────── */
+/* ── src/ui/ReviewSurface.tsx ─────────────────────────── */
 .review-surface {
   outline: none;
   display: flex;
@@ -993,7 +1019,7 @@ dd {
 }
 
 .proposed {
-  border-left: 2px solid var(--role-agent);
+  border-left: 2px solid var(--agent);
   padding-left: 8px;
 }
 
@@ -1005,7 +1031,7 @@ dd {
 
 .verdict-mark {
   font-size: 12px;
-  color: var(--role-agent);
+  color: var(--agent);
 }
 
 .final-editor {
@@ -1029,12 +1055,12 @@ dd {
   margin-left: 8px;
 }
 
-.empty {
+.review-surface .empty {
   padding: 48px 16px;
   color: var(--ink-faint);
 }
 
-.notice {
+.review-surface .notice {
   color: var(--pending);
   font-size: 13px;
   padding: 4px 16px;
@@ -1051,7 +1077,7 @@ dd {
   padding: 0;
 }
 
-/* ── src/shell/SettingsSurface.vue ─────────────────────────── */
+/* ── src/ui/SettingsSurface.tsx ─────────────────────────── */
 .settings {
   height: 100%;
   min-height: 0;
@@ -1202,9 +1228,10 @@ dd {
   padding-top: 26px;
 }
 
+/* 设置如今只住在 400px 面板里：单列，不叠卡（双列在面板宽度下必然互相覆盖）。 */
 .settings-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.65fr) minmax(220px, 0.75fr);
+  grid-template-columns: 1fr;
   gap: 18px;
 }
 
@@ -1281,7 +1308,7 @@ dd {
   }
 }
 
-/* ── src/shell/ShortcutsPanel.vue ─────────────────────────── */
+/* ── src/ui/ShortcutsPanel.tsx ─────────────────────────── */
 .shortcuts {
   display: flex;
   flex-direction: column;
@@ -1313,7 +1340,7 @@ kbd {
   color: var(--ink-soft);
 }
 
-/* ── src/shell/StatusLine.vue ─────────────────────────── */
+/* ── src/ui/StatusLine.tsx ─────────────────────────── */
 .status-line {
   position: fixed;
   bottom: 0;
@@ -1343,6 +1370,42 @@ kbd {
   transition:
     opacity 240ms var(--ease),
     visibility 0s 240ms;
+}
+
+/* Work in progress: one sentence over a breathing ink line. The sweep is the
+   progress — work of unknown duration must not fake a percent. */
+.status-line .activity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: auto;
+  padding-left: 14px;
+  color: var(--ink-soft);
+}
+
+.status-line .activity-ink {
+  width: 36px;
+  height: 2px;
+  border-radius: 1px;
+  background: linear-gradient(90deg, transparent, var(--seal) 40%, var(--seal) 60%, transparent);
+  background-size: 200% 100%;
+  animation: ink-sweep 1.6s var(--ease) infinite;
+}
+
+@keyframes ink-sweep {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-line .activity-ink {
+    animation: none;
+    background-position: 0 0;
+  }
 }
 
 /* 保存失败时才出现，紧跟在状态之后；`margin-right: auto` 让它与状态同处左侧，
@@ -1399,7 +1462,7 @@ kbd {
   font-size: 11px;
 }
 
-/* ── src/shell/ThemePicker.vue ─────────────────────────── */
+/* ── src/ui/ThemePicker.tsx ─────────────────────────── */
 .theme-picker {
   display: flex;
   flex-direction: column;
@@ -1463,7 +1526,7 @@ kbd {
   color: var(--pending);
 }
 
-/* ── src/shell/TypographyPanel.vue ─────────────────────────── */
+/* ── src/ui/TypographyPanel.tsx ─────────────────────────── */
 .typography-panel {
   display: grid;
   gap: 18px;
@@ -1728,84 +1791,7 @@ kbd {
   }
 }
 
-/* ── src/shell/UniversalButton.vue ─────────────────────────── */
-.universal-hot-zone {
-  position: fixed;
-  /* 万用键的感应区在按钮之上，先接到指针。 */
-  z-index: calc(var(--z-overlay) + 1);
-  top: 0;
-  left: 50%;
-  width: 112px;
-  height: calc(2 * var(--hairline, 1px));
-  transform: translateX(-50%);
-}
-
-.universal-button-zone {
-  position: fixed;
-  /* 万用键浮在一切工作台内容之上。 */
-  z-index: var(--z-overlay);
-  top: 0;
-  left: 50%;
-  display: grid;
-  width: 136px;
-  height: 86px;
-  place-items: start center;
-  padding-top: 4px;
-  transform: translate(-50%, -14px);
-  opacity: 0;
-  pointer-events: none;
-  visibility: hidden;
-  transition:
-    opacity 90ms var(--ease),
-    transform 140ms var(--ease),
-    visibility 0s 140ms;
-}
-
-.universal-button-zone.revealed,
-.universal-button-zone:focus-within {
-  transform: translate(-50%, 0);
-  opacity: 1;
-  pointer-events: auto;
-  visibility: visible;
-  transition:
-    opacity 90ms var(--ease),
-    transform 140ms var(--ease),
-    visibility 0s;
-}
-
-.universal-button {
-  display: grid;
-  width: 34px;
-  height: 30px;
-  place-items: center;
-  border: 1px solid var(--rule-strong);
-  border-radius: 0 0 8px 8px;
-  color: var(--ink);
-  background: var(--paper-raised);
-  box-shadow: 0 8px 24px color-mix(in oklab, var(--ink) 14%, transparent);
-  font-size: 17px;
-}
-
-.universal-button img {
-  width: 22px;
-  height: 22px;
-  object-fit: contain;
-}
-
-.universal-icon-error {
-  margin-top: 34px;
-  color: var(--refused);
-  font-size: 10px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .universal-button-zone,
-  .universal-button-zone.revealed {
-    transition: opacity 90ms linear;
-  }
-}
-
-/* ── src/shell/UniversalMenu.vue ─────────────────────────── */
+/* ── src/ui/UniversalMenu.tsx ─────────────────────────── */
 .command-backdrop {
   position: fixed;
   /* 命令面板是模态：它一出现，别的都不该能点。 */
@@ -1952,7 +1938,7 @@ kbd {
   }
 }
 
-/* ── src/shell/WindowChrome.vue ─────────────────────────── */
+/* ── src/ui/WindowChrome.tsx ─────────────────────────── */
 .window-chrome {
   position: fixed;
   /* 窗口边框在内容之上。 */
@@ -2093,7 +2079,7 @@ kbd {
   transform: rotate(90deg);
 }
 
-/* ── src/shell/Workbench.vue ─────────────────────────── */
+/* ── src/shell/Workbench.tsx ─────────────────────────── */
 .workbench {
   --chrome-height: 38px;
   --status-height: 26px;
@@ -2109,11 +2095,6 @@ kbd {
   align-items: center;
   justify-content: center;
   text-align: center;
-}
-
-.welcome-mark {
-  margin-bottom: 18px;
-  color: var(--ink);
 }
 
 .welcome-brand {
@@ -2195,17 +2176,6 @@ kbd {
     visibility 0s 240ms;
 }
 
-.rail-strip {
-  position: fixed;
-  left: 0;
-  top: var(--chrome-height);
-  bottom: var(--status-height);
-  width: 6px;
-  background: color-mix(in oklab, var(--rail) 55%, transparent);
-  /* 收起的侧栏退到正文层——它此时只是一条边。 */
-  z-index: var(--z-manuscript);
-}
-
 .brand {
   display: flex;
   align-items: center;
@@ -2223,9 +2193,28 @@ kbd {
 }
 
 .rail-search {
-  display: grid;
-  gap: 5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 10px 0 4px;
+}
+
+.rail-search input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 精确/模糊切换：一个词，不是一个图标——模式必须读得出来。 */
+.rail-search .search-mode {
+  flex: none;
+  font-size: 11px;
+  color: var(--rail-faint);
+  padding: 4px 6px;
+}
+
+.rail-search .search-mode[aria-pressed="true"] {
+  color: var(--seal);
+  box-shadow: inset 0 -1px var(--seal);
 }
 
 .rail-search input {
@@ -2288,22 +2277,6 @@ kbd {
   padding: 10px 10px 4px;
 }
 
-.drop-hint {
-  margin: 6px 4px;
-  border: 1px dashed color-mix(in oklab, var(--rail-ink) 45%, transparent);
-  border-radius: 3px;
-  padding: 10px;
-  text-align: center;
-  font-size: 12px;
-  color: var(--rail-faint);
-}
-
-.drop-hint.hot {
-  border-color: var(--seal);
-  color: var(--seal);
-  background: color-mix(in oklab, var(--seal) 12%, transparent);
-}
-
 /* 文档条目是标题，不是文件行：明朝体 + 印色竖线。 */
 .rail li button {
   display: block;
@@ -2351,16 +2324,23 @@ kbd {
   background: var(--paper);
 }
 
+/*
+ * One definite height, the lifeline of the whole scroll chain: the parent
+ * .stage has a definite height, this row inherits it, and only then does
+ * .editor-wrap's height:100% resolve to a real value. With min-height the
+ * percentage resolved to auto and no scroll container ever existed — the
+ * wheel had nowhere to go (the confirmed pre-v0.2.2 bug).
+ */
 .stage-row {
   display: flow-root;
-  min-height: calc(100vh - var(--chrome-height) - var(--status-height));
+  height: 100%;
 }
 
 /*
  * An open panel path forms one stack on one side.
  * shell/panel-motion.ts owns direction and motion; data-quarter declares membership.
  */
-.stage-row > [data-quarter] {
+.stage-row > [data-quarter]:not(.dispatch) {
   position: absolute;
   inset-inline-start: var(--panel-offset, 0);
   top: 0;
@@ -2386,6 +2366,14 @@ kbd {
   );
   backdrop-filter: blur(var(--panel-blur, 0)) saturate(var(--panel-saturate, 1));
   -webkit-backdrop-filter: blur(var(--panel-blur, 0)) saturate(var(--panel-saturate, 1));
+}
+
+/* A solid panel carries no filter at all: even blur(0) allocates a
+   compositing layer, and a fullscreen filter layer is the known WebView2
+   stall class. The transparent materials keep their glass. */
+:root[data-panel-material="solid"] .stage-row > [data-quarter] {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 /*
@@ -2443,64 +2431,6 @@ kbd {
 }
 
 /*
- * 书脊。
- *
- * 前一层不消失也不被盖住，压成一条竖脊立在旁边：标题竖排，点一下回到那一层。
- * 走了多深一眼可见——脊就一条条排在那里，树形文件图与图书馆书架在这里是同一件事。
- */
-.panel-spine {
-  position: absolute;
-  inset-block: 0;
-  inset-inline-start: var(--spine-offset, 0);
-  /* The spine sits above quarter panels. */
-  z-index: var(--z-spine);
-  width: var(--spine-width, 34px);
-  display: flex;
-  /* 竖排下主轴是纵向：align 管左右居中，justify 决定字从哪端起排。
-     从顶端起排，脊读起来才像书脊而不是一个居中的小标签。 */
-  align-items: center;
-  justify-content: flex-start;
-  /* 上下留白让字沿着脊背走，而不是贴顶；左右不留白，脊本来就窄。 */
-  padding: 22px 0;
-  border: 0;
-  border-inline-end: 1px solid var(--rule);
-  border-radius: 0;
-  background: var(--paper-sunk);
-  color: var(--ink-faint);
-  cursor: pointer;
-  /* 竖排标题：书脊上的字本来就是竖着读的。 */
-  writing-mode: vertical-rl;
-  text-orientation: upright;
-  font-family: var(--serif);
-  font-size: 12.5px;
-  /* 竖排时字与字会显得粘连，比横排需要更松的字距。 */
-  letter-spacing: 0.2em;
-  white-space: nowrap;
-  overflow: hidden;
-  /* 一层层立起来：错开的延迟由内联变量给，本身就是一条进度。 */
-  animation: spine-rise var(--panel-motion, 300ms) var(--panel-easing, ease-out) backwards;
-  animation-delay: var(--spine-delay, 0ms);
-  transition:
-    color 140ms var(--ease),
-    background 140ms var(--ease);
-}
-
-.panel-spine:hover {
-  background: var(--paper-raised);
-  color: var(--ink);
-}
-
-/*
- * 当前打开的那一层：它的脊与面板连成一片，读作「这一层是敞开的」。
- * 没有这个区分时，两条一模一样的脊回答不了「现在开的是哪一层」。
- */
-.panel-spine[aria-current="true"] {
-  background: color-mix(in oklab, var(--paper-raised) 92%, var(--seal));
-  color: var(--ink);
-  box-shadow: inset -2px 0 0 var(--seal);
-}
-
-/*
  * 面板蹭上光。
  *
  * 单侧灯从面板这一侧来，所以光先经过面板才到正文——半透明的那两档因此有了
@@ -2523,15 +2453,6 @@ kbd {
   );
 }
 
-/* 立起来：从压扁的状态展开，而不是滑进来——它是「退化」的逆过程。 */
-@keyframes spine-rise {
-  from {
-    transform: scaleX(0.2);
-    transform-origin: var(--spine-origin, left) center;
-    opacity: 0;
-  }
-}
-
 @keyframes panel-in {
   from {
     transform: translateX(var(--panel-enter-from, -100%));
@@ -2539,13 +2460,13 @@ kbd {
   }
 }
 
-.notice {
+.stage > .notice {
   color: var(--pending);
   font-size: 13px;
   padding: 0 24px;
 }
 
-.empty {
+.stage > .empty {
   max-width: 720px;
   margin: 0 auto;
   padding: 20vh 24px 0;
@@ -2553,4 +2474,226 @@ kbd {
   font-family: var(--serif);
   font-size: 15px;
   color: var(--ink-faint);
+}
+
+/* 栏内表单（RailPrompt）：一句话的询问在侧栏就地问完，不跳窗口。 */
+.rail-prompt {
+  display: grid;
+  gap: 6px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--rail-rule);
+}
+
+.rail-prompt label {
+  display: grid;
+  gap: 4px;
+  padding: 0 8px;
+  color: var(--rail-faint);
+  font-size: 11px;
+}
+
+.rail-prompt input {
+  width: 100%;
+  border-color: color-mix(in oklab, var(--rail-ink) 22%, transparent);
+  background: color-mix(in oklab, var(--rail) 82%, var(--rail-ink));
+  color: var(--rail-ink);
+  font-size: 12px;
+}
+
+.rail-prompt-actions {
+  display: flex;
+  gap: 4px;
+}
+
+/* 关窗前的未保存确认：给出路，不是一行字把作者堵死。 */
+.close-confirm {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 7px 10px;
+  color: var(--pending);
+  background: color-mix(in oklab, var(--pending) 8%, transparent);
+  border-left: 2px solid var(--pending);
+  font-size: 13px;
+}
+
+/* 裁决理由的就地输入（ReviewSurface）。 */
+.reason-editor {
+  width: 100%;
+  margin: 6px 0;
+  font-size: 13px;
+}
+
+/* ── 工单信箱（TicketMailboxPanel） ── */
+.mailbox {
+  border-top: 1px solid var(--rail-rule);
+  padding-top: 6px;
+}
+
+.mailbox-badge {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--seal);
+  color: var(--paper);
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+.mailbox-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: none;
+  padding: 4px 8px;
+  color: var(--rail-faint);
+  font-size: 11px;
+  text-align: left;
+}
+
+.mailbox-count {
+  margin-left: auto;
+  font-size: 10px;
+}
+
+.mailbox-row {
+  display: grid;
+  width: 100%;
+  border: none;
+  padding: 5px 8px 5px 20px;
+  text-align: left;
+}
+
+.mailbox-title {
+  overflow: hidden;
+  color: var(--rail-ink);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mailbox-detail {
+  overflow: hidden;
+  color: var(--rail-faint);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mailbox-empty {
+  padding: 4px 8px 4px 20px;
+  color: var(--rail-faint);
+  font-size: 11px;
+  list-style: none;
+}
+
+.mailbox-menu {
+  position: fixed;
+  z-index: var(--z-modal);
+  display: grid;
+  min-width: 120px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--paper-raised);
+  box-shadow: 0 8px 24px color-mix(in oklab, var(--ink) 14%, transparent);
+  padding: 4px;
+}
+
+.mailbox-menu button {
+  border: none;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  text-align: left;
+}
+
+/* ── 饭盒裁决（VerdictBento + 印点） ── */
+/* 段落右缘的印点：提案到了就在那里，缓慢淡入。 */
+.proposal-mark {
+  position: absolute;
+  right: -14px;
+  top: 0.5em;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--seal);
+  cursor: pointer;
+  animation: proposal-mark-in 700ms var(--ease) backwards;
+}
+
+@keyframes proposal-mark-in {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+
+.editor-host p[data-block-id] {
+  position: relative;
+}
+
+/* 饭盒本体：侧挂（默认），inline 时在上下文中展开。 */
+.verdict-bento {
+  position: fixed;
+  z-index: var(--z-menu);
+  display: grid;
+  gap: 10px;
+  width: min(340px, 32vw);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper-raised);
+  box-shadow: 0 12px 36px color-mix(in oklab, var(--ink) 16%, transparent);
+  padding: 14px;
+  font-size: 13px;
+  animation: bento-in 260ms var(--ease) backwards;
+}
+
+.verdict-bento.inline {
+  width: min(560px, 66vw);
+}
+
+@keyframes bento-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.bento-original {
+  margin: 0;
+  color: var(--ink-faint);
+  font-family: var(--serif);
+  line-height: 1.7;
+}
+
+.bento-original s {
+  color: var(--refused);
+  text-decoration-color: color-mix(in oklab, var(--refused) 60%, transparent);
+}
+
+.bento-after {
+  margin: 0;
+  border-left: 2px solid var(--agent);
+  padding-left: 8px;
+  font-family: var(--serif);
+  line-height: 1.7;
+}
+
+.bento-editor {
+  width: 100%;
+  font: inherit;
+}
+
+.bento-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* 右键工作区的分区标签：选区工具在上，段落工具在下。 */
+.context-menu .menu-section {
+  padding: 6px 10px 2px;
+  color: var(--ink-ghost);
+  font-size: 10px;
+  letter-spacing: 0.18em;
 }

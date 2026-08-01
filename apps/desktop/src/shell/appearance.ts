@@ -36,6 +36,10 @@ export function applyAppearance(root: HTMLElement, appearance: AppearanceConfig)
   root.style.setProperty("--panel-saturate", String(material.saturate));
   root.style.setProperty("--panel-opacity", String(material.opacity));
   root.style.setProperty("--panel-rim", String(material.rim));
+  // The name travels too: blur(0) still allocates a compositing filter layer,
+  // so solid panels drop backdrop-filter entirely (a WebView2 stall class on
+  // large fullscreen surfaces lives behind that layer).
+  root.dataset.panelMaterial = appearance.panel_material ?? "solid";
 
   // Lamp position is the authority for highlights, shadows, and the lit panel edge.
   const lamp = lampPlacement(appearance.night_lamp ?? "off", motion.side);

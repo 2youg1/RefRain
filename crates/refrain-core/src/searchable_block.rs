@@ -19,7 +19,7 @@
 //!
 //! # Why an ordinal rather than an `Id`
 //!
-//! Anthropic's tool-writing guidance, measured: resolving opaque identifiers
+//! Tool-writing guidance, measured: resolving opaque identifiers
 //! into "semantically meaningful" ones "significantly improves Claude's
 //! precision in retrieval tasks by reducing hallucinations". A block's
 //! ordinal within its document is derivable from the source bytes by anyone

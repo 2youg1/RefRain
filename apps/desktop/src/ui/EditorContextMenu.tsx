@@ -17,7 +17,6 @@ export type EditorContextMenuProps = {
   onHighlight: () => void;
   onComment: () => void;
   onRelocate: () => void;
-  onDispatch: () => void;
   onAccumulate: () => void;
   onClose: () => void;
 };
@@ -51,10 +50,14 @@ export function EditorContextMenu(props: EditorContextMenuProps): JSX.Element {
           height: Math.min(
             360,
             40 +
+              // 两个分区标签（选区/段落）。
+              52 +
               (props.context.canFormat ? 64 : 0) +
               (props.context.canDeleteEmpty ? 32 : 0) +
               (props.context.selection === null ? 0 : props.relocating ? 32 : 64) +
-              props.context.punctuation.length * 32,
+              props.context.punctuation.length * 32 +
+              // 「攒进工单」与「取消」。
+              64,
           ),
         },
       ),
@@ -90,7 +93,7 @@ export function EditorContextMenu(props: EditorContextMenuProps): JSX.Element {
     entries[target]?.focus();
   };
 
-  // 锚点或指针一变就重新放置并把焦点收回第一项（等价于原 Vue 的 watch）。
+  // 锚点或指针一变就重新放置并把焦点收回第一项。
   createEffect(() => {
     void props.context;
     void props.pointerX;
@@ -122,7 +125,11 @@ export function EditorContextMenu(props: EditorContextMenuProps): JSX.Element {
         }}
         onKeyDown={onKeydown}
       >
+        {/* 选区工具：有选区才出现。 */}
         <Show when={props.context.canFormat}>
+          <div class="menu-section" role="presentation">
+            选区
+          </div>
           <button type="button" role="menuitem" onClick={() => props.onFormat("strong")}>
             加粗
           </button>
@@ -155,11 +162,12 @@ export function EditorContextMenu(props: EditorContextMenuProps): JSX.Element {
             将批注迁到这里
           </button>
         </Show>
-        <button type="button" role="menuitem" onClick={() => props.onDispatch()}>
-          派发此段
-        </button>
+        {/* 段落工具：只记录，不跳走——送出集中在工单台。 */}
+        <div class="menu-section" role="presentation">
+          段落
+        </div>
         <button type="button" role="menuitem" onClick={() => props.onAccumulate()}>
-          加入派发
+          攒进工单
         </button>
         <button type="button" role="menuitem" onClick={() => props.onClose()}>
           取消

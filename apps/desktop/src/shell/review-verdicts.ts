@@ -178,16 +178,18 @@ export function writesOf(
   unit: Unit,
   kind: VerdictKindName,
   finalText: string | null,
-): SliceWrite[] {
-  const last = unit.slices.at(-1);
-  return unit.slices.map((slice) => {
-    const isLast = slice === last;
-    return {
-      sliceId: slice.id,
-      kind: kind === "accept-modified" && !isLast ? "accept" : kind,
-      finalText: kind === "accept-modified" && isLast ? finalText : null,
-    };
-  });
+): SliceWrite[] | null {
+  // 改后接受的最终文本只能落在 insertion slice 上（领域规则：modified 必须
+  // 是插入）。纯删除单元没有 insertion——返回 null，由调用方如实拒绝，
+  // 而不是把文本写到删除行上被后端整单退回。
+  const target =
+    kind === "accept-modified" ? unit.slices.find((s) => s.kind === "insert") : undefined;
+  if (kind === "accept-modified" && target === undefined) return null;
+  return unit.slices.map((slice) => ({
+    sliceId: slice.id,
+    kind: kind === "accept-modified" && slice !== target ? "accept" : kind,
+    finalText: kind === "accept-modified" && slice === target ? finalText : null,
+  }));
 }
 
 /** 键盘 → 意图。原 onKeydown 的 switch 与 if 全部抽到这里，组件只做分派。 */

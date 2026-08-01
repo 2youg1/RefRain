@@ -45,7 +45,10 @@ const check = (name: string, condition: boolean, detail?: unknown): void => {
 const base = `http://127.0.0.1:${DRIVER_PORT}`;
 
 async function call(method: string, path: string, body?: unknown): Promise<unknown> {
-  const init: RequestInit = { method, headers: { "content-type": "application/json" } };
+  const init: RequestInit = {
+    method,
+    headers: { "content-type": "application/json", connection: "close" },
+  };
   if (body !== undefined) init.body = JSON.stringify(body);
   const response = await fetch(`${base}${path}`, init);
   const text = await response.text();
@@ -147,8 +150,6 @@ const caps = () => ({
         // browser process dies before it opens its devtools port.
         args: [
           `--user-data-dir=${join(dataDir, "webview-args")}`,
-          "--no-sandbox",
-          "--disable-gpu",
           "--no-first-run",
           "--disable-extensions",
         ],
@@ -192,6 +193,15 @@ const start = async (): Promise<void> => {
     }
   });
   session = ((await call("POST", "/session", caps())) as { sessionId?: string }).sessionId ?? "";
+  // A cold WebView2 + vite compile can outlive the native window: the pick
+  // must land in the mounted app, not in about:blank.
+  await waitFor("the app to mount", async () =>
+    Boolean(
+      await execute(
+        `return document.readyState === "complete" && !!document.querySelector(".workbench")`,
+      ),
+    ),
+  );
   await execute(
     `window["refrain.e2e.pick"] = ${JSON.stringify(fixture)}; window["refrain.e2e.pin"] = true; "planted"`,
   );
@@ -219,7 +229,7 @@ const openChapter = async (): Promise<void> => {
   // KARA surface in this slice, so toggle out first.
   await chord("");
   await waitFor("KARA off", async () =>
-    Boolean(await execute(`return document.querySelector(".kara-chrome") === null`)),
+    Boolean(await execute(`return document.querySelector(".kara-veil") === null`)),
   );
 };
 
@@ -269,7 +279,7 @@ const run = async (): Promise<void> => {
   check("the fixture froze candidates with changed slices", changedSlices > 0, changedSlices);
 
   // The keyboard path: judge every unit with Alt+A.
-  await clickButton("Review");
+  await clickButton("逐句裁决");
   await waitFor("the review surface", async () =>
     Boolean(await execute(`return document.querySelector(".review-surface") !== null`)),
   );
@@ -354,7 +364,7 @@ const run = async (): Promise<void> => {
   check("the cursor comes back exactly", typeof restored.cursor === "number", restored.cursor);
 
   // Commit after the restart: one Text Action, batch clears, disk untouched.
-  await clickButton("Review");
+  await clickButton("逐句裁决");
   await waitFor("the review surface again", async () =>
     Boolean(await execute(`return document.querySelector(".review-surface") !== null`)),
   );
@@ -362,7 +372,11 @@ const run = async (): Promise<void> => {
   if (surface2 !== null) await click(surface2);
   await altKey("");
   await new Promise((resolve) => setTimeout(resolve, 1500));
-  await waitFor("the surface to close on commit", async () =>
+  // The verdict surface no longer closes itself after a commit (C12.6 UI
+  // redo): the landed manuscript head below is the commit's evidence, and
+  // the author leaves through 返回. Recorded in the acceptance memo.
+  if ((await elementOrNull(".review-surface")) !== null) await clickButton("返回");
+  await waitFor("the surface to close after commit", async () =>
     Boolean(await execute(`return document.querySelector(".review-surface") === null`)),
   );
   const head = await execute(

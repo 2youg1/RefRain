@@ -498,22 +498,8 @@ const block = (t: Theme): string => {
         `  --${name}: oklch(${trim(c[0], 3)} ${trim(c[1], 4)} ${trim(c[2], 1)}); /* ${hex(c)} */`,
       );
 
-    /*
-     * The semantic layer, aliased onto the hues above.
-     *
-     * `roles.ts` names five roles and builds `var(--role-pending)` from them,
-     * but nothing ever emitted that name — so `Files.svelte` asked for
-     * `--role-pending-wash`, got nothing, and the selected row in a list whose
-     * purpose is selecting rows drew no selection at all. `mark.svg` fell back
-     * to a hardcoded orange, which is why the application icon and the seal in
-     * the interface could not agree on a colour.
-     *
-     * Aliases rather than a second set of values: one authority per hue, and a
-     * role is a promise about meaning that must hold across all eight themes.
-     */
-    out.push("");
-    for (const role of ["pending", "accepted", "refused", "agent", "source"])
-      out.push(`  --role-${role}: var(--${role});`, `  --role-${role}-wash: var(--${role}-wash);`);
+    // 语义别名层已退役：界面直接说色相（--agent、--pending），九个 --role-*
+    // 别名没有任何消费方。一个色相一个权威，不需要第二层名字。
   }
   out.push("}");
   return out.join("\n");

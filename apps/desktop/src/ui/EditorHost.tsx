@@ -5,6 +5,7 @@
 
 import {
   type BlockPrefix,
+  type CodeTheme,
   type EditorAction,
   type EditorAnnotationProjection,
   type EditorContext,
@@ -12,6 +13,7 @@ import {
   type EditorFormat,
   type EditorHandle,
   mountEditor,
+  type ProposalMark,
   type PunctuationFinding,
   type SelectionMeasure,
 } from "@refrain/editor";
@@ -28,7 +30,7 @@ import {
 /**
  * What the shell may ask of the open editor.
  *
- * Vue exposed these through `defineExpose`, which let any parent reach in by
+ * The old shell exposed these to any parent, which let it reach in by
  * name. Naming the surface as a type makes the seam checkable: the shell can
  * only call what appears here.
  */
@@ -47,6 +49,8 @@ export interface EditorHostHandle {
   settled(): Promise<void>;
   /** Observe how much text is selected, for the status line's readout. */
   onSelectionMeasured(listener: (measure: SelectionMeasure | null) => void): () => void;
+  /** A block's screen rect, for pinning the bento next to its anchor. */
+  blockRect(blockId: string): DOMRect | null;
 }
 
 export interface EditorHostProps {
@@ -54,6 +58,11 @@ export interface EditorHostProps {
   readonly path: string;
   readonly document: OpenDocumentDto_Serialize;
   readonly annotations: readonly EditorAnnotationProjection[];
+  /** 段落右缘的提案印点；点开一枚就是一次饭盒裁决。 */
+  readonly proposalMarks?: readonly ProposalMark[] | undefined;
+  readonly onProposalMark?: ((id: string) => void) | undefined;
+  /** The code palette in force; the shell projects it from Config. */
+  readonly codeTheme?: CodeTheme | undefined;
   readonly onConfirmed: (revision: string) => void;
   readonly onRejected: (reason: string) => void;
   readonly onContext: (context: EditorContext, pointerX: number, pointerY: number) => void;
@@ -75,8 +84,13 @@ export function EditorHost(props: EditorHostProps) {
   // One key per mounted host, not per document: the host outlives a document
   // switch, and a stale pending frame must be cancellable after the switch.
   const confirmationFrame = `editor-confirm:${crypto.randomUUID()}`;
+  // A remount while a confirmation is in flight must invalidate that
+  // confirmation: its revision belongs to the document being closed, and
+  // applying it here would mark the new document dirty with foreign state.
+  let mountEpoch = 0;
 
   const apply = async (action: EditorAction): Promise<void> => {
+    const epoch = mountEpoch;
     const structural = action.changes.some(
       (change) =>
         (change.kind === "replace" && (change.text === null || change.blocks.length > 1)) ||
@@ -88,12 +102,15 @@ export function EditorHost(props: EditorHostProps) {
         changes: toDto(action),
       }),
     );
+    if (epoch !== mountEpoch) return;
     confirmedRevision = transition.revision;
     editor?.setRevision(transition.revision);
     if (structural) {
       const confirmed = await unwrap(commands.currentDocument(props.rootId, props.path));
+      if (epoch !== mountEpoch) return;
+      // The view restores the caret itself: it knows the structural edit's
+      // intended target, while a blind focus() lands on the first block.
       editor?.replace({ revision: confirmed.revision, blocks: confirmed.blocks });
-      editor?.focus();
     }
     props.onConfirmed(transition.revision);
   };
@@ -139,6 +156,7 @@ export function EditorHost(props: EditorHostProps) {
    */
   const remount = (): void => {
     if (host === undefined) return;
+    mountEpoch += 1;
     // Drop work owed to the document being closed: its revision is gone.
     actions.destroy();
     cancelScheduledFrame(confirmationFrame);
@@ -152,6 +170,9 @@ export function EditorHost(props: EditorHostProps) {
     };
     editor = mountEditor(host, document, { submit: (action) => actions.submit(action) });
     editor.setAnnotations(props.annotations);
+    editor.setProposalMarks(props.proposalMarks ?? []);
+    editor.onProposalMark((id) => props.onProposalMark?.(id));
+    if (props.codeTheme !== undefined) editor.setCodeTheme(props.codeTheme);
     editor.focus();
     props.onReady({
       focus: () => editor?.focus(),
@@ -169,6 +190,7 @@ export function EditorHost(props: EditorHostProps) {
         await actions.settled();
       },
       onSelectionMeasured: (listener) => editor?.onSelectionMeasured(listener) ?? (() => {}),
+      blockRect: (blockId) => editor?.blockRect(blockId) ?? null,
     });
   };
 
@@ -186,6 +208,15 @@ export function EditorHost(props: EditorHostProps) {
 
   createEffect(() => {
     editor?.setAnnotations(props.annotations);
+  });
+
+  createEffect(() => {
+    editor?.setProposalMarks(props.proposalMarks ?? []);
+  });
+
+  createEffect(() => {
+    const theme = props.codeTheme;
+    if (theme !== undefined) editor?.setCodeTheme(theme);
   });
 
   onCleanup(() => {

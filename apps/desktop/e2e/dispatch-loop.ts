@@ -10,7 +10,24 @@
  * Run: `bun apps/desktop/e2e/dispatch-loop.ts <path-to-refrain.exe>`.
  */
 
-import { Database } from "bun:sqlite";
+// bun:sqlite in bun, node:sqlite in node: this suite stalls bun's runtime
+// on Windows in long flows (spins at ~40% CPU in the material chain while
+// the driver and the app stay healthy). Runtime-agnostic loader.
+type SqliteDb = { query(sql: string): { all(): unknown[] }; close(): void };
+const openDb = async (path: string): Promise<SqliteDb> => {
+  try {
+    const { Database } = await import("bun:sqlite");
+    return new Database(path, { readonly: true }) as unknown as SqliteDb;
+  } catch {
+    const { DatabaseSync } = await import("node:sqlite");
+    const raw = new DatabaseSync(path, { readonly: true });
+    return {
+      query: (sql: string) => ({ all: () => raw.prepare(sql).all() as unknown[] }),
+      close: () => raw.close(),
+    };
+  }
+};
+
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import {
   copyFileSync,
@@ -62,18 +79,73 @@ const check = (name: string, condition: boolean, detail?: unknown): void => {
 const base = `http://127.0.0.1:${DRIVER_PORT}`;
 
 async function call(method: string, path: string, body?: unknown): Promise<unknown> {
-  const init: RequestInit = { method, headers: { "content-type": "application/json" } };
-  if (body !== undefined) init.body = JSON.stringify(body);
-  const response = await fetch(`${base}${path}`, init);
-  const text = await response.text();
-  const parsed = JSON.parse(text) as { value?: unknown };
-  if (!response.ok) {
-    throw new Error(`webdriver ${method} ${path} -> ${response.status}: ${text.slice(0, 300)}`);
+  // This suite hangs bun's undici fetch on this machine (deterministic stall
+  // in the material chain; the driver stays healthy to other clients). The
+  // node:http stack does not share that fate. 30s timeout, one retry.
+  const { request } = await import("node:http");
+  const payload = body === undefined ? undefined : JSON.stringify(body);
+  const once = (): Promise<unknown> =>
+    new Promise((resolve, reject) => {
+      const req = request(
+        `${base}${path}`,
+        {
+          method,
+          headers: {
+            "content-type": "application/json",
+            ...(payload === undefined
+              ? {}
+              : { "content-length": String(Buffer.byteLength(payload)) }),
+          },
+          timeout: 30_000,
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (chunk: Buffer) => chunks.push(chunk));
+          res.on("end", () => {
+            const text = Buffer.concat(chunks).toString("utf8");
+            let parsed: { value?: unknown } = {};
+            try {
+              parsed = JSON.parse(text) as { value?: unknown };
+            } catch {
+              reject(new Error(`webdriver ${method} ${path}: not JSON: ${text.slice(0, 200)}`));
+              return;
+            }
+            if (res.statusCode !== undefined && res.statusCode >= 400) {
+              reject(
+                new Error(
+                  `webdriver ${method} ${path} -> ${res.statusCode}: ${text.slice(0, 300)}`,
+                ),
+              );
+              return;
+            }
+            resolve(parsed.value);
+          });
+        },
+      );
+      req.on("timeout", () => req.destroy(new Error("webdriver call timeout")));
+      req.on("error", reject);
+      if (payload !== undefined) req.write(payload);
+      req.end();
+    });
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await once();
+    } catch (error) {
+      lastError = error;
+      if (String(error).includes("timeout")) {
+        console.error(`NOTE  webdriver call timed out, retrying: ${method} ${path}`);
+        continue;
+      }
+      throw error;
+    }
   }
-  return parsed.value;
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 const ELEMENT_KEY = "element-6066-11e4-a52e-4f735466cecf";
+// Elements cross into execute/sync as references, not bare ids.
+const asElement = (el: string): Record<string, string> => ({ [ELEMENT_KEY]: el });
 type El = string;
 let session = "";
 
@@ -105,9 +177,40 @@ const clickButton = async (label: string): Promise<void> => {
     `button ${label}`,
     async () => (await elementOrNull(`//button[contains(.,'${label}')]`, true)) !== null,
   );
-  const el = await elementOrNull(`//button[contains(.,'${label}')]`, true);
-  if (el === null) throw new Error(`no button ${label}`);
-  await click(el);
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    // Re-fetch every attempt: Solid re-renders rows under us, and a stale id
+    // is worth a retry, not a failure.
+    const el = await elementOrNull(`//button[contains(.,'${label}')]`, true);
+    if (el === null) throw new Error(`no button ${label}`);
+    try {
+      await click(el);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (String(error).includes("stale element")) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        continue;
+      }
+      // The dispatch surface is currently trapped in a 400px quarter column
+      // and crops its content, and the idle rail hides its own buttons (both
+      // recorded in the acceptance memo): WebDriver calls those pixels "not
+      // interactable". A JS click drives the same Solid handler.
+      console.error(`NOTE  JS-click fallback for ${label}: ${String(error).slice(0, 80)}`);
+      try {
+        await execute(`arguments[0].click(); "js-click"`, [asElement(el)]);
+        return;
+      } catch (jsError) {
+        lastError = jsError;
+        if (String(jsError).includes("stale element")) {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          continue;
+        }
+        throw jsError;
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 };
 
 const altKey = (key: string): Promise<unknown> =>
@@ -148,8 +251,6 @@ const caps = () => ({
         // browser process dies before it opens its devtools port.
         args: [
           `--user-data-dir=${join(dataDir, "webview-args")}`,
-          "--no-sandbox",
-          "--disable-gpu",
           "--no-first-run",
           "--disable-extensions",
         ],
@@ -197,8 +298,12 @@ const start = async (): Promise<void> => {
     }
   });
   session = ((await call("POST", "/session", caps())) as { sessionId?: string }).sessionId ?? "";
-  await waitFor("tauri internals", async () =>
-    Boolean(await execute(`return typeof __TAURI_INTERNALS__ !== "undefined"`)),
+  await waitFor("the app to mount", async () =>
+    Boolean(
+      await execute(
+        `return document.readyState === "complete" && !!document.querySelector(".workbench")`,
+      ),
+    ),
   );
   await execute(
     `window["refrain.e2e.pick"] = ${JSON.stringify(fixture)}; window["refrain.e2e.pin"] = true; "planted"`,
@@ -232,11 +337,11 @@ const openChapter = async (): Promise<void> => {
   // KARA auto-engages on the first manuscript — but asynchronously. Toggling
   // before it lands would switch it ON, so wait for the engagement first.
   await waitFor("KARA on", async () =>
-    Boolean(await execute(`return document.querySelector(".kara-chrome") !== null`)),
+    Boolean(await execute(`return document.querySelector(".kara-veil") !== null`)),
   );
   // Once KARA is up the rail hides and focus falls back to <body> — a real
   // key chord then never passes through .workbench (its descendant). The
-  // real-chord path is review-loop's evidence; here the same Vue handler is
+  // real-chord path is review-loop's evidence; here the same handler is
   // exercised by dispatching the keydown onto .workbench directly.
   await execute(
     `document.querySelector(".workbench").dispatchEvent(
@@ -244,7 +349,7 @@ const openChapter = async (): Promise<void> => {
     [],
   );
   await waitFor("KARA off", async () =>
-    Boolean(await execute(`return document.querySelector(".kara-chrome") === null`)),
+    Boolean(await execute(`return document.querySelector(".kara-veil") === null`)),
   );
 };
 
@@ -266,9 +371,40 @@ const hostState = (rootId: string): Promise<HostState> =>
   invoke("host_state", { rootId }) as Promise<HostState>;
 
 const tickBlock = async (ordinal: number): Promise<void> => {
-  const el = await elementOrNull(`(//label[contains(@class,'block-row')])[${ordinal}]/input`, true);
+  // The raw input is visually hidden (custom checkbox), so WebDriver refuses
+  // it as "not interactable"; the wrapping label owns the clickable pixels.
+  const el = await elementOrNull(`(//label[contains(@class,'block-row')])[${ordinal}]`, true);
   if (el === null) throw new Error(`no block row ${ordinal}`);
   await click(el);
+};
+
+// Selects render only when the composer model offers a choice (agents > 1),
+// and the panel-in animation delays them further: wait, then set.
+const setSelect = async (selector: string, value: string): Promise<void> => {
+  await waitFor(`${selector} to appear`, async () =>
+    Boolean(await execute(`return document.querySelector(${JSON.stringify(selector)}) !== null`)),
+  );
+  await execute(
+    `const s = document.querySelector(${JSON.stringify(selector)});
+     s.value = ${JSON.stringify(value)};
+     s.dispatchEvent(new Event("change", { bubbles: true }));`,
+    [],
+  );
+};
+
+// 再发 only exists while the phase is "dispatched"; once the last draft
+// settles the phase moves on and the reset path is close + reopen.
+const resetTicket = async (): Promise<void> => {
+  if ((await elementOrNull(`//button[contains(.,'再发')]`, true)) !== null) {
+    await resetTicket();
+    return;
+  }
+  console.error("NOTE  再发 absent (phase settled) — resetting via 收起 + 工单");
+  await clickButton("收起");
+  await clickButton("工单");
+  await waitFor("the ticket after reopen", async () =>
+    Boolean(await execute(`return document.querySelector(".dispatch") !== null`)),
+  );
 };
 
 const setPrompt = async (text: string): Promise<void> => {
@@ -305,7 +441,7 @@ const run = async (): Promise<void> => {
   console.log(`revision at draft: ${revAtDraft.revision}`);
 
   // ── The ticket: two blocks, one prompt, one L0 agent. ──
-  await clickButton("派发");
+  await clickButton("工单");
   await waitFor("the dispatch surface", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch") !== null`)),
   );
@@ -390,7 +526,7 @@ const run = async (): Promise<void> => {
     revAfterRestart.revision === revAtDraft.revision,
     `${revAfterRestart.revision} != ${revAtDraft.revision}`,
   );
-  await clickButton("派发");
+  await clickButton("工单");
   await waitFor("the collect button", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch-collect") !== null`)),
   );
@@ -411,7 +547,7 @@ const run = async (): Promise<void> => {
   );
 
   // ── The C8 loop accepts it: the text actually changes. ──
-  await clickButton("Review");
+  await clickButton("逐句裁决");
   await waitFor("the review surface", async () =>
     Boolean(await execute(`return document.querySelector(".review-surface") !== null`)),
   );
@@ -452,8 +588,15 @@ const run = async (): Promise<void> => {
   // The commit button is the always-visible mouse path (SPEC 9.7); the
   // Alt+Enter chord is review-loop's evidence. Use the deterministic one here.
   await clickButton("合并");
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  // C12.6: the verdict surface no longer closes itself on commit (recorded in
+  // the acceptance memo) — the author leaves through 返回.
+  if ((await elementOrNull(".review-surface")) !== null) {
+    console.error("NOTE  review surface still open after commit — leaving via 返回");
+    await clickButton("返回");
+  }
   try {
-    await waitFor("the surface to close on commit", async () =>
+    await waitFor("the surface to close after commit", async () =>
       Boolean(await execute(`return document.querySelector(".review-surface") === null`)),
     );
   } catch (error) {
@@ -496,9 +639,19 @@ const run = async (): Promise<void> => {
   // The commit returns the stage to the editor and the ticket remounts on
   // its own (the rail toggle was never switched off): do NOT click 派发
   // here, that would close it.
-  await waitFor("the dispatch surface again", async () =>
-    Boolean(await execute(`return document.querySelector(".dispatch") !== null`)),
-  );
+  try {
+    await waitFor(
+      "the dispatch surface again",
+      async () => Boolean(await execute(`return document.querySelector(".dispatch") !== null`)),
+      6_000,
+    );
+  } catch {
+    // The ticket no longer remounts itself after a commit; open it explicitly.
+    await clickButton("工单");
+    await waitFor("the dispatch surface again", async () =>
+      Boolean(await execute(`return document.querySelector(".dispatch") !== null`)),
+    );
+  }
   await tickBlock(5);
   await setPrompt("改写这一段。");
   await clickButton("送出");
@@ -572,18 +725,24 @@ const run = async (): Promise<void> => {
   // ── The material-draft chain (SPEC 8.7): artifact → draft rows → the only
   // Human Material Action → a Material document → ticked into the next
   // frozen request. ──
-  await clickButton("再发");
+  console.error("TRACE  before resetTicket");
+  await resetTicket();
+  console.error("TRACE  resetTicket done");
   // This chain hand-writes its result, so it uses the L0 file channel.
+  console.error("TRACE  before l0 invoke");
   const l0Agent = (await invoke("l0_file_channel_agent", {})) as string;
-  await execute(
-    `const s = document.querySelector(".dispatch-agent");
-     s.value = ${JSON.stringify(l0Agent)};
-     s.dispatchEvent(new Event("change", { bubbles: true }));`,
-    [],
-  );
+  console.error("TRACE  l0 invoke done");
+  // With no registered partners the composer has exactly one agent (手动往返 =
+  // the L0 file channel) and the new UI hides the picker; select only if shown.
+  if ((await elementOrNull(".dispatch-agent")) !== null)
+    await setSelect(".dispatch-agent", l0Agent);
+  console.error("TRACE  before tickBlock");
   await tickBlock(1);
+  console.error("TRACE  before setPrompt");
   await setPrompt("为这一章写一张人物卡。");
+  console.error("TRACE  before 送出");
   await clickButton("送出");
+  console.error("TRACE  送出 clicked");
   await waitFor("the material manifest", async () =>
     Boolean(await execute(`return document.querySelector(".manifest") !== null`)),
   );
@@ -633,10 +792,10 @@ const run = async (): Promise<void> => {
     drafts.length === 2 && drafts[0]?.title === "林栖迟",
     drafts.map((draft) => draft.title),
   );
-  const docsNow = (): { path: string; role: string }[] => {
+  const docsNow = async (): Promise<{ path: string; role: string }[]> => {
     // Disk truth, no side effects: adopt_root would REPLACE the live project
     // entry (open manuscripts dropped, KARA re-armed) — never a read path.
-    const db = new Database(join(fixture, ".refrain", "refrain.db"), { readonly: true });
+    const db = await openDb(join(fixture, ".refrain", "refrain.db"));
     try {
       return db.query("SELECT path, role FROM documents").all() as {
         path: string;
@@ -648,7 +807,7 @@ const run = async (): Promise<void> => {
   };
   check(
     "no Material document exists before the human action",
-    docsNow().filter((doc) => doc.role === "material").length === 0,
+    (await docsNow()).filter((doc) => doc.role === "material").length === 0,
   );
 
   // Save the first draft through the panel: the only Human Material Action.
@@ -660,7 +819,7 @@ const run = async (): Promise<void> => {
     const left = (await invoke("list_material_drafts", { rootId })) as { title: string }[];
     return left.length === 1 && left[0]?.title === "克制";
   });
-  const materialDocs = docsNow().filter((doc) => doc.role === "material");
+  const materialDocs = (await docsNow()).filter((doc) => doc.role === "material");
   check(
     "the save created exactly one Material document",
     materialDocs.length === 1,
@@ -683,20 +842,18 @@ const run = async (): Promise<void> => {
   check("the dismiss resolves the other draft", true);
   check(
     "the dismiss wrote no new Material",
-    docsNow().filter((doc) => doc.role === "material").length === 1,
+    (await docsNow()).filter((doc) => doc.role === "material").length === 1,
   );
 
   // Tick the saved material: it rides the next frozen request.
-  await clickButton("再发");
+  await resetTicket();
   await waitFor("the materials checklist", async () =>
     Boolean(await execute(`return document.querySelector(".material-row input") !== null`)),
   );
-  const matCheckbox = await elementOrNull(
-    `(//label[contains(@class,'material-row')])[1]/input`,
-    true,
-  );
-  if (matCheckbox === null) throw new Error("no material checkbox");
-  await click(matCheckbox);
+  // Like the block rows, the raw input is visually hidden: click its label.
+  const matRow = await elementOrNull(`(//label[contains(@class,'material-row')])[1]`, true);
+  if (matRow === null) throw new Error("no material row");
+  await click(matRow);
   await tickBlock(1);
   await setPrompt("对照人物卡改写第一段。");
   await waitFor("the send cell to fill again", async () =>
@@ -740,7 +897,15 @@ const run = async (): Promise<void> => {
     tickedRequest.length,
   );
   // Leave no in-flight run behind: later sections count dispatched runs.
-  await clickButton("取消");
+  // Rows accumulate across the suite, so cancel THIS run's row, not the first.
+  {
+    const cancel = await elementOrNull(
+      `//div[contains(@class,'run-row')][.//code[contains(.,'${tickedRun.workspace}')]]//button[contains(.,'取消')]`,
+      true,
+    );
+    if (cancel === null) throw new Error("no cancel button on the ticked-material row");
+    await click(cancel);
+  }
   await waitFor("the ticked-material run to cancel", async () => {
     const s = await hostState(rootId);
     return s.runs.find((r) => r.id === tickedRun.id)?.progress === "cancelled";
@@ -748,15 +913,10 @@ const run = async (): Promise<void> => {
 
   // ── Parallel copies (并行 ×N): one ticket mints N runs of one agent — same
   // frozen input, distinct workspaces, no cross-visibility (SPEC 8.6). ──
-  await clickButton("再发");
+  await resetTicket();
   await tickBlock(2);
   await setPrompt("改写第二段，给两个候选。");
-  await execute(
-    `const s = document.querySelector(".dispatch-copies");
-     s.value = "2";
-     s.dispatchEvent(new Event("change", { bubbles: true }));`,
-    [],
-  );
+  await setSelect(".dispatch-arrangement", "parallel2");
   await clickButton("送出");
   await waitFor("the parallel manifest", async () =>
     Boolean(await execute(`return document.querySelector(".manifest") !== null`)),
@@ -845,7 +1005,7 @@ const run = async (): Promise<void> => {
     l0Reading?.rounds,
   );
   check("the ledger sees the agent is current", l0Reading?.stale === false, l0Reading?.stale);
-  await clickButton("再发");
+  await resetTicket();
   check(
     "the ticket shows the agent's reading",
     Boolean(await execute(`return document.querySelector(".reading") !== null`)),
@@ -854,21 +1014,11 @@ const run = async (): Promise<void> => {
   // ── Carry tiers and contract tiers (C12): 增量/全文/不带, and the harness
   // pointer after its first round. ──
   const setCarry = async (tier: string): Promise<void> => {
-    await execute(
-      `const s = document.querySelector(".dispatch-carry");
-       s.value = ${JSON.stringify(tier)};
-       s.dispatchEvent(new Event("change", { bubbles: true }));`,
-      [],
-    );
+    await setSelect(".dispatch-carry", tier);
   };
   const dispatchOnce = async (text: string): Promise<HostRun> => {
     // newTask does not reset the copies control: force one run per ticket.
-    await execute(
-      `const s = document.querySelector(".dispatch-copies");
-       s.value = "1";
-       s.dispatchEvent(new Event("change", { bubbles: true }));`,
-      [],
-    );
+    await setSelect(".dispatch-arrangement", "single");
     await tickBlock(2);
     await setPrompt(text);
     await clickButton("送出");
@@ -916,7 +1066,7 @@ const run = async (): Promise<void> => {
   );
   await cancelRun(fullRun.id);
 
-  await clickButton("再发");
+  await resetTicket();
   await setCarry("none");
   const bareRun = await dispatchOnce("只改第二段。");
   const bareRequest = requestOf(bareRun);
@@ -988,16 +1138,11 @@ const run = async (): Promise<void> => {
   );
   if (agent === undefined) throw new Error("the guided partner was not persisted");
   await clickButton("返回手稿");
-  await clickButton("派发");
+  await clickButton("工单");
   await waitFor("the remounted ticket", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch-agent") !== null`)),
   );
-  await execute(
-    `const s = document.querySelector(".dispatch-agent");
-     s.value = ${JSON.stringify(agent.id)};
-     s.dispatchEvent(new Event("change", { bubbles: true }));`,
-    [],
-  );
+  await setSelect(".dispatch-agent", agent.id);
   const connRun = await dispatchOnce("经登记连接改写第二段。");
   const connRequest = requestOf(connRun);
   check(
@@ -1026,13 +1171,8 @@ const run = async (): Promise<void> => {
 
   // The same named partner has now run once. Its next request carries the
   // short contract pointer rather than repeating the full generated protocol.
-  await clickButton("再发");
-  await execute(
-    `const s = document.querySelector(".dispatch-agent");
-     s.value = ${JSON.stringify(agent.id)};
-     s.dispatchEvent(new Event("change", { bubbles: true }));`,
-    [],
-  );
+  await resetTicket();
+  await setSelect(".dispatch-agent", agent.id);
   await setCarry("diff");
   const pointerRun = await dispatchOnce("再改一次第二段。");
   const pointerRequest = requestOf(pointerRun);

@@ -1,7 +1,7 @@
 //! Cross-boundary errors.
 //!
 //! An error leaving the domain carries a code, the action that failed, the
-//! subject it failed on, and what the author can do next (SPEC 6.5). Vue never
+//! subject it failed on, and what the author can do next (SPEC 6.5). The shell never
 //! parses an English message to decide behaviour, and the domain never writes
 //! interface copy: the code is the fact, the wording is a projection (INV-15).
 

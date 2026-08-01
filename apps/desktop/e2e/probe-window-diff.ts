@@ -13,6 +13,9 @@
  */
 
 import { chromium } from "playwright";
+import { ensureNodeDriver } from "../../../scripts/pw-chromium.ts";
+
+ensureNodeDriver(import.meta.url);
 
 const TOTAL = 100_000;
 const WINDOW = 200;

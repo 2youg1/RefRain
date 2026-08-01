@@ -101,6 +101,8 @@ fn a_task_survives_the_round_trip_unchanged() {
 
     assert_eq!(state.tasks.len(), 1);
     assert_eq!(state.tasks[0], task);
+    // Windows 上文件句柄不解就删目录会吃到 code 32；先放掉现场再清。
+    drop(store);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -118,6 +120,8 @@ fn a_run_survives_the_round_trip_unchanged() {
 
     assert_eq!(state.runs.len(), 1);
     assert_eq!(state.runs[0], run);
+    // Windows 上文件句柄不解就删目录会吃到 code 32；先放掉现场再清。
+    drop(store);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -174,6 +178,8 @@ fn every_kind_of_edge_survives_the_round_trip() {
             edge_kind(run.edge.as_ref().unwrap())
         );
     }
+    // Windows 上文件句柄不解就删目录会吃到 code 32；先放掉现场再清。
+    drop(store);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -303,6 +309,8 @@ fn an_updated_run_replaces_the_row_rather_than_adding_one() {
     let state = journal.load().unwrap();
     assert_eq!(state.runs.len(), 1, "the update added a second row");
     assert_eq!(state.runs[0].progress, RunProgress::Cancelled);
+    // Windows 上文件句柄不解就删目录会吃到 code 32；先放掉现场再清。
+    drop(store);
     fs::remove_dir_all(root).unwrap();
 }
 

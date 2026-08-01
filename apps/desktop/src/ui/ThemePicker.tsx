@@ -65,15 +65,11 @@ const RAIL_WIDTHS = [
   { value: "wide", label: "宽", title: "长章节名一眼读完" },
 ] as const satisfies readonly { value: RailWidth; label: string; title: string }[];
 
-/** 代码配色。「跟随主题」不是一个具体配色，而是「继续跟着界面走」这件事本身。 */
+/** 代码配色：日一套、夜一套，另加「跟随主题」——那不是具体配色，而是继续跟着界面走这件事本身。 */
 const CODE_THEMES = [
   { value: "", label: "跟随主题", title: "代码配色随界面主题变化" },
   { value: "vitesse-light", label: "Vitesse 日", title: "低饱和印刷感" },
   { value: "vitesse-dark", label: "Vitesse 夜", title: "同族的夜间版" },
-  { value: "github-light", label: "GitHub 日", title: "最眼熟的一套" },
-  { value: "github-dark", label: "GitHub 夜", title: "最眼熟的一套" },
-  { value: "min-light", label: "极简 日", title: "几乎只区分注释与字符串" },
-  { value: "min-dark", label: "极简 夜", title: "几乎只区分注释与字符串" },
 ] as const;
 type CodeThemeChoice = (typeof CODE_THEMES)[number]["value"];
 
@@ -107,7 +103,12 @@ export function ThemePicker(props: ThemePickerProps) {
       setLamp(appearance.night_lamp ?? "off");
       setPanelWidth(appearance.panel_width ?? "regular");
       setRailWidth(appearance.rail_width ?? "narrow");
-      setCodeTheme((appearance.code_theme ?? "") as CodeThemeChoice);
+      // Configs written by older versions may name a retired palette:
+      // a dark suffix folds into the night choice, anything else into day.
+      const stored = appearance.code_theme ?? "";
+      setCodeTheme(
+        stored === "" ? "" : stored.endsWith("-dark") ? "vitesse-dark" : "vitesse-light",
+      );
     } catch (cause) {
       setError(describe(cause));
     }

@@ -39,9 +39,24 @@ const PROGRESS: Readonly<Record<string, string>> = {
  */
 const FINISHED: ReadonlySet<string> = new Set(["completed", "failed", "cancelled"]);
 
-/** 一个 Run 还能不能取消。 */
+/**
+ * The states still on their way. To the author they mean one thing: wait.
+ *
+ * Complement of FINISHED over the non-queued states: the global watcher
+ * (shell/run-watch.ts) and the dispatch panel read the same set, because
+ * two copies is how the status line says "in flight" while the panel
+ * already offers "collect".
+ */
+const IN_FLIGHT: ReadonlySet<string> = new Set(["authorized", "launching", "dispatched"]);
+
+/** A Run that can no longer be cancelled. */
 export function terminal(run: RunDto): boolean {
   return FINISHED.has(run.progress);
+}
+
+/** A Run still on its way. */
+export function inFlight(run: RunDto): boolean {
+  return IN_FLIGHT.has(run.progress);
 }
 
 export function runStatusLabel(run: RunDto): string {

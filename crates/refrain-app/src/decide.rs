@@ -134,6 +134,56 @@ fn staged_batch(store: &ProjectStore, path: &str) -> Result<Vec<String>, Refrain
     Ok(ids)
 }
 
+/// 把还在批次里的裁决退回未读：批次与账本同时移除。
+///
+/// 只认批次里的 id——批次在提交时清空，所以「在批次里」就是「尚未合并进
+/// 正文」唯一可靠的证据。不在批次里的裁决可能已经落地，删它会同时毁掉
+/// 审计与事实，那条路（撤销合并）需要按冻结原文反向落地，不在这里。
+pub fn revert_verdicts(
+    store: &mut ProjectStore,
+    path: &str,
+    verdict_ids: &[String],
+) -> Result<usize, RefrainError> {
+    let (cursor, batch_json) = store
+        .review_session_get(path)
+        .map_err(into_domain)?
+        .unwrap_or((0, "[]".to_string()));
+    let batch: Vec<String> = serde_json::from_str(&batch_json).map_err(|error| {
+        RefrainError::new(ErrorCode::StateUnavailable, "read a batch", path.to_owned())
+            .with_detail(error.to_string())
+    })?;
+    let staged: std::collections::HashSet<&str> = batch.iter().map(String::as_str).collect();
+    let outside: Vec<&str> = verdict_ids
+        .iter()
+        .map(String::as_str)
+        .filter(|id| !staged.contains(id))
+        .collect();
+    if !outside.is_empty() {
+        return Err(RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "recall a verdict that already left the batch",
+            path.to_owned(),
+        )
+        .with_detail(format!("not in the staged batch: {}", outside.join(", "))));
+    }
+
+    let kept: Vec<&String> = batch
+        .iter()
+        .filter(|id| !verdict_ids.contains(id))
+        .collect();
+    store
+        .review_session_set(
+            path,
+            cursor,
+            &serde_json::to_string(&kept).unwrap_or_else(|_| "[]".to_string()),
+        )
+        .map_err(into_domain)?;
+    store
+        .ledger()
+        .forget(verdict_ids)
+        .map_err(crate::journal::into_domain_store)
+}
+
 /// 把账本里的一行重建成一个绑定到真实提案的裁决。
 fn verdict_of(
     row: &VerdictRecord,

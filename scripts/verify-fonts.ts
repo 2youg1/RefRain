@@ -2,7 +2,11 @@
 
 import { basename } from "node:path";
 import { chromium } from "playwright";
-import { type FontConfig, manuscriptStack } from "../apps/desktop/src/fonts";
+import { ensureNodeDriver } from "./pw-chromium.ts";
+
+ensureNodeDriver(import.meta.url);
+
+import { type FontConfig, manuscriptStack } from "../apps/desktop/src/fonts.ts";
 
 const sourceRoot = "apps/desktop/src/fonts";
 const distRoot = "apps/desktop/dist";

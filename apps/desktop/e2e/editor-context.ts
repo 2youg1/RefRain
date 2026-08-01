@@ -1,4 +1,7 @@
 import { type Browser, chromium } from "playwright";
+import { ensureNodeDriver } from "../../../scripts/pw-chromium.ts";
+
+ensureNodeDriver(import.meta.url);
 
 const bundle = await Bun.build({
   entrypoints: ["packages/editor/src/index.ts"],
@@ -17,7 +20,7 @@ const html = `<!doctype html>
   import * as editor from "/editor.js";
   window.editorApi = editor;
 </script>`;
-const server = Bun.serve({
+const server = await Bun.serve({
   port: 0,
   fetch(request) {
     const path = new URL(request.url).pathname;

@@ -88,7 +88,7 @@
       "owner": "desktop",
       "disposition": {
         "kind": "owned-by",
-        "tests": ["crates/refrain-store/src/project.rs", "crates/refrain-store/tests/migrate.rs"]
+        "tests": ["crates/refrain-store/src/project.rs"]
       }
     },
     {
@@ -577,16 +577,16 @@
       "legacy": "legacy/packages/core/test/selective-undo-insert.test.ts",
       "owner": "manuscript",
       "disposition": {
-        "kind": "owned-by",
-        "tests": ["crates/refrain-core/tests/selective_undo.rs"]
+        "kind": "intentionally-retired",
+        "authority": "SPEC D20"
       }
     },
     {
       "legacy": "legacy/packages/core/test/selective-undo.test.ts",
       "owner": "manuscript",
       "disposition": {
-        "kind": "owned-by",
-        "tests": ["crates/refrain-core/tests/selective_undo.rs"]
+        "kind": "intentionally-retired",
+        "authority": "SPEC D20"
       }
     },
     {
@@ -625,8 +625,8 @@
       "legacy": "legacy/packages/fs/test/boundary.test.ts",
       "owner": "root-files",
       "disposition": {
-        "kind": "owned-by",
-        "tests": ["crates/refrain-store/tests/files.rs"]
+        "kind": "intentionally-retired",
+        "authority": "SPEC D20"
       }
     },
     {

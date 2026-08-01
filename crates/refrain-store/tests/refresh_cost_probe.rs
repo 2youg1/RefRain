@@ -72,6 +72,8 @@ fn refresh_cost_does_not_scale_with_indexing() {
     println!("PROBE 第一次检索(含建索引) = {:?}", first_search);
     println!("PROBE 之后的检索        = {:?}", later_search);
 
+    // Windows 上文件句柄不解就删目录会吃到 code 32；先放掉现场再清。
+    drop(store);
     fs::remove_dir_all(root).unwrap();
 
     // 判据一：热刷新绝不该与建索引同量级。

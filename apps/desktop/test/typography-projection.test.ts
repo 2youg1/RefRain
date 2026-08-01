@@ -39,16 +39,12 @@ describe("typography projection", () => {
       "--manuscript-word-spacing": "0.1em",
       "--manuscript-measure": "42em",
       "--manuscript-indent": "2em",
-      "--paragraph-spacing": "1.25",
       "--paragraph-gap": "2.813em",
       "--manuscript-align": "justify",
       "--page-top-padding": "4.5rem",
       "--page-bottom-padding": "35vh",
-      "--grid-every": "2",
-      "--line-box": "55.631px",
       "--rule-at": "42.403px",
       "--grid-period": "111.262px",
-      "--font-line": "1.18",
     });
   });
 
@@ -56,6 +52,7 @@ describe("typography projection", () => {
     const projection = typographyProjection({ ...typography, baseline_grid_lines: 0 }, 1.18);
 
     expect(projection.dataset.baselineGrid).toBe("off");
-    expect(projection.properties["--grid-every"]).toBe("1");
+    // 归零不产出 0px 周期：gridEvery  clamp 到 1，周期等于一个行盒。
+    expect(projection.properties["--grid-period"]).toBe("55.631px");
   });
 });

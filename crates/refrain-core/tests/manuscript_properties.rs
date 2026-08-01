@@ -1,6 +1,6 @@
 use refrain_core::{
-    DecisionBatch, EditScope, EditorAction, EditorChange, Id, Lineage, Manuscript, Proposal,
-    Replacement, SourceSnapshot, TextCommand, Verdict, VerdictKind,
+    DecisionBatch, EditScope, Id, Lineage, Manuscript, Proposal, SourceSnapshot, TextCommand,
+    Verdict, VerdictKind,
 };
 
 fn open(source: &[u8]) -> Manuscript {
@@ -99,49 +99,4 @@ fn every_pair_of_disjoint_single_block_proposals_commutes() {
             );
         }
     }
-}
-
-#[test]
-fn four_disjoint_actions_can_be_undone_in_all_twenty_four_orders() {
-    let source = b"zero\n\none\n\ntwo\n\nthree";
-    let mut changed = open(source);
-    let blocks = changed.head().block_ids();
-    let mut actions = Vec::new();
-    for (index, block) in blocks.iter().copied().enumerate() {
-        let transition = changed
-            .execute(TextCommand::Editor(EditorAction::new(
-                changed.head().id(),
-                vec![EditorChange::Replace(
-                    Replacement::new(vec![block], Some(format!("changed {index}"))).unwrap(),
-                )],
-                "property action",
-            )))
-            .unwrap();
-        actions.push(transition.action().id());
-    }
-
-    let mut orders = 0;
-    for first in 0..4 {
-        for second in 0..4 {
-            for third in 0..4 {
-                for fourth in 0..4 {
-                    let order = [first, second, third, fourth];
-                    if (0..4).any(|index| order[index + 1..].contains(&order[index])) {
-                        continue;
-                    }
-                    let mut manuscript = changed.clone();
-                    for index in order {
-                        manuscript
-                            .execute(TextCommand::SelectiveUndo {
-                                action: actions[index],
-                            })
-                            .unwrap();
-                    }
-                    assert_eq!(manuscript.materialize().unwrap(), source);
-                    orders += 1;
-                }
-            }
-        }
-    }
-    assert_eq!(orders, 24);
 }

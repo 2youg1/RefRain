@@ -80,7 +80,7 @@ export function UniversalMenu(props: UniversalMenuProps) {
     }
   };
 
-  // 结果集一变，高亮回到首项（对齐 Vue 的 watch(visible)）。
+  // 结果集一变，高亮回到首项。
   createEffect(on(visible, () => setCursor(0), { defer: true }));
 
   onMount(() => input?.focus());

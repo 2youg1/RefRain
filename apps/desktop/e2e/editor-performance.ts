@@ -1,4 +1,8 @@
+import { fileURLToPath } from "node:url";
 import { type Browser, chromium, type Page } from "playwright";
+import { ensureNodeDriver } from "../../../scripts/pw-chromium.ts";
+
+ensureNodeDriver(import.meta.url);
 
 interface Sample {
   readonly mountMs: number;
@@ -37,7 +41,8 @@ const percentile = (values: readonly number[], fraction: number): number => {
 };
 
 const bundle = await Bun.build({
-  entrypoints: [new URL("../../../packages/editor/src/index.ts", import.meta.url).pathname],
+  // Windows 上 URL.pathname 是 "/C:/..."——不是合法路径。fileURLToPath 才是。
+  entrypoints: [fileURLToPath(new URL("../../../packages/editor/src/index.ts", import.meta.url))],
   target: "browser",
   format: "esm",
   write: false,
@@ -47,7 +52,7 @@ if (!bundle.success || bundle.outputs[0] === undefined) {
   throw new Error(`editor bundle failed: ${bundle.logs.map(String).join("\n")}`);
 }
 const editorJavaScript = await bundle.outputs[0].text();
-const editorFont = Bun.file(new URL("../src/fonts/Jost.woff2", import.meta.url).pathname);
+const editorFont = Bun.file(fileURLToPath(new URL("../src/fonts/Jost.woff2", import.meta.url)));
 const html = `<!doctype html>
 <meta charset="utf-8">
 <style>
@@ -64,7 +69,7 @@ import { mountEditor } from "/editor.js";
 window.mountEditor = mountEditor;
 window.editorReady = true;
 </script>`;
-const server = Bun.serve({
+const server = await Bun.serve({
   port: 0,
   fetch(request) {
     const path = new URL(request.url).pathname;

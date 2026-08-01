@@ -7,6 +7,7 @@
  * IME, measurement, scroll anchoring, and frame lifecycle from callers.
  */
 
+import type { CodeTheme } from "./code-highlight";
 import type {
   Block,
   BlockPrefix,
@@ -21,6 +22,8 @@ import type {
 } from "./model";
 import { VirtualManuscriptView } from "./virtual-manuscript-view";
 
+export type { CodeTheme } from "./code-highlight";
+export { codeThemeFor, normalizeCodeTheme } from "./code-highlight";
 export type {
   Block,
   BlockPrefix,
@@ -32,6 +35,7 @@ export type {
   EditorFormat,
   EditorHandle,
   EditorPort,
+  ProposalMark,
   PunctuationFinding,
   SelectionMeasure,
 } from "./model";
@@ -83,6 +87,18 @@ export function mountEditor(
     },
     setAnnotations(annotations: readonly EditorAnnotationProjection[]) {
       view.setAnnotations(annotations);
+    },
+    setProposalMarks(marks) {
+      view.setProposalMarks(marks);
+    },
+    onProposalMark(listener) {
+      return view.onProposalMark(listener);
+    },
+    blockRect(blockId) {
+      return view.blockRect(blockId);
+    },
+    setCodeTheme(theme: CodeTheme) {
+      view.setCodeTheme(theme);
     },
     isComposing() {
       return view.isComposing();

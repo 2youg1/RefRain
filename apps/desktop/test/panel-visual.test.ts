@@ -1,62 +1,33 @@
 /**
- * 书脊与材质：两条视觉规格的算术，不必开窗口就能问清楚。
+ * 面板几何与材质：两条视觉规格的算术，不必开窗口就能问清楚。
  */
 
 import { describe, expect, test } from "bun:test";
 
 import { materialSpec, supportedMaterial } from "../src/shell/panel-material";
-import {
-  PANEL_WIDTH,
-  panelOffset,
-  panelReserve,
-  SPINE_STAGGER_MS,
-  SPINE_WIDTH,
-  spineLayout,
-  spineSettleMs,
-} from "../src/shell/panel-spine";
+import { PANEL_WIDTH, panelLayout, panelReserve } from "../src/shell/panel-spine";
 
-describe("书脊", () => {
-  test("脊一条挨一条排开，展开的那层让过它们全部", () => {
-    const spines = spineLayout(3);
-    expect(spines.map((spine) => spine.offset)).toEqual([0, SPINE_WIDTH, SPINE_WIDTH * 2]);
-    // 展开的那一层从最后一条脊之后开始，否则会压住它。
-    expect(panelOffset(3)).toBe(SPINE_WIDTH * 3);
-  });
-
-  test("只有一层时没有脊，版心不被平白让走", () => {
-    expect(spineLayout(0)).toEqual([]);
-    expect(panelOffset(0)).toBe(0);
-  });
-
-  test("脊依次立起，读起来像书一本本上架", () => {
-    const delays = spineLayout(4).map((spine) => spine.delayMs);
-    expect(delays).toEqual([0, SPINE_STAGGER_MS, SPINE_STAGGER_MS * 2, SPINE_STAGGER_MS * 3]);
-    // 严格递增：同时出现就没有「一层层」，只是一起闪一下。
-    expect(delays.every((delay, index) => index === 0 || delay > (delays[index - 1] ?? 0))).toBe(
-      true,
-    );
-  });
-
-  test("整条路径立起的时间可以直接当进度用", () => {
-    // 最后一条脊的延迟，加上它自己走完的时间。
-    expect(spineSettleMs(4, 300)).toBe(SPINE_STAGGER_MS * 3 + 300);
-    // 一层时没有错开，就是那一层的时长。
-    expect(spineSettleMs(1, 300)).toBe(300);
-    expect(spineSettleMs(0, 300)).toBe(300);
-  });
-
-  test("正文让开的宽度＝几条脊加展开的那一层", () => {
+describe("面板几何", () => {
+  test("正文让开的宽度＝几层就是几份面板宽", () => {
     // 没有面板时不让：版心不该被平白推走。
     expect(panelReserve(0)).toBe(0);
-    // 一层时只有那一层的宽度，没有脊。
     expect(panelReserve(1)).toBe(PANEL_WIDTH);
-    // 三层＝两条脊 + 一层。让不够的话，行首会被切掉。
-    expect(panelReserve(3)).toBe(SPINE_WIDTH * 2 + PANEL_WIDTH);
+    // 让不够的话，行首会被切掉。
+    expect(panelReserve(3)).toBe(PANEL_WIDTH * 3);
   });
 
-  test("负数与乱数不产生负偏移", () => {
-    expect(panelOffset(-2)).toBe(0);
-    expect(spineLayout(-1)).toEqual([]);
+  test("负数与乱数不产生负让位", () => {
+    expect(panelReserve(-2)).toBe(0);
+  });
+
+  test("让位与「开着」必须同时给出，否则作者看到的是错位", () => {
+    expect(panelLayout(0, false)).toEqual({
+      "data-panels": "closed",
+      style: { "--panel-reserve": "0px", display: undefined },
+    });
+    expect(panelLayout(2, false)["data-panels"]).toBe("open");
+    // 舞台整个让位时，布局照常给出，只是不显示。
+    expect(panelLayout(2, true).style.display).toBe("none");
   });
 });
 

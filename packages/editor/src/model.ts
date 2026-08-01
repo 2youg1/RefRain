@@ -1,5 +1,7 @@
 /** Public editor contract. The Rust domain owns canonical bytes; these values are projections. */
 
+import type { CodeTheme } from "./code-highlight";
+
 /**
  * A block as the domain hands it over: an opaque id, its text, and — when the
  * bridge sends it — the byte shape the viewport uses to predict its height.
@@ -69,6 +71,12 @@ export interface PunctuationFinding {
   readonly rule: string;
 }
 
+/** 段落右缘的一枚提案印点：id 是提案的，blockId 是它锚定的那一段。 */
+export interface ProposalMark {
+  readonly id: string;
+  readonly blockId: string;
+}
+
 export interface EditorAnnotationProjection {
   readonly id: string;
   readonly blockId: string;
@@ -134,6 +142,11 @@ export interface EditorHandle {
   onSelectionMeasured(listener: (measure: SelectionMeasure | null) => void): () => void;
   /** Project persisted anchors without inserting markup into manuscript text. */
   setAnnotations(annotations: readonly EditorAnnotationProjection[]): void;
+  setProposalMarks(marks: readonly ProposalMark[]): void;
+  onProposalMark(listener: (id: string) => void): () => void;
+  blockRect(blockId: string): DOMRect | null;
+  /** Recolour fenced code with a different palette and clear the token cache. */
+  setCodeTheme(theme: CodeTheme): void;
   /** During composition, candidate text is not settled manuscript text. */
   isComposing(): boolean;
   /**

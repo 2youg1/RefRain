@@ -30,7 +30,8 @@ if (files.length === 0) {
 const commands: string[] = [];
 for (const file of files) {
   const text = readFileSync(file, "utf8");
-  for (const match of text.matchAll(/#\[tauri::command\][\s\S]{0,200}?fn\s+(\w+)/g)) {
+  // 两种形态：`#[tauri::command]` 与 `#[tauri::command(async)]`。
+  for (const match of text.matchAll(/#\[tauri::command(?:\(async\))?\][\s\S]{0,200}?fn\s+(\w+)/g)) {
     if (match[1] !== undefined) commands.push(match[1]);
   }
 }

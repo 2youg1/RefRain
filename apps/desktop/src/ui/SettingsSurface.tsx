@@ -1,7 +1,17 @@
 // Settings share one Config and persist each change immediately.
 // Undo restores only touched leaf paths from the entry mark; untouched current values remain.
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  type JSX,
+  on,
+  onCleanup,
+  onMount,
+  Show,
+} from "solid-js";
 import { describe, unwrap } from "../bridge";
 import {
   type AppearanceConfig,
@@ -16,16 +26,7 @@ import { TypographyPanel } from "./TypographyPanel";
 
 type Section = "appearance" | "typography" | "shortcuts";
 
-/**
- * 打开设置先落在排版。
- *
- * 外观是选主题与图标——装一次就不再动；排版是字体、字号、行距、版心，
- * 作者写一段就想调一次。默认值应当对着最常来的那件事。
- */
-const DEFAULT_SECTION: Section = "typography";
-
 type SettingsSurfaceProps = {
-  returnLabel?: string;
   initialSection?: Section;
   onClosed?: () => void;
   onThemePicked?: (slug: string) => void;
@@ -51,8 +52,45 @@ const asTree = (appearance: AppearanceConfig): Record<string, unknown> =>
 const asAppearance = (tree: Record<string, unknown>): AppearanceConfig =>
   tree as unknown as AppearanceConfig;
 
+/** 页眉：状态一句话 + 三个动作。唯一的出口是「完成」（onClosed）。 */
+function SettingsHeader(props: {
+  status: string;
+  showReset: boolean;
+  canReset: boolean;
+  canUndo: boolean;
+  onReset: () => void;
+  onUndo: () => void;
+  onDone: () => void;
+}): JSX.Element {
+  return (
+    <header class="settings-hero">
+      <div class="settings-heading">
+        <span class="settings-eyebrow">工作环境</span>
+        <h2 id="settings-title">设置</h2>
+        <p>调整阅读与写作环境。每项更改会自动保存在这台电脑中。</p>
+      </div>
+      <div class="settings-actions">
+        <span class="settings-status" aria-live="polite">
+          {props.status}
+        </span>
+        <Show when={props.showReset}>
+          <button type="button" disabled={!props.canReset} onClick={props.onReset}>
+            恢复本页默认
+          </button>
+        </Show>
+        <button type="button" disabled={!props.canUndo} onClick={props.onUndo}>
+          撤销本次调整
+        </button>
+        <button class="primary" type="button" onClick={props.onDone}>
+          完成
+        </button>
+      </div>
+    </header>
+  );
+}
+
 export function SettingsSurface(props: SettingsSurfaceProps) {
-  const [section, setSection] = createSignal<Section>(props.initialSection ?? DEFAULT_SECTION);
+  const [section, setSection] = createSignal<Section>(props.initialSection ?? "typography");
   const [mark, setMark] = createSignal<AppearanceConfig | null>(null);
   const [latest, setLatest] = createSignal<AppearanceConfig | null>(null);
   // 只增不减的「本会话动过的字段」账本。撤销成功后整本清空。
@@ -63,9 +101,19 @@ export function SettingsSurface(props: SettingsSurfaceProps) {
   const [contentRevision, setContentRevision] = createSignal(0);
   let stopConfig: UnlistenFn | null = null;
 
-  createEffect(() => {
-    setSection(props.initialSection ?? DEFAULT_SECTION);
-  });
+  // Follow only a genuine section change (the author ran "open typography"
+  // while another section was showing). An unconditional effect would also
+  // fire on unrelated panel announcements and drag the author's chosen tab
+  // back — that was a real bug.
+  createEffect(
+    on(
+      () => props.initialSection,
+      (next) => {
+        if (next !== undefined) setSection(next);
+      },
+      { defer: true },
+    ),
+  );
 
   const current = createMemo(() => SECTIONS.find((entry) => entry.id === section()) ?? SECTIONS[0]);
   const canReset = createMemo(() => section() !== "shortcuts" && !busy());
@@ -183,37 +231,15 @@ export function SettingsSurface(props: SettingsSurfaceProps) {
   return (
     <section class="settings" data-quarter="settings" aria-labelledby="settings-title">
       <div class="settings-frame">
-        <header class="settings-hero">
-          <button class="settings-back" type="button" onClick={() => props.onClosed?.()}>
-            <span aria-hidden="true">←</span>
-            返回 {props.returnLabel ?? "工作台"}
-          </button>
-          <div class="settings-heading">
-            <span class="settings-eyebrow">工作环境</span>
-            <h2 id="settings-title">设置</h2>
-            <p>调整阅读与写作环境。每项更改会自动保存在这台电脑中。</p>
-          </div>
-          <div class="settings-actions">
-            <span class="settings-status" aria-live="polite">
-              {status()}
-            </span>
-            <Show when={section() !== "shortcuts"}>
-              <button type="button" disabled={!canReset()} onClick={() => void resetCurrent()}>
-                恢复本页默认
-              </button>
-            </Show>
-            <button
-              type="button"
-              disabled={!changed() || busy()}
-              onClick={() => void undoSession()}
-            >
-              撤销本次调整
-            </button>
-            <button class="primary" type="button" onClick={() => props.onClosed?.()}>
-              完成
-            </button>
-          </div>
-        </header>
+        <SettingsHeader
+          status={status()}
+          showReset={section() !== "shortcuts"}
+          canReset={canReset()}
+          canUndo={changed() && !busy()}
+          onReset={() => void resetCurrent()}
+          onUndo={() => void undoSession()}
+          onDone={() => props.onClosed?.()}
+        />
 
         <div class="settings-tabs" aria-label="设置分类" role="tablist">
           <For each={SECTIONS}>

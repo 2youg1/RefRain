@@ -70,17 +70,6 @@
   --source-wash: oklch(0.935 0.024 232); /* #daedf7 */
   --pending: oklch(0.583 0.168 38); /* #ca4d23 */
   --pending-wash: oklch(0.935 0.0504 38); /* #ffdfd2 */
-
-  --role-pending: var(--pending);
-  --role-pending-wash: var(--pending-wash);
-  --role-accepted: var(--accepted);
-  --role-accepted-wash: var(--accepted-wash);
-  --role-refused: var(--refused);
-  --role-refused-wash: var(--refused-wash);
-  --role-agent: var(--agent);
-  --role-agent-wash: var(--agent-wash);
-  --role-source: var(--source);
-  --role-source-wash: var(--source-wash);
 }
 
 /* ── 霞 kasumi · 日间 · 新海誠・波子汽水 ──────── */
@@ -137,17 +126,6 @@
   --source-wash: oklch(0.943 0.024 232); /* #ddeffa */
   --pending: oklch(0.7 0.152 8); /* #eb728c */
   --pending-wash: oklch(0.943 0.0456 8); /* #ffe0e6 */
-
-  --role-pending: var(--pending);
-  --role-pending-wash: var(--pending-wash);
-  --role-accepted: var(--accepted);
-  --role-accepted-wash: var(--accepted-wash);
-  --role-refused: var(--refused);
-  --role-refused-wash: var(--refused-wash);
-  --role-agent: var(--agent);
-  --role-agent-wash: var(--agent-wash);
-  --role-source: var(--source);
-  --role-source-wash: var(--source-wash);
 }
 
 /* ── 砂 suna · 日间 · 枯山水 ────────────────────── */
@@ -202,17 +180,6 @@
   --source-wash: oklch(0.947 0.024 232); /* #def1fb */
   --pending: oklch(0.52 0.132 262); /* #3d66b4 */
   --pending-wash: oklch(0.947 0.0396 262); /* #dfeeff */
-
-  --role-pending: var(--pending);
-  --role-pending-wash: var(--pending-wash);
-  --role-accepted: var(--accepted);
-  --role-accepted-wash: var(--accepted-wash);
-  --role-refused: var(--refused);
-  --role-refused-wash: var(--refused-wash);
-  --role-agent: var(--agent);
-  --role-agent-wash: var(--agent-wash);
-  --role-source: var(--source);
-  --role-source-wash: var(--source-wash);
 }
 
 /* ── 桦 hua · 日间 · 桦木・木漏れ日 ──────────────── */
@@ -267,17 +234,6 @@
   --source-wash: oklch(0.936 0.024 232); /* #dbedf7 */
   --pending: oklch(0.596 0.146 76); /* #af7000 */
   --pending-wash: oklch(0.936 0.0438 76); /* #fbe7ca */
-
-  --role-pending: var(--pending);
-  --role-pending-wash: var(--pending-wash);
-  --role-accepted: var(--accepted);
-  --role-accepted-wash: var(--accepted-wash);
-  --role-refused: var(--refused);
-  --role-refused-wash: var(--refused-wash);
-  --role-agent: var(--agent);
-  --role-agent-wash: var(--agent-wash);
-  --role-source: var(--source);
-  --role-source-wash: var(--source-wash);
 }
 
 /* ── 侘 wabi · 日间 · 青瓷・侘び ────────────────── */
@@ -332,17 +288,6 @@
   --source-wash: oklch(0.941 0.024 232); /* #dceff9 */
   --pending: oklch(0.5 0.15 152); /* #007a34 */
   --pending-wash: oklch(0.941 0.045 152); /* #d6f5dd */
-
-  --role-pending: var(--pending);
-  --role-pending-wash: var(--pending-wash);
-  --role-accepted: var(--accepted);
-  --role-accepted-wash: var(--accepted-wash);
-  --role-refused: var(--refused);
-  --role-refused-wash: var(--refused-wash);
-  --role-agent: var(--agent);
-  --role-agent-wash: var(--agent-wash);
-  --role-source: var(--source);
-  --role-source-wash: var(--source-wash);
 }
 
 /* ── 墨 sumi · 夜间 · AI 业黑白・人文の朱 ────── */
@@ -398,17 +343,6 @@
   --source-wash: oklch(0.227 0.024 232); /* #101e26 */
   --pending: oklch(0.82 0.16 40); /* #ff9d71 */
   --pending-wash: oklch(0.227 0.048 40); /* #2f130a */
-
-  --role-pending: var(--pending);
-  --role-pending-wash: var(--pending-wash);
-  --role-accepted: var(--accepted);
-  --role-accepted-wash: var(--accepted-wash);
-  --role-refused: var(--refused);
-  --role-refused-wash: var(--refused-wash);
-  --role-agent: var(--agent);
-  --role-agent-wash: var(--agent-wash);
-  --role-source: var(--source);
-  --role-source-wash: var(--source-wash);
 }
 
 /* ── 韶 shao · 夜间 · Blade Runner の雨夜・Edgerunners ── */
@@ -464,15 +398,4 @@
   --source-wash: oklch(0.228 0.024 232); /* #111f26 */
   --pending: oklch(0.86 0.132 192); /* #47ece7 */
   --pending-wash: oklch(0.228 0.0396 192); /* #002221 */
-
-  --role-pending: var(--pending);
-  --role-pending-wash: var(--pending-wash);
-  --role-accepted: var(--accepted);
-  --role-accepted-wash: var(--accepted-wash);
-  --role-refused: var(--refused);
-  --role-refused-wash: var(--refused-wash);
-  --role-agent: var(--agent);
-  --role-agent-wash: var(--agent-wash);
-  --role-source: var(--source);
-  --role-source-wash: var(--source-wash);
 }

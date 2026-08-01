@@ -146,6 +146,81 @@ async function performCommit(rootId: string, path: string): Promise<CommitResult
 // 组件：读投影、发意图。
 // ──────────────────────────────────────────────────────────────────────────
 
+/**
+ * 理由的就地输入：Enter 记下（空也记——「可留空」），Escape 当作没问过。
+ * 挂在提案下方一行，不跳 window.prompt。
+ */
+function ReasonEditor(props: {
+  onState: (text: string) => void;
+  onCancel: () => void;
+}): JSX.Element {
+  return (
+    <input
+      class="reason-editor"
+      type="text"
+      aria-label="理由（可留空）"
+      placeholder="理由（可留空）"
+      ref={(node) => queueMicrotask(() => node.focus())}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          event.stopPropagation();
+          props.onState(event.currentTarget.value);
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          props.onCancel();
+        }
+      }}
+    />
+  );
+}
+
+/**
+ * 鼠标路径：键盘能做的，这里都有一颗看得见的按钮（规则：快捷键不能是唯一入口）。
+ */
+function VerdictButtons(props: {
+  disabled: boolean;
+  label: string;
+  staged: boolean;
+  stagedCount: number;
+  onAccept: () => void;
+  onReject: () => void;
+  onEdit: () => void;
+  onReason: () => void;
+  onToggleStage: () => void;
+  onCommit: () => void;
+}): JSX.Element {
+  return (
+    <div class="mouse-row">
+      <button type="button" disabled={props.disabled} onClick={props.onAccept}>
+        {props.label} (Alt+A)
+      </button>
+      <button type="button" disabled={props.disabled} onClick={props.onReject}>
+        拒绝 (Alt+X)
+      </button>
+      <button type="button" disabled={props.disabled} onClick={props.onEdit}>
+        改后接受 (Alt+E)
+      </button>
+      <button type="button" disabled={props.disabled} onClick={props.onReason}>
+        理由 (Alt+R)
+      </button>
+      <button type="button" disabled={props.disabled} onClick={props.onToggleStage}>
+        {props.staged ? "出批" : "入批"} (Alt+S)
+      </button>
+      <button
+        type="button"
+        class="primary"
+        disabled={props.stagedCount === 0}
+        onClick={props.onCommit}
+      >
+        合并 {props.stagedCount} 条 (Alt+Enter)
+      </button>
+    </div>
+  );
+}
+
 export function ReviewSurface(props: ReviewSurfaceProps): JSX.Element {
   const [session, setSession] = createSignal<Session>({ kind: "loading" });
   const [cursor, setCursor] = createSignal(0);
@@ -153,6 +228,8 @@ export function ReviewSurface(props: ReviewSurfaceProps): JSX.Element {
   const [ledger, setLedger] = createSignal<Ledger>(new Map());
   const [pane, setPane] = createSignal<Pane>({ kind: "reading" });
   const [reason, setReason] = createSignal<Reason>({ kind: "unstated" });
+  // 理由就地问：不跳 window.prompt，一行输入框挂在提案下方，Enter 交卷 Esc 收回。
+  const [askingReason, setAskingReason] = createSignal(false);
   const [peer, setPeer] = createSignal<Peer>({ kind: "a" });
   const [notice, setNotice] = createSignal<Notice>({ kind: "silent" });
 
@@ -196,12 +273,12 @@ export function ReviewSurface(props: ReviewSurfaceProps): JSX.Element {
   const judge = async (verdict: VerdictKindName, finalText: string | null): Promise<void> => {
     const unit = current();
     if (unit === null) return;
-    const result = await performJudge(
-      props.rootId,
-      unit,
-      writesOf(unit, verdict, finalText),
-      reason(),
-    );
+    const writes = writesOf(unit, verdict, finalText);
+    if (writes === null) {
+      setNotice({ kind: "refused", text: "纯删除的提案不能改后接受——它没有可落文本的位置。" });
+      return;
+    }
+    const result = await performJudge(props.rootId, unit, writes, reason());
     if (result.kind === "failed") {
       setNotice(result);
       return;
@@ -246,8 +323,7 @@ export function ReviewSurface(props: ReviewSurfaceProps): JSX.Element {
   };
 
   const askReason = (): void => {
-    const given = window.prompt("理由（可留空）") ?? "";
-    setReason({ kind: "stated", text: given });
+    setAskingReason(true);
   };
 
   const onKeydown = (event: KeyboardEvent): void => {
@@ -352,14 +428,25 @@ export function ReviewSurface(props: ReviewSurfaceProps): JSX.Element {
                   onInput={(event) => setPane({ kind: "editing", text: event.currentTarget.value })}
                 />
               </Show>
+              <Show when={askingReason()}>
+                <ReasonEditor
+                  onState={(text) => {
+                    setReason({ kind: "stated", text });
+                    setAskingReason(false);
+                  }}
+                  onCancel={() => setAskingReason(false)}
+                />
+              </Show>
               <p class="hint">
+                {reason().kind === "stated" &&
+                  `理由：${(reason() as { text: string }).text || "（空）"} · `}
                 Alt+J/K 移动 · Alt+A {actionLabel(unit())} · Alt+X 拒绝 · Alt+E 改后接受 · Alt+R
                 理由 · Alt+S 入批 · Alt+P 换看竞争稿 · Alt+Enter 合并
               </p>
               <Show when={mark()}>
                 {(held) => (
                   <p class="verdict-mark">
-                    已判:{held().kind}
+                    已判：{held().kind}
                     <Show when={held().staged}>
                       <span> · 已入批</span>
                     </Show>
@@ -371,36 +458,18 @@ export function ReviewSurface(props: ReviewSurfaceProps): JSX.Element {
         )}
       </Show>
 
-      <div class="mouse-row">
-        <button
-          type="button"
-          disabled={current() === null}
-          onClick={() => void judge("accept", null)}
-        >
-          {actionLabel(current())} (Alt+A)
-        </button>
-        <button
-          type="button"
-          disabled={current() === null}
-          onClick={() => void judge("reject", null)}
-        >
-          拒绝 (Alt+X)
-        </button>
-        <button type="button" disabled={current() === null} onClick={openEditor}>
-          改后接受 (Alt+E)
-        </button>
-        <button type="button" disabled={current() === null} onClick={() => void toggleStage()}>
-          {standing().kind === "staged" ? "出批" : "入批"} (Alt+S)
-        </button>
-        <button
-          type="button"
-          class="primary"
-          disabled={staged() === 0}
-          onClick={() => void commit()}
-        >
-          合并 {staged()} 条 (Alt+Enter)
-        </button>
-      </div>
+      <VerdictButtons
+        disabled={current() === null}
+        label={actionLabel(current())}
+        staged={standing().kind === "staged"}
+        stagedCount={staged()}
+        onAccept={() => void judge("accept", null)}
+        onReject={() => void judge("reject", null)}
+        onEdit={openEditor}
+        onReason={askReason}
+        onToggleStage={() => void toggleStage()}
+        onCommit={() => void commit()}
+      />
     </section>
   );
 }

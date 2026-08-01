@@ -17,9 +17,9 @@ pub mod cancel;
 pub mod collect;
 pub mod decide;
 pub mod journal;
-pub mod material_access;
 pub mod review;
 pub mod scope;
+pub mod upstream;
 
 pub use cancel::{cancel_and_read_back, progress_of, refuse_cancel_without_handle};
 pub use collect::{Collected, collect_attempt};

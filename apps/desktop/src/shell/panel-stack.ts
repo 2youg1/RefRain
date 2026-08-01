@@ -21,7 +21,6 @@
  */
 export interface Panel<Content = unknown> {
   readonly key: string;
-  readonly title: string;
   readonly content: Content;
 }
 
@@ -33,10 +32,6 @@ export class PanelStack<Content = unknown> {
 
   constructor(private readonly announce: () => void) {}
 
-  get layers(): readonly Panel<Content>[] {
-    return this.#layers;
-  }
-
   get depth(): number {
     return this.#layers.length;
   }
@@ -44,10 +39,6 @@ export class PanelStack<Content = unknown> {
   /** 最外一层，也就是作者正在看的那个。 */
   get top(): Panel<Content> | null {
     return this.#layers.at(-1) ?? null;
-  }
-
-  has(key: string): boolean {
-    return this.#layers.some((layer) => layer.key === key);
   }
 
   /**

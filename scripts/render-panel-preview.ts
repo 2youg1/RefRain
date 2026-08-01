@@ -3,6 +3,10 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { chromium } from "playwright";
+import { ensureNodeDriver } from "./pw-chromium.ts";
+
+ensureNodeDriver(import.meta.url);
+
 import { type LampKind, lampFacing, lampPlacement } from "../apps/desktop/src/shell/lamp";
 
 /*
@@ -21,15 +25,6 @@ const SPEC = {
   acrylic: { blur: 20, saturate: 1.4, opacity: 0.72, rim: 0.18 },
   liquid: { blur: 12, saturate: 1.8, opacity: 0.52, rim: 0.42 },
 } as const;
-
-const SPINE_WIDTH = 34;
-
-/** 一条打开到第三层的路径：两条脊 + 一个展开的面板。 */
-const LAYERS = [
-  { key: "settings", title: "设置" },
-  { key: "settings/typography", title: "排版" },
-  { key: "settings/typography/fonts", title: "字体" },
-] as const;
 
 /*
  * 灯的位置来自 shell/lamp.ts——预览必须问真模块，不能自己编一套。
@@ -52,8 +47,6 @@ const lampVars = (kind: string): string => {
 
 const page = (theme: string, material: keyof typeof SPEC, lamp: string) => {
   const spec = SPEC[material];
-  const spines = LAYERS.slice(0, -1);
-  const open = LAYERS.at(-1);
   return `<!doctype html>
 <html lang="zh-Hans" data-theme="${theme}" data-paper="paper" data-lamp="${lamp}" data-panel-side="left"
       style="--panel-blur:${spec.blur}px;--panel-saturate:${spec.saturate};--panel-opacity:${spec.opacity};--panel-rim:${spec.rim};--panel-motion:300ms;--panel-easing:cubic-bezier(0.16,0.84,0.34,1);--panel-enter-from:-100%;${lampVars(lamp)}">
@@ -85,7 +78,7 @@ const page = (theme: string, material: keyof typeof SPEC, lamp: string) => {
 </style>
 </head>
 <body>
-<div class="stage-row" data-panels="open" style="--panel-reserve:${spines.length * SPINE_WIDTH + 400}px">
+<div class="stage-row" data-panels="open" style="--panel-reserve:400px">
   <div class="lamp-layer" aria-hidden="true"></div>
   <div class="manuscript-mock">
     <article class="editor-host">
@@ -94,14 +87,8 @@ const page = (theme: string, material: keyof typeof SPEC, lamp: string) => {
       <p>所以工具能做的只有一件事：不要在他按住那个东西的时候，把他的注意力拿走。</p>
     </article>
   </div>
-  ${spines
-    .map(
-      (layer, index) =>
-        `<button type="button" class="panel-spine"${index === spines.length - 1 ? ' aria-current="true"' : ""} style="--spine-offset:${index * SPINE_WIDTH}px;--spine-width:${SPINE_WIDTH}px;--spine-delay:${index * 40}ms">${layer.title}</button>`,
-    )
-    .join("\n  ")}
-  <section class="panel-layer" style="--panel-offset:${spines.length * SPINE_WIDTH}px">
-    <h2>${open?.title ?? ""}</h2>
+  <section class="panel-layer" style="--panel-offset:0px">
+    <h2>字体</h2>
     <div class="field">拉丁　Jost</div>
     <div class="field">中文　Noto Sans SC</div>
     <div class="field">日文　Zen Kaku Gothic New</div>

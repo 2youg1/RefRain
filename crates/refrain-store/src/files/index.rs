@@ -17,7 +17,6 @@
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::UNIX_EPOCH;
 
 use ignore::{WalkBuilder, WalkState};
 
@@ -34,19 +33,12 @@ pub enum Kind {
 
 /// One entry in the workspace.
 ///
-/// `name_folded` is the lowercase form, computed once during the walk. Folding
-/// during a search instead would repeat the allocation on every keystroke, for
-/// every entry — the single largest avoidable cost in an incremental filter.
+/// 名录只读两样：路径与「是不是手稿」。树形呈现、排序、折叠名字都属于已退役
+/// 的门面，不在索引里留位置。
 #[derive(Debug, Clone)]
 pub struct Entry {
     pub path: PathBuf,
-    pub name: String,
-    pub name_folded: String,
-    pub kind: Kind,
-    pub size: u64,
-    /// Milliseconds since the Unix epoch.
-    pub modified_ms: i64,
-    pub depth: usize,
+    kind: Kind,
     /// True when the extension is one this application edits.
     pub manuscript: bool,
 }
@@ -55,7 +47,7 @@ pub struct Entry {
 const MANUSCRIPT: &[&str] = &["md", "markdown", "mdown", "txt"];
 
 impl Entry {
-    fn from(path: PathBuf, depth: usize) -> Result<Self, String> {
+    fn from(path: PathBuf) -> Result<Self, String> {
         let metadata = path
             .symlink_metadata()
             .map_err(|error| format!("inspect {}: {error}", path.display()))?;
@@ -69,13 +61,6 @@ impl Entry {
             Kind::File
         };
 
-        let name = path
-            .file_name()
-            .ok_or_else(|| format!("name {}", path.display()))?
-            .to_string_lossy()
-            .into_owned();
-        let name_folded = name.to_lowercase();
-
         let manuscript = matches!(kind, Kind::File)
             && path
                 .extension()
@@ -85,21 +70,9 @@ impl Entry {
                 })
                 .unwrap_or(false);
 
-        let modified_ms = metadata
-            .modified()
-            .ok()
-            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-            .map(|since| since.as_millis() as i64)
-            .unwrap_or(0);
-
         Ok(Self {
             path,
-            name,
-            name_folded,
             kind,
-            size: metadata.len(),
-            modified_ms,
-            depth,
             manuscript,
         })
     }
@@ -160,19 +133,11 @@ impl ScanOptions {
     }
 }
 
-/// Walk every root in parallel and return one flat index.
-///
-/// The threads append into per-thread buffers and merge once, so the shared
-/// mutex is taken once per thread rather than once per entry.
-pub fn scan(roots: &[PathBuf], options: &ScanOptions) -> Vec<Entry> {
-    scan_all(roots, options).0
-}
-
-/// Walk every root and refuse a partial result.
+/// Walk every root in parallel and refuse a partial result.
 ///
 /// Use this at reconciliation boundaries where omission means deletion. The
-/// interactive file index deliberately keeps using [`scan`] so one unreadable
-/// entry does not hide every healthy entry from the writer.
+/// threads append into per-thread buffers and merge once, so the shared
+/// mutex is taken once per thread rather than once per entry.
 pub(crate) fn scan_checked(
     roots: &[PathBuf],
     options: &ScanOptions,
@@ -235,7 +200,7 @@ fn scan_all(roots: &[PathBuf], options: &ScanOptions) -> (Vec<Entry>, Vec<String
                 return WalkState::Continue;
             }
 
-            match Entry::from(entry.into_path(), depth) {
+            match Entry::from(entry.into_path()) {
                 Ok(item) => {
                     let keep = !options.manuscripts_only
                         || item.manuscript

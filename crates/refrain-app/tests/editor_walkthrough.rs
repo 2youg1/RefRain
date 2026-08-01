@@ -214,6 +214,8 @@ fn an_editor_goes_from_opening_a_draft_to_deciding_two_proposals() {
         "每条提案都要有可读的改法，否则他没有可比较的东西"
     );
 
+    // Windows 上文件句柄不解就删目录会吃到 code 32；先放掉现场再清。
+    drop(store);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -297,5 +299,7 @@ fn an_edit_made_after_dispatch_fails_with_something_the_editor_can_do() {
         "失败要指出是哪一个范围，他才知道该去看哪里；实际 detail = {detail:?}"
     );
 
+    // Windows 上文件句柄不解就删目录会吃到 code 32；先放掉现场再清。
+    drop(store);
     fs::remove_dir_all(root).unwrap();
 }

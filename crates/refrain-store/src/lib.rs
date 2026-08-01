@@ -9,12 +9,11 @@
 pub mod annotations;
 pub mod atomic;
 pub mod config;
-pub mod files;
+pub(crate) mod files;
 pub mod icons;
 pub mod ingest;
 pub mod ledger;
 pub mod materials;
-pub mod migrate;
 pub mod orchestration;
 pub mod project;
 pub mod root;

@@ -15,6 +15,10 @@ export interface ShortcutTargets {
   readonly composing: () => boolean;
   readonly save: () => void;
   readonly toggleCommandMenu: () => void;
+  /** KARA 的开合。Ctrl+Enter。 */
+  readonly toggleKara: () => void;
+  /** 聚焦栏顶搜索。Ctrl+F。 */
+  readonly focusSearch: () => void;
   /** 右键菜单开着吗。 */
   readonly menuOpen: () => boolean;
   readonly closeMenu: () => void;
@@ -44,6 +48,8 @@ export function handleShortcut(event: KeyboardEvent, targets: ShortcutTargets): 
 
   if (modifier && key === "s") return act(targets.save);
   if (modifier && key === "k") return act(targets.toggleCommandMenu);
+  if (modifier && key === "enter") return act(targets.toggleKara);
+  if (modifier && key === "f") return act(targets.focusSearch);
   // Cmd+1..4 按层直达。放在 Ctrl+[ 之前无所谓——数字与方括号不会撞。
   //
   // `goToQuarter` 返回 false 表示那一层此刻去不了（没有稿子时的编辑层与

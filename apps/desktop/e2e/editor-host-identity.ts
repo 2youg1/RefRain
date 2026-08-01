@@ -15,6 +15,10 @@
 // 再问编辑器 DOM 里现在是谁的文本。
 
 import { type Browser, chromium } from "playwright";
+import { ensureNodeDriver } from "../../../scripts/pw-chromium.ts";
+
+ensureNodeDriver(import.meta.url);
+
 import { build } from "vite";
 import solid from "vite-plugin-solid";
 
@@ -41,7 +45,7 @@ const html = `<!doctype html>
 <meta charset="utf-8">
 <div id="root"></div>
 <script type="module" src="/entry.js"></script>`;
-const server = Bun.serve({
+const server = await Bun.serve({
   port: 0,
   fetch(request) {
     const path = new URL(request.url).pathname;

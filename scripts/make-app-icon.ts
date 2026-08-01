@@ -4,6 +4,9 @@ import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright";
+import { ensureNodeDriver } from "./pw-chromium.ts";
+
+ensureNodeDriver(import.meta.url);
 
 const sourcePath = "apps/desktop/src/assets/mark.svg";
 const componentPath = "apps/desktop/src/ui/LogoMark.tsx";

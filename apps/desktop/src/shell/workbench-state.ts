@@ -10,41 +10,34 @@ export type WorkbenchReference =
  *
  * 「打开到哪一层面板」不在这里——那是 `PanelStack` 的事。它一度也住在这个 state 里，
  * 于是同一件事有两份记录：栈压了一层，reducer 也存了一个 reference，谁对看调用次序。
- * 现在这里只留下栈无法回答的两件事：作者在哪个场景（写作/Review/派发），
- * 以及有没有一个必须先处理掉的安全事件。
+ * 现在这里只留下栈无法回答的事：作者在哪个场景（写作/逐句裁决/工单），
+ * 以及手上有没有一份打开的稿子。
  */
-export interface WorkbenchState<Safety> {
+export interface WorkbenchState {
   readonly hasDocument: boolean;
   readonly stage: WorkbenchStage;
-  readonly safety: { readonly kind: "external-conflict"; readonly value: Safety } | null;
 }
 
-export type WorkbenchEvent<Safety> =
+export type WorkbenchEvent =
   | { readonly kind: "documentSelected" }
-  | { readonly kind: "openStage"; readonly stage: WorkbenchStage }
-  | { readonly kind: "raiseSafety"; readonly value: Safety }
-  | { readonly kind: "resolveSafety" };
+  | { readonly kind: "projectChanged" }
+  | { readonly kind: "openStage"; readonly stage: WorkbenchStage };
 
-export const initialWorkbenchState = <Safety>(): WorkbenchState<Safety> => ({
+export const initialWorkbenchState = (): WorkbenchState => ({
   hasDocument: false,
   stage: "writing",
-  safety: null,
 });
 
-/** Own the two axes the panel stack cannot answer. */
-export function reduceWorkbench<Safety>(
-  state: WorkbenchState<Safety>,
-  event: WorkbenchEvent<Safety>,
-): WorkbenchState<Safety> {
+/** Own the axes the panel stack cannot answer. */
+export function reduceWorkbench(state: WorkbenchState, event: WorkbenchEvent): WorkbenchState {
   switch (event.kind) {
     case "documentSelected":
-      return { hasDocument: true, stage: "writing", safety: null };
+      return { hasDocument: true, stage: "writing" };
+    // 换项目等于换了一份稿子的世界：打开的文档不再属于这里。
+    case "projectChanged":
+      return { hasDocument: false, stage: "writing" };
     case "openStage":
       if (event.stage !== "writing" && !state.hasDocument) return state;
       return { ...state, stage: event.stage };
-    case "raiseSafety":
-      return { ...state, safety: { kind: "external-conflict", value: event.value } };
-    case "resolveSafety":
-      return { ...state, safety: null };
   }
 }

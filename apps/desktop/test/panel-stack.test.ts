@@ -6,15 +6,24 @@ import { describe, expect, test } from "bun:test";
 
 import { PanelStack } from "../src/shell/panel-stack";
 
-const panel = (key: string) => ({ key, title: key });
-const keys = (stack: PanelStack) => stack.layers.map((layer) => layer.key);
+const panel = (key: string) => ({ key });
+
+/** 一路退到底，把经过的顶层记下来——路径的形状由此可读。 */
+const drain = (stack: PanelStack): string[] => {
+  const keys: string[] = [];
+  while (stack.top !== null) {
+    keys.push(stack.top.key);
+    stack.back();
+  }
+  return keys;
+};
 
 describe("PanelStack", () => {
-  test("展开一层是压栈，路径就是屏幕上并排的那几层", () => {
+  test("展开一层是压栈，最外一层就是作者正在看的", () => {
     const stack = new PanelStack(() => undefined);
     stack.open(panel("settings"));
     stack.open(panel("settings/typography"));
-    expect(keys(stack)).toEqual(["settings", "settings/typography"]);
+    expect(stack.depth).toBe(2);
     expect(stack.top?.key).toBe("settings/typography");
   });
 
@@ -22,7 +31,7 @@ describe("PanelStack", () => {
     const stack = new PanelStack(() => undefined);
     stack.open(panel("settings"));
     stack.open(panel("settings"));
-    expect(keys(stack)).toEqual([]);
+    expect(stack.depth).toBe(0);
   });
 
   test("点栈里靠内的一层是回到它，不是开一个副本", () => {
@@ -31,17 +40,15 @@ describe("PanelStack", () => {
     stack.open(panel("settings/typography"));
     stack.open(panel("settings/typography/fonts"));
     stack.open(panel("settings"));
-    expect(keys(stack)).toEqual(["settings"]);
+    expect(stack.depth).toBe(1);
+    expect(stack.top?.key).toBe("settings");
   });
 
   test("Escape 退一步，不是关掉整条路径", () => {
     const stack = new PanelStack(() => undefined);
     stack.open(panel("library"));
     stack.open(panel("library/interviews"));
-    stack.back();
-    expect(keys(stack)).toEqual(["library"]);
-    stack.back();
-    expect(keys(stack)).toEqual([]);
+    expect(drain(stack)).toEqual(["library/interviews", "library"]);
     // 空栈上再退不该报错，也不该广播
     stack.back();
     expect(stack.depth).toBe(0);
@@ -66,14 +73,5 @@ describe("PanelStack", () => {
     stack.back(); // 空栈，不广播
     stack.clear(); // 空栈，不广播
     expect(beats).toBe(2);
-  });
-
-  test("has 认得路径上的每一层，不只是顶层", () => {
-    const stack = new PanelStack(() => undefined);
-    stack.open(panel("settings"));
-    stack.open(panel("settings/typography"));
-    expect(stack.has("settings")).toBe(true);
-    expect(stack.has("settings/typography")).toBe(true);
-    expect(stack.has("library")).toBe(false);
   });
 });

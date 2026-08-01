@@ -34,16 +34,12 @@ export function typographyProjection(
       "--manuscript-word-spacing": `${decimal(typography.word_spacing_thousandths_em / 1000)}em`,
       "--manuscript-measure": `${decimal(typography.measure_tenths_em / 10)}em`,
       "--manuscript-indent": `${decimal(typography.first_line_indent_tenths_em / 10)}em`,
-      "--paragraph-spacing": decimal(paragraphSpacing),
       "--paragraph-gap": `${decimal(leading * paragraphSpacing)}em`,
       "--manuscript-align": typography.alignment,
       "--page-top-padding": `${decimal(typography.page_top_padding_tenths_rem / 10)}rem`,
       "--page-bottom-padding": `${decimal(typography.page_bottom_padding_tenths_vh / 10)}vh`,
-      "--grid-every": String(gridEvery),
-      "--line-box": `${decimal(lineBox)}px`,
       "--rule-at": `${decimal(ruleAt)}px`,
       "--grid-period": `${decimal(lineBox * gridEvery)}px`,
-      "--font-line": decimal(fontLine, 4),
     },
   };
 }

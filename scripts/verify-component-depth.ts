@@ -12,14 +12,14 @@ const BODY_CEILING = 200;
  */
 const BODY_DEBT: Readonly<Record<string, number>> = {
   // Shell composition; lifecycle, command mapping, and domain rules live in dedicated modules.
-  "Workbench.tsx": 634,
+  "Workbench.tsx": 590,
   // Typography preview reads the same CSS variables as the manuscript.
-  "TypographyPanel.tsx": 483,
-  "DispatchSurface.tsx": 347,
+  "TypographyPanel.tsx": 478,
+  "DispatchSurface.tsx": 304,
   "ConnectionsSurface.tsx": 239,
   // Stale-proposal decisions and presentation live outside this composition surface.
-  "ReviewSurface.tsx": 259,
-  "SettingsSurface.tsx": 242,
+  "ReviewSurface.tsx": 253,
+  "SettingsSurface.tsx": 230,
 };
 
 /** Same contract for bridge calls: a recorded count that may only fall. */

@@ -12,6 +12,17 @@
   --mono: "Courier Prime", ui-monospace, monospace;
   --display: "Antic Didone", "Chiron Sung HK", serif;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.64, 0, 0.78, 0);
+  /*
+   * 角色别名：surfaces.css 按角色说话（焦点、静音字、发丝线），颜色权威仍在
+   * themes.css——别名只做一次指向，不开第二个颜色来源。
+   */
+  --ui-font: var(--sans);
+  --focus: var(--seal);
+  --muted: var(--ink-faint);
+  --hair: var(--rule);
+  --hover: color-mix(in oklab, var(--ink) 8%, transparent);
+  --paper-recessed: var(--paper-sunk);
 }
 
 * {

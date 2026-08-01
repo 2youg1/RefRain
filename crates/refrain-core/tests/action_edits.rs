@@ -88,27 +88,3 @@ fn action_edits_follow_document_order_across_change_kinds() {
         [EditKind::Insert, EditKind::Replace]
     );
 }
-
-#[test]
-fn a_compensation_is_an_edit_that_can_be_undone_in_turn() {
-    let mut manuscript = open();
-    let block = manuscript.head().block_ids()[1];
-    let changed = manuscript
-        .execute(TextCommand::Editor(EditorAction::new(
-            manuscript.head().id(),
-            vec![EditorChange::Replace(
-                Replacement::new(vec![block], Some("TWO".to_owned())).unwrap(),
-            )],
-            "replace",
-        )))
-        .unwrap();
-    let compensation = manuscript
-        .execute(TextCommand::SelectiveUndo {
-            action: changed.action().id(),
-        })
-        .unwrap();
-
-    assert_eq!(compensation.action().edits().len(), 1);
-    assert_eq!(compensation.action().edits()[0].before(), Some("TWO"));
-    assert_eq!(compensation.action().edits()[0].after(), Some("two"));
-}

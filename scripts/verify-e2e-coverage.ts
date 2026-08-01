@@ -32,7 +32,7 @@ requireFacts(writing, "Settings and installed-font E2E", [
   'invoke("list_fonts")',
   'clickButton("撤销本次调整")',
   'clickButton("恢复本页默认")',
-  'pressKey("")',
+  'pressKey("")',
 ]);
 requireFacts(writing, "annotation and ticket E2E", [
   'clickButton("建立高亮")',

@@ -1,6 +1,6 @@
 import { BlockHeightIndex } from "./block-height-index";
 import { applyBlockPrefix, type BlockPrefix } from "./block-prefix";
-import { type CodeTheme, fenceLanguage, tokenizeCode } from "./code-highlight";
+import { type CodeTheme, fenceLanguage, forgetHighlights, tokenizeCode } from "./code-highlight";
 import { applyInlineMark } from "./inline-mark";
 import type {
   Block,
@@ -8,10 +8,11 @@ import type {
   EditorChange,
   EditorContext,
   EditorFormat,
+  ProposalMark,
   PunctuationFinding,
   SelectionMeasure,
 } from "./model";
-import { applyLocally, projectionIndex } from "./projection";
+import { applyLocally, PENDING_ID_PREFIX, projectionIndex } from "./projection";
 import { applyPunctuationFinding, findPunctuation } from "./punctuation";
 
 const BLOCK_TAG = "p";
@@ -31,7 +32,13 @@ function predictedLines(block: Block, lineUnits: number): number {
   const hard = (block.hardLines ?? 0) + 1;
   if (block.isFence === true) return hard;
   const perHard = Math.ceil(width / hard);
-  return hard * Math.max(1, Math.ceil(perHard / lineUnits));
+  // Averaging undercounts one unusually long line: that line alone wraps onto
+  // several rows. Take the larger estimate — a slightly tall spacer costs
+  // less than a scrollbar that shrinks once measuring catches up.
+  return Math.max(
+    hard * Math.max(1, Math.ceil(perHard / lineUnits)),
+    Math.ceil((block.maxLineUnits ?? 0) / lineUnits),
+  );
 }
 
 /** 一个只占高度、不接事件、读屏器看不见的填充块。 */
@@ -198,6 +205,12 @@ export class VirtualManuscriptView {
   readonly #frames: FrameHandles = { render: null, measurement: null, layout: null };
 
   #annotations: readonly EditorAnnotationProjection[] = [];
+  /**
+   * 提案印点：段落右缘的一枚小圆点，点开是饭盒裁决。与批注不同道——批注
+   * 画在文字上（CSS Highlight），印点是段落的一个附件，有自己的生命周期。
+   */
+  #proposalMarks: readonly ProposalMark[] = [];
+  #proposalMarkListeners: ((id: string) => void)[] = [];
   #blocks: Block[];
   #heightIndex: BlockHeightIndex;
   #contextBlock: { readonly blockId: string; readonly sourceText: string } | null = null;
@@ -205,6 +218,20 @@ export class VirtualManuscriptView {
   #selectionListeners: ((measure: SelectionMeasure | null) => void)[] = [];
   #contextSelection: ContextSelection | null = null;
   #interaction: InteractionState = { kind: "idle" };
+  /**
+   * The intended caret after a structural edit (split, merge, span delete,
+   * multi-block paste): when the confirmation comes back, the caret returns
+   * to where the author was working instead of the first block.
+   */
+  #pendingCaret: { readonly blockId: string; readonly offset: number } | null = null;
+  /**
+   * Birth certificate of a locally minted placeholder block: pending id → the
+   * text and position it had when it crossed the bridge. The author keeps
+   * typing while the confirmation travels; those characters live on the
+   * placeholder, and this record is what reconciles the placeholder id with
+   * the domain id so they can be submitted once a real name exists.
+   */
+  readonly #pendingBirths = new Map<string, { readonly text: string; readonly index: number }>();
   /**
    * The palette fences are coloured with. Set by the shell when the author
    * changes theme; `forgetHighlights` clears the token cache at the same time.
@@ -256,6 +283,7 @@ export class VirtualManuscriptView {
     }
 
     element.ownerDocument.fonts?.addEventListener("loadingdone", this.#onFontsLoaded);
+    element.addEventListener("pointerdown", this.#onProposalMarkPointer, true);
     element.addEventListener("beforeinput", this.#onBeforeInput);
     element.addEventListener("input", this.#onInput);
     element.addEventListener("paste", this.#onPaste);
@@ -274,6 +302,13 @@ export class VirtualManuscriptView {
     this.#contextBlock = null;
     this.#contextSelection = null;
     const previousBlocks = this.#blocks;
+    // Capture the caret before the swap: confirmed blocks may carry fresh ids,
+    // and the author's typing position must not travel with them.
+    const caretParagraph = this.#paragraphAtCaret();
+    const caretId = caretParagraph?.dataset.blockId ?? null;
+    const caretOffset = caretParagraph === null ? null : caretWithin(caretParagraph);
+    const intended = this.#pendingCaret;
+    this.#pendingCaret = null;
     const previousPositions = projectionIndex(previousBlocks);
     for (const block of blocks) {
       const previousIndex = previousPositions.get(block.id);
@@ -281,10 +316,78 @@ export class VirtualManuscriptView {
       if (previous?.text !== block.text) this.#measuredHeights.delete(block.id);
     }
     this.#blocks = [...blocks];
+    const adopted = this.#adoptPending(previousBlocks);
     this.#rebuildHeightIndex();
     if (this.#interaction.kind === "idle") {
       this.#renderedSignature = "";
       this.#render();
+    }
+    this.#restoreCaret(caretId, caretOffset, intended, adopted);
+  }
+
+  /**
+   * Map placeholder ids onto the ids the domain just confirmed.
+   *
+   * Local structural edits (split, multi-block paste) mint pending-* blocks;
+   * the domain mints its own ids for the same content. The author kept typing
+   * during the round trip, so any placeholder whose text has moved on gets one
+   * deferred replace now that a real id exists — this is what makes fast
+   * typing right after Enter lose nothing.
+   */
+  #adoptPending(previousBlocks: readonly Block[]): Map<string, string> {
+    const adopted = new Map<string, string>();
+    if (this.#pendingBirths.size === 0) return adopted;
+    const previousIds = new Set(previousBlocks.map((block) => block.id));
+    for (const pending of previousBlocks) {
+      const birth = this.#pendingBirths.get(pending.id);
+      if (birth === undefined) continue;
+      this.#pendingBirths.delete(pending.id);
+      // Candidates: ids not seen before whose text matches what the domain
+      // received. Ties (identical paragraphs) go to the one nearest the
+      // placeholder's birth position.
+      let found: { id: string; distance: number } | null = null;
+      for (let index = 0; index < this.#blocks.length; index += 1) {
+        const candidate = this.#blocks[index];
+        if (candidate === undefined || previousIds.has(candidate.id)) continue;
+        if (candidate.text !== birth.text) continue;
+        const distance = Math.abs(index - birth.index);
+        if (found === null || distance < found.distance) found = { id: candidate.id, distance };
+      }
+      if (found === null) continue; // The insert was refused; the block vanishes on render.
+      adopted.set(pending.id, found.id);
+      if (pending.text !== birth.text) {
+        this.#submit([{ kind: "replace", blocks: [found.id], text: pending.text }]);
+      }
+    }
+    return adopted;
+  }
+
+  /**
+   * Put the caret back after a confirmed replace. Intended caret first (the
+   * structural edit's own target), then the block the caret was in. When
+   * neither survives, leave the selection alone — jumping to the first block
+   * is the worst answer a confirmation can give.
+   */
+  #restoreCaret(
+    previousId: string | null,
+    previousOffset: number | null,
+    intended: { readonly blockId: string; readonly offset: number } | null,
+    adopted: Map<string, string>,
+  ): void {
+    if (this.#destroyed) return;
+    if (intended !== null) {
+      const id = adopted.get(intended.blockId) ?? intended.blockId;
+      if (this.#indexOf(id) >= 0) {
+        this.focus(id, intended.offset);
+        return;
+      }
+    }
+    if (previousId !== null && previousOffset !== null) {
+      const id = adopted.get(previousId) ?? previousId;
+      const block = this.#known(id);
+      if (block !== undefined) {
+        this.focus(id, Math.min(previousOffset, block.text.length));
+      }
     }
   }
 
@@ -474,6 +577,72 @@ export class VirtualManuscriptView {
     this.#projectAnnotations();
   }
 
+  /** 换上整组提案印点。与批注一样：整组替换，不逐枚增量。 */
+  setProposalMarks(marks: readonly ProposalMark[]): void {
+    this.#proposalMarks = [...marks];
+    this.#syncProposalMarks();
+  }
+
+  /** 印点被点开。返回退订。 */
+  onProposalMark(listener: (id: string) => void): () => void {
+    this.#proposalMarkListeners.push(listener);
+    return () => {
+      this.#proposalMarkListeners = this.#proposalMarkListeners.filter(
+        (candidate) => candidate !== listener,
+      );
+    };
+  }
+
+  /** 一个块此刻在屏幕上的位置——饭盒据此贴到锚点旁边。 */
+  blockRect(blockId: string): DOMRect | null {
+    return this.#byId.get(blockId)?.getBoundingClientRect() ?? null;
+  }
+
+  /** 有没有印点被渲染过：一枚都没有时，每一帧的查询是纯浪费。 */
+  #proposalMarksRendered = false;
+
+  /** 印点重挂：渲染会重写段落 textContent，印点每一帧都要确认自己还在。 */
+  #syncProposalMarks(): void {
+    if (this.#proposalMarks.length === 0 && !this.#proposalMarksRendered) return;
+    const wanted = new Set<string>();
+    for (const mark of this.#proposalMarks) {
+      const paragraph = this.#byId.get(mark.blockId);
+      if (paragraph === undefined) continue;
+      wanted.add(mark.id);
+      let dot = paragraph.querySelector<HTMLElement>(`:scope > .proposal-mark`);
+      if (dot === null) {
+        dot = paragraph.ownerDocument.createElement("span");
+        dot.className = "proposal-mark";
+        dot.contentEditable = "false";
+        dot.setAttribute("role", "button");
+        dot.setAttribute("aria-label", "提案");
+        paragraph.append(dot);
+      }
+      dot.dataset.proposalMark = mark.id;
+      this.#proposalMarksRendered = true;
+    }
+    // 摘掉不再被点名的（判过的、换稿剩下的）。
+    let remaining = false;
+    for (const dot of this.#element.querySelectorAll<HTMLElement>(".proposal-mark")) {
+      if (wanted.has(dot.dataset.proposalMark ?? "")) remaining = true;
+      else dot.remove();
+    }
+    this.#proposalMarksRendered = remaining;
+  }
+
+  /**
+   * Switch the code palette: clear the token cache, strip the highlight marks,
+   * and let the next render colour every fence with the new theme.
+   */
+  setCodeTheme(theme: CodeTheme): void {
+    if (theme === this.#codeTheme) return;
+    this.#codeTheme = theme;
+    forgetHighlights();
+    for (const paragraph of this.#byId.values()) delete paragraph.dataset.highlighted;
+    this.#renderedSignature = "";
+    if (this.#interaction.kind === "idle") this.#render();
+  }
+
   isComposing(): boolean {
     return this.#interaction.kind === "composing";
   }
@@ -489,6 +658,7 @@ export class VirtualManuscriptView {
   destroy(): void {
     if (this.#destroyed) return;
     this.#destroyed = true;
+    this.#element.removeEventListener("pointerdown", this.#onProposalMarkPointer, true);
     this.#element.removeEventListener("beforeinput", this.#onBeforeInput);
     this.#element.removeEventListener("input", this.#onInput);
     this.#element.removeEventListener("paste", this.#onPaste);
@@ -497,6 +667,7 @@ export class VirtualManuscriptView {
     this.#scrollHost.removeEventListener("scroll", this.#onScroll);
     this.#element.ownerDocument.removeEventListener("selectionchange", this.#onSelectionChange);
     this.#selectionListeners = [];
+    this.#proposalMarkListeners = [];
     this.#element.ownerDocument.fonts?.removeEventListener("loadingdone", this.#onFontsLoaded);
     this.#resizeObserver?.disconnect();
     this.#rootObserver?.disconnect();
@@ -533,13 +704,8 @@ export class VirtualManuscriptView {
 
   /**
    * The language a fence declares, or null when it declares none this
-   * highlighter knows.
-   *
-   * The info string is whatever follows the opening backticks. Only the first
-   * word is the language; the rest is metadata other tools use.
-   *
-   * Exported as a free function so a test can call the code that ships rather
-   * than a copy of it: a transcribed assertion only ever proves the transcript.
+   * highlighter knows. `code-highlight.ts` owns the parsing; this is the
+   * block-shaped guard around it.
    */
   #fenceLanguage(block: Block): string | null {
     return block.isFence === true ? fenceLanguage(block.text) : null;
@@ -590,14 +756,6 @@ export class VirtualManuscriptView {
     }
   }
 
-  /**
-   * The paragraph an event concerns.
-   *
-   * The whole manuscript is one editing host, so a browser-generated event
-   * targets the container rather than a paragraph — the caret is what says
-   * which block the author is in. Pointer events still carry a paragraph, and
-   * that answer is preferred because a right-click does not move the caret.
-   */
   /**
    * The paragraph a pointer landed on. Nothing else counts: a right-click does
    * not move the caret, so falling back to the selection here would answer for
@@ -754,13 +912,12 @@ export class VirtualManuscriptView {
   }
 
   /**
-   * 把一个 spacer 撑成 [start, end) 那段未渲染区域的高度。
+   * Take the spacer at `slot` and stretch it to the height of [start, end).
    *
-   * 高度为零时留在 DOM 里而不是摘掉：它只是一个零高度的空 div，留着可以省掉
-   * 每帧判断「这个 spacer 现在该不该存在」，也让子节点顺序恒定为
-   * 头 spacer → 段落 → 尾 spacer。
+   * A zero-height spacer stays in the DOM rather than being removed: it costs
+   * nothing, and the child order stays head spacer → paragraphs → tail spacer
+   * on every frame. Created on demand.
    */
-  /** 取第 `slot` 个填充块并撑成 [start, end) 那段的高度。不够就新建一个。 */
   #spacerAt(slot: number, start: number, end: number): HTMLElement {
     let spacer = this.#spacers[slot];
     if (spacer === undefined) {
@@ -1002,6 +1159,7 @@ export class VirtualManuscriptView {
       }
     }
     this.#projectAnnotations();
+    this.#syncProposalMarks();
     if (pinnedId !== null && activeOffset !== null) {
       const restored = this.#byId.get(pinnedId);
       if (restored !== undefined) {
@@ -1119,6 +1277,14 @@ export class VirtualManuscriptView {
       }
     }
     this.#blocks = applyLocally(this.#blocks, changes);
+    // Register the birth of every placeholder this submit minted: the text it
+    // crossed the bridge with, and where it was born. #adoptPending reads it.
+    for (let index = 0; index < this.#blocks.length; index += 1) {
+      const block = this.#blocks[index];
+      if (block === undefined) continue;
+      if (!block.id.startsWith(PENDING_ID_PREFIX) || this.#pendingBirths.has(block.id)) continue;
+      this.#pendingBirths.set(block.id, { text: block.text, index });
+    }
     if (structural) this.#rebuildHeightIndex();
   }
 
@@ -1141,6 +1307,15 @@ export class VirtualManuscriptView {
     if (block === undefined) return;
     const current = paragraph.textContent ?? "";
     if (current === block.text) return;
+    if (id.startsWith(PENDING_ID_PREFIX)) {
+      // A placeholder has no name the domain knows yet. Mirror the edit into
+      // the local projection only; #adoptPending submits it after the
+      // confirmation assigns the real id.
+      this.#blocks = applyLocally(this.#blocks, [{ kind: "replace", blocks: [id], text: current }]);
+      this.#measuredHeights.delete(id);
+      this.#heightIndex.invalidate(this.#indexOf(id));
+      return;
+    }
     this.#submit([{ kind: "replace", blocks: [id], text: current === "" ? null : current }]);
   }
 
@@ -1156,6 +1331,10 @@ export class VirtualManuscriptView {
       { kind: "replace", blocks: [id], text: head === "" ? null : head },
       { kind: "insert", before: after, texts: [tail === "" ? " " : tail] },
     ]);
+    // The caret follows the tail into the new block's start. That block still
+    // carries a placeholder id; #adoptPending translates it on confirmation.
+    const minted = this.#blocks[index + 1];
+    if (minted !== undefined) this.#pendingCaret = { blockId: minted.id, offset: 0 };
   }
 
   #mergeWithPrevious(paragraph: HTMLElement, id: string): void {
@@ -1165,27 +1344,177 @@ export class VirtualManuscriptView {
     const previous = this.#blocks[index - 1];
     if (previous === undefined) return;
     const text = paragraph.textContent ?? "";
+    this.#pendingCaret = { blockId: previous.id, offset: previous.text.length };
     this.#submit([
       { kind: "replace", blocks: [previous.id], text: previous.text + text },
       { kind: "replace", blocks: [id], text: null },
     ]);
   }
 
+  /** Delete at the end of a block mirrors Backspace at its start. */
+  #mergeWithNext(paragraph: HTMLElement, id: string): void {
+    const index = this.#indexOf(id);
+    const next = this.#blocks[index + 1];
+    if (index < 0 || next === undefined) return;
+    const text = paragraph.textContent ?? "";
+    this.#pendingCaret = { blockId: id, offset: text.length };
+    this.#submit([{ kind: "replace", blocks: [id, next.id], text: text + next.text }]);
+  }
+
   readonly #onBeforeInput = (event: InputEvent): void => {
     if (this.#interaction.kind === "composing") return;
     this.#contextBlock = null;
     this.#contextSelection = null;
+    const type = event.inputType;
+    // History belongs to the domain. The browser's own undo stack knows
+    // nothing about the structural edits we performed in script, so letting
+    // it run resurrects text the author deleted. Until a real undo exists,
+    // a clear refusal beats quiet corruption.
+    if (type === "historyUndo" || type === "historyRedo") {
+      event.preventDefault();
+      return;
+    }
     const paragraph = this.#paragraphAtCaret();
     if (paragraph === null) return;
     const id = paragraph.dataset.blockId ?? "";
-    if (event.inputType === "insertParagraph" || event.inputType === "insertLineBreak") {
+    if (type === "insertParagraph" || type === "insertLineBreak") {
       event.preventDefault();
       this.#splitAtCaret(paragraph, id);
-    } else if (event.inputType === "deleteContentBackward" && caretWithin(paragraph) === 0) {
+      return;
+    }
+    if (type === "deleteContentBackward" && caretWithin(paragraph) === 0) {
       event.preventDefault();
       this.#mergeWithPrevious(paragraph, id);
+      return;
+    }
+    if (type === "deleteContentForward") {
+      const atEnd = caretWithin(paragraph) === (paragraph.textContent ?? "").length;
+      if (atEnd) {
+        event.preventDefault();
+        this.#mergeWithNext(paragraph, id);
+        return;
+      }
+    }
+    if (
+      type === "deleteContentBackward" ||
+      type === "deleteContentForward" ||
+      type === "deleteByCut"
+    ) {
+      const span = this.#selectionSpan();
+      if (span !== null) {
+        // A native delete would merge the paragraphs in the DOM while the
+        // projection still held them, and the next render would resurrect
+        // the removed blocks alongside the merged text.
+        event.preventDefault();
+        if (type === "deleteByCut") {
+          const text = this.#element.ownerDocument.getSelection()?.toString() ?? "";
+          void this.#view.navigator.clipboard?.writeText(text).catch(() => undefined);
+        }
+        this.#deleteSpan(span);
+      }
+      return;
+    }
+    if (type === "insertFromDrop") {
+      const text = event.dataTransfer?.getData("text/plain") ?? "";
+      const span = this.#selectionSpan();
+      if (span !== null || /\n\s*\n/.test(text)) {
+        event.preventDefault();
+        this.#dropText(text, span);
+      }
     }
   };
+
+  /** A selection spanning two or more blocks; null when collapsed or inside one. */
+  #selectionSpan(): {
+    readonly startId: string;
+    readonly startOffset: number;
+    readonly endId: string;
+    readonly endOffset: number;
+  } | null {
+    const selection = this.#element.ownerDocument.getSelection();
+    if (selection === null || selection.rangeCount === 0 || selection.isCollapsed) return null;
+    const range = selection.getRangeAt(0);
+    const startParagraph = this.#paragraphFrom(range.startContainer);
+    const endParagraph = this.#paragraphFrom(range.endContainer);
+    if (startParagraph === null || endParagraph === null || startParagraph === endParagraph) {
+      return null;
+    }
+    const startProbe = range.cloneRange();
+    startProbe.selectNodeContents(startParagraph);
+    startProbe.setEnd(range.startContainer, range.startOffset);
+    const endProbe = range.cloneRange();
+    endProbe.selectNodeContents(endParagraph);
+    endProbe.setEnd(range.endContainer, range.endOffset);
+    return {
+      startId: startParagraph.dataset.blockId ?? "",
+      startOffset: startProbe.toString().length,
+      endId: endParagraph.dataset.blockId ?? "",
+      endOffset: endProbe.toString().length,
+    };
+  }
+
+  /** Delete a cross-block selection: keep the two half-blocks, drop the rest. */
+  #deleteSpan(span: {
+    readonly startId: string;
+    readonly startOffset: number;
+    readonly endId: string;
+    readonly endOffset: number;
+  }): void {
+    const startIndex = this.#indexOf(span.startId);
+    const endIndex = this.#indexOf(span.endId);
+    if (startIndex < 0 || endIndex < startIndex) return;
+    const head = (this.#blocks[startIndex]?.text ?? "").slice(0, span.startOffset);
+    const tail = (this.#blocks[endIndex]?.text ?? "").slice(span.endOffset);
+    const ids = this.#blocks.slice(startIndex, endIndex + 1).map((block) => block.id);
+    const text = head + tail;
+    this.#pendingCaret = { blockId: ids[0] ?? "", offset: span.startOffset };
+    this.#submit([{ kind: "replace", blocks: ids, text: text === "" ? null : text }]);
+  }
+
+  /** Dropped text: a cross-block selection is consumed first, then paragraphs insert. */
+  #dropText(
+    text: string,
+    span: {
+      readonly startId: string;
+      readonly startOffset: number;
+      readonly endId: string;
+      readonly endOffset: number;
+    } | null,
+  ): void {
+    if (text === "") return;
+    if (span === null) {
+      const paragraph = this.#paragraphAtCaret();
+      if (paragraph !== null)
+        this.#insertParagraphs(paragraph, paragraph.dataset.blockId ?? "", text);
+      return;
+    }
+    const startIndex = this.#indexOf(span.startId);
+    const endIndex = this.#indexOf(span.endId);
+    if (startIndex < 0 || endIndex < startIndex) return;
+    const head = (this.#blocks[startIndex]?.text ?? "").slice(0, span.startOffset);
+    const tail = (this.#blocks[endIndex]?.text ?? "").slice(span.endOffset);
+    const ids = this.#blocks.slice(startIndex, endIndex + 1).map((block) => block.id);
+    const parts = text
+      .split(/\n\s*\n/)
+      .map((part) => part.trim())
+      .filter((part) => part !== "");
+    if (parts.length <= 1) {
+      const merged = head + text + tail;
+      this.#pendingCaret = { blockId: ids[0] ?? "", offset: (head + text).length };
+      this.#submit([{ kind: "replace", blocks: ids, text: merged === "" ? null : merged }]);
+      return;
+    }
+    const [first, ...rest] = parts as [string, ...string[]];
+    const after = this.#blocks[endIndex + 1]?.id ?? null;
+    const changes: EditorChange[] = [
+      { kind: "replace", blocks: ids, text: head + first },
+      { kind: "insert", before: after, texts: [...rest, tail] },
+    ];
+    this.#submit(changes);
+    const firstKept = head + first !== "";
+    const tailBlock = this.#blocks[startIndex + (firstKept ? 1 : 0) + rest.length];
+    if (tailBlock !== undefined) this.#pendingCaret = { blockId: tailBlock.id, offset: 0 };
+  }
 
   readonly #onPaste = (event: ClipboardEvent): void => {
     const paragraph = this.#paragraphAtCaret();
@@ -1193,7 +1522,15 @@ export class VirtualManuscriptView {
     const text = event.clipboardData?.getData("text/plain") ?? "";
     if (!/\n\s*\n/.test(text)) return;
     event.preventDefault();
-    const id = paragraph.dataset.blockId ?? "";
+    this.#insertParagraphs(paragraph, paragraph.dataset.blockId ?? "", text);
+  };
+
+  /**
+   * Multi-paragraph text arriving at the caret: the first part joins the
+   * current block's head, each middle part becomes its own block, and the
+   * block's tail becomes the last block.
+   */
+  #insertParagraphs(paragraph: HTMLElement, id: string, text: string): void {
     const offset = caretWithin(paragraph) ?? (paragraph.textContent ?? "").length;
     const current = paragraph.textContent ?? "";
     const headText = current.slice(0, offset);
@@ -1213,7 +1550,20 @@ export class VirtualManuscriptView {
     ];
     if (texts.length > 0) changes.push({ kind: "insert", before: after, texts });
     this.#submit(changes);
-  };
+    // The caret lands at the end of what was pasted: the head block when there
+    // were no middle parts, the last middle block otherwise — or the start of
+    // the surviving tail when one exists.
+    const firstKept = headBlock !== "";
+    if (tailText !== "") {
+      const tail = this.#blocks[index + (firstKept ? 1 : 0) + rest.length];
+      if (tail !== undefined) this.#pendingCaret = { blockId: tail.id, offset: 0 };
+    } else if (rest.length > 0) {
+      const last = this.#blocks[index + (firstKept ? 1 : 0) + rest.length - 1];
+      if (last !== undefined) this.#pendingCaret = { blockId: last.id, offset: last.text.length };
+    } else {
+      this.#pendingCaret = { blockId: id, offset: headBlock.length };
+    }
+  }
 
   readonly #onInput = (_event: Event): void => {
     if (this.#interaction.kind === "composing") return;
@@ -1255,6 +1605,19 @@ export class VirtualManuscriptView {
     const waiting = this.#settledWaiters;
     this.#settledWaiters = [];
     for (const resolve of waiting) resolve();
+  };
+
+  readonly #onProposalMarkPointer = (event: PointerEvent): void => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const dot = target.closest(".proposal-mark");
+    if (!(dot instanceof HTMLElement)) return;
+    const id = dot.dataset.proposalMark;
+    if (id === undefined) return;
+    // 印点不是文本：这一下不该动光标，也不该进 beforeinput。
+    event.preventDefault();
+    event.stopPropagation();
+    for (const listener of this.#proposalMarkListeners) listener(id);
   };
 
   readonly #onScroll = (): void => {

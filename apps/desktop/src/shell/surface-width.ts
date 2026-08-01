@@ -36,12 +36,3 @@ export function panelWidthPx(width: PanelWidth): number {
 export function railWidthPx(width: RailWidth): number {
   return RAIL_PX[width];
 }
-
-/**
- * 铺满时正文让开多少：一点也不让。
- *
- * 舞台整个归了面板，正文此刻不在场——再为它保留位置，只会让面板凭空少一块。
- */
-export function reserveFor(width: PanelWidth, pathWidth: number): number {
-  return width === "full" ? 0 : pathWidth;
-}

@@ -60,7 +60,6 @@ const requiredOwners = [
   ["crates/refrain-store/src/ingest.rs", "content_hex"],
   ["crates/refrain-store/src/icons.rs", "content_hex"],
   ["crates/refrain-store/src/materials.rs", "content_hex"],
-  ["crates/refrain-store/src/migrate.rs", "content_hex"],
   ["crates/refrain-host/src/staging.rs", "content_hex"],
   // 收取一次派发时算的 artifact 摘要，随用例一起搬出了装配层。
   ["crates/refrain-app/src/collect.rs", "content_hex"],

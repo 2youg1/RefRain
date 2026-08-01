@@ -1,68 +1,80 @@
 import type {
   BlockPrefix,
+  CodeTheme,
   EditorAnnotationProjection,
+  EditorContext,
   EditorFormat,
   PunctuationFinding,
   SelectionMeasure,
 } from "@refrain/editor";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
-import { describe, unwrap } from "../bridge";
-import { type AnnotationDto, commands } from "../generated/bindings.gen";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  type JSX,
+  onCleanup,
+  onMount,
+  Show,
+} from "solid-js";
+import { describe } from "../bridge";
+import type {
+  AnnotationDto,
+  DocumentRow,
+  OpenDocumentDto_Serialize,
+  ProposalDto,
+} from "../generated/bindings.gen";
 import { AnnotationSurface } from "../ui/AnnotationSurface";
 import { ConflictDialog } from "../ui/ConflictDialog";
 import { ConnectionsSurface } from "../ui/ConnectionsSurface";
-import { DispatchSurface } from "../ui/DispatchSurface";
-import { EditorContextMenu } from "../ui/EditorContextMenu";
+import { DispatchSurface, type DispatchSurfaceProps } from "../ui/DispatchSurface";
+import { EditorContextMenu, type EditorContextMenuProps } from "../ui/EditorContextMenu";
 import { EditorHost, type EditorHostHandle } from "../ui/EditorHost";
 import { KaraSurface } from "../ui/KaraSurface";
 import { LogoMark } from "../ui/LogoMark";
-import { RailShelf } from "../ui/RailShelf";
+import { MailboxSection } from "../ui/MailboxSection";
+import { RailPrompt } from "../ui/RailPrompt";
+import { type RailCatalog, RailShelf } from "../ui/RailShelf";
 import { ReviewSurface } from "../ui/ReviewSurface";
 import { SettingsSurface } from "../ui/SettingsSurface";
 import { StatusLine } from "../ui/StatusLine";
-import { UniversalButton } from "../ui/UniversalButton";
 import { UniversalMenu } from "../ui/UniversalMenu";
+import { VerdictBento } from "../ui/VerdictBento";
 import { WindowChrome } from "../ui/WindowChrome";
+import { noticeText, workingText } from "./activity-text";
 import { AnnotationSelection } from "./annotation-selection";
 import { CommandFocus } from "./command-focus";
-import { type DocumentGateway, DocumentSession } from "./document-session";
+import { browserGateway, DocumentSession } from "./document-session";
 import { EditIntents } from "./edit-intents";
 import { useKara } from "./kara-state";
 import { canOpen, panelKey, settingsSection } from "./panel-reference";
-import { panelLayout } from "./panel-spine";
+import { type PanelLayout, panelLayout } from "./panel-spine";
 import { PanelStack } from "./panel-stack";
 import { ProjectSession } from "./project-session";
 import { QuarterMemory, runQuarterKey } from "./quarter-navigation";
 import { takesWholeStage } from "./quarters";
 import { browserTimer, RailPresence } from "./rail-presence";
 import { railScroll } from "./rail-scroll";
+import { browserRunWatchGateway, RunWatch } from "./run-watch";
 import { SelectionReadout } from "./selection-readout";
 import { handleShortcut } from "./shortcuts";
+import type { TicketMailbox } from "./ticket-mailbox";
+import { anchorProposals, bentoLayout, type VerdictAnchor } from "./verdict-anchors";
 import { Welcome } from "./Welcome";
 import { commandCatalog, type WorkbenchCommandId } from "./workbench-commands";
 import {
   initialWorkbenchState,
   reduceWorkbench,
+  type WorkbenchEvent,
   type WorkbenchReference,
   type WorkbenchState,
 } from "./workbench-state";
 
-const gateway: DocumentGateway = {
-  openDocument: async (rootId, path) => unwrap(commands.openDocument(rootId, path)),
-  currentDocument: async (rootId, path) => unwrap(commands.currentDocument(rootId, path)),
-  async persistRevision(rootId, path, stamp) {
-    const outcome = await unwrap(commands.persistRevision(rootId, path, stamp));
-    return outcome.kind === "saved"
-      ? { kind: "saved", value: outcome.value }
-      : { kind: "conflict", value: outcome.value };
-  },
-  listAnnotations: async (rootId, document) => unwrap(commands.listAnnotations(rootId, document)),
-  upsertAnnotation: async (request) => unwrap(commands.upsertAnnotation(request)),
-  deleteAnnotation: async (rootId, id) => unwrap(commands.deleteAnnotation(rootId, id)),
+type WorkbenchProps = {
+  onThemeChanged?: (slug: string) => void;
+  /** The code palette in force, projected from Config by App. */
+  codeTheme?: CodeTheme | undefined;
 };
-
-type WorkbenchProps = { onThemeChanged?: (slug: string) => void };
 
 /**
  * 命令 id 到块级前缀的映射。
@@ -79,11 +91,578 @@ const BLOCK_PREFIX_OF: Partial<Record<WorkbenchCommandId, BlockPrefix>> = {
   "format-ordered-list": "ordered-list",
 };
 
+/** 栏脚的目的地按钮。每个全局快捷键在这里都有一颗看得见的入口（KARA = Ctrl+Enter）。 */
+function RailFoot(props: {
+  hasDocument: boolean;
+  stage: "writing" | "review" | "dispatch";
+  annotationsOpen: boolean;
+  karaEngaged: boolean;
+  connectionsOpen: boolean;
+  settingsOpen: boolean;
+  onOpenStage: (stage: "writing" | "review" | "dispatch") => void;
+  onOpenAnnotations: () => void;
+  onToggleKara: () => void;
+  onOpenConnections: () => void;
+  onOpenSettings: () => void;
+}): JSX.Element {
+  return (
+    <div class="rail-foot">
+      <Show when={props.hasDocument}>
+        <button
+          type="button"
+          classList={{ current: props.stage === "review" }}
+          onClick={() => props.onOpenStage("review")}
+        >
+          逐句裁决
+        </button>
+        <button
+          type="button"
+          classList={{ current: props.stage === "dispatch" }}
+          onClick={() => props.onOpenStage("dispatch")}
+        >
+          工单
+        </button>
+        <button
+          type="button"
+          classList={{ current: props.annotationsOpen }}
+          onClick={props.onOpenAnnotations}
+        >
+          批注
+        </button>
+        <button
+          type="button"
+          classList={{ current: props.karaEngaged }}
+          onClick={props.onToggleKara}
+        >
+          KARA
+        </button>
+      </Show>
+      <button
+        type="button"
+        classList={{ current: props.connectionsOpen }}
+        onClick={props.onOpenConnections}
+      >
+        连接
+      </button>
+      <button
+        type="button"
+        classList={{ current: props.settingsOpen }}
+        onClick={props.onOpenSettings}
+      >
+        设置
+      </button>
+    </div>
+  );
+}
+
+/** 侧栏：品牌、新建与导入、搜索、栏内表单、两架文档、栏脚目的地。 */
+function RailNav(props: {
+  receded: boolean;
+  rail: ReturnType<typeof railScroll>;
+  onBrandToggle: () => void;
+  onCreateChapter: () => void;
+  onCreateMaterial: () => void;
+  onImport: () => void;
+  importDisabled: boolean;
+  query: string;
+  onQuery: (value: string) => void;
+  precision: "exact" | "loose";
+  onTogglePrecision: () => void;
+  searchRef: (element: HTMLInputElement) => void;
+  prompt: { label: string } | null;
+  onPromptSubmit: (answer: string) => void;
+  onPromptCancel: () => void;
+  mailboxRootId: string | null;
+  mailboxPath: string | null;
+  onMailboxReady: (instance: TicketMailbox) => void;
+  runWatch: RunWatch;
+  onOpenTicket: (box: "draft" | "unread" | "done") => void;
+  onTicketNotice: (text: string) => void;
+  chapters: readonly DocumentRow[];
+  materials: readonly DocumentRow[];
+  currentPath: string | null;
+  onSelect: (path: string) => void;
+  catalog: RailCatalog;
+  foot: Parameters<typeof RailFoot>[0];
+}): JSX.Element {
+  return (
+    <nav
+      class="rail"
+      classList={{ receded: props.receded }}
+      aria-label="文档"
+      ref={props.rail.ref}
+      onScroll={props.rail.onScroll}
+    >
+      <button type="button" class="brand" onClick={props.onBrandToggle}>
+        <LogoMark size={28} label="RefRain" />
+      </button>
+      <div class="rail-actions">
+        <button type="button" onClick={props.onCreateChapter}>
+          新章
+        </button>
+        <button type="button" onClick={props.onCreateMaterial}>
+          新资料
+        </button>
+        <button type="button" disabled={props.importDisabled} onClick={props.onImport}>
+          导入
+        </button>
+      </div>
+      <div class="rail-search">
+        <input
+          ref={props.searchRef}
+          value={props.query}
+          type="search"
+          aria-label="搜索全部文档"
+          placeholder="搜索全部文档（Ctrl+F）"
+          onInput={(event) => props.onQuery(event.currentTarget.value)}
+        />
+        {/* 默认精确：词里的每一部分都要出现；找不到时再切模糊。 */}
+        <button
+          type="button"
+          class="search-mode"
+          aria-pressed={props.precision === "loose"}
+          title={
+            props.precision === "exact" ? "精确：词的每一部分都要出现" : "模糊：任一部分命中即可"
+          }
+          onClick={props.onTogglePrecision}
+        >
+          {props.precision === "exact" ? "精确" : "模糊"}
+        </button>
+      </div>
+      <Show when={props.prompt}>
+        {(request) => (
+          <RailPrompt
+            label={request().label}
+            onSubmit={props.onPromptSubmit}
+            onCancel={props.onPromptCancel}
+          />
+        )}
+      </Show>
+      <RailShelf
+        label="原稿"
+        shelf="manuscript"
+        rows={props.chapters}
+        scrollTop={props.rail.view().top}
+        viewportHeight={props.rail.view().height}
+        currentPath={props.currentPath}
+        onSelect={props.onSelect}
+        catalog={props.catalog}
+      />
+      <Show when={props.materials.length > 0}>
+        <RailShelf
+          label="资料"
+          shelf="material"
+          rows={props.materials}
+          scrollTop={props.rail.view().top}
+          viewportHeight={props.rail.view().height}
+          currentPath={props.currentPath}
+          onSelect={props.onSelect}
+          catalog={props.catalog}
+        />
+      </Show>
+      <MailboxSection
+        rootId={props.mailboxRootId}
+        path={props.mailboxPath}
+        runWatch={props.runWatch}
+        onOpenTicket={props.onOpenTicket}
+        onNotice={props.onTicketNotice}
+        onReady={props.onMailboxReady}
+      />
+      <RailFoot {...props.foot} />
+    </nav>
+  );
+}
+
+/** 关窗前的未保存确认：给出路（保存并关闭），不是一行字把作者堵死。 */
+function CloseConfirmBar(props: { onSaveAndClose: () => void; onCancel: () => void }): JSX.Element {
+  return (
+    <div class="close-confirm" role="alert">
+      <span>正文尚未保存。</span>
+      <button type="button" onClick={props.onSaveAndClose}>
+        保存并关闭
+      </button>
+      <button type="button" onClick={props.onCancel}>
+        取消
+      </button>
+    </div>
+  );
+}
+
+/** 工单台在舞台行里的那一格。接线只有一处，散到调用点就会漂开。 */
+function DispatchStage(props: {
+  rootId: string;
+  path: string;
+  blocks: DispatchSurfaceProps["blocks"];
+  materials: DispatchSurfaceProps["materials"];
+  seed: string[];
+  initialPrompt: string | undefined;
+  runWatch: RunWatch;
+  onCollected: (count: number) => void;
+  onMaterialSaved: (row: DocumentRow) => void;
+  onClosed: () => void;
+}): JSX.Element {
+  return (
+    <DispatchSurface
+      rootId={props.rootId}
+      path={props.path}
+      blocks={props.blocks}
+      materials={props.materials}
+      seed={props.seed}
+      initialPrompt={props.initialPrompt}
+      runWatch={props.runWatch}
+      onCollected={props.onCollected}
+      onMaterialSaved={props.onMaterialSaved}
+      onClosed={props.onClosed}
+    />
+  );
+}
+
+/** 正文右键菜单的接线，一处。每个动作收掉菜单后的去向也在这里。 */
+function EditorMenu(props: {
+  menu: { context: EditorContextMenuProps["context"]; x: number; y: number };
+  kara: boolean;
+  relocating: boolean;
+  editor: () => EditorHostHandle | null;
+  intents: EditIntents;
+  onHighlight: () => void;
+  onComment: () => void;
+  onRelocate: () => void;
+  onDispatch: (accumulate: boolean) => void;
+  focusEditor: () => void;
+}): JSX.Element {
+  const release = (): void => props.intents.release();
+  return (
+    <EditorContextMenu
+      context={props.menu.context}
+      pointerX={props.menu.x}
+      pointerY={props.menu.y}
+      kara={props.kara}
+      relocating={props.relocating}
+      onFormat={(kind: EditorFormat) => {
+        props.editor()?.formatSelection(kind);
+        release();
+      }}
+      onDeleteEmpty={() => {
+        props.editor()?.deleteEmptyBlock();
+        release();
+      }}
+      onPunctuation={(finding: PunctuationFinding) => {
+        props.editor()?.applyPunctuation(finding);
+        release();
+      }}
+      onHighlight={props.onHighlight}
+      onComment={props.onComment}
+      onRelocate={props.onRelocate}
+      onAccumulate={() => props.onDispatch(true)}
+      onClose={() => {
+        release();
+        // 菜单拿走焦点开过键盘路，收掉时还回编辑器。
+        props.focusEditor();
+      }}
+    />
+  );
+}
+
+/**
+ * 设置面板的接线，一处。
+ *
+ * 它出现在两个位置——有稿子时在 stage-row 内与正文并存，没稿子时在一条空
+ * stage-row 里。两处的接线完全相同，抄两遍的代价是它们会漂开：改了一处的
+ * `onThemePicked` 而忘了另一处，换主题在其中一种情形下静默失效。
+ *
+ * 设置与正文并存——作者改字号时要看得见自己的字。它在 stage-row 里而不是
+ * stage 里，因此走的是与其他面板同一条 CSS 路径。
+ */
+function SettingsReference(props: {
+  reference: WorkbenchReference | null;
+  onClosed: () => void;
+  onThemeChanged?: ((slug: string) => void) | undefined;
+}): JSX.Element {
+  return (
+    <Show when={props.reference?.kind === "settings"}>
+      <SettingsSurface
+        initialSection={settingsSection(props.reference)}
+        onClosed={props.onClosed}
+        onThemePicked={(slug: string) => props.onThemeChanged?.(slug)}
+      />
+    </Show>
+  );
+}
+
+/**
+ * 饭盒的全部状态：印点投影、正在打开的那一只、以及裁决动作。
+ * 信箱由 MailboxSection 交出（onMailboxReady），这里只认它，不认桥。
+ */
+function createBentoState(deps: {
+  documentTick: () => number;
+  active: () => OpenDocumentDto_Serialize | null;
+  setNotice: (text: string) => void;
+  /** 接受类裁决已合并：外壳把落地后的正文读回来。 */
+  adoptCommitted: () => Promise<unknown>;
+}) {
+  let mailbox: TicketMailbox | null = null;
+  let stopMailbox: (() => void) | null = null;
+  const [mailTick, setMailTick] = createSignal(0);
+  const unjudged = createMemo(() => {
+    mailTick();
+    return mailbox?.unjudgedProposals ?? [];
+  });
+  /** 提案 → 段落右缘印点的投影：锚不住的提案不出现，不钉到错的段落上。 */
+  const anchors = createMemo<VerdictAnchor[]>(() => {
+    mailTick();
+    deps.documentTick();
+    return anchorProposals(unjudged(), deps.active()?.blocks ?? []);
+  });
+  // 打开的饭盒：一次一只，判完即合。
+  const [bentoId, setBentoId] = createSignal<string | null>(null);
+  const [bentoBusy, setBentoBusy] = createSignal(false);
+  const bento = createMemo(() => {
+    const id = bentoId();
+    if (id === null) return null;
+    const proposal = unjudged().find((candidate) => candidate.id === id);
+    const anchor = anchors().find((candidate) => candidate.id === id);
+    const block = deps.active()?.blocks.find((candidate) => candidate.id === anchor?.blockId);
+    if (proposal === undefined || anchor === undefined || block === undefined) return null;
+    return { proposal, anchor, block };
+  });
+  const judge = async (
+    kind: "accept" | "accept-modified" | "reject",
+    finalText: string | null,
+  ): Promise<void> => {
+    const current = bento();
+    if (mailbox === null || current === null) return;
+    setBentoBusy(true);
+    try {
+      const notice = await mailbox.judge(current.proposal.id, kind, finalText);
+      if (notice !== null) deps.setNotice(notice);
+      // 接受类裁决此刻已落成正文；退回只是记录，不用重读。
+      if (kind !== "reject") await deps.adoptCommitted();
+      setBentoId(null);
+    } catch (error) {
+      // 失败要说话（过期提案、被拒绝的合并）——静默吞掉等于替作者装作判完了。
+      deps.setNotice(describe(error));
+    } finally {
+      setBentoBusy(false);
+    }
+  };
+  return {
+    anchors,
+    bentoId,
+    setBentoId,
+    bento,
+    bentoBusy,
+    judge,
+    adoptCommitted: deps.adoptCommitted,
+    onMailboxReady: (instance: TicketMailbox): void => {
+      mailbox = instance;
+      stopMailbox?.();
+      stopMailbox = instance.onChanged(() => setMailTick((value) => value + 1));
+    },
+    dispose: (): void => stopMailbox?.(),
+  };
+}
+
+/** 打开的饭盒：一次一只，贴在锚点旁边，判完即合。 */
+function BentoLayer(props: {
+  bento: {
+    proposal: ProposalDto;
+    anchor: VerdictAnchor;
+    block: { id: string; text: string };
+  };
+  editor: () => EditorHostHandle | null;
+  busy: boolean;
+  onJudge: (kind: "accept" | "accept-modified" | "reject", finalText: string | null) => void;
+  onClose: () => void;
+}): JSX.Element {
+  const rect = (): DOMRect | null => props.editor()?.blockRect(props.bento.anchor.blockId) ?? null;
+  const layout = (): "side" | "inline" =>
+    bentoLayout(rect()?.right ?? window.innerWidth, window.innerWidth);
+  const position = (): { top: number; left: number } => {
+    const box = rect();
+    if (box === null) return { top: 80, left: 80 };
+    return layout() === "side"
+      ? { top: box.top, left: box.right + 12 }
+      : { top: box.bottom + 8, left: box.left };
+  };
+  return (
+    <VerdictBento
+      proposal={props.bento.proposal}
+      original={{
+        text: props.bento.block.text,
+        start: props.bento.anchor.start,
+        end: props.bento.anchor.end,
+      }}
+      layout={layout()}
+      position={position()}
+      busy={props.busy}
+      onAccept={() => props.onJudge("accept", null)}
+      onEditAccept={(text) => props.onJudge("accept-modified", text)}
+      onReturn={() => props.onJudge("reject", null)}
+      onClose={props.onClose}
+    />
+  );
+}
+
+/** 有稿子时的那条舞台行：编辑器、面板路径与光源，只有一条 CSS 路径。 */
+function WritingStageRow(props: {
+  rootId: string;
+  openDocument: OpenDocumentDto_Serialize;
+  layout: () => PanelLayout;
+  annotations: readonly EditorAnnotationProjection[];
+  proposalMarks: readonly VerdictAnchor[];
+  onProposalMark: (id: string) => void;
+  codeTheme: CodeTheme | undefined;
+  onEditorReady: (handle: EditorHostHandle | null) => void;
+  onConfirmed: () => void;
+  onRejected: (reason: string) => void;
+  onContext: (context: EditorContext, pointerX: number, pointerY: number) => void;
+  annotationsOpen: boolean;
+  annotationRows: readonly AnnotationDto[];
+  selectedAnnotations: ReadonlySet<string>;
+  onToggleAnnotation: (id: string) => void;
+  onCloseReference: () => void;
+  onDeleteAnnotation: (id: string) => void;
+  onRelocate: (annotation: AnnotationDto) => void;
+  onDispatchAnnotations: (blockIds: string[], prompt: string) => void;
+  dispatchOpen: boolean;
+  materials: { path: string; label: string }[];
+  seed: string[];
+  initialPrompt: string | undefined;
+  runWatch: RunWatch;
+  onCollected: (count: number) => void;
+  onMaterialSaved: (row: DocumentRow) => void;
+  onDispatchClosed: () => void;
+  connectionsOpen: boolean;
+  settings: JSX.Element;
+}): JSX.Element {
+  return (
+    <div
+      class="stage-row"
+      attr:data-panels={props.layout()["data-panels"]}
+      style={props.layout().style}
+    >
+      {/* 光源区。层级与理由见 shell/strata.ts。 */}
+      <div class="lamp-layer" aria-hidden="true" />
+      <EditorHost
+        rootId={props.rootId}
+        path={props.openDocument.document.path}
+        document={props.openDocument}
+        annotations={props.annotations}
+        proposalMarks={props.proposalMarks}
+        onProposalMark={props.onProposalMark}
+        codeTheme={props.codeTheme}
+        onReady={props.onEditorReady}
+        onConfirmed={props.onConfirmed}
+        onRejected={props.onRejected}
+        onContext={props.onContext}
+      />
+      <Show when={props.annotationsOpen}>
+        <AnnotationSurface
+          annotations={props.annotationRows}
+          selected={props.selectedAnnotations}
+          onToggle={props.onToggleAnnotation}
+          onClose={props.onCloseReference}
+          onDelete={props.onDeleteAnnotation}
+          onRelocate={props.onRelocate}
+          onDispatch={props.onDispatchAnnotations}
+        />
+      </Show>
+      <Show when={props.dispatchOpen}>
+        <DispatchStage
+          rootId={props.rootId}
+          path={props.openDocument.document.path}
+          blocks={props.openDocument.blocks}
+          materials={props.materials}
+          seed={props.seed}
+          initialPrompt={props.initialPrompt}
+          runWatch={props.runWatch}
+          onCollected={props.onCollected}
+          onMaterialSaved={props.onMaterialSaved}
+          onClosed={props.onDispatchClosed}
+        />
+      </Show>
+      <Show when={props.connectionsOpen}>
+        <ConnectionsSurface rootId={props.rootId} onClosed={props.onCloseReference} />
+      </Show>
+      {props.settings}
+    </div>
+  );
+}
+
+/** 欢迎屏分支：没有项目时的全部去处，含就地问名字的表单。 */
+function WelcomeBranch(props: {
+  notice: string | null;
+  prompt: { label: string } | null;
+  onPromptSubmit: (answer: string) => void;
+  onPromptCancel: () => void;
+  onOpenFolder: () => void;
+  onCreateProject: () => void;
+  onOpenDocument: () => void;
+}): JSX.Element {
+  return (
+    <>
+      <Show when={props.prompt}>
+        {(request) => (
+          <div class="welcome-prompt">
+            <RailPrompt
+              label={request().label}
+              onSubmit={props.onPromptSubmit}
+              onCancel={props.onPromptCancel}
+            />
+          </div>
+        )}
+      </Show>
+      <Welcome
+        notice={props.notice}
+        onOpenFolder={props.onOpenFolder}
+        onCreateProject={props.onCreateProject}
+        onOpenDocument={props.onOpenDocument}
+      />
+    </>
+  );
+}
+
+/** 关窗守卫：未保存不堵死作者，给「保存并关闭」的出路。 */
+function createCloseGuard(deps: {
+  documentSession: DocumentSession;
+  setNotice: (text: string) => void;
+}) {
+  const [closePending, setClosePending] = createSignal(false);
+  const destroyWindow = (): Promise<void> =>
+    getCurrentWindow()
+      .destroy()
+      .catch((error) => {
+        deps.setNotice(describe(error));
+      });
+  return {
+    closePending,
+    requestClose: (): void => {
+      if (deps.documentSession.hasUnsavedText()) {
+        setClosePending(true);
+        return;
+      }
+      void destroyWindow();
+    },
+    saveAndClose: async (): Promise<void> => {
+      await deps.documentSession.save();
+      if (deps.documentSession.hasUnsavedText()) {
+        deps.setNotice("保存失败：请先解决状态行里的问题，再关闭窗口。");
+        return;
+      }
+      setClosePending(false);
+      await destroyWindow();
+    },
+    cancel: (): void => {
+      setClosePending(false);
+    },
+  };
+}
+
 export function Workbench(props: WorkbenchProps) {
   const [notice, setNotice] = createSignal<string | null>(null);
   const [projectTick, setProjectTick] = createSignal(0);
   const [documentTick, setDocumentTick] = createSignal(0);
-  const [state, setState] = createSignal<WorkbenchState<never>>(initialWorkbenchState());
+  const [state, setState] = createSignal<WorkbenchState>(initialWorkbenchState());
   const [panelTick, setPanelTick] = createSignal(0);
   const panels = new PanelStack<WorkbenchReference>(() => setPanelTick((value) => value + 1));
   const [selectionTick, setSelectionTick] = createSignal(0);
@@ -113,10 +692,23 @@ export function Workbench(props: WorkbenchProps) {
     return intents.seed;
   });
   const [commandMenuOpen, setCommandMenuOpen] = createSignal(false);
-  // 面板拿走焦点、还回焦点这件事完整地归 CommandFocus——包括「热区会把作者
-  // 关进开合循环」那条只有它知道的规矩。这里只订它的广播。
+  // 一句话的询问（项目名、新章名、批注）在侧栏就地问，不跳 window.prompt。
+  // 同一时间只问一句：新问句到来时旧的先收回，作者不会面对两张表单。
+  const [promptRequest, setPromptRequest] = createSignal<{
+    label: string;
+    resolve: (answer: string | null) => void;
+  } | null>(null);
+  const askInline = (label: string): Promise<string | null> =>
+    new Promise((resolve) => {
+      promptRequest()?.resolve(null);
+      setPromptRequest({ label, resolve });
+    });
+  const settlePrompt = (answer: string | null): void => {
+    promptRequest()?.resolve(answer);
+    setPromptRequest(null);
+  };
+  // 面板拿走焦点、还回焦点这件事完整地归 CommandFocus。这里只订它的广播。
   const commandFocus = new CommandFocus(setCommandMenuOpen, () => editor?.focus());
-  const openCommandMenu = (): void => commandFocus.show();
   const closeCommandMenu = (): void => commandFocus.hide();
 
   const [railReceded, setRailReceded] = createSignal(false);
@@ -124,7 +716,19 @@ export function Workbench(props: WorkbenchProps) {
   const kara = useKara();
   const [karaTick, setKaraTick] = createSignal(0);
   const stopKara = kara.subscribe(() => setKaraTick((value) => value + 1));
+  // The global watcher for agents working elsewhere: in-flight and settled
+  // states stay visible on the status line whether the panel is open or not.
+  const runWatch = new RunWatch(browserRunWatchGateway, {
+    allSettled: () => kara.quiet("agent-completed"),
+  });
+  const [runTick, setRunTick] = createSignal(0);
+  const stopRuns = runWatch.onChanged(() => setRunTick((value) => value + 1));
+  const runsInFlight = createMemo(() => {
+    runTick();
+    return runWatch.view().inFlight;
+  });
   let editor: EditorHostHandle | null = null;
+  let searchInput: HTMLInputElement | null = null;
   const [selectionMeasure, setSelectionMeasure] = createSignal<SelectionMeasure | null>(null);
   const selectionReadout = new SelectionReadout(setSelectionMeasure);
 
@@ -136,12 +740,14 @@ export function Workbench(props: WorkbenchProps) {
     // 装上一个项目，等于换了一份稿子的世界：打开的文档不再属于这里。
     (opened) => {
       documentSession.useProject(opened.rootId);
+      runWatch.retarget(opened.rootId);
+      transition({ kind: "projectChanged" });
       setNotice(null);
     },
     describe,
   );
   const documentSession = new DocumentSession(
-    gateway,
+    browserGateway,
     () => editor,
     {
       notice: setNotice,
@@ -152,8 +758,8 @@ export function Workbench(props: WorkbenchProps) {
   const stopProject = projectSession.onChanged(() => {
     setProjectTick((value) => value + 1);
     // 名录自己会说话了（「已导入」、取得项目时的失败）。外壳照搬，不改写措辞。
-    const activity = projectSession.view();
-    if (activity.kind === "reported" || activity.kind === "failed") setNotice(activity.text);
+    const text = noticeText(projectSession.view());
+    if (text !== null) setNotice(text);
   });
   const stopDocument = documentSession.onChanged(() => setDocumentTick((value) => value + 1));
 
@@ -166,6 +772,18 @@ export function Workbench(props: WorkbenchProps) {
     return documentSession.view();
   });
   const active = createMemo(() => documentView().document);
+  const bentoState = createBentoState({
+    documentTick,
+    active,
+    setNotice,
+    // 合并落地即回到写作现场——裁决面不替作者留着。
+    adoptCommitted: async () => {
+      await documentSession.adoptCommitted();
+      openStage("writing");
+    },
+  });
+  const { anchors, setBentoId, bento, bentoBusy, onMailboxReady, judge: judgeBento } = bentoState;
+
   const documents = createMemo(() => {
     projectTick();
     return projectSession.visibleDocuments;
@@ -207,9 +825,27 @@ export function Workbench(props: WorkbenchProps) {
     karaTick();
     return kara.engaged.value;
   });
+  /**
+   * The status line's "what is happening" sentence: the operation in hand
+   * first (import, opening a project), then the agents running elsewhere.
+   * One sentence, one authority — there used to be three copies.
+   */
+  const activityLine = createMemo(() => {
+    projectTick();
+    const working = workingText(projectSession.view());
+    if (working !== null) return working;
+    const inFlight = runsInFlight();
+    return inFlight > 0 ? (inFlight > 1 ? `Agent 在途 ×${inFlight}` : "Agent 在途") : null;
+  });
+  /** An in-progress operation greys out its entry — a second click would be
+      swallowed silently, and silent swallowing is what anger is made of. */
+  const projectBusy = createMemo(() => {
+    projectTick();
+    return projectSession.view().kind === "working";
+  });
   // Agent navigation remembers its last panel. It is read only when Cmd+4 runs.
   const quarterMemory = new QuarterMemory();
-  const transition = (event: Parameters<typeof reduceWorkbench<never>>[1]): void => {
+  const transition = (event: WorkbenchEvent): void => {
     setState((current) => reduceWorkbench(current, event));
   };
   const openStage = (stage: "writing" | "review" | "dispatch"): void => {
@@ -225,7 +861,7 @@ export function Workbench(props: WorkbenchProps) {
       quarterMemory.rememberAgent({ reference: next });
     }
     const key = panelKey(next);
-    panels.open({ key, title: key, content: next });
+    panels.open({ key, content: next });
   };
   const closeReference = (): void => panels.clear();
 
@@ -233,7 +869,7 @@ export function Workbench(props: WorkbenchProps) {
   const openProjectFolder = (): Promise<void> => projectSession.openFolder();
   const openSingleDocument = (): Promise<void> => projectSession.openSingleDocument();
   const createProject = async (): Promise<void> => {
-    const name = window.prompt("项目名");
+    const name = await askInline("项目名");
     if (name === null) return;
     await projectSession.createProject(name);
   };
@@ -253,7 +889,7 @@ export function Workbench(props: WorkbenchProps) {
   };
 
   const createDocument = async (role: "chapter" | "material"): Promise<void> => {
-    const title = window.prompt(role === "chapter" ? "新章名" : "新资料名");
+    const title = await askInline(role === "chapter" ? "新章名" : "新资料名");
     if (title === null) return;
     // 建好之后跳过去是外壳的编排；名录只管把它记下来。
     const created = await projectSession.createDocument(title, role);
@@ -263,6 +899,7 @@ export function Workbench(props: WorkbenchProps) {
   const importMaterial = (): Promise<void> => projectSession.importMaterial();
 
   const save = (): void => void documentSession.save();
+
   const markDirty = (): void => {
     documentSession.markDirty();
     const caret = editor?.caret();
@@ -278,9 +915,7 @@ export function Workbench(props: WorkbenchProps) {
     const target = intents.annotationTarget(existing);
     if (target === null) return;
     const body =
-      kind === "comment" && existing === null
-        ? window.prompt("批注")?.trim() || null
-        : (existing?.body ?? null);
+      kind === "comment" && existing === null ? await askInline("批注") : (existing?.body ?? null);
     if (kind === "comment" && body === null) return;
     const row = await documentSession.upsertAnnotation({ ...target, kind, body });
     intents.release();
@@ -302,68 +937,45 @@ export function Workbench(props: WorkbenchProps) {
     openStage("dispatch");
   };
 
+  // 右键「攒进工单」只记录：送出集中在工单台，不打断手上的句子。
   const dispatchBlock = (accumulate: boolean): void => {
-    if (intents.dispatchAimedBlock(accumulate)) openStage("dispatch");
+    if (!intents.dispatchAimedBlock(accumulate)) return;
+    setNotice(`已攒进工单（${dispatchSeed().blockIds.length} 段）。去「工单」一次送出。`);
   };
 
   const executeCommand = (id: WorkbenchCommandId): void => {
     closeCommandMenu();
-    switch (id) {
-      case "return-writing":
-        openStage("writing");
-        queueMicrotask(() => editor?.focus());
-        break;
-      case "open-review":
-        openStage("review");
-        break;
-      case "open-project":
-        void openProjectFolder();
-        break;
-      case "create-project":
-        void createProject();
-        break;
-      case "open-document":
-        void openSingleDocument();
-        break;
-      case "new-chapter":
-        void createDocument("chapter");
-        break;
-      case "new-material":
-        void createDocument("material");
-        break;
-      case "import-material":
-        void importMaterial();
-        break;
-      case "save-document":
-        save();
-        break;
-      case "open-dispatch":
-        openStage("dispatch");
-        break;
-      case "open-connections":
-        openReference({ kind: "connections" });
-        break;
-      case "open-appearance":
-        openReference({ kind: "settings", section: "appearance" });
-        break;
-      case "open-typography":
-        openReference({ kind: "settings", section: "typography" });
-        break;
-      case "open-shortcuts":
-        openReference({ kind: "settings", section: "shortcuts" });
-        break;
-      default: {
-        // 块级格式化命令是一次查表，不是六条分支。表里没有的 id 落到这里
-        // 什么也不做——这是刻意的：命令目录与执行分属两处，漏接一个不应当
-        // 让整条命令路径崩掉。
-        const prefix = BLOCK_PREFIX_OF[id];
-        if (prefix !== undefined) editor?.applyBlockPrefix(prefix);
-        break;
-      }
+    if (id === "return-writing") {
+      openStage("writing");
+      queueMicrotask(() => editor?.focus());
+      return;
     }
+    const simple: Partial<Record<WorkbenchCommandId, () => void>> = {
+      "open-review": () => openStage("review"),
+      "open-project": () => void openProjectFolder(),
+      "create-project": () => void createProject(),
+      "open-document": () => void openSingleDocument(),
+      "new-chapter": () => void createDocument("chapter"),
+      "new-material": () => void createDocument("material"),
+      "import-material": () => void importMaterial(),
+      "save-document": save,
+      "open-dispatch": () => openStage("dispatch"),
+      "open-connections": () => openReference({ kind: "connections" }),
+      "open-appearance": () => openReference({ kind: "settings", section: "appearance" }),
+      "open-typography": () => openReference({ kind: "settings", section: "typography" }),
+      "open-shortcuts": () => openReference({ kind: "settings", section: "shortcuts" }),
+    };
+    const action = simple[id];
+    if (action !== undefined) {
+      action();
+      return;
+    }
+    // 块级格式化命令是一次查表。表里没有的 id 落到这里什么也不做——这是刻意的：
+    // 命令目录与执行分属两处，漏接一个不应当让整条命令路径崩掉。
+    const prefix = BLOCK_PREFIX_OF[id];
+    if (prefix !== undefined) editor?.applyBlockPrefix(prefix);
   };
 
-  /** Cmd+1..4。返回 false 表示这一层此刻去不了，那一下不该被接管。 */
   /** Cmd+1..4。返回 false 表示这一层此刻去不了，那一下不该被接管。 */
   const goToQuarter = (key: string): boolean =>
     runQuarterKey(key, quarterMemory, active() !== null, {
@@ -383,6 +995,11 @@ export function Workbench(props: WorkbenchProps) {
       composing: () => editor?.isComposing() === true,
       save,
       toggleCommandMenu: () => commandFocus.toggle(),
+      toggleKara: () => void kara.toggle(),
+      focusSearch: () => {
+        searchInput?.focus();
+        searchInput?.select();
+      },
       menuOpen: () => menu() !== null,
       closeMenu: () => intents.release(),
       panelDepth: () => panels.depth,
@@ -393,15 +1010,8 @@ export function Workbench(props: WorkbenchProps) {
 
   const onPointerMove = (event: PointerEvent): void => rail.pointerMoved(event.clientX);
 
-  const requestClose = (): void => {
-    if (documentSession.hasUnsavedText()) {
-      setNotice("正文尚未保存。请先保存，再关闭窗口。");
-      return;
-    }
-    void getCurrentWindow()
-      .destroy()
-      .catch((error) => setNotice(describe(error)));
-  };
+  const closeGuard = createCloseGuard({ documentSession, setNotice });
+  const { closePending, requestClose, saveAndClose } = closeGuard;
 
   onMount(() => {
     window.addEventListener("keydown", onKeydown);
@@ -416,29 +1026,17 @@ export function Workbench(props: WorkbenchProps) {
     stopProject();
     stopDocument();
     stopKara();
+    stopRuns();
+    bentoState.dispose();
+    runWatch.dispose();
   });
 
-  /**
-   * 设置面板的接线，一处。
-   *
-   * 它出现在两个位置——有稿子时在 stage-row 内与正文并存，没稿子时在一条空
-   * stage-row 里。两处的接线完全相同，抄两遍的代价是它们会漂开：改了一处的
-   * `onThemePicked` 而忘了另一处，换主题在其中一种情形下静默失效。
-   *
-   * 设置是四区第 1 层，与正文并存——作者改字号时要看得见自己的字。它在
-   * stage-row 里而不是 stage 里，因此走的是与其他面板同一条 CSS 路径：
-   * 绝对定位、正文让位、书脊、动效、材质、灯光全部自动跟随。此前它是 stage
-   * 的直接子元素，探针实测把正文挤到视口外 156px 处。
-   */
   const settingsPanel = () => (
-    <Show when={reference()?.kind === "settings"}>
-      <SettingsSurface
-        initialSection={settingsSection(reference())}
-        returnLabel={active()?.document.path ?? "工作台"}
-        onClosed={closeReference}
-        onThemePicked={(slug: string) => props.onThemeChanged?.(slug)}
-      />
-    </Show>
+    <SettingsReference
+      reference={reference()}
+      onClosed={closeReference}
+      onThemeChanged={props.onThemeChanged}
+    />
   );
 
   return (
@@ -448,16 +1046,6 @@ export function Workbench(props: WorkbenchProps) {
         onCloseRequested={requestClose}
         onError={setNotice}
       />
-      <Show
-        when={
-          project() !== null &&
-          active() !== null &&
-          state().stage === "writing" &&
-          reference() === null
-        }
-      >
-        <UniversalButton onActivate={openCommandMenu} />
-      </Show>
       <Show when={commandMenuOpen()}>
         <UniversalMenu
           entries={commandsForMenu()}
@@ -469,8 +1057,11 @@ export function Workbench(props: WorkbenchProps) {
       <Show
         when={project()}
         fallback={
-          <Welcome
+          <WelcomeBranch
             notice={notice()}
+            prompt={promptRequest()}
+            onPromptSubmit={(answer) => settlePrompt(answer)}
+            onPromptCancel={() => settlePrompt(null)}
             onOpenFolder={() => void openProjectFolder()}
             onCreateProject={() => void createProject()}
             onOpenDocument={() => void openSingleDocument()}
@@ -479,164 +1070,111 @@ export function Workbench(props: WorkbenchProps) {
       >
         {(root) => (
           <>
-            <nav
-              class="rail"
-              classList={{ receded: railReceded() || reference()?.kind === "settings" }}
-              aria-label="文档"
-              ref={railView.ref}
-              onScroll={railView.onScroll}
-            >
-              <button type="button" class="brand" onClick={() => setRailReceded((value) => !value)}>
-                <LogoMark size={28} label="RefRain" />
-              </button>
-              <div class="rail-actions">
-                <button type="button" onClick={() => void createDocument("chapter")}>
-                  新章
-                </button>
-                <button type="button" onClick={() => void createDocument("material")}>
-                  新资料
-                </button>
-                <button type="button" onClick={() => void importMaterial()}>
-                  导入
-                </button>
-              </div>
-              <div class="rail-search">
-                <input
-                  value={projectSession.query}
-                  type="search"
-                  aria-label="搜索全部文档"
-                  placeholder="搜索全部文档"
-                  onInput={(event) => projectSession.setQuery(event.currentTarget.value)}
-                />
-              </div>
-              <RailShelf
-                label="原稿"
-                shelf="manuscript"
-                rows={chapters()}
-                scrollTop={railView.view().top}
-                viewportHeight={railView.view().height}
-                currentPath={active()?.document.path ?? null}
-                onSelect={(path) => void selectDocument(path)}
-                catalog={projectSession}
-              />
-              <Show when={materials().length > 0}>
-                <RailShelf
-                  label="资料"
-                  shelf="material"
-                  rows={materials()}
-                  scrollTop={railView.view().top}
-                  viewportHeight={railView.view().height}
-                  currentPath={active()?.document.path ?? null}
-                  onSelect={(path) => void selectDocument(path)}
-                  catalog={projectSession}
-                />
-              </Show>
-              <div class="rail-foot">
-                <Show when={active()}>
-                  <button
-                    type="button"
-                    classList={{ current: state().stage === "review" }}
-                    onClick={() => openStage("review")}
-                  >
-                    Review
-                  </button>
-                  <button
-                    type="button"
-                    classList={{ current: state().stage === "dispatch" }}
-                    onClick={() => openStage("dispatch")}
-                  >
-                    派发
-                  </button>
-                  <button
-                    type="button"
-                    classList={{ current: annotationsOpen() }}
-                    onClick={() => openReference({ kind: "annotations" })}
-                  >
-                    批注
-                  </button>
-                </Show>
-                <button
-                  type="button"
-                  classList={{ current: reference()?.kind === "connections" }}
-                  onClick={() => openReference({ kind: "connections" })}
-                >
-                  连接
-                </button>
-                <button
-                  type="button"
-                  classList={{ current: reference()?.kind === "settings" }}
-                  onClick={() => openReference({ kind: "settings", section: "appearance" })}
-                >
-                  设置
-                </button>
-              </div>
-            </nav>
+            <RailNav
+              receded={railReceded() || reference()?.kind === "settings"}
+              rail={railView}
+              onBrandToggle={() => setRailReceded((value) => !value)}
+              onCreateChapter={() => void createDocument("chapter")}
+              onCreateMaterial={() => void createDocument("material")}
+              onImport={() => void importMaterial()}
+              importDisabled={projectBusy()}
+              query={projectSession.query}
+              onQuery={(value) => projectSession.setQuery(value)}
+              precision={projectSession.precision}
+              onTogglePrecision={() =>
+                projectSession.setPrecision(
+                  projectSession.precision === "exact" ? "loose" : "exact",
+                )
+              }
+              searchRef={(element) => {
+                searchInput = element;
+              }}
+              prompt={promptRequest()}
+              onPromptSubmit={(answer) => settlePrompt(answer)}
+              onPromptCancel={() => settlePrompt(null)}
+              mailboxRootId={project()?.rootId ?? null}
+              mailboxPath={active()?.document.path ?? null}
+              onMailboxReady={onMailboxReady}
+              runWatch={runWatch}
+              onOpenTicket={(box) => openStage(box === "draft" ? "dispatch" : "review")}
+              onTicketNotice={setNotice}
+              chapters={chapters()}
+              materials={materials()}
+              currentPath={active()?.document.path ?? null}
+              onSelect={(path) => void selectDocument(path)}
+              catalog={projectSession}
+              foot={{
+                hasDocument: active() !== null,
+                stage: state().stage,
+                annotationsOpen: annotationsOpen(),
+                karaEngaged: karaEngaged(),
+                connectionsOpen: reference()?.kind === "connections",
+                settingsOpen: reference()?.kind === "settings",
+                onOpenStage: openStage,
+                onOpenAnnotations: () => openReference({ kind: "annotations" }),
+                onToggleKara: () => void kara.toggle(),
+                onOpenConnections: () => openReference({ kind: "connections" }),
+                onOpenSettings: () =>
+                  openReference({ kind: "settings", section: settingsSection(reference()) }),
+              }}
+            />
 
             <main class="stage">
               <Show when={notice()}>{(text) => <p class="notice">{text()}</p>}</Show>
+              <Show when={closePending()}>
+                <CloseConfirmBar
+                  onSaveAndClose={() => void saveAndClose()}
+                  onCancel={closeGuard.cancel}
+                />
+              </Show>
               <Show when={state().stage === "review" && active() !== null}>
                 <ReviewSurface
                   rootId={root().rootId}
                   path={active()?.document.path ?? ""}
-                  onCommitted={() => void documentSession.adoptCommitted()}
+                  onCommitted={() => void bentoState.adoptCommitted()}
                   onClosed={() => openStage("writing")}
                 />
               </Show>
               <Show when={active()}>
                 {(openDocument) => (
-                  <div
-                    class="stage-row"
-                    attr:data-panels={layout()["data-panels"]}
-                    style={layout().style}
-                  >
-                    {/* 光源区。层级与理由见 shell/strata.ts。 */}
-                    <div class="lamp-layer" aria-hidden="true" />
-                    <EditorHost
-                      rootId={root().rootId}
-                      path={openDocument().document.path}
-                      document={openDocument()}
-                      annotations={editorAnnotations()}
-                      onReady={(handle) => {
-                        editor = handle;
-                        selectionReadout.observe(handle);
-                      }}
-                      onConfirmed={() => markDirty()}
-                      onRejected={setNotice}
-                      onContext={(context, pointerX, pointerY) =>
-                        intents.aim(context, pointerX, pointerY)
-                      }
-                    />
-                    <Show when={annotationsOpen()}>
-                      <AnnotationSurface
-                        annotations={documentView().annotations}
-                        selected={selectedAnnotations()}
-                        onToggle={(id) => annotationSelection.toggle(id)}
-                        onClose={closeReference}
-                        onDelete={(id) => void documentSession.deleteAnnotation(id)}
-                        onRelocate={beginRelocation}
-                        onDispatch={dispatchAnnotations}
-                      />
-                    </Show>
-                    <Show when={state().stage === "dispatch" && !annotationsOpen()}>
-                      <DispatchSurface
-                        rootId={root().rootId}
-                        path={openDocument().document.path}
-                        blocks={openDocument().blocks}
-                        materials={materials().map((row) => ({ path: row.path, label: row.path }))}
-                        seed={[...dispatchSeed().blockIds]}
-                        initialPrompt={dispatchSeed().prompt}
-                        onCollected={(count) =>
-                          setNotice(`${count} 条提案已冻结，点 Review 逐句裁决。`)
-                        }
-                        onMaterialSaved={(row) => projectSession.add(row)}
-                        onClosed={() => openStage("writing")}
-                      />
-                    </Show>
-                    <Show when={reference()?.kind === "connections"}>
-                      <ConnectionsSurface rootId={root().rootId} onClosed={closeReference} />
-                    </Show>
-                    {settingsPanel()}
-                  </div>
+                  <WritingStageRow
+                    rootId={root().rootId}
+                    openDocument={openDocument()}
+                    layout={layout}
+                    annotations={editorAnnotations()}
+                    proposalMarks={anchors()}
+                    onProposalMark={(id) => setBentoId(id)}
+                    codeTheme={props.codeTheme}
+                    onEditorReady={(handle) => {
+                      editor = handle;
+                      selectionReadout.observe(handle);
+                    }}
+                    onConfirmed={() => markDirty()}
+                    onRejected={setNotice}
+                    onContext={(context, pointerX, pointerY) =>
+                      intents.aim(context, pointerX, pointerY)
+                    }
+                    annotationsOpen={annotationsOpen()}
+                    annotationRows={documentView().annotations}
+                    selectedAnnotations={selectedAnnotations()}
+                    onToggleAnnotation={(id) => annotationSelection.toggle(id)}
+                    onCloseReference={closeReference}
+                    onDeleteAnnotation={(id) => void documentSession.deleteAnnotation(id)}
+                    onRelocate={beginRelocation}
+                    onDispatchAnnotations={dispatchAnnotations}
+                    dispatchOpen={state().stage === "dispatch" && !annotationsOpen()}
+                    materials={materials().map((row) => ({ path: row.path, label: row.path }))}
+                    seed={[...dispatchSeed().blockIds]}
+                    initialPrompt={dispatchSeed().prompt}
+                    runWatch={runWatch}
+                    onCollected={(count) =>
+                      setNotice(`${count} 条提案已冻结，去「逐句裁决」一条条判。`)
+                    }
+                    onMaterialSaved={(row) => projectSession.add(row)}
+                    onDispatchClosed={() => openStage("writing")}
+                    connectionsOpen={reference()?.kind === "connections"}
+                    settings={settingsPanel()}
+                  />
                 )}
               </Show>
               {/*
@@ -659,33 +1197,31 @@ export function Workbench(props: WorkbenchProps) {
 
             <Show when={menu()}>
               {(current) => (
-                <EditorContextMenu
-                  context={current().context}
-                  pointerX={current().x}
-                  pointerY={current().y}
+                <EditorMenu
+                  menu={current()}
                   kara={karaEngaged()}
                   relocating={documentView().relocating !== null}
-                  onFormat={(kind: EditorFormat) => {
-                    editor?.formatSelection(kind);
-                    intents.release();
-                  }}
-                  onDeleteEmpty={() => {
-                    editor?.deleteEmptyBlock();
-                    intents.release();
-                  }}
-                  onPunctuation={(finding: PunctuationFinding) => {
-                    editor?.applyPunctuation(finding);
-                    intents.release();
-                  }}
+                  editor={() => editor}
+                  intents={intents}
                   onHighlight={() => void persistAnnotation("highlight")}
                   onComment={() => void persistAnnotation("comment")}
                   onRelocate={() => {
                     const relocating = documentView().relocating;
                     if (relocating !== null) void persistAnnotation(relocating.kind, relocating);
                   }}
-                  onDispatch={() => dispatchBlock(false)}
-                  onAccumulate={() => dispatchBlock(true)}
-                  onClose={() => intents.release()}
+                  onDispatch={(accumulate) => dispatchBlock(accumulate)}
+                  focusEditor={() => queueMicrotask(() => editor?.focus())}
+                />
+              )}
+            </Show>
+            <Show when={bento()}>
+              {(current) => (
+                <BentoLayer
+                  bento={current()}
+                  editor={() => editor}
+                  busy={bentoBusy()}
+                  onJudge={(kind, finalText) => void judgeBento(kind, finalText)}
+                  onClose={() => setBentoId(null)}
                 />
               )}
             </Show>
@@ -693,10 +1229,9 @@ export function Workbench(props: WorkbenchProps) {
               state={documentView().save}
               path={active()?.document.path ?? null}
               selection={selectionMeasure()}
+              activity={activityLine()}
             />
-            <Show when={karaEngaged()}>
-              <KaraSurface />
-            </Show>
+            <KaraSurface />
             <Show when={documentView().conflict}>
               {(conflict) => (
                 <ConflictDialog

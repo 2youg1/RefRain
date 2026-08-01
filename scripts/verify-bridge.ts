@@ -14,7 +14,7 @@ import { report, scan } from "./gate-lib.ts";
 
 const HAND_WRITTEN = /\binvoke\s*\(|\b__TAURI__\b|@tauri-apps\/api\/core/;
 
-const result = scan(["apps/desktop/src/**/*.{ts,vue}", "packages/**/src/**/*.ts"], HAND_WRITTEN, {
+const result = scan(["apps/desktop/src/**/*.{ts,tsx}", "packages/**/src/**/*.ts"], HAND_WRITTEN, {
   ignoreLine: (line) => /^\s*(\/\/|\/\*|\*)/.test(line),
 });
 
