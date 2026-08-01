@@ -42,12 +42,17 @@ description: RefRain 写作工作台的 agent 协议。当你收到一份含 "# 
 ```xml
 <material path="资料/人物志.md" digest="…" bytes="104857" blocks="212" access="retrievable">
   <title>人物志</title>
-  <outline><h># 人物志</h><h>## 陆沉舟</h></outline>
+  <outline>
+    <h level="1">人物志</h>
+      <h level="2">陆沉舟</h>
+  </outline>
   <excerpt>开篇的原文…</excerpt>
 </material>
 ```
 
-`<outline>` 是作者写的标题，逐字。`<excerpt>` 是开头的原文。
+`<outline>` 是作者写的标题，逐字。`level` 是作者敲的 `#` 个数（1 到 6），
+缩进与它一致——六十条标题平铺时你读到第 40 条已经不知道自己在哪一章，
+层级就是为这个带的。`<excerpt>` 是开头的原文。
 应用不联网、不带模型，因此它不概括材料。目录里没有生成的内容。
 
 `access` 是作者的授权：

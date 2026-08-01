@@ -124,7 +124,9 @@ mod tests {
         assert_eq!(
             kinds,
             vec![
-                BlockKind::Heading,
+                BlockKind::Heading(
+                    crate::block_shape::HeadingLevel::from_level(1).expect("1 is a level")
+                ),
                 BlockKind::Paragraph,
                 BlockKind::Fence,
                 BlockKind::Paragraph

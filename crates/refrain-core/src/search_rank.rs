@@ -31,7 +31,7 @@
 //! It does not retrieve. It scores candidates a retriever already found, so it
 //! stays a pure function of its inputs and can be tested without a database.
 
-use crate::block_shape::BlockKind;
+use crate::block_shape::{BlockKind, HeadingLevel};
 use crate::role::DocumentRole;
 
 /// Where a match was found, and what the surrounding structure says about it.
@@ -152,8 +152,17 @@ pub fn score(candidate: &Candidate) -> f64 {
     // No catch-all: BlockKind is a closed set, and a new variant must force a
     // decision here rather than silently scoring zero.
     let structure = match candidate.block {
-        // The author wrote this heading to mark where something is.
-        BlockKind::Heading => cap::HEADING,
+        // The author wrote this heading to mark where something is, and the
+        // shallower it sits the more of the document it speaks for: a hit in
+        // `# 人物志` is a hit on the chapter, a hit in `###### 附注` is a hit
+        // on a paragraph that happens to be titled. Scaling by depth is the
+        // whole reason the level is carried on the variant — before it was,
+        // every heading scored the same and a six-level document ranked its
+        // footnote titles level with its chapters.
+        BlockKind::Heading(level) => {
+            let depth = f64::from(level.get() - 1) / f64::from(HeadingLevel::MAX - 1);
+            cap::HEADING - (cap::HEADING - cap::BODY) * depth
+        }
         // A fence is a deliberate insertion — code, a quoted document — and
         // carries more intent than running prose.
         BlockKind::Fence => cap::BODY * 0.75,
@@ -272,6 +281,14 @@ fn apply_permutation(candidates: &mut [Candidate], scored: &[(f64, usize)]) {
 mod tests {
     use super::*;
 
+    /// A first-level heading, the shape most of these cases care about.
+    /// Written once so a test that means "a heading" does not have to spell
+    /// out a level it is not testing.
+    const H1: HeadingLevel = match HeadingLevel::from_level(1) {
+        Some(level) => level,
+        None => panic!("1 is a level"),
+    };
+
     fn candidate(path: &str) -> Candidate {
         Candidate {
             path: path.to_string(),
@@ -355,7 +372,7 @@ mod tests {
             // 文档内的一个标题块，正文相关度处在实测的高分位。
             Candidate {
                 path_match: PathMatch::None,
-                block: BlockKind::Heading,
+                block: BlockKind::Heading(H1),
                 bm25: MEASURED_P75,
                 ..candidate("第七章-某个很长的章节")
             },
@@ -437,7 +454,7 @@ mod tests {
                 ..candidate("甲")
             },
             Candidate {
-                block: BlockKind::Heading,
+                block: BlockKind::Heading(H1),
                 bm25: 1.0,
                 ..candidate("乙")
             },
@@ -515,7 +532,7 @@ mod tests {
         );
         // Block signal, holding everything else equal.
         assert!(
-            score(&with(PathMatch::None, BlockKind::Heading))
+            score(&with(PathMatch::None, BlockKind::Heading(H1)))
                 > score(&with(PathMatch::None, BlockKind::Fence))
         );
         assert!(
@@ -567,7 +584,7 @@ mod tests {
                         _ => PathMatch::None,
                     },
                     block: match i % 3 {
-                        0 => BlockKind::Heading,
+                        0 => BlockKind::Heading(H1),
                         1 => BlockKind::Fence,
                         _ => BlockKind::Paragraph,
                     },

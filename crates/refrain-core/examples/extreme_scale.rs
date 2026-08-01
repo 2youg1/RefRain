@@ -14,7 +14,7 @@
 //!
 //! 这个 bench 对比三种做法在流式约束下的表现，并测出物化的真实代价。
 
-use refrain_core::block_shape::BlockKind;
+use refrain_core::block_shape::{BlockKind, HeadingLevel};
 use refrain_core::role::DocumentRole;
 use refrain_core::search_rank::{Candidate, PathMatch, score};
 use std::cmp::Ordering;
@@ -37,7 +37,7 @@ fn score_at(i: usize) -> f64 {
         _ => PathMatch::None,
     };
     let block = match i % 17 {
-        0 => BlockKind::Heading,
+        0 => BlockKind::Heading(HeadingLevel::from_level(1).expect("1 is a level")),
         1 | 2 => BlockKind::Fence,
         _ => BlockKind::Paragraph,
     };

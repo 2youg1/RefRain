@@ -18,7 +18,59 @@ pub enum BlockKind {
     /// 围栏代码块：不折行（或按代码规则折），且通常有独立的行距。
     Fence,
     /// 标题：字号更大，且几乎不折行。
-    Heading,
+    ///
+    /// 载荷是层级（`#` 的个数，1..=6）。它不是排版信息而是**结构信息**：
+    /// agent 拿到六十条标题的平铺清单时，读到第 40 条已经不知道自己在哪一章。
+    /// 层级带在这里而不是让上层重新解析字节，是因为边界判定本来就逐字节走过
+    /// 首行、顺手数 `#` 是零额外扫描；让上层再解析一遍就会有第二个权威，
+    /// 而两份判定漂开时没有任何东西会报错。
+    Heading(HeadingLevel),
+}
+
+/// 标题层级：`#` 的个数。
+///
+/// Markdown 只到六级，第七个 `#` 不再是标题。用一个具名类型而不是裸 `u8`，
+/// 是因为「层级 0」与「层级 9」都不存在，而裸整数会让每个使用点各自去想
+/// 该不该防这两个值。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct HeadingLevel(u8);
+
+impl HeadingLevel {
+    /// Markdown 的层级上限。第七个 `#` 起不再是标题。
+    pub const MAX: u8 = 6;
+
+    /// 从首行字节数出 `#`。非标题（或超过六个 `#`）返回 `None`。
+    #[must_use]
+    pub fn of_line(content: &[u8]) -> Option<Self> {
+        let hashes = content.iter().take_while(|byte| **byte == b'#').count();
+        // `#foo` 不是标题——CommonMark 要求 `#` 之后是空白或行尾。这条不是
+        // 挑剔：井号在正文里做话题标签很常见，把 `#今天` 当成一级标题会让
+        // 大纲多出作者没写过的一章。
+        let followed_by_space = matches!(content.get(hashes), None | Some(b' ') | Some(b'\t'));
+        if hashes == 0 || hashes > Self::MAX as usize || !followed_by_space {
+            return None;
+        }
+        Some(Self(hashes as u8))
+    }
+
+    /// 从层级数字构造。超出 1..=6 返回 `None`。
+    ///
+    /// `of_line` 面向扫描器，这一个面向已经知道层级的调用方（测试、反序列化、
+    /// 从别处读回的结构）。两条路都收口在同一个类型上，所以「层级 0」和
+    /// 「层级 9」在系统里任何地方都构造不出来。
+    #[must_use]
+    pub const fn from_level(level: u8) -> Option<Self> {
+        if level == 0 || level > Self::MAX {
+            return None;
+        }
+        Some(Self(level))
+    }
+
+    /// 层级本身，1..=6。
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
 }
 
 /// 一个块的形状。
@@ -99,7 +151,7 @@ pub struct ShapeAccumulator {
     max_line_units: u32,
     line_units: u32,
     is_fence: bool,
-    is_heading: bool,
+    heading: Option<HeadingLevel>,
     started: bool,
 }
 
@@ -109,7 +161,11 @@ impl ShapeAccumulator {
         if !self.started {
             self.started = true;
             self.is_fence = inside_fence;
-            self.is_heading = !inside_fence && content.first() == Some(&b'#');
+            self.heading = if inside_fence {
+                None
+            } else {
+                HeadingLevel::of_line(content)
+            };
         } else {
             self.hard_lines += 1;
         }
@@ -122,12 +178,10 @@ impl ShapeAccumulator {
     #[must_use]
     pub fn finish(&self) -> BlockShape {
         BlockShape {
-            kind: if self.is_fence {
-                BlockKind::Fence
-            } else if self.is_heading {
-                BlockKind::Heading
-            } else {
-                BlockKind::Paragraph
+            kind: match (self.is_fence, self.heading) {
+                (true, _) => BlockKind::Fence,
+                (false, Some(level)) => BlockKind::Heading(level),
+                (false, None) => BlockKind::Paragraph,
             },
             width_units: self.width_units,
             hard_lines: self.hard_lines,
@@ -226,9 +280,24 @@ mod tests {
     }
 
     #[test]
-    fn a_heading_is_recognised_by_its_first_byte() {
-        assert_eq!(shape_of(&["# 章一"]).kind, BlockKind::Heading);
-        assert_eq!(shape_of(&["章一"]).kind, BlockKind::Paragraph);
+    fn a_heading_carries_the_level_the_author_wrote() {
+        let level = |line: &str| match shape_of(&[line]).kind {
+            BlockKind::Heading(level) => Some(level.get()),
+            _ => None,
+        };
+        assert_eq!(level("# 章一"), Some(1));
+        assert_eq!(level("### 第三层"), Some(3));
+        assert_eq!(level("###### 第六层"), Some(6));
+        assert_eq!(level("章一"), None);
+    }
+
+    #[test]
+    fn a_hash_that_is_not_a_heading_stays_a_paragraph() {
+        // Both of these appear in real manuscripts, and both used to become
+        // headings: the old rule was "first byte is #". A topic tag then added
+        // a chapter the author never wrote, and seven hashes did the same.
+        assert_eq!(shape_of(&["#今天"]).kind, BlockKind::Paragraph);
+        assert_eq!(shape_of(&["####### 七个"]).kind, BlockKind::Paragraph);
     }
 
     #[test]

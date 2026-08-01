@@ -739,12 +739,17 @@ pub fn skill_doc() -> String {
 ```xml
 <material path="资料/人物志.md" digest="…" bytes="104857" blocks="212" access="retrievable">
   <title>人物志</title>
-  <outline><h># 人物志</h><h>## 陆沉舟</h></outline>
+  <outline>
+    <h level="1">人物志</h>
+      <h level="2">陆沉舟</h>
+  </outline>
   <excerpt>开篇的原文…</excerpt>
 </material>
 ```
 
-`<outline>` 是作者写的标题，逐字。`<excerpt>` 是开头的原文。
+`<outline>` 是作者写的标题，逐字。`level` 是作者敲的 `#` 个数（1 到 6），
+缩进与它一致——六十条标题平铺时你读到第 40 条已经不知道自己在哪一章，
+层级就是为这个带的。`<excerpt>` 是开头的原文。
 应用不联网、不带模型，因此它不概括材料。目录里没有生成的内容。
 
 `access` 是作者的授权：
@@ -912,6 +917,62 @@ mod docs_tests {
         assert!(doc.contains("version=\"2\""));
     }
 
+    /// The `<outline>` example in the document must be what the renderer
+    /// actually produces.
+    ///
+    /// The test above checks that element *names* appear, which is a real
+    /// check and an insufficient one: it passed unchanged when `<outline>`
+    /// went from `<h># 人物志</h>` to `<h level="1">人物志</h>`, because the
+    /// name `outline` was still in the document. An agent reading that
+    /// document would have been taught a syntax the parser no longer emits,
+    /// and nothing in the repository would have said so.
+    ///
+    /// So this compares against the authority rather than against another
+    /// example: it renders a listing whose headings match the document's, and
+    /// requires the document to contain those exact lines.
+    #[test]
+    fn the_outline_example_is_what_the_renderer_emits() {
+        use crate::material_listing::{Disclosure, MaterialListing};
+        use crate::role::DocumentRole;
+
+        let rendered = MaterialListing::describe(
+            "资料/人物志.md",
+            "人物志",
+            DocumentRole::Material,
+            "…",
+            "# 人物志\n\n开篇的原文…\n\n## 陆沉舟\n\n他的段落。\n",
+            Disclosure::Retrievable,
+        )
+        .to_contract_element();
+
+        let doc = skill_doc();
+        let heading_lines: Vec<&str> = rendered
+            .lines()
+            .filter(|line| line.contains("<h level="))
+            .map(str::trim_end)
+            .collect();
+
+        // Measured, not assumed: filtering on `<h level=` finds nothing the
+        // moment the renderer stops emitting that attribute, and a loop over
+        // an empty list passes without executing its body. Renaming the
+        // attribute to `depth` made this test green while the document taught
+        // a syntax nothing produced — the exact drift it exists to catch. So
+        // the sample count is asserted before the samples are.
+        assert_eq!(
+            heading_lines.len(),
+            2,
+            "the renderer emitted no `<h level=` lines, so the comparison below \
+             would check nothing. Renderer produced:\n{rendered}"
+        );
+
+        for line in heading_lines {
+            assert!(
+                doc.contains(line),
+                "the document's outline example is not what the renderer emits.\n\
+                 missing line: {line:?}\nrenderer produced:\n{rendered}"
+            );
+        }
+    }
     /// The per-request contract must not carry what the agent cannot act on.
     ///
     /// Two things were cut here and must stay cut: the error table (no live

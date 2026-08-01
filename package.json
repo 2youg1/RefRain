@@ -62,6 +62,7 @@
     "verify:large-input-performance": "cargo test --release -p refrain-store --test large_input_performance -- --nocapture",
     "verify:digest-authority": "bun scripts/verify-digest-authority.ts",
     "verify:editor-kernel": "bun scripts/verify-editor-kernel.ts",
+    "env:check": "bun scripts/env-check.ts",
     "verify:no-js": "bun scripts/verify-no-js.ts",
     "verify:workflows": "bun scripts/verify-workflows.ts",
     "verify:legacy-parity": "bun scripts/verify-legacy-parity.ts",

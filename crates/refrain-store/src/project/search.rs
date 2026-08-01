@@ -37,7 +37,7 @@
 //! pairs so that ordinary token matching works and bm25 keeps its
 //! discrimination. See `review/search-probe-results.md`.
 
-use refrain_core::block_shape::BlockKind;
+use refrain_core::block_shape::{BlockKind, HeadingLevel};
 use refrain_core::chinese_index::{Precision, bigram, match_expression_with};
 use refrain_core::searchable_block::blocks_of;
 use refrain_core::{ErrorCode, RefrainError};
@@ -98,19 +98,34 @@ fn entries_of(db: &Connection, path: &str) -> Result<Vec<Entry>, RefrainError> {
         .map_err(|cause| store_failure("read index state", cause))
 }
 
-fn kind_name(kind: BlockKind) -> &'static str {
+fn kind_name(kind: BlockKind) -> String {
     // No catch-all: a new BlockKind must force a decision about how it is
     // stored rather than silently landing in whatever this arm happened to be.
     match kind {
-        BlockKind::Paragraph => "paragraph",
-        BlockKind::Heading => "heading",
-        BlockKind::Fence => "fence",
+        BlockKind::Paragraph => "paragraph".to_string(),
+        // The level rides in the name rather than in a new column. It is not a
+        // separate fact about the block — it is part of what kind of block this
+        // is — and a column would need a schema migration plus a default for
+        // every row already written, where a suffix needs neither: rows from
+        // before this change read as plain "heading" and take the fallback
+        // below. `ensure_indexed` rebuilds them on next open anyway.
+        BlockKind::Heading(level) => format!("heading:{}", level.get()),
+        BlockKind::Fence => "fence".to_string(),
     }
 }
 
 fn kind_of(name: &str) -> BlockKind {
+    if let Some(level) = name.strip_prefix("heading:") {
+        // An unparseable or out-of-range level reads as level 1 rather than
+        // failing the read: a corrupt suffix should cost the outline its
+        // indentation, not cost the author the search index.
+        let parsed = level.parse::<u8>().ok().and_then(HeadingLevel::from_level);
+        return BlockKind::Heading(
+            parsed.unwrap_or_else(|| HeadingLevel::from_level(1).expect("1 is a level")),
+        );
+    }
     match name {
-        "heading" => BlockKind::Heading,
+        "heading" => BlockKind::Heading(HeadingLevel::from_level(1).expect("1 is a level")),
         "fence" => BlockKind::Fence,
         // A row written by a newer build carrying a kind this one does not
         // know reads as prose. That is the honest floor: it ranks the block

@@ -7,7 +7,7 @@
 
 use std::time::Instant;
 
-use refrain_core::block_shape::{BlockKind, BlockShape};
+use refrain_core::block_shape::{BlockKind, BlockShape, HeadingLevel};
 
 /// 造一份形状分布不均匀的语料：真实稿件是聚集的，不是均匀随机的。
 ///
@@ -99,7 +99,11 @@ fn a_shape_read_from_text_matches_what_the_text_says() {
     assert_eq!(shape.kind, BlockKind::Paragraph);
 
     let heading = BlockShape::of("## 章一");
-    assert_eq!(heading.kind, BlockKind::Heading);
+    assert_eq!(
+        heading.kind,
+        BlockKind::Heading(HeadingLevel::from_level(2).expect("2 is a level")),
+        "the scan carries the level, not just the fact that it is a heading"
+    );
 
     let fence = BlockShape::of("```rust\nlet a = 1;\n```");
     assert_eq!(fence.kind, BlockKind::Fence);

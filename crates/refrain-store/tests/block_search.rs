@@ -8,7 +8,7 @@
 //!
 //! 所以这里的每份文档都有多个块，且块类型各不相同。
 
-use refrain_core::block_shape::BlockKind;
+use refrain_core::block_shape::{BlockKind, HeadingLevel};
 use refrain_core::searchable_block::block_at;
 use refrain_store::Database;
 use refrain_store::project::search::{IndexedBlock, forget_document, index_document, search};
@@ -100,7 +100,25 @@ fn a_hit_carries_the_kind_of_block_it_landed_in() {
         .into_iter()
         .find(|hit| hit.path == "资料-人物志.md" && hit.ordinal == 0)
         .expect("标题块应被命中");
-    assert_eq!(heading.kind, BlockKind::Heading);
+    assert_eq!(
+        heading.kind,
+        BlockKind::Heading(HeadingLevel::from_level(1).expect("1 is a level"))
+    );
+
+    // The level has to survive the round trip through SQLite, not merely exist
+    // in memory: the outline is rebuilt from the index, so a level that is
+    // written and not read back leaves every heading looking top-level. This
+    // material has both a `#` and a `##`, and they must come back different.
+    let nested = search(&db, "习惯", 20)
+        .unwrap()
+        .into_iter()
+        .find(|hit| hit.path == "资料-人物志.md" && hit.kind != BlockKind::Paragraph)
+        .expect("二级标题块应被命中");
+    assert_eq!(
+        nested.kind,
+        BlockKind::Heading(HeadingLevel::from_level(2).expect("2 is a level")),
+        "a `##` heading must read back as level 2, not as a bare heading"
+    );
 
     let fence = search(&db, "这个词出现在围栏里", 20)
         .unwrap()

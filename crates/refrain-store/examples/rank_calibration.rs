@@ -191,7 +191,7 @@ fn main() {
         for block in refrain_core::searchable_block::blocks_of(text) {
             let slot = match block.kind {
                 BlockKind::Paragraph => 0,
-                BlockKind::Heading => 1,
+                BlockKind::Heading(_) => 1,
                 BlockKind::Fence => 2,
             };
             kinds[slot] += 1;

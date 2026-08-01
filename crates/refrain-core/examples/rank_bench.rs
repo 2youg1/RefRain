@@ -3,7 +3,7 @@
 //! 搜索框只显示一屏，Agent 只读几条——全排序是没人看的工作。
 //! 这个 bench 就是要用数字回答「选择比排序快多少」。
 
-use refrain_core::block_shape::BlockKind;
+use refrain_core::block_shape::{BlockKind, HeadingLevel};
 use refrain_core::role::DocumentRole;
 use refrain_core::search_rank::{Candidate, PathMatch, rank, rank_top};
 use std::time::Instant;
@@ -23,7 +23,7 @@ fn pool(n: usize) -> Vec<Candidate> {
                 _ => PathMatch::None,
             },
             block: match i % 3 {
-                0 => BlockKind::Heading,
+                0 => BlockKind::Heading(HeadingLevel::from_level(1).expect("1 is a level")),
                 1 => BlockKind::Fence,
                 _ => BlockKind::Paragraph,
             },

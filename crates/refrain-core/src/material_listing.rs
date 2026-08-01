@@ -102,6 +102,24 @@ const EXCERPT_BYTES: usize = 180;
 /// agent can tell a truncated outline from a short one.
 const MAX_OUTLINE_HEADINGS: usize = 24;
 
+/// One heading in a material's outline.
+///
+/// Two fields and no children: a tree of owned nodes would have to be built,
+/// serialised, and — the part that decides it — repaired whenever an author
+/// skips a level, which authors do constantly (`#` then `###`). A level number
+/// per heading carries the same information, survives any skip without
+/// interpretation, and renders as indentation at the one place that needs it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct OutlineHeading {
+    /// The heading text, verbatim, with its `#` markers and surrounding space
+    /// removed — those are syntax, and the level field already carries what
+    /// they meant.
+    pub text: String,
+    /// 1..=6, exactly as many `#` as the author wrote.
+    pub level: u8,
+}
+
 /// One material, as it appears in a request's listing.
 ///
 /// Everything here is derived from the text and the index — nothing is
@@ -124,8 +142,14 @@ pub struct MaterialListing {
     /// How many indexable blocks it holds. With the ordinal, this is what
     /// makes "read blocks 12 to 18" a request an agent can form unaided.
     pub blocks: u32,
-    /// The author's own headings, verbatim and in order.
-    pub outline: Vec<String>,
+    /// The author's own headings, verbatim, in order, each with the level the
+    /// author gave it.
+    ///
+    /// Flat text was the previous shape, and it failed at exactly the length
+    /// where an outline earns its keep: by the fortieth of sixty headings an
+    /// agent no longer knows which chapter it is inside, so it asks for the
+    /// whole document — the thing the outline exists to avoid.
+    pub outline: Vec<OutlineHeading>,
     /// How many headings the material actually has, which may exceed
     /// `outline.len()`. Reported so a truncated outline says it is truncated.
     pub heading_count: u32,
@@ -150,10 +174,23 @@ impl MaterialListing {
         disclosure: Disclosure,
     ) -> Self {
         let blocks = blocks_of(text);
-        let headings: Vec<&str> = blocks
+        let headings: Vec<OutlineHeading> = blocks
             .iter()
-            .filter(|block| block.kind == BlockKind::Heading)
-            .map(|block| block.text.trim())
+            .filter_map(|block| match block.kind {
+                BlockKind::Heading(level) => Some(OutlineHeading {
+                    // Strip the markers, not the text. `## 陆沉舟` is the
+                    // author's title for that section; the hashes are how
+                    // Markdown spells the level, and the level is now a field.
+                    text: block
+                        .text
+                        .trim()
+                        .trim_start_matches('#')
+                        .trim_start()
+                        .to_string(),
+                    level: level.get(),
+                }),
+                BlockKind::Paragraph | BlockKind::Fence => None,
+            })
             .collect();
 
         Self {
@@ -166,7 +203,7 @@ impl MaterialListing {
             outline: headings
                 .iter()
                 .take(MAX_OUTLINE_HEADINGS)
-                .map(|heading| (*heading).to_string())
+                .cloned()
                 .collect(),
             heading_count: u32::try_from(headings.len()).unwrap_or(u32::MAX),
             excerpt: excerpt_of(text),
@@ -197,7 +234,18 @@ impl MaterialListing {
         if !self.outline.is_empty() {
             out.push_str("\n  <outline>");
             for heading in &self.outline {
-                out.push_str(&format!("\n    <h>{}</h>", escape_text(heading)));
+                // Both the attribute and the indentation, on purpose. The
+                // attribute is what a parser reads; the indentation is what
+                // the model reads, and a flat list of sixty titles is exactly
+                // the failure this replaces. Indent depth is level-1 so a
+                // document whose headings all sit at `##` does not arrive
+                // uniformly indented for no reason.
+                out.push_str(&format!(
+                    "\n    {}<h level=\"{}\">{}</h>",
+                    "  ".repeat(usize::from(heading.level.saturating_sub(1))),
+                    heading.level,
+                    escape_text(&heading.text)
+                ));
             }
             if self.heading_count as usize > self.outline.len() {
                 out.push_str(&format!(
@@ -268,12 +316,63 @@ mod tests {
         )
     }
 
-    /// The listing carries the author's headings, exactly as written.
+    /// The listing carries the author's headings, exactly as written, each at
+    /// the level the author wrote it.
     #[test]
-    fn the_outline_is_the_authors_own_headings_verbatim() {
+    fn the_outline_is_the_authors_own_headings_verbatim_with_their_levels() {
         let entry = described();
-        assert_eq!(entry.outline, vec!["# 人物志", "## 陆沉舟", "## 习惯"]);
+        let outline: Vec<(&str, u8)> = entry
+            .outline
+            .iter()
+            .map(|heading| (heading.text.as_str(), heading.level))
+            .collect();
+        assert_eq!(
+            outline,
+            vec![("人物志", 1), ("陆沉舟", 2), ("习惯", 2)],
+            "the text loses its markers and keeps everything else"
+        );
         assert_eq!(entry.heading_count, 3);
+    }
+
+    /// Plan §7's criterion, stated as the test that fails when it stops
+    /// holding: every level in the listing equals the number of `#` the author
+    /// typed on that line. Checked against the source text rather than against
+    /// another copy of the expectation, so the two cannot agree while both
+    /// being wrong.
+    #[test]
+    fn every_outline_level_equals_the_hashes_in_the_source() {
+        let source =
+            "# 一\n\n正文\n\n## 二\n\n### 三\n\n###### 六\n\n#不是标题\n\n####### 七个也不是\n";
+        let entry = MaterialListing::describe(
+            "manuscript/深.md",
+            "深",
+            DocumentRole::Chapter,
+            "digest",
+            source,
+            Disclosure::Full,
+        );
+
+        let from_source: Vec<(String, u8)> = source
+            .lines()
+            .filter_map(|line| {
+                let hashes = line.bytes().take_while(|byte| *byte == b'#').count();
+                let followed = matches!(line.as_bytes().get(hashes), None | Some(b' '));
+                ((1..=6).contains(&hashes) && followed)
+                    .then(|| (line[hashes..].trim().to_string(), hashes as u8))
+            })
+            .collect();
+
+        let from_listing: Vec<(String, u8)> = entry
+            .outline
+            .iter()
+            .map(|heading| (heading.text.clone(), heading.level))
+            .collect();
+
+        assert_eq!(from_listing, from_source);
+        assert_eq!(
+            entry.heading_count, 4,
+            "two of the six lines are not headings"
+        );
     }
 
     /// The point of the whole design, measured at the scale it exists for.
@@ -388,8 +487,10 @@ mod tests {
         );
         let listing = entry.to_contract_element();
 
-        // 标题是作者写的结构，可以给——那正是目录的意义。
-        assert!(listing.contains("# 机密"));
+        // 标题是作者写的结构，可以给——那正是目录的意义。层级现在是属性，
+        // `#` 不再出现在契约里（它是 Markdown 拼写层级的方式，而层级已经
+        // 有了自己的字段）。
+        assert!(listing.contains("<h level=\"1\">机密</h>"), "{listing}");
         // 正文不行，摘录也是正文。
         assert!(
             !listing.contains("这段正文"),
