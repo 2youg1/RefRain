@@ -37,6 +37,7 @@ export {
 } from "./char-class.ts";
 export { type Hang, hangingAt } from "./hanging.ts";
 export { type BreakCandidate, candidates, lineStarts } from "./line-break.ts";
+export { longestUnbreakableSpan, optimizedLineStarts } from "./optimal-break.ts";
 export {
   type BreakStrictness,
   type HangPolicy,
