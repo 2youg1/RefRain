@@ -97,6 +97,14 @@ export const commands = {
 	 *  text it already has.
 	 */
 	importedSourceBytes: (rootId: string, digest: string, format: string) => __TAURI_INVOKE<number[] | null>("imported_source_bytes", { rootId, digest, format }),
+	/**
+	 *  Search and keep the blocks, so the result panel can show what matched.
+	 *
+	 *  `document_search` answers "which files"; this answers "which passages, and
+	 *  what do they say". A path cannot be highlighted — the query words are not
+	 *  in it — so showing the author where their words are needs the text.
+	 */
+	blockSearch: (rootId: string, query: string, precision: SearchPrecision) => typedError<BlockHit[], RefrainError>(__TAURI_INVOKE("block_search", { rootId, query, precision })),
 	/**  Every candidate for a document, newest last, for the review surface. */
 	listProposals: (rootId: string, path: string) => typedError<ProposalDto[], RefrainError>(__TAURI_INVOKE("list_proposals", { rootId, path })),
 	/**
@@ -450,6 +458,34 @@ export type BlockDto = {
 	maxLineUnits: number,
 	/**  A fence keeps the author's lines instead of wrapping. */
 	isFence: boolean,
+};
+
+/**
+ *  One block the index matched, with the text it matched on.
+ *
+ *  Carries the excerpt so the shell can show what was found rather than only
+ *  where. `start_byte` is what makes the hit navigable — the shell opens the
+ *  document and puts the caret there.
+ */
+export type BlockHit = {
+	path: string,
+	/**  Which block of that document, counting from zero. */
+	ordinal: number,
+	/**
+	 *  What the author made this block: `heading`, `fence`, `table`, `paragraph`.
+	 *
+	 *  Crosses the bridge as the same wire name the index stores, not as a
+	 *  serialisable `BlockKind`. Deriving serde on the domain enum would make
+	 *  every future variant an implicit part of the wire contract, and the
+	 *  shell only needs to tell a heading from prose.
+	 */
+	kind: string,
+	/**  Byte offset of the block within the document, for navigation. */
+	startByte: number,
+	/**  The block's text as it stood when this search ran. */
+	text: string,
+	/**  Larger is more relevant, matching `search_rank`'s convention. */
+	relevance: number | null,
 };
 
 export type BuiltinTypographyPreset = {
