@@ -77,7 +77,7 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): JSX.Element {
                     原文已经移动。此批注不会自动附着到相似文字；请重新选择准确原文后迁移。
                   </p>
                 </Show>
-                <div class="actions">
+                <div class="annotation-actions">
                   <Show when={row.anchorState === "drifted"}>
                     <button type="button" onClick={() => props.onRelocate(row)}>
                       重新选择原文

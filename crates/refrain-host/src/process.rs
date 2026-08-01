@@ -14,7 +14,7 @@
 
 use std::io::{self, Read};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 #[cfg(unix)]
@@ -60,6 +60,11 @@ pub struct ProcessOutcome {
     pub stdout: String,
     pub stderr: String,
 }
+
+/// How often `wait` checks whether the child has exited. The lock is taken and
+/// released once per tick, so a cancel arriving mid-wait waits at most this long
+/// — the same cadence `wait_timeout` already polls at.
+const WAIT_POLL: std::time::Duration = std::time::Duration::from_millis(10);
 
 /// A running child. Dropping without `wait` or `cancel_tree` is allowed; the
 /// host's Run journal, not the process table, decides what a run means.
@@ -116,12 +121,37 @@ impl ProcessHandle {
         if let Some(mut pipe) = self.stderr() {
             pipe.read_to_end(&mut stderr)?;
         }
-        let status = self.child()?.wait()?;
+        let status = self.wait_without_holding_lock()?;
         Ok(ProcessOutcome {
             code: status.code(),
             stdout: String::from_utf8_lossy(&stdout).into_owned(),
             stderr: String::from_utf8_lossy(&stderr).into_owned(),
         })
+    }
+
+    /// Wait for exit without pinning the mutex for the child's whole lifetime.
+    ///
+    /// `Child::wait` blocks until the process exits. Called through the guard
+    /// (`self.child()?.wait()`), the lock is therefore held for exactly as long
+    /// as the child keeps running — and `cancel_tree` needs that same lock, so
+    /// a cancel arriving during the wait blocks forever. Its five-second
+    /// timeout and its retry both sit *after* the lock, so neither ever runs.
+    ///
+    /// The shape is reachable in production, not theoretical: an adapter drains
+    /// stdout to EOF and then waits (`adapters.rs`), while a harness that has
+    /// finished printing but is still cleaning up keeps the process alive. A
+    /// reproduction with this exact lock order (`exec 1>&-; exec 2>&-; sleep 60`)
+    /// confirmed the cancel never returns.
+    ///
+    /// `try_wait` polls instead: the lock is taken and released once per tick,
+    /// so `cancel_tree` gets its turn between polls and its kill actually lands.
+    fn wait_without_holding_lock(&self) -> io::Result<ExitStatus> {
+        loop {
+            if let Some(status) = self.child()?.try_wait()? {
+                return Ok(status);
+            }
+            std::thread::sleep(WAIT_POLL);
+        }
     }
 
     /// Block until exit, or kill the child and fail once `timeout` has passed.
@@ -400,6 +430,40 @@ mod tests {
         cancel.cancel_tree().unwrap();
         let outcome = observer.join().unwrap().unwrap();
         assert!(started.elapsed().as_secs() < 15, "cancel took too long");
+        assert_ne!(outcome.code, Some(0));
+    }
+
+    /// Cancel must land on a child that has stopped talking but is still alive.
+    ///
+    /// The test above cannot catch this: its child keeps the pipes open, so the
+    /// observer blocks inside `read_to_end` and never holds the mutex, and the
+    /// cancel finds the lock free. The dangerous order only appears after EOF —
+    /// the observer moves on to the wait, and a wait that holds the lock for the
+    /// child's remaining lifetime makes `cancel_tree` unreachable. `cancel_tree`
+    /// has a five-second timeout and a retry, but both sit after the lock, so
+    /// neither runs; the cancel simply never returns.
+    ///
+    /// This is the shape a real harness has when it has printed its last line
+    /// and is still cleaning up, and it is reachable from production: an adapter
+    /// drains stdout to EOF and then waits, on a background thread.
+    #[test]
+    fn cancel_lands_after_the_child_closed_its_pipes_but_kept_running() {
+        let handle = launch_fixture(&["--close-then-sleep", "60"]).unwrap();
+        let cancel = handle.cancel_token();
+        // Drain to EOF and enter the wait — exactly what `observe` does.
+        let observer = std::thread::spawn(move || handle.wait());
+        std::thread::sleep(std::time::Duration::from_millis(400));
+
+        let (done, waiting) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done.send(cancel.cancel_tree());
+        });
+        let landed = waiting.recv_timeout(std::time::Duration::from_secs(10));
+        assert!(
+            landed.is_ok(),
+            "cancel_tree never returned: the wait is holding the lock for the child's lifetime",
+        );
+        let outcome = observer.join().unwrap().unwrap();
         assert_ne!(outcome.code, Some(0));
     }
 }

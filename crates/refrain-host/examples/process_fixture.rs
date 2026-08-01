@@ -16,6 +16,48 @@ fn main() {
         Some("--sleep") => std::thread::sleep(std::time::Duration::from_secs(
             args.get(1).and_then(|n| n.parse().ok()).unwrap_or(60),
         )),
+        // Finish talking, then keep working — a harness that has printed its
+        // last line but is still cleaning up.
+        //
+        // This mode exists because the ordinary `--sleep` child cannot expose
+        // the wait/cancel lock order at all: its pipes stay open, so a reader
+        // blocks in `read_to_end` *before* the mutex is taken, and a cancel
+        // arriving then finds the lock free. Only after EOF does the observer
+        // reach the wait — and a wait holding the lock for the child's whole
+        // remaining lifetime is what makes cancel unreachable.
+        //
+        // The shell owns the closing because Rust's `Stdout` is a handle to the
+        // descriptor, not the descriptor: dropping it leaves fd 1 open, so the
+        // parent never sees EOF (measured — the reader blocked until timeout).
+        Some("--close-then-sleep") => {
+            let seconds = args.get(1).map(String::as_str).unwrap_or("60").to_string();
+            let shell = if cfg!(windows) { "cmd" } else { "sh" };
+            let flag = if cfg!(windows) { "/C" } else { "-c" };
+            let script = if cfg!(windows) {
+                format!("timeout /T {seconds} >NUL")
+            } else {
+                format!("exec 1>&-; exec 2>&-; sleep {seconds}")
+            };
+            // `exec` so the shell *replaces* this process: spawning it as a
+            // child leaves our own fd 1 open, and the parent then never sees
+            // EOF (measured — the reader blocked until the timeout).
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                let error = std::process::Command::new(shell)
+                    .args([flag, &script])
+                    .exec();
+                panic!("exec failed: {error}");
+            }
+            #[cfg(not(unix))]
+            {
+                let status = std::process::Command::new(shell)
+                    .args([flag, &script])
+                    .status()
+                    .expect("the shell that closes our pipes and keeps running");
+                std::process::exit(status.code().unwrap_or(0));
+            }
+        }
         Some("--argv-count") => print!("{}", args.len()),
         // Act as a producer: read the promoted request, write an artifact.
         //

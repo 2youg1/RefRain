@@ -247,7 +247,13 @@
 .review-surface header,
 .settings-hero,
 .dispatch .ticket-head,
-.actions {
+/*
+ * 批注那一行的动作。类名从 `.actions` 改出来，因为工单台也叫 `.actions`，
+ * 两条规则隔着六百行各写各的，实测双向泄漏：批注侧声明的 gap:12px 被下面那条
+ * 覆写成 8px 并多出 margin-top，工单侧则拿到了它从未声明的 align-items 与
+ * justify-content。改任一处都会静默影响另一个组件。
+ */
+.annotation-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
