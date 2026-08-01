@@ -85,6 +85,21 @@ jobs:
         working-directory: apps/desktop
         run: bun x tauri build --debug --no-bundle
 
+      - name: Start the debug frontend server
+        if: runner.os == 'Windows'
+        working-directory: apps/desktop
+        shell: pwsh
+        run: |
+          # A debug binary does not embed the frontend; it loads it from the
+          # vite dev server, and without one the window is a blank error page.
+          Start-Process bun -ArgumentList "run","dev:web"
+          $deadline = (Get-Date).AddSeconds(90)
+          do {
+            Start-Sleep -Seconds 2
+            $ok = (Invoke-WebRequest -Uri "http://localhost:5173" -UseBasicParsing -TimeoutSec 2 -ErrorAction SilentlyContinue).StatusCode -eq 200
+          } until ($ok -or (Get-Date) -gt $deadline)
+          if (-not $ok) { throw "vite dev server did not answer 5173" }
+
       - name: Install tauri-driver and a matching msedgedriver
         if: runner.os == 'Windows'
         shell: pwsh
