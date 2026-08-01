@@ -14,6 +14,9 @@ dist/
 # 截图记录外观，不记录产生外观的值——所以脚本进仓库，图不进。
 /docs/panel-preview/
 
+# 同上：语义断行开关对比页由 scripts/build-semantic-break-compare.ts 重建。
+/docs/semantic-break-compare.html
+
 # Rust and Tauri generated output.
 target/
 apps/desktop/src-tauri/gen/

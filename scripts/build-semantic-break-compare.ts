@@ -196,7 +196,11 @@ ${sections}
 </div>
 </html>`;
 
-const outputDirectory = process.env.REFRAIN_REVIEW_DIR ?? resolve(import.meta.dir, "../../review");
+// 与 `generate-layout-preview.ts`、`render-panel-preview.ts` 同一个惯例：
+// 产物落在 `docs/`（已 gitignore），脚本进仓库。放 docs/ 而不是仓库外，是因为
+// 页面用绝对路径链接产品真实的样式表，服务必须从仓库根起——工件在根之外就
+// 取不到，表现是页面 200 而样式全 404，读起来像设计做坏了。
+const outputDirectory = process.env.REFRAIN_REVIEW_DIR ?? resolve(import.meta.dir, "../docs");
 const target = resolve(outputDirectory, "semantic-break-compare.html");
 await mkdir(dirname(target), { recursive: true });
 await writeFile(target, html, "utf8");
