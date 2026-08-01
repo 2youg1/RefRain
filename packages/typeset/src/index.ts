@@ -35,6 +35,14 @@ export {
   isFullWidthPunctuation,
   isWesternSide,
 } from "./char-class.ts";
+export {
+  type DiffAge,
+  type DiffPresentation,
+  type DiffSpan,
+  diffAge,
+  diffSpans,
+  forPresentation,
+} from "./diff.ts";
 export { type Hang, hangingAt } from "./hanging.ts";
 export { type BreakCandidate, candidates, lineStarts } from "./line-break.ts";
 export { longestUnbreakableSpan, optimizedLineStarts } from "./optimal-break.ts";
