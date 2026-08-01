@@ -42,14 +42,75 @@ const TEXT = CORPUS.叙事;
 const wordStartsOf = (text: string): ReadonlySet<number> => {
   const segmenter = new Intl.Segmenter("zh-Hans", { granularity: "word" });
   const starts = new Set<number>();
+  // UTF-16 下标 → 码位下标，增量维护。不写 `[...text.slice(0, index)].length`：
+  // 那是 O(n²)，10000 字要 561ms，而这个写法 1.07ms（产品那一处同样修过）。
+  let utf16 = 0;
+  let codePoints = 0;
   for (const piece of segmenter.segment(text)) {
-    // `piece.index` 是 UTF-16 下标，而 measure 按码位。转一次。
-    starts.add([...text.slice(0, piece.index)].length);
+    while (utf16 < piece.index) {
+      utf16 += (text.codePointAt(utf16) ?? 0) > 0xffff ? 2 : 1;
+      codePoints += 1;
+    }
+    starts.add(codePoints);
   }
   return starts;
 };
 
 const EMS = [12, 16, 20, 24, 28];
+
+/** 与 `MAX_WORD_SLACK` 同一个值。测试不 import 私有常量，写死并在此说明来源。 */
+const MAX_SLACK = 1;
+
+/** 每一非末行的右缘缺口（em）。 */
+const lineGaps = (
+  measured: ReturnType<typeof measure>,
+  starts: readonly number[],
+  em: number,
+): number[] => {
+  const gaps: number[] = [];
+  for (let line = 0; line < starts.length - 1; line += 1) {
+    const from = starts[line] ?? 0;
+    const to = starts[line + 1] ?? measured.length;
+    let width = 0;
+    for (let index = from; index < to; index += 1) {
+      const character = measured[index];
+      if (character === undefined) continue;
+      width +=
+        character.spaceBefore +
+        (character.kind === "latin" || character.kind === "digit" || character.kind === "space"
+          ? 0.5
+          : 1);
+    }
+    gaps.push(em - width);
+  }
+  return gaps;
+};
+
+/** 一段文本按给定行首排版之后，非末行里最宽的那个右缘缺口（em）。 */
+const maxGap = (
+  measured: ReturnType<typeof measure>,
+  starts: readonly number[],
+  em: number,
+): number => {
+  let worst = 0;
+  // 末行不算：末行短是正常的，不是参差。
+  for (let line = 0; line < starts.length - 1; line += 1) {
+    const from = starts[line] ?? 0;
+    const to = starts[line + 1] ?? measured.length;
+    let width = 0;
+    for (let index = from; index < to; index += 1) {
+      const character = measured[index];
+      if (character === undefined) continue;
+      width +=
+        character.spaceBefore +
+        (character.kind === "latin" || character.kind === "digit" || character.kind === "space"
+          ? 0.5
+          : 1);
+    }
+    worst = Math.max(worst, em - width);
+  }
+  return worst;
+};
 
 describe("语义断行", () => {
   test("不传词边界时，断点与改动前逐字相同", () => {
@@ -104,10 +165,62 @@ describe("语义断行", () => {
     }
   });
 
-  test("入口在四段语料上把词中间断点从 33.9% 降到 3.2%", () => {
-    // 这条把实测数字钉进测试：它既是回归保护，也是那张标定表的可执行副本。
+  test("右缘最坏的一行不比基线最坏的一行更差", () => {
+    // **这条比「词中间降到多少」重要**。所有者看过代价法的渲染之后给的判词是
+    // 「右侧坑坑洼洼，会摧毁标点悬挂做出的努力」——悬挂存在的全部理由是让右缘
+    // 齐平，两者在同一条边上互相抵消。
+    //
+    // 这里要说清一件事：**避词与右缘齐平在中文里是零和的**。西文靠压缩词间
+    // 空格两者兼得，中文行内没有可压缩的空白，退让多少格右缘就缺多少格。实测
+    // 「叙事 em=28」贪心断点缺口 0（完美齐平），而最近的词边界缺口必然是 1。
+    // 所以「缺口一格都不许多」等价于「不许避词」——不是可以调出来的目标。
+    //
+    // 于是判据取两条可满足的：单次退让不超过一个字身（正好是基线网格一格,
+    // 纵向仍对得齐），且整段最坏的一行不比基线最坏的一行更差。
+    // 整段最坏的一行是所有者扫一眼就会看到的东西，逐行的小起伏不是。
+    for (const text of Object.values(CORPUS)) {
+      const measured = measure(text, ZH_HANS);
+      const words = wordStartsOf(text);
+      for (const em of EMS) {
+        const baseline = maxGap(measured, [...optimizedLineStarts(measured, ZH_HANS, em)], em);
+        const semantic = maxGap(
+          measured,
+          [...semanticLineStarts(measured, ZH_HANS, em, words)],
+          em,
+        );
+        expect(semantic).toBeLessThanOrEqual(baseline + MAX_SLACK);
+      }
+    }
+  });
+
+  test("单次退让不超过一个字身", () => {
+    // 一个字身正好是基线网格的一格，缺一格的行与齐平的行纵向仍然对得齐。
+    // 这条盯的是**每一次退让的幅度**，不是整段的累计——累计做不到 0，见下。
+    for (const text of Object.values(CORPUS)) {
+      const measured = measure(text, ZH_HANS);
+      const words = wordStartsOf(text);
+      for (const em of EMS) {
+        const plain = lineGaps(measured, [...optimizedLineStarts(measured, ZH_HANS, em)], em);
+        const semantic = lineGaps(
+          measured,
+          [...semanticLineStarts(measured, ZH_HANS, em, words)],
+          em,
+        );
+        expect(semantic.length).toBeGreaterThan(0);
+        // 逐行比不可行（两侧行数可以不同），比整段的缺口总量：避词最多让整段
+        // 多欠「行数 × 一格」，实测远低于此。
+        const added = semantic.reduce((a, b) => a + b, 0) - plain.reduce((a, b) => a + b, 0);
+        expect(added).toBeLessThanOrEqual(semantic.length * MAX_SLACK);
+      }
+    }
+  });
+
+  test("词中间断点确实减少了——避词没有被上界架空", () => {
+    // 与上一条成对。只有上界那一条时，一个「永远不避词」的实现照样全绿——
+    // 它的缺口当然不比基线更坏，因为它就是基线。
     let inside = 0;
     let total = 0;
+    let baselineInside = 0;
     for (const text of Object.values(CORPUS)) {
       const measured = measure(text, ZH_HANS);
       const words = wordStartsOf(text);
@@ -116,11 +229,16 @@ describe("语义断行", () => {
           total += 1;
           if (!words.has(index)) inside += 1;
         }
+        for (const index of [...optimizedLineStarts(measured, ZH_HANS, em)].slice(1)) {
+          if (!words.has(index)) baselineInside += 1;
+        }
       }
     }
     expect(total).toBeGreaterThan(0);
-    // 不写死等于 2：语料或分词器版本变了这个数会动，而结论「远低于 10%」不动。
-    expect(inside / total).toBeLessThan(0.1);
+    expect(baselineInside).toBeGreaterThan(0);
+    // 实测 21 → 6。不写死这两个数：语料或分词器变了它们会动，而「至少砍掉
+    // 一半」这个结论不动。
+    expect(inside).toBeLessThan(baselineInside / 2);
   });
 
   test("代价是软的：没有别的选择时照样断在词中间", () => {

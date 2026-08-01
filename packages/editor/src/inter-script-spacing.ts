@@ -155,10 +155,25 @@ function wordStartsOf(text: string): ReadonlySet<number> | null {
   if (typeof Intl.Segmenter !== "function") return null;
   const segmenter = new Intl.Segmenter("zh-Hans", { granularity: "word" });
   const starts = new Set<number>();
+  // `piece.index` 是 UTF-16 下标，而 `measure` 按码位。增补平面的字在两个
+  // 坐标系里占的格数不同，不转就会把词首标到错的位置上。
+  //
+  // 转换必须**增量**做。第一版写的是 `[...text.slice(0, piece.index)].length`
+  // ——每个词都从头切一次再展开，那是 O(n²)。实测 10000 字要 561ms，而我据此
+  // 向所有者报告「Intl.Segmenter 超线性、长段会掉帧」。**那个归因是错的**：
+  // 换成下面这个一次走完的写法，同样 10000 字是 1.07ms（快 524 倍），而
+  // 分词器自身占 0.918ms——包装的开销几乎为零。两种写法的输出逐项相同。
+  //
+  // 教训记在这里：把自己包装代码的复杂度记到第三方 API 头上，会让一个本来
+  // 免费的方案看起来需要缓存、需要长度上限、需要所有者重新权衡。
+  let utf16 = 0;
+  let codePoints = 0;
   for (const piece of segmenter.segment(text)) {
-    // `piece.index` 是 UTF-16 下标，而 `measure` 按码位。增补平面的字在两个
-    // 坐标系里差一格，不转就会把词首标到错的位置上。
-    starts.add([...text.slice(0, piece.index)].length);
+    while (utf16 < piece.index) {
+      utf16 += (text.codePointAt(utf16) ?? 0) > 0xffff ? 2 : 1;
+      codePoints += 1;
+    }
+    starts.add(codePoints);
   }
   return starts;
 }

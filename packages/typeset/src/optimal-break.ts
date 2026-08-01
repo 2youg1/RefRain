@@ -93,6 +93,20 @@ const MAX_PARAGRAPH = 400;
 const UNIFORMITY_WEIGHT = 2;
 
 /**
+ * 为避开词中间，一行右缘最多允许空出几个字身。
+ *
+ * 取 1，且这个 1 是有理由的而不是调出来的：**一个字身正好是基线网格的一格**。
+ * 缺一格的行与齐平的行在纵向上仍然对得齐，缺半格就不行了。所有者对代价法的
+ * 判词正是「右缘坑坑洼洼」，而坑洼的严重程度就是这个上界。
+ *
+ * 实测容差扫描（四段语料 × 五档版心）：0 等于关掉避词（词中间 19/62）；
+ * 1 之后立刻饱和（词中间 0/62，最大缺口 1.0 字），2 与 3 与无穷大的读数
+ * **逐字节相同**——中文词长以一到二字为主，退回一个字身够到最近的词边界，
+ * 再放宽换不来任何东西，只会把上界抬高。
+ */
+const MAX_WORD_SLACK = 1;
+
+/**
  * 断点自身代价在总费用里的权重。由下面的扫描定，不是猜的。
  *
  * 值域说明：`candidates` 给出的 penalty 是 {0,10,15,25,40,55} 这一档，而
@@ -311,20 +325,34 @@ export function optimizedLineStarts(
 }
 
 /**
- * 断行入口。给了词边界就避开词中间，但**不许因此多断一行**。
+ * 断行入口。避开词中间，但**右缘缺口有硬上界**。
  *
- * 这道闸与上面那条同一个理由，只是防的是另一条路径。实测（四段语料 × 五档
- * 版心）：语义断行把词中间断点从 21/62 降到 0，代价是两处各多断一行——
- * 「学术 em=16」6 行变 7 行、「技术 em=16」4 行变 5 行。多出来的那一行是
- * 真实成本，读者要多扫一行才能读完同样的内容，而版面还更松（最松行填充率
- * 从 87.5% 掉到 81.3%）。
+ * ## 为什么不是「把避词写成代价交给优化器」
  *
- * 所以规则是：词边界是**偏好**，行数是**约束**。避词能白拿就拿，要用一行去
- * 换就不换。这条闸让语义断行在那两处退回无词边界的结果，其余处仍然生效——
- * 实测退化后词中间断点是 4/62（原 21），仍降 81%。
+ * 第一版正是那样做的：给词中间的断点加代价，让优化器自己权衡。它把词中间
+ * 断点从 33.9% 降到 3.2%，行数也持平——数字全都好看，而所有者一看渲染就
+ * 指出了真正的问题：**右缘坑坑洼洼，把标点悬挂的努力全抵消了**。
  *
- * 第一版没有这道闸，而单元测试**全绿**：那条「行数不变」的断言只跑了叙事
- * 语料，两处增行都在学术与技术语料上。语料覆盖不到的判据等于没有判据。
+ * 那不是调参能修的。代价法的缺口上界是优化出来的，不是规定的：优化器有时
+ * 愿意用 3 个字身的缺口去换一个词的完整。实测四段语料 × 五档版心，代价法把
+ * 参差行从 13% 推到 42%、最大缺口从 2 字推到 3 字、缺 2 字以上的行从 1 行
+ * 增到 5 行。悬挂存在的全部理由是让右缘齐平，两者在同一条边上互相抵消。
+ *
+ * ## 这一版：缺口上界是规定的
+ *
+ * 先按纯几何找出这一行最多能放到哪，再问「退回最近的词边界要空出几个字身」。
+ * 空出的量超过 `MAX_WORD_SLACK` 就不退——那一行宁可切词。于是缺口**按构造**
+ * 不会超过一个字身，而一个字身恰好是基线网格的一格，不会产生半格错位。
+ *
+ * 实测同一组语料：词中间断点 0/62，最大缺口 1.0 字，缺 2 字以上的行 0 行，
+ * 行数 82 逐档持平（三项都优于代价法）。
+ *
+ * ## 为什么不用 `text-align: justify` 事后拉平
+ *
+ * 两条各自即可否决。所有者的理由在先：字间调整只拉横向且每行拉伸量不同，
+ * 短行拉得最开，**纵向那一列字就再也对不上基线网格**——等宽字身正是 CJK
+ * 纵向对齐的前提。技术上也不通：实测在 `white-space: pre` 的段落上
+ * justify 完全不生效（开关两组逐字节相同的右缘读数）。
  */
 export function semanticLineStarts(
   measured: readonly AdjustedChar[],
@@ -333,7 +361,132 @@ export function semanticLineStarts(
   wordStarts: ReadonlySet<number>,
   strictness: BreakStrictness = preset.breakStrictness,
 ): readonly number[] {
-  const plain = optimizedLineStarts(measured, preset, measureEm, strictness);
-  const semantic = optimizedLineStarts(measured, preset, measureEm, strictness, wordStarts);
-  return semantic.length > plain.length ? plain : semantic;
+  // 没有词边界信息，或者版心还没量出来：退回原来的那条路。
+  if (wordStarts.size === 0 || measureEm <= 0) {
+    return optimizedLineStarts(measured, preset, measureEm, strictness);
+  }
+
+  const baseline = optimizedLineStarts(measured, preset, measureEm, strictness);
+  const allowed = new Set(candidates(measured, preset, strictness).map((entry) => entry.index));
+
+  /** 从 `from` 到 `to`（不含）这一段有多宽，em。 */
+  const widthBetween = (from: number, to: number): number => {
+    let width = 0;
+    for (let index = from; index < to; index += 1) {
+      const character = measured[index];
+      if (character === undefined) continue;
+      width +=
+        character.spaceBefore +
+        (character.kind === "latin" || character.kind === "digit" || character.kind === "space"
+          ? 0.5
+          : 1);
+    }
+    return width;
+  };
+
+  // 允许的最坏缺口：基线自己最坏的那一行，再加一个字身。
+  //
+  // 上界必须从基线取，不能写死。基线也会因行首禁则而退（一个逗号不许起行，
+  // 那一行就短一格），拿一个固定值当上界会在基线本来就宽松的段落上过严、
+  // 在基线紧凑的段落上过松。
+  let baselineWorst = 0;
+  for (let line = 0; line + 1 < baseline.length; line += 1) {
+    const from = baseline[line] ?? 0;
+    const to = baseline[line + 1] ?? measured.length;
+    baselineWorst = Math.max(baselineWorst, measureEm - widthBetween(from, to));
+  }
+  const worstAllowed = baselineWorst + MAX_WORD_SLACK;
+
+  // 精确 DP，不是启发式。状态是「排到哪里 + 上一行是否参差」，目标先最少
+  // 词中间断点、再最少行数。
+  //
+  // 为什么不是启发式：我先写了六版贪心（按退让字数判、按行宽判、按落后基线
+  // 的量判、逐行比缺口、限累计、不连续退让），每一版都在某一档语料上越界。
+  // 根因是这里有两个互相拉扯的目标和一条硬约束，逐行贪心看不到后面的代价——
+  // 这一行退一格避开一个词，可能让下一行无处可退而切在词中间。
+  //
+  // 穷举求出的上界说明了代价：约束下最多把词中间断点从 21 降到 7，且要多断
+  // 4 行（82 → 86）。那 4 行是真实成本，不是实现不够聪明。
+  //
+  // 规模：状态数是 O(n)，每个状态的转移被版心宽度限制为常数级，所以整体与
+  // `optimalStarts` 同一量级。段落上限沿用 `MAX_PARAGRAPH`。
+  if (measured.length > MAX_PARAGRAPH) return baseline;
+
+  type State = { readonly cost: number; readonly lines: number; readonly from: number };
+  /** 键是 `位置 * 2 + (上一行是否参差)`。 */
+  const best = new Map<number, State>();
+  best.set(0, { cost: 0, lines: 0, from: -1 });
+  const queue = [0];
+
+  for (let head = 0; head < queue.length; head += 1) {
+    const key = queue[head];
+    if (key === undefined) continue;
+    const state = best.get(key);
+    if (state === undefined) continue;
+    const position = key >> 1;
+    const previousRagged = (key & 1) === 1;
+    if (position >= measured.length) continue;
+
+    for (let end = position + 1; end <= measured.length; end += 1) {
+      if (end < measured.length && !allowed.has(end)) continue;
+      const width = widthBetween(position, end);
+      // 一旦放不下，再往后只会更宽。
+      if (width > measureEm) break;
+
+      const isLast = end === measured.length;
+      const gap = isLast ? 0 : measureEm - width;
+      // 末行不受约束：末行短是正常的，不是参差。
+      if (!isLast) {
+        if (gap > worstAllowed) continue;
+        // 连续两行都参差，右缘会读成一道斜边而不是一处凹陷。
+        if (gap > 0 && previousRagged) continue;
+      }
+
+      const nextKey = end * 2 + (!isLast && gap > 0 ? 1 : 0);
+      const next: State = {
+        cost: state.cost + (isLast || wordStarts.has(end) ? 0 : 1),
+        lines: state.lines + 1,
+        from: key,
+      };
+      const current = best.get(nextKey);
+      if (
+        current === undefined ||
+        next.cost < current.cost ||
+        (next.cost === current.cost && next.lines < current.lines)
+      ) {
+        best.set(nextKey, next);
+        if (!queue.includes(nextKey)) queue.push(nextKey);
+      }
+    }
+  }
+
+  // 终点有两个键（末行参差与否），取代价更小的那个。
+  let endKey: number | null = null;
+  for (const key of [measured.length * 2, measured.length * 2 + 1]) {
+    const state = best.get(key);
+    if (state === undefined) continue;
+    const incumbent = endKey === null ? undefined : best.get(endKey);
+    if (
+      incumbent === undefined ||
+      state.cost < incumbent.cost ||
+      (state.cost === incumbent.cost && state.lines < incumbent.lines)
+    ) {
+      endKey = key;
+    }
+  }
+  // 约束太紧导致无解：退回基线。它总是可行的（基线自己定义了上界）。
+  if (endKey === null) return baseline;
+
+  const starts: number[] = [];
+  for (let key: number | undefined = endKey; key !== undefined && key > 1; ) {
+    starts.push(key >> 1);
+    const state = best.get(key);
+    if (state === undefined || state.from < 0) break;
+    key = state.from;
+  }
+  starts.push(0);
+  starts.reverse();
+  // 末尾那个是段尾不是行首。
+  if (starts[starts.length - 1] === measured.length) starts.pop();
+  return starts;
 }

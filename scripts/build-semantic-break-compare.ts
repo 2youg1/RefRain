@@ -23,6 +23,11 @@ import {
   ZH_HANS,
 } from "../packages/typeset/src/index.ts";
 
+/**
+ * 词首下标（码位坐标系）。与产品同一个写法——增量转换，不是
+ * `[...text.slice(0, index)].length`（那是 O(n²)，10000 字 561ms vs 1.07ms）。
+ */
+
 /** 四种文体各一段。四段而非一段：增行只在其中两段上出现过。 */
 const CORPUS: ReadonlyArray<readonly [string, string]> = [
   [
@@ -49,8 +54,14 @@ const MEASURES = [16, 20, 28] as const;
 const wordStartsOf = (text: string): ReadonlySet<number> => {
   const segmenter = new Intl.Segmenter("zh-Hans", { granularity: "word" });
   const starts = new Set<number>();
+  let utf16 = 0;
+  let codePoints = 0;
   for (const piece of segmenter.segment(text)) {
-    starts.add([...text.slice(0, piece.index)].length);
+    while (utf16 < piece.index) {
+      utf16 += (text.codePointAt(utf16) ?? 0) > 0xffff ? 2 : 1;
+      codePoints += 1;
+    }
+    starts.add(codePoints);
   }
   return starts;
 };
@@ -77,10 +88,37 @@ const renderLine = (
   startIndex: number,
   words: ReadonlySet<number>,
   isLast: boolean,
+  gap: number,
 ): string => {
   const cut = !isLast && !words.has(startIndex + [...line].length);
   const body = escapeHtml(line);
-  return `<div class="line${cut ? " cut" : ""}">${body}</div>`;
+  // 右缘缺口画成一格一格的空位：所有者要判的正是这条边整不整齐，
+  // 用一个百分比说不清楚。末行不画——末行短是正常的。
+  const slack = isLast ? 0 : Math.round(gap * 2) / 2;
+  const shim = slack > 0 ? `<span class="gap" style="--slack:${slack}"></span>` : "";
+  return `<div class="line${cut ? " cut" : ""}">${body}${shim}</div>`;
+};
+
+/** 每一非末行的右缘缺口（em）。 */
+const gapsOf = (text: string, starts: readonly number[], em: number): number[] => {
+  const measured = measure(text, ZH_HANS);
+  const gaps: number[] = [];
+  for (let line = 0; line + 1 < starts.length; line += 1) {
+    const from = starts[line] ?? 0;
+    const to = starts[line + 1] ?? measured.length;
+    let width = 0;
+    for (let index = from; index < to; index += 1) {
+      const character = measured[index];
+      if (character === undefined) continue;
+      width +=
+        character.spaceBefore +
+        (character.kind === "latin" || character.kind === "digit" || character.kind === "space"
+          ? 0.5
+          : 1);
+    }
+    gaps.push(em - width);
+  }
+  return gaps;
 };
 
 const panel = (
@@ -92,12 +130,17 @@ const panel = (
   title: string,
 ): string => {
   const lines = linesOf(text, starts);
+  const gaps = gapsOf(text, starts, em);
   const rendered = lines
-    .map((line, index) => renderLine(line, starts[index] ?? 0, words, index === lines.length - 1))
+    .map((line, index) =>
+      renderLine(line, starts[index] ?? 0, words, index === lines.length - 1, gaps[index] ?? 0),
+    )
     .join("");
   const cuts = starts.slice(1).filter((index) => !words.has(index)).length;
+  const ragged = gaps.filter((gap) => gap > 0.01).length;
+  const worst = Math.max(0, ...gaps);
   return `<div class="panel">
-  <div class="panel-head"><span>${title}</span><span class="stat">${lines.length} 行 · 切词 ${cuts} 处</span></div>
+  <div class="panel-head"><span>${title}</span><span class="stat">${lines.length} 行 · 切词 ${cuts} · 参差 ${ragged} · 最大缺口 ${worst.toFixed(1)}字</span></div>
   <div class="page" style="--measure: ${em}em">${rendered}</div>
 </div>`;
 };
@@ -112,8 +155,8 @@ const sections = CORPUS.flatMap(([name, text]) => {
     return `<section>
   <h2>${name} · 版心 ${em}em${same ? '<span class="same">两侧相同</span>' : ""}</h2>
   <div class="pair">
-    ${panel(text, ZH_HANS, em, plain, words, "关（现行）")}
-    ${panel(text, ZH_HANS, em, semantic, words, "开（语义断行）")}
+    ${panel(text, ZH_HANS, em, plain, words, "A · 现行")}
+    ${panel(text, ZH_HANS, em, semantic, words, "C · 避词")}
   </div>
 </section>`;
   });
@@ -125,6 +168,11 @@ let semanticCuts = 0;
 let totalBreaks = 0;
 let plainLines = 0;
 let semanticLines = 0;
+let plainRagged = 0;
+let semanticRagged = 0;
+let totalLines = 0;
+let plainWorst = 0;
+let semanticWorst = 0;
 for (const [, text] of CORPUS) {
   const measured = measure(text, ZH_HANS);
   const words = wordStartsOf(text);
@@ -136,6 +184,13 @@ for (const [, text] of CORPUS) {
     plainCuts += plain.slice(1).filter((index) => !words.has(index)).length;
     semanticCuts += semantic.slice(1).filter((index) => !words.has(index)).length;
     totalBreaks += plain.slice(1).length;
+    const plainGaps = gapsOf(text, plain, em);
+    const semanticGaps = gapsOf(text, semantic, em);
+    totalLines += plainGaps.length;
+    plainRagged += plainGaps.filter((gap) => gap > 0.01).length;
+    semanticRagged += semanticGaps.filter((gap) => gap > 0.01).length;
+    plainWorst = Math.max(plainWorst, ...plainGaps);
+    semanticWorst = Math.max(semanticWorst, ...semanticGaps);
   }
 }
 
@@ -177,6 +232,14 @@ const html = `<!doctype html>
   .line { width: var(--measure); white-space: pre; }
   /* 切进词中间的行：行尾下方一道短线。标代价而不是标成绩。 */
   .line.cut { box-shadow: inset 0 -2px 0 -1px var(--refused, #b8563f); }
+  /* 右缘缺口：把空出来的那几格画成浅色方块，这条边整不整齐要看得见。 */
+  .gap {
+    display: inline-block; width: calc(var(--slack) * 1em); height: 1em;
+    vertical-align: -0.15em;
+    background: repeating-linear-gradient(45deg,
+      transparent 0 3px, var(--rule, #d9d3c7) 3px 4px);
+    opacity: .85;
+  }
 </style>
 <div class="wrap">
 <h1>语义断行 · 开关对比</h1>
@@ -187,10 +250,11 @@ const html = `<!doctype html>
 所以它退回了左侧的结果。
 </p>
 <div class="summary">
-  <div><b>${((plainCuts / totalBreaks) * 100).toFixed(1)}%</b><span>关：${plainCuts}/${totalBreaks} 个断点切进词里</span></div>
-  <div><b>${((semanticCuts / totalBreaks) * 100).toFixed(1)}%</b><span>开：${semanticCuts}/${totalBreaks}</span></div>
-  <div><b>${plainLines} → ${semanticLines}</b><span>总行数（四段 × 五档版心）</span></div>
-  <div><b>0</b><span>新增依赖：Intl.Segmenter 是运行时内置</span></div>
+  <div><b>${((plainCuts / totalBreaks) * 100).toFixed(1)}% → ${((semanticCuts / totalBreaks) * 100).toFixed(1)}%</b><span>断点切进词里（${plainCuts} → ${semanticCuts} 处，共 ${totalBreaks}）</span></div>
+  <div><b>${plainRagged} → ${semanticRagged}</b><span>参差的行（共 ${totalLines} 非末行）</span></div>
+  <div><b>${plainWorst.toFixed(1)} → ${semanticWorst.toFixed(1)} 字</b><span>最大缺口</span></div>
+  <div><b>${plainLines} → ${semanticLines}</b><span>总行数</span></div>
+  <div><b>0</b><span>新增依赖</span></div>
 </div>
 ${sections}
 </div>
