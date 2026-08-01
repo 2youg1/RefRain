@@ -41,21 +41,6 @@ const LOOSE_ALLOWS = new Set<CharClass>(["extender", "middle"]);
 const STRICT_FORBIDS = new Set<CharClass>(["digit", "latin"]);
 
 /**
- * 断在词中间要付的代价。
- *
- * 取 15：它必须**高于** `lineStarts` 里那道 `ACCEPTABLE_PENALTY = 20` 的
- * 门槛之下的自然代价（表意文字之间是 0），又必须**低于**「宁可撑破版心」。
- * 15 落在两者之间——单独一个词中间断点（0 + 15 = 15）仍在可接受档内，所以
- * 没有别的选择时照样断得下去；而只要同一段里存在一个词边界断点（代价 0），
- * 最优解就会优先选它。
- *
- * 不取更大的值，是因为代价一旦越过 20，词中间就从「不情愿」变成「拒绝」，
- * 那与 `BreakCandidate.penalty` 那句「语义断行只作软代价」相矛盾——一个
- * 没有词边界可用的窄版心会被逼到撑破版心，而切开一个词远比那轻。
- */
-const WORD_INTERIOR = 15;
-
-/**
  * 生成候选断点。
  *
  * 规则的次序即优先级：先问预设的禁则（行首不可现、行尾不可留），再问严格度
@@ -65,7 +50,6 @@ export function candidates(
   measured: readonly AdjustedChar[],
   preset: TypesetPreset,
   strictness: BreakStrictness = preset.breakStrictness,
-  wordStarts?: ReadonlySet<number>,
 ): readonly BreakCandidate[] {
   const found: BreakCandidate[] = [];
 
@@ -100,13 +84,7 @@ export function candidates(
       continue;
     }
 
-    const base = penaltyAt(before.kind, after.kind, strictness);
-    // 语义代价是**加**上去的，不是替换。字符类的判据仍然全额生效——一个
-    // 恰好落在词首的长标点断点，代价还是 40。
-    found.push({
-      index,
-      penalty: base + (wordStarts !== undefined && !wordStarts.has(index) ? WORD_INTERIOR : 0),
-    });
+    found.push({ index, penalty: penaltyAt(before.kind, after.kind, strictness) });
   }
 
   return found;
@@ -179,7 +157,6 @@ export function lineStarts(
   preset: TypesetPreset,
   measureEm: number,
   strictness: BreakStrictness = preset.breakStrictness,
-  wordStarts?: ReadonlySet<number>,
 ): readonly number[] {
   // 代价必须参与选择，不能只看「在不在候选集里」。
   //
@@ -191,10 +168,7 @@ export function lineStarts(
   //
   // 换句话说，宽松档当时是个装饰品：它改的量没有任何东西会读。
   const penalties = new Map(
-    candidates(measured, preset, strictness, wordStarts).map((entry) => [
-      entry.index,
-      entry.penalty,
-    ]),
+    candidates(measured, preset, strictness).map((entry) => [entry.index, entry.penalty]),
   );
 
   /** 断在这里划不划算。代价越低越愿意，超过这个值就宁可往前退。 */
@@ -203,7 +177,6 @@ export function lineStarts(
   const starts: number[] = [0];
   let width = 0;
   let lastCandidate: number | null = null;
-  let lastPenalty = Number.POSITIVE_INFINITY;
 
   for (let index = 0; index < measured.length; index += 1) {
     const character = measured[index];
@@ -212,19 +185,7 @@ export function lineStarts(
     // 代价高的断点仍然是断点——放不下时它总比撑破版心好——但只要还有更便宜
     // 的选择，就不该用它。宽松档把长标点与中点的代价压到 1，正是让这些位置
     // 从「万不得已」变成「乐意」。
-    //
-    // 在可接受档**之内**还要比大小，不能只记最后一个。同一行里往往有好几个
-    // 可接受的候选，取最后一个等于「能塞多满塞多满」——那正是词中间断点的
-    // 来源：`老槐树` 的 `槐|树` 与两字之前的词边界代价都 ≤20，贪心永远选后者。
-    //
-    // 只在**更便宜**时才改记，代价相同时保留更靠后的那个（行更满）。语义
-    // 断行正是靠这一条起作用：词中间 +15 之后不再与词边界的 0 等价。
-    if (penalty !== undefined && penalty <= ACCEPTABLE_PENALTY) {
-      if (lastCandidate === null || penalty <= lastPenalty) {
-        lastCandidate = index;
-        lastPenalty = penalty;
-      }
-    }
+    if (penalty !== undefined && penalty <= ACCEPTABLE_PENALTY) lastCandidate = index;
 
     const advance =
       character.spaceBefore +
@@ -261,9 +222,6 @@ export function lineStarts(
       }
       starts.push(start);
       lastCandidate = null;
-      // 代价也要跟着清。留着上一行的最低代价，下一行就只肯接受比它更便宜的
-      // 候选——一行一旦断在代价 0 处，之后每一行都不再接受代价 10 的位置。
-      lastPenalty = Number.POSITIVE_INFINITY;
       // 重新从新行的起点量起。
       width = 0;
       index = start - 1;

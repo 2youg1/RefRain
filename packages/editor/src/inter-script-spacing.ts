@@ -59,7 +59,6 @@ import {
   measure,
   optimizedLineStarts,
   presetOf,
-  semanticLineStarts,
   type TypesetPreset,
 } from "@refrain/typeset";
 
@@ -141,48 +140,10 @@ export interface SpacedRun {
  * `measureEm` 为 0 或负数时不断行，只切间距：那表示调用方还不知道版心多宽
  * （元素尚未进 DOM、宽度尚未测出），此时按 0 宽断行会把每个字断成一行。
  */
-/**
- * 词首下标（码位坐标系）。`null` 表示这个运行时不做分词。
- *
- * `Intl.Segmenter` 是运行时内置的（Chromium 有，即 WebView2 有；实测切
- * 9900 字 1.6ms）。**不引入任何分词库**：一个词典或模型要几 MB，而这里拿到
- * 的收益是把词中间断点从 33.9% 降到 3.2%——那个收益配不上一个新依赖。
- *
- * 运行时没有 `Intl.Segmenter` 时返回 null，断行退回纯字符类模型。那是降级
- * 不是故障：那条路径此前一直是唯一的路径。
- */
-function wordStartsOf(text: string): ReadonlySet<number> | null {
-  if (typeof Intl.Segmenter !== "function") return null;
-  const segmenter = new Intl.Segmenter("zh-Hans", { granularity: "word" });
-  const starts = new Set<number>();
-  // `piece.index` 是 UTF-16 下标，而 `measure` 按码位。增补平面的字在两个
-  // 坐标系里占的格数不同，不转就会把词首标到错的位置上。
-  //
-  // 转换必须**增量**做。第一版写的是 `[...text.slice(0, piece.index)].length`
-  // ——每个词都从头切一次再展开，那是 O(n²)。实测 10000 字要 561ms，而我据此
-  // 向所有者报告「Intl.Segmenter 超线性、长段会掉帧」。**那个归因是错的**：
-  // 换成下面这个一次走完的写法，同样 10000 字是 1.07ms（快 524 倍），而
-  // 分词器自身占 0.918ms——包装的开销几乎为零。两种写法的输出逐项相同。
-  //
-  // 教训记在这里：把自己包装代码的复杂度记到第三方 API 头上，会让一个本来
-  // 免费的方案看起来需要缓存、需要长度上限、需要所有者重新权衡。
-  let utf16 = 0;
-  let codePoints = 0;
-  for (const piece of segmenter.segment(text)) {
-    while (utf16 < piece.index) {
-      utf16 += (text.codePointAt(utf16) ?? 0) > 0xffff ? 2 : 1;
-      codePoints += 1;
-    }
-    starts.add(codePoints);
-  }
-  return starts;
-}
-
 export function spacedRuns(
   text: string,
   preset: TypesetPreset,
   measureEm = 0,
-  semanticBreaks = false,
 ): readonly SpacedRun[] {
   if (text === "") return [{ text: "", gapAfter: 0, breakAfter: false, hangEm: 0 }];
 
@@ -191,15 +152,7 @@ export function spacedRuns(
   // 得到两个坏字符。累加 `character.text.length` 才是对的。
   const adjusted = measure(text, preset);
   // 断行下标是**码位**下标，与 adjusted 的下标同一个坐标系。
-  const words = semanticBreaks ? wordStartsOf(text) : null;
-  const starts =
-    measureEm > 0
-      ? new Set(
-          words === null
-            ? optimizedLineStarts(adjusted, preset, measureEm)
-            : semanticLineStarts(adjusted, preset, measureEm, words),
-        )
-      : null;
+  const starts = measureEm > 0 ? new Set(optimizedLineStarts(adjusted, preset, measureEm)) : null;
   const runs: SpacedRun[] = [];
   let pending = "";
   // 这一段第一个字符的码位下标。行尾下标 = 段首 + 段内码位数 − 1，用它去问
@@ -266,10 +219,9 @@ export function paintSpacedText(
   text: string,
   language: string,
   measureEm = 0,
-  semanticBreaks = false,
 ): void {
   const preset = presetOf(language);
-  const runs = spacedRuns(text, preset, measureEm, semanticBreaks);
+  const runs = spacedRuns(text, preset, measureEm);
 
   // 快路径：没有混排边界也不需要换行，就是一个文本节点，与不开这个功能时
   // 完全一样。
