@@ -15,6 +15,7 @@ pub mod digest;
 pub mod error;
 pub mod health;
 pub mod id;
+pub mod inline_span;
 pub mod kara;
 pub mod manuscript;
 pub mod material_listing;
