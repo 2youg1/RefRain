@@ -57,9 +57,21 @@ const FORBIDDEN_IN_TYPESET: readonly { readonly pattern: RegExp; readonly why: s
 
 const failures: string[] = [];
 
-// 一、两个包都不准声明运行时依赖。
+// 一、两个包都不准声明**外部**运行时依赖。
 //
 // devDependencies 不算：那是构建这个包的工具，不会跟着它跑到服务端去。
+//
+// 同仓库的姊妹包也不算，这是本轮放宽的一处，理由要写清楚：这条规则想守的
+// 性质是「这个包不知道自己跑在哪里」，而 `@refrain/typeset` 本身就零依赖、
+// 零 DOM、零宿主——依赖它一个宿主知识也没引入。把它一并禁掉，实际效果是
+// 逼着 editor 用 `../../typeset/src/...` 这样的相对路径去 import 同一份代码，
+// 那既没有减少耦合，又让打包器看不出包的边界（typeset 此前正是这样被漏出
+// 工作区清单的）。
+//
+// 放宽的是范围，不是强度：任何 npm 包、任何 `@tauri-apps/*` 仍然一律拒绝，
+// 下面的注入证明覆盖这一条。
+const SIBLING_PACKAGES = new Set(["@refrain/typeset", "@refrain/editor"]);
+
 for (const { path: pkg } of PACKAGES) {
   const manifestPath = `${pkg}/package.json`;
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as PackageManifest;
@@ -68,8 +80,18 @@ for (const { path: pkg } of PACKAGES) {
     ["peerDependencies", manifest.peerDependencies],
     ["optionalDependencies", manifest.optionalDependencies],
   ] as const) {
-    for (const name of Object.keys(entries ?? {})) {
-      failures.push(`${manifestPath}: ${group} 里出现了 ${name}；这个包必须零依赖`);
+    for (const [name, range] of Object.entries(entries ?? {})) {
+      if (SIBLING_PACKAGES.has(name)) {
+        // 姊妹包必须走 workspace 协议。写死版本号就成了对 npm 上某个同名包
+        // 的依赖，而那个包不是这里的这一个。
+        if (!range.startsWith("workspace:")) {
+          failures.push(
+            `${manifestPath}: ${name} 必须写成 workspace:*，现在是 ${range}——那会去 npm 上取一个同名的别的包`,
+          );
+        }
+        continue;
+      }
+      failures.push(`${manifestPath}: ${group} 里出现了 ${name}；这个包不准依赖外部世界`);
     }
   }
 }
@@ -114,5 +136,5 @@ if (failures.length > 0) {
 }
 console.log(
   `typeset purity ok — ${PACKAGES.length} 个包、${scanned} 个源文件；` +
-    `排版引擎零 DOM，两个包零依赖零宿主`,
+    `排版引擎零 DOM，两个包不依赖外部世界（姊妹包限 workspace:*）`,
 );

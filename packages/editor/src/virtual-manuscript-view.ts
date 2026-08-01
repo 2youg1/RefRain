@@ -2,6 +2,7 @@ import { BlockHeightIndex } from "./block-height-index";
 import { applyBlockPrefix, type BlockPrefix } from "./block-prefix";
 import { type CodeTheme, fenceLanguage, forgetHighlights, tokenizeCode } from "./code-highlight";
 import { applyInlineMark } from "./inline-mark";
+import { paintSpacedText } from "./inter-script-spacing";
 import type {
   Block,
   EditorAnnotationProjection,
@@ -436,11 +437,53 @@ export class VirtualManuscriptView {
     this.#submit([{ kind: "replace", blocks: [block.id], text: next }]);
     const mounted = this.#byId.get(block.id);
     if (mounted !== undefined) {
-      mounted.textContent = next;
+      this.#paintText(mounted, next);
       this.#element.focus({ preventScroll: true });
       placeCaret(mounted, next.length);
     }
     return true;
+  }
+
+  /**
+   * 把一个块的文本画进它的段落元素。
+   *
+   * 四个写入点（挂载、行内标记、块前缀、批量替换）此前各自写 `textContent`。
+   * 混排间距要在写文本的同时插入间距元素，而分散在四处意味着**将来新增第五
+   * 个写入点的人必须记得这件事**——记不住是常态，而漏掉的表现是那一个块的
+   * 中西文之间没有间距，不报错、不崩溃，只是和别的段落长得不一样。
+   *
+   * 所以间距不是「写完文本再做的一步」，它就是写文本这件事本身。
+   *
+   * 语言取自 DOM 的 `lang`，而不是视图自己存一份。理由有两条：
+   *
+   * 一是 `lang` 本来就是 HTML 表达语言的机制，浏览器的 `line-break`、
+   * `word-break: auto-phrase`、字体回退全都读它——视图另存一份就成了第二个
+   * 权威，而两者漂开时没有任何东西会报错。
+   *
+   * 二是手稿可以中日混排。`closest("[lang]")` 让某个块（或某个区域）能声明
+   * 自己是日文，而两种语言的间距值确实不同：CSS Text 4 §8.4.1 的 1/8 ic
+   * 对 JIS 的 1/4 em。没有任何 `lang` 时 `presetOf` 落到简中。
+   */
+  #paintText(paragraph: HTMLElement, text: string): void {
+    paintSpacedText(paragraph, text, this.#declaredLanguage(paragraph));
+  }
+
+  /**
+   * 这个段落该按哪种语言排版。
+   *
+   * 从段落自己往上找 `lang`，找不到就用编辑宿主的，再找不到用文档的。
+   *
+   * 不能只写 `paragraph.closest("[lang]")`：`#paragraphFor` 造出段落时它还
+   * 没有插进 DOM，`closest` 那时返回 null，于是**挂载路径永远拿不到语言**，
+   * 而已挂载的块改文本时又拿得到——同一份稿子的新块与旧块用两套间距，且只
+   * 在滚动到未渲染区域时才看得出来。所以宿主是兜底的那一层：它始终在 DOM 里。
+   */
+  #declaredLanguage(paragraph: HTMLElement): string {
+    return (
+      paragraph.closest<HTMLElement>("[lang]")?.lang ||
+      this.#element.closest<HTMLElement>("[lang]")?.lang ||
+      paragraph.ownerDocument.documentElement.lang
+    );
   }
 
   /** The block a right-click captured, when the caret is elsewhere. */
@@ -525,7 +568,7 @@ export class VirtualManuscriptView {
     this.#submit([{ kind: "replace", blocks: [block.id], text: edit.text }]);
     const paragraph = this.#byId.get(block.id);
     if (paragraph !== undefined) {
-      paragraph.textContent = edit.text;
+      this.#paintText(paragraph, edit.text);
       paragraph.focus({ preventScroll: true });
       placeCaret(paragraph, edit.end);
     }
@@ -568,7 +611,7 @@ export class VirtualManuscriptView {
     this.#contextSelection = null;
     this.#submit([{ kind: "replace", blocks: [block.id], text }]);
     const paragraph = this.#byId.get(block.id);
-    if (paragraph !== undefined) paragraph.textContent = text;
+    if (paragraph !== undefined) this.#paintText(paragraph, text);
     return true;
   }
 
@@ -695,7 +738,7 @@ export class VirtualManuscriptView {
     // selection can cross paragraph boundaries. Per-paragraph contentEditable
     // makes each one its own host and the browser collapses any drag that
     // leaves it — the author watches the selection stop at the block edge.
-    paragraph.textContent = block.text;
+    this.#paintText(paragraph, block.text);
     paragraph.style.minHeight = "1em";
     paragraph.style.whiteSpace = "pre-wrap";
     paragraph.style.outline = "none";

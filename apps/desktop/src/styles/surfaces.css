@@ -272,10 +272,33 @@
   text-align: var(--manuscript-align, left);
   hanging-punctuation: allow-end last;
   text-spacing-trim: trim-start;
-  font-feature-settings:
-    "halt" 1,
-    "vhal" 1;
-  font-variant-east-asian: proportional-width;
+
+  /* 正文不开任何字体级的标点压缩。
+   *
+   * 此处原本是 `font-feature-settings: "halt" 1, "vhal" 1` 加
+   * `font-variant-east-asian: proportional-width`。本机实测（Chromium，
+   * 字体 load 之后量，`「你好」，世界。！？` 在 100px 下）：
+   *
+   * | 字体 | 开 | 关 |
+   * |---|---:|---:|
+   * | Noto Sans SC | 678px | 950px |
+   * | Zen Kaku Gothic New | 1000px | 1000px |
+   *
+   * 中文那份被压掉 272px，日文那份纹丝不动——因为 Zen Kaku 根本没有这几个
+   * OpenType 特性。于是同一份稿子的中日两段用着两套度量，而作者从没要求过
+   * 任何一套。这不是「日文没优化」，是排版规则藏在了字体文件里：换一个字体
+   * 版面就变，而没有任何地方记录过这个决定。
+   *
+   * 标点压缩的规则归 `@refrain/typeset` 的语言预设所有（GB/T 15834 §5.1.10
+   * 行尾压半字身、JLREQ §3.1.9 句点后空原则上保留——两者方向相反，一张表
+   * 处理中日必有一边是错的）。规则在数据里，改得动、量得出、写得进门禁。
+   *
+   * 量的时候必须先 `document.fonts.load()`：font-face 是懒的，第一版探针在
+   * 字体下载之前就量，中日两栏得到完全相同的数字（都回退到了同一个 fallback），
+   * 而那个「中日一致」的读数看起来像个好消息。
+   */
+  font-feature-settings: normal;
+  font-variant-east-asian: normal;
 }
 
 .editor-host p[data-block-id] {

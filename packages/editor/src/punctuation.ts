@@ -60,6 +60,23 @@ const isAbbreviationPeriod = (text: string, index: number): boolean => {
 };
 
 /**
+ * Is this period part of a run of two or more? Then leave the whole run alone.
+ *
+ * `他想了想...然后说。` used to come back as `他想了想。.。然后说。`: each dot
+ * was judged on its own, the first and third saw a CJK neighbour and became
+ * 。, and the middle one — CJK on neither side — stayed. Three characters the
+ * author typed as one gesture came out as three different characters.
+ *
+ * A run of dots is an ellipsis the author is spelling in ASCII, or a range, or
+ * a placeholder. Whatever it is, it is one token, and this function's only job
+ * is to make the loop treat it as one.
+ */
+function isRunOfDots(text: string, index: number): boolean {
+  if (text[index] !== ".") return false;
+  return text[index - 1] === "." || text[index + 1] === ".";
+}
+
+/**
  * Return conservative, independently confirmable width findings for one block.
  * Source text is never changed here. Ambiguous prose is deliberately left alone.
  */
@@ -81,6 +98,7 @@ export function findPunctuation(blockId: string, text: string): readonly Punctua
       cjkSuggestion !== undefined &&
       !isDecimal(text, index) &&
       !isAbbreviationPeriod(text, index) &&
+      !isRunOfDots(text, index) &&
       (original === "("
         ? isCjk(after)
         : original === ")"
