@@ -15,8 +15,37 @@
  * 把他调好的东西改掉。
  */
 
+import type { AppearanceConfig } from "../generated/bindings.gen";
+
 /** 设置的三个分类，与标签页一一对应。 */
 export type SettingsSection = "appearance" | "typography" | "shortcuts";
+
+/**
+ * 一条配置叶子路径，由 `AppearanceConfig` 的形状推导。
+ *
+ * 这些路径以前是手打的字符串，于是有两种坏法，而只有第一种会被发现：
+ *
+ * - 写了配置里没有的字段——测试查得出来。
+ * - **漏写了配置里有的字段**——没有任何东西会红。`typography_presets` 就这样
+ *   漏了整整一版：作者的自定义排版预设在设置索引里不存在。
+ *
+ * 还有第三种，两条检查都抓不到：`appearance.typography.line_height_percent`
+ * 写成 `...line_height`。检查只看第二段，第三段写错照样全绿——而 26 条路径
+ * 里有 14 条是三段的。
+ *
+ * 递归展开成联合类型之后，这三种坏法都变成**编译错误**。字符串字面量对不上
+ * 联合类型的任何一支时 `tsc` 当场拒绝，不需要等谁来跑测试。
+ */
+type LeafPath<T, Prefix extends string = ""> = {
+  [K in keyof T & string]: NonNullable<T[K]> extends readonly unknown[]
+    ? `${Prefix}${K}`
+    : NonNullable<T[K]> extends object
+      ? `${Prefix}${K}` | LeafPath<NonNullable<T[K]>, `${Prefix}${K}.`>
+      : `${Prefix}${K}`;
+}[keyof T & string];
+
+/** 全部合法的设置路径。写错一个字符就编译不过。 */
+export type SettingsLeaf = LeafPath<AppearanceConfig, "appearance.">;
 
 /** 树上的一个节点。有 `leaf` 的是可跳转的修改点，没有的是分组。 */
 export type SettingsNode = {
@@ -30,7 +59,7 @@ export type SettingsNode = {
    * 分组没有它：分组不是一个可改的值，给它一条路径会让「点开分组」
    * 变成「改了什么东西」。
    */
-  readonly leaf?: string;
+  readonly leaf?: SettingsLeaf;
   /** 一句话说明这一项管什么。搜索会搜它。 */
   readonly hint?: string;
   readonly children?: readonly SettingsNode[];

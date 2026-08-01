@@ -100,7 +100,7 @@ fn entries_of(db: &Connection, path: &str) -> Result<Vec<Entry>, RefrainError> {
         .map_err(|cause| store_failure("read index state", cause))
 }
 
-fn kind_name(kind: BlockKind) -> String {
+pub(crate) fn kind_name(kind: BlockKind) -> String {
     // No catch-all: a new BlockKind must force a decision about how it is
     // stored rather than silently landing in whatever this arm happened to be.
     match kind {

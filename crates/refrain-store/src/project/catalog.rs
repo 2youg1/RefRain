@@ -68,6 +68,32 @@ pub struct DocumentPage {
     pub next: Option<String>,
 }
 
+/// One block the index matched, with the text it matched on.
+///
+/// Carries the excerpt so the shell can show what was found rather than only
+/// where. `start_byte` is what makes the hit navigable — the shell opens the
+/// document and puts the caret there.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockHit {
+    pub path: String,
+    /// Which block of that document, counting from zero.
+    pub ordinal: u32,
+    /// What the author made this block: `heading`, `fence`, `table`, `paragraph`.
+    ///
+    /// Crosses the bridge as the same wire name the index stores, not as a
+    /// serialisable `BlockKind`. Deriving serde on the domain enum would make
+    /// every future variant an implicit part of the wire contract, and the
+    /// shell only needs to tell a heading from prose.
+    pub kind: String,
+    /// Byte offset of the block within the document, for navigation.
+    pub start_byte: u32,
+    /// The block's text as it stood when this search ran.
+    pub text: String,
+    /// Larger is more relevant, matching `search_rank`'s convention.
+    pub relevance: f64,
+}
+
 /// A document row as the project database knows it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -627,6 +653,91 @@ impl ProjectStore {
         });
         rows.truncate(order.len());
         Ok(rows)
+    }
+
+    /// Search and keep the blocks, with the text each one matched on.
+    ///
+    /// `search_documents_with` folds every hit into the document that holds
+    /// it, because a file list is what the shell shows. That fold throws away
+    /// the two facts a reader needs to recognise a hit: which block, and what
+    /// it says. Without them the result panel can only show a path — and a
+    /// path cannot be highlighted, because the query words are not in it.
+    ///
+    /// The text is read from disk rather than stored in the index. The index
+    /// holds offsets precisely so it does not become a second copy of the
+    /// manuscript: a copy would be stale the moment the author typed, and a
+    /// stale excerpt shown as a search result is worse than no excerpt.
+    pub fn search_blocks_with(
+        &mut self,
+        query: &str,
+        precision: Precision,
+        limit: u32,
+    ) -> Result<Vec<BlockHit>, RefrainError> {
+        let query = query.trim();
+        if query.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        if query.len() > MAX_DOCUMENT_SEARCH_BYTES {
+            return Err(
+                RefrainError::new(ErrorCode::IllegalName, "search blocks", "query").with_detail(
+                    format!("query exceeds {MAX_DOCUMENT_SEARCH_BYTES} UTF-8 bytes"),
+                ),
+            );
+        }
+
+        self.ensure_indexed()?;
+        let wanted = limit.min(MAX_DOCUMENT_SEARCH_RESULTS);
+        let hits = super::search::search_with(&self.db, query, precision, wanted)?;
+        if hits.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let root = self.permit.canonical_path.clone();
+        let kind = self.permit.kind;
+        // One read per document, not per block: a query that matches eight
+        // blocks of one chapter would otherwise read that chapter eight times.
+        let mut loaded: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        let mut found = Vec::new();
+        for hit in hits {
+            let text = match loaded.get(&hit.path) {
+                Some(text) => text,
+                None => {
+                    let resolved = match kind {
+                        crate::root::RootKind::Folder => root.join(&hit.path),
+                        crate::root::RootKind::File => root.clone(),
+                    };
+                    // A file the index knows and the disk no longer has is not
+                    // an error the author should see mid-search; it is a stale
+                    // index row, and the next reconcile removes it.
+                    let Ok(bytes) = std::fs::read(&resolved) else {
+                        continue;
+                    };
+                    let Ok(text) = String::from_utf8(bytes) else {
+                        continue;
+                    };
+                    loaded.entry(hit.path.clone()).or_insert(text)
+                }
+            };
+
+            let start = hit.start_byte as usize;
+            let end = start.saturating_add(hit.bytes as usize).min(text.len());
+            // The offsets came from an index that may predate the author's
+            // last keystroke. Slicing on a boundary that is no longer a
+            // character boundary panics, so check rather than trust.
+            if start > end || !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+                continue;
+            }
+            found.push(BlockHit {
+                path: hit.path,
+                ordinal: hit.ordinal,
+                kind: super::search::kind_name(hit.kind),
+                start_byte: hit.start_byte,
+                text: text[start..end].to_string(),
+                relevance: hit.relevance,
+            });
+        }
+        Ok(found)
     }
 
     /// Search the way an author expects: precisely, then forgivingly.

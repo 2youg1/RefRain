@@ -6,6 +6,7 @@ use super::{DocumentPageQuery, ProjectStore, fingerprint_of};
 use crate::project::RootLocator;
 use crate::root::RootKind;
 use crate::schema::{AppDb, Database};
+use refrain_core::chinese_index::Precision;
 
 #[test]
 fn catalog_identity_ignores_scan_order_and_generated_ids() {
@@ -125,6 +126,113 @@ fn an_unchanged_catalog_skips_sql_reconciliation() {
         .unwrap();
 
     assert_eq!(store.db.total_changes(), first_changes);
+    drop(store);
+    drop(app);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// 块级搜索返回的是**文本**，不只是路径。
+///
+/// 钉住的失败：搜索结果面板只能显示文件路径，而查询词不在路径里——「高亮
+/// 查询词」在那个形状下无处可高亮。`search_documents_with` 把每个命中折叠
+/// 成它所属的文档，正是那次折叠丢掉了这两个事实。
+#[test]
+fn block_search_returns_the_text_that_matched() {
+    let root = std::env::temp_dir().join(format!("refrain-blocksearch-{}", Id::new()));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("章.md"),
+        "第一段讲的是别的事情。\n\n第二段里有风景的发现这个说法。\n",
+    )
+    .unwrap();
+    let mut app = crate::schema::open_in_memory().unwrap();
+    AppDb::migrate(&mut app).unwrap();
+    let (mut store, _) = ProjectStore::adopt(
+        &mut app,
+        &RootLocator {
+            path: root.clone(),
+            kind: RootKind::Folder,
+        },
+    )
+    .unwrap();
+
+    // 目录先进表：`index_catalog` 从 `documents` 读路径，而 `adopt` 只认领
+    // Root，不扫文件。少这一步索引里一条都没有，搜索恒空。
+    store
+        .refresh_document_page(DocumentPageQuery {
+            after: None,
+            limit: 16,
+        })
+        .unwrap();
+
+    let hits = store
+        .search_blocks_with("风景的发现", Precision::Exact, 10)
+        .unwrap();
+
+    assert!(!hits.is_empty(), "块级搜索一条都没返回");
+    let first = &hits[0];
+    // 这是整条改动的意义：拿到了文本，所以有东西可高亮。
+    assert!(
+        first.text.contains("风景的发现"),
+        "返回的块文本里没有查询词：{:?}",
+        first.text
+    );
+    // 命中的是第二段，不是整份文档——折叠若还在，这里会拿到第一段或全文。
+    assert!(
+        !first.text.contains("第一段"),
+        "返回的是整份文档而不是命中的那一块：{:?}",
+        first.text
+    );
+    // `start_byte` 是这条命中可导航的全部理由。
+    assert!(first.start_byte > 0, "第二段的偏移不该是 0");
+
+    drop(store);
+    drop(app);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// 索引比磁盘旧时不能崩。
+///
+/// 偏移来自一份可能早于作者最后一次按键的索引。在不再是字符边界的位置切片
+/// 会 panic——而作者只是打了个字。这条测试把文件改短再搜，走的正是那条路。
+#[test]
+fn stale_offsets_are_skipped_not_panicked_on() {
+    let root = std::env::temp_dir().join(format!("refrain-staleoffset-{}", Id::new()));
+    fs::create_dir_all(&root).unwrap();
+    let file = root.join("章.md");
+    fs::write(
+        &file,
+        "第一段。\n\n第二段里有风景的发现这个说法，后面还有很长很长的一段话。\n",
+    )
+    .unwrap();
+    let mut app = crate::schema::open_in_memory().unwrap();
+    AppDb::migrate(&mut app).unwrap();
+    let (mut store, _) = ProjectStore::adopt(
+        &mut app,
+        &RootLocator {
+            path: root.clone(),
+            kind: RootKind::Folder,
+        },
+    )
+    .unwrap();
+    // 先让目录进表再建索引。
+    store
+        .refresh_document_page(DocumentPageQuery {
+            after: None,
+            limit: 16,
+        })
+        .unwrap();
+    store
+        .search_blocks_with("风景的发现", Precision::Exact, 10)
+        .unwrap();
+
+    // 磁盘上的文件变短，索引里的偏移随即越界。
+    fs::write(&file, "短。\n").unwrap();
+    let hits = store.search_blocks_with("风景的发现", Precision::Exact, 10);
+
+    // 不崩即通过。返回空还是返回别的都可以接受——重点是它没有 panic。
+    assert!(hits.is_ok(), "索引比磁盘旧时报错了：{hits:?}");
+
     drop(store);
     drop(app);
     fs::remove_dir_all(root).unwrap();

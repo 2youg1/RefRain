@@ -20,8 +20,9 @@ use refrain_core::{
 };
 use refrain_store::mailbox::{MailboxBoxName, MailboxStanding};
 use refrain_store::project::{
-    BackupStatus, DocumentCommit, DocumentPage, DocumentPageQuery, DocumentRow, FileStamp,
-    MAX_DOCUMENT_PAGE_SIZE, MAX_DOCUMENT_SEARCH_RESULTS, ProjectFailure, ProjectStore, RootLocator,
+    BackupStatus, BlockHit, DocumentCommit, DocumentPage, DocumentPageQuery, DocumentRow,
+    FileStamp, MAX_DOCUMENT_PAGE_SIZE, MAX_DOCUMENT_SEARCH_RESULTS, ProjectFailure, ProjectStore,
+    RootLocator,
 };
 use refrain_store::root::RootKind;
 use refrain_store::schema::{AppDb, Database};
@@ -540,6 +541,30 @@ fn document_search(
         entry
             .store
             .search_documents_with(&query, precision, MAX_DOCUMENT_SEARCH_RESULTS)
+    })
+}
+
+/// Search and keep the blocks, so the result panel can show what matched.
+///
+/// `document_search` answers "which files"; this answers "which passages, and
+/// what do they say". A path cannot be highlighted — the query words are not
+/// in it — so showing the author where their words are needs the text.
+#[tauri::command(async)]
+#[specta::specta]
+fn block_search(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    query: String,
+    precision: SearchPrecision,
+) -> Result<Vec<BlockHit>, RefrainError> {
+    let precision = match precision {
+        SearchPrecision::Exact => refrain_core::chinese_index::Precision::Exact,
+        SearchPrecision::Loose => refrain_core::chinese_index::Precision::Loose,
+    };
+    state.with_project(&root_id, |_state, entry| {
+        entry
+            .store
+            .search_blocks_with(&query, precision, MAX_DOCUMENT_SEARCH_RESULTS)
     })
 }
 
@@ -1508,6 +1533,7 @@ macro_rules! refrain_commands {
         set_universal_icon,
         universal_icon,
         imported_source_bytes,
+        block_search,
         $($debug_command,)*
         list_proposals,
         record_verdict,
