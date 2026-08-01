@@ -18,6 +18,7 @@ use refrain_core::{
     KaraMachine, KaraPolicy, KaraTransition, Lineage, Manuscript, RecoveryStep, RefrainError,
     Replacement, SourceSnapshot, TextCommand,
 };
+use refrain_store::mailbox::{MailboxBoxName, MailboxStanding};
 use refrain_store::project::{
     BackupStatus, DocumentCommit, DocumentPage, DocumentPageQuery, DocumentRow, FileStamp,
     MAX_DOCUMENT_PAGE_SIZE, MAX_DOCUMENT_SEARCH_RESULTS, ProjectFailure, ProjectStore, RootLocator,
@@ -1326,6 +1327,122 @@ fn delete_annotation(
     })
 }
 
+// ── 信箱的安排（SPEC 9.6）─────────────────────────────────────────────
+//
+// 次序、Pin、弃置都是作者做出的判断，所以都落在项目库里，而不是某个面板
+// 的内存。弃置只写下时刻：提案行与账本一行不动（INV-4）。
+
+/// The author's standing arrangement: order, pins, and what was discarded.
+#[tauri::command(async)]
+#[specta::specta]
+fn mailbox_standings(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+) -> Result<Vec<MailboxStanding>, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        entry.store.mailbox().all().map_err(into_domain_store)
+    })
+}
+
+/// Write one box's order. The whole box arrives at once: rank is a position
+/// within a list, and writing them one at a time would let two callers
+/// interleave into an order neither asked for.
+#[tauri::command(async)]
+#[specta::specta]
+fn set_mailbox_order(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    box_name: String,
+    entry_ids: Vec<String>,
+) -> Result<(), RefrainError> {
+    let box_name = mailbox_box(&box_name)?;
+    state.with_project(&root_id, |_state, entry| {
+        let mailbox = entry.store.mailbox();
+        let now = now_millis();
+        for (index, entry_id) in entry_ids.iter().enumerate() {
+            mailbox
+                .set_rank(entry_id, box_name, index as u32, now)
+                .map_err(into_domain_store)?;
+        }
+        Ok(())
+    })
+}
+
+/// Pin or unpin. Both directions are the author speaking, so both persist.
+#[tauri::command(async)]
+#[specta::specta]
+fn set_mailbox_pinned(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    box_name: String,
+    entry_id: String,
+    pinned: bool,
+) -> Result<(), RefrainError> {
+    let box_name = mailbox_box(&box_name)?;
+    state.with_project(&root_id, |_state, entry| {
+        entry
+            .store
+            .mailbox()
+            .set_pinned(&entry_id, box_name, pinned, now_millis())
+            .map_err(into_domain_store)
+    })
+}
+
+/// Discard tickets. This is a soft delete and the only delete there is: the
+/// proposals stay, the ledger stays, and `restore_mailbox_entry` brings the
+/// entry back. Nothing on disk is touched.
+#[tauri::command(async)]
+#[specta::specta]
+fn discard_mailbox_entries(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    box_name: String,
+    entry_ids: Vec<String>,
+) -> Result<(), RefrainError> {
+    let box_name = mailbox_box(&box_name)?;
+    state.with_project(&root_id, |_state, entry| {
+        let mailbox = entry.store.mailbox();
+        let now = now_millis();
+        for entry_id in &entry_ids {
+            mailbox
+                .discard(entry_id, box_name, now)
+                .map_err(into_domain_store)?;
+        }
+        Ok(())
+    })
+}
+
+/// Bring a discarded ticket back. Returns false when it was never discarded.
+#[tauri::command(async)]
+#[specta::specta]
+fn restore_mailbox_entry(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    entry_id: String,
+) -> Result<bool, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        entry
+            .store
+            .mailbox()
+            .restore(&entry_id, now_millis())
+            .map(|restored| restored > 0)
+            .map_err(into_domain_store)
+    })
+}
+
+/// The wire carries a box as text; this is where it becomes the enum. An
+/// unknown name is refused by name rather than defaulting to a box the author
+/// never meant.
+fn mailbox_box(value: &str) -> Result<MailboxBoxName, RefrainError> {
+    MailboxBoxName::from_wire(value).ok_or_else(|| {
+        RefrainError::new(
+            ErrorCode::IllegalName,
+            "name a mailbox box",
+            value.to_owned(),
+        )
+    })
+}
+
 fn now_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1368,6 +1485,11 @@ macro_rules! refrain_commands {
         revert_verdicts,
         review_state,
         commit_decision_batch,
+        mailbox_standings,
+        set_mailbox_order,
+        set_mailbox_pinned,
+        discard_mailbox_entries,
+        restore_mailbox_entry,
         draft_review_task,
         preview_dispatch,
         l0_file_channel_agent,
@@ -1688,7 +1810,7 @@ fn set_review_batch(
     })
 }
 
-/// Recall staged verdicts to unread （工单信箱的回溯）. Only verdicts still in
+/// Recall staged verdicts to unread （托付信箱的回溯）. Only verdicts still in
 /// the batch pass — anything already merged into the text stays history.
 #[tauri::command(async)]
 #[specta::specta]

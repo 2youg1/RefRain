@@ -394,6 +394,48 @@ impl Database for ProjectDb {
                     )
                 },
             },
+            Migration {
+                version: SchemaVersion(9),
+                name: "mailbox-standing",
+                apply: |tx| {
+                    // The author's standing arrangement of the mailbox.
+                    //
+                    // Order, pinning, and discard were front-end state until
+                    // now: a `#order` array inside the panel that the window
+                    // dropped on close. Order can be rebuilt by hand, so
+                    // losing it was an annoyance. Pinning and discard cannot:
+                    // pinning is an explicit statement about what must stay
+                    // visible, and discarding a batch of proposals is the
+                    // author declining work an agent did. Both are the same
+                    // class of fact as a verdict, and facts of that class
+                    // live in the project database.
+                    //
+                    // One row per mailbox entry, keyed by the entry's own id
+                    // (a task id or a proposal id). Absence is the default
+                    // arrangement: an entry nobody has touched has no row,
+                    // so an untouched mailbox costs nothing.
+                    //
+                    // `discarded_at` is a soft delete. Nothing is unlinked,
+                    // nothing leaves the ledger, and the proposal rows stay
+                    // exactly where they were — INV-4 permits no permanent
+                    // delete at any layer, and a discarded batch remains
+                    // auditable. `rank` orders what remains; `pinned` lifts a
+                    // row above ranking altogether so later arrivals cannot
+                    // push it down.
+                    tx.execute_batch(
+                        "CREATE TABLE mailbox_standing (
+                             entry_id     TEXT PRIMARY KEY,
+                             box_name     TEXT NOT NULL CHECK (box_name IN ('draft', 'unread', 'done')),
+                             rank         INTEGER,
+                             pinned       INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1)),
+                             discarded_at INTEGER,
+                             updated_at   INTEGER NOT NULL
+                         ) STRICT;
+                         CREATE INDEX mailbox_standing_box
+                             ON mailbox_standing(box_name, rank);",
+                    )
+                },
+            },
         ]
     }
 }

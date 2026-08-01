@@ -399,9 +399,9 @@ const resetTicket = async (): Promise<void> => {
     await resetTicket();
     return;
   }
-  console.error("NOTE  再发 absent (phase settled) — resetting via 收起 + 工单");
+  console.error("NOTE  再发 absent (phase settled) — resetting via 收起 + 托付");
   await clickButton("收起");
-  await clickButton("工单");
+  await clickButton("托付");
   await waitFor("the ticket after reopen", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch") !== null`)),
   );
@@ -441,7 +441,7 @@ const run = async (): Promise<void> => {
   console.log(`revision at draft: ${revAtDraft.revision}`);
 
   // ── The ticket: two blocks, one prompt, one L0 agent. ──
-  await clickButton("工单");
+  await clickButton("托付");
   await waitFor("the dispatch surface", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch") !== null`)),
   );
@@ -526,7 +526,7 @@ const run = async (): Promise<void> => {
     revAfterRestart.revision === revAtDraft.revision,
     `${revAfterRestart.revision} != ${revAtDraft.revision}`,
   );
-  await clickButton("工单");
+  await clickButton("托付");
   await waitFor("the collect button", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch-collect") !== null`)),
   );
@@ -647,7 +647,7 @@ const run = async (): Promise<void> => {
     );
   } catch {
     // The ticket no longer remounts itself after a commit; open it explicitly.
-    await clickButton("工单");
+    await clickButton("托付");
     await waitFor("the dispatch surface again", async () =>
       Boolean(await execute(`return document.querySelector(".dispatch") !== null`)),
     );
@@ -1138,7 +1138,7 @@ const run = async (): Promise<void> => {
   );
   if (agent === undefined) throw new Error("the guided partner was not persisted");
   await clickButton("返回手稿");
-  await clickButton("工单");
+  await clickButton("托付");
   await waitFor("the remounted ticket", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch-agent") !== null`)),
   );

@@ -93,12 +93,10 @@ const BLOCK_PREFIX_OF: Partial<Record<WorkbenchCommandId, BlockPrefix>> = {
 /** 栏脚的目的地按钮。每个全局快捷键在这里都有一颗看得见的入口（KARA = Ctrl+Enter）。 */
 function RailFoot(props: {
   hasDocument: boolean;
-  stage: "writing" | "review" | "dispatch";
   annotationsOpen: boolean;
   karaEngaged: boolean;
   connectionsOpen: boolean;
   settingsOpen: boolean;
-  onOpenStage: (stage: "writing" | "review" | "dispatch") => void;
   onOpenAnnotations: () => void;
   onToggleKara: () => void;
   onOpenConnections: () => void;
@@ -106,21 +104,17 @@ function RailFoot(props: {
 }): JSX.Element {
   return (
     <div class="rail-foot">
+      {/*
+        逐句裁决与托付台**不在这里**：它们只从信箱进入。
+
+        两个入口通向同一个 stage 时，作者要去的其实是「有三单未读」而不是
+        一个空的裁决台，而信箱本来就带着计数——底部这一排给不出它。实测
+        这两个按钮打开的 stage 与信箱三格完全相同（待托付→dispatch，
+        其余→review），且没有任何一个能告诉作者另一个也到这里。
+
+        批注留下：它开的是 annotations 面板，与信箱三格不重合。
+      */}
       <Show when={props.hasDocument}>
-        <button
-          type="button"
-          classList={{ current: props.stage === "review" }}
-          onClick={() => props.onOpenStage("review")}
-        >
-          逐句裁决
-        </button>
-        <button
-          type="button"
-          classList={{ current: props.stage === "dispatch" }}
-          onClick={() => props.onOpenStage("dispatch")}
-        >
-          工单
-        </button>
         <button
           type="button"
           classList={{ current: props.annotationsOpen }}
@@ -295,7 +289,7 @@ function CloseConfirmBar(props: { onSaveAndClose: () => void; onCancel: () => vo
   );
 }
 
-/** 工单台在舞台行里的那一格。接线只有一处，散到调用点就会漂开。 */
+/** 托付台在舞台行里的那一格。接线只有一处，散到调用点就会漂开。 */
 function DispatchStage(props: {
   rootId: string;
   path: string;
@@ -946,10 +940,10 @@ export function Workbench(props: WorkbenchProps) {
     openStage("dispatch");
   };
 
-  // 右键「攒进工单」只记录：送出集中在工单台，不打断手上的句子。
+  // 右键「攒进托付」只记录：送出集中在托付台，不打断手上的句子。
   const dispatchBlock = (accumulate: boolean): void => {
     if (!intents.dispatchAimedBlock(accumulate)) return;
-    setNotice(`已攒进工单（${dispatchSeed().blockIds.length} 段）。去「工单」一次送出。`);
+    setNotice(`已攒进托付（${dispatchSeed().blockIds.length} 段）。去「托付」一次送出。`);
   };
 
   const executeCommand = (id: WorkbenchCommandId): void => {
@@ -1110,12 +1104,10 @@ export function Workbench(props: WorkbenchProps) {
               catalog={projectSession}
               foot={{
                 hasDocument: active() !== null,
-                stage: state().stage,
                 annotationsOpen: annotationsOpen(),
                 karaEngaged: karaEngaged(),
                 connectionsOpen: reference()?.kind === "connections",
                 settingsOpen: reference()?.kind === "settings",
-                onOpenStage: openStage,
                 onOpenAnnotations: () => openReference({ kind: "annotations" }),
                 onToggleKara: () => void kara.toggle(),
                 onOpenConnections: () => openReference({ kind: "connections" }),

@@ -20,7 +20,7 @@ export function takesWholeStage(scene: { reference: string | null; stage: string
 }
 
 /**
- * 工单台此刻是否立在正文旁边。
+ * 托付台此刻是否立在正文旁边。
  *
  * 它不在面板栈里（是舞台的一个 stage，不是 `panels.open` 推进来的一层），但它占的
  * 正是同一条竖带，所以「正文让开多宽」必须把它算进来——少算这一层，正文就不让位，

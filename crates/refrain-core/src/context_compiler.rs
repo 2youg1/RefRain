@@ -708,7 +708,7 @@ mod tests {
     /// 没有边的一轮，请求里不该多出任何一节。
     ///
     /// 与上面两条配对：只测「有上游时它在」的话，一个无条件插入空节的实现也会
-    /// 全绿，而那会让每个普通工单都多付几十字节并多一段读不懂的话。
+    /// 全绿，而那会让每个普通托付都多付几十字节并多一段读不懂的话。
     #[test]
     fn a_round_without_an_edge_carries_no_upstream_section() {
         let package = compile(&input());

@@ -13,6 +13,7 @@ pub(crate) mod files;
 pub mod icons;
 pub mod ingest;
 pub mod ledger;
+pub mod mailbox;
 pub mod materials;
 pub mod orchestration;
 pub mod project;

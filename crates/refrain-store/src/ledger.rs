@@ -147,7 +147,7 @@ impl<'a> VerdictLedger<'a> {
             .collect()
     }
 
-    /// Forget judgments by id: the recall path （已处理 → 未读）. Only rows
+    /// Forget judgments by id: the recall path （已裁决 → 已回复）. Only rows
     /// that never reached a commit should pass through here — the caller owns
     /// that check, because the ledger cannot see batches.
     pub fn forget(&self, ids: &[String]) -> Result<usize, StoreError> {

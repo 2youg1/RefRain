@@ -1,17 +1,27 @@
 /**
- * 工单信箱（SPEC 9.6 的收件面）：三格状态机的唯一权威。
+ * 托付信箱（SPEC 9.6 的收件面）：三格状态机的唯一权威。
  *
- * - 待发送：起了草还没交出去的单（Task 停在 draft）。
- * - 未读：提案到了、还没有一句裁决的单。徽标计数就是它。
- * - 已处理：判过的单。还在批次里的可以回溯——退回未读，批次与账本同时放手。
+ * - 待托付：起了草还没交出去的单（Task 停在 draft）。
+ * - 已回复：提案到了、还没有一句裁决的单。徽标计数就是它。
+ * - 已裁决：判过的单。还在批次里的可以回溯——退回已回复，批次与账本同时放手。
  *
  * 数据来自 host_state（tasks）与 review_state（proposals/verdicts/batch），
- * 信箱只做投影与次序，不另存一份事实。置顶置底是作者的次序，信箱替他记住。
+ * 信箱只做投影，不另存一份事实。
+ *
+ * **次序、Pin、弃置的权威在 Rust**（`mailbox_standing`）。它们此前只活在这里
+ * 的一个 `#order` 数组里，关窗即失：次序丢了是麻烦，而 Pin 与弃置是作者的
+ * 显式判断——「这一单必须留在眼前」「我放弃这批提案」与裁决同属一类事实，
+ * 不能由一个面板的内存来记。弃置只做软删除：提案与账本一行不动（INV-4）。
+ *
+ * 侧栏那一格是**缩略**：只显示前 `MAILBOX_PEEK` 条，其余折进管理页。上界在
+ * 这里而不在面板里，因为「一格显示多少」决定了侧栏有没有上界，而底部导航
+ * 能不能留在屏内取决于它。
  */
 
 import { unwrap } from "../bridge";
 import type {
   HostStateDto,
+  MailboxStanding_Serialize,
   ProposalDto,
   ReviewStateDto_Serialize,
 } from "../generated/bindings.gen";
@@ -23,6 +33,17 @@ import { Broadcast } from "./session";
 export const browserMailboxGateway: TicketMailboxGateway = {
   hostState: (rootId) => unwrap(commands.hostState(rootId)),
   reviewState: (rootId, path) => unwrap(commands.reviewState(rootId, path)),
+  standings: (rootId) => unwrap(commands.mailboxStandings(rootId)),
+  setOrder: async (rootId, box, entryIds) => {
+    await unwrap(commands.setMailboxOrder(rootId, box, entryIds));
+  },
+  setPinned: async (rootId, box, entryId, pinned) => {
+    await unwrap(commands.setMailboxPinned(rootId, box, entryId, pinned));
+  },
+  discard: async (rootId, box, entryIds) => {
+    await unwrap(commands.discardMailboxEntries(rootId, box, entryIds));
+  },
+  restore: (rootId, entryId) => unwrap(commands.restoreMailboxEntry(rootId, entryId)),
   revertVerdicts: (rootId, path, verdictIds) =>
     unwrap(commands.revertVerdicts(rootId, path, verdictIds)),
   recordVerdict: (rootId, proposalId, sliceId, kind, reason, finalText) =>
@@ -36,6 +57,11 @@ export const browserMailboxGateway: TicketMailboxGateway = {
 export interface TicketMailboxGateway {
   hostState(rootId: string): Promise<HostStateDto>;
   reviewState(rootId: string, path: string): Promise<ReviewStateDto_Serialize>;
+  standings(rootId: string): Promise<MailboxStanding_Serialize[]>;
+  setOrder(rootId: string, box: Box, entryIds: string[]): Promise<void>;
+  setPinned(rootId: string, box: Box, entryId: string, pinned: boolean): Promise<void>;
+  discard(rootId: string, box: Box, entryIds: string[]): Promise<void>;
+  restore(rootId: string, entryId: string): Promise<boolean>;
   revertVerdicts(rootId: string, path: string, verdictIds: string[]): Promise<number>;
   recordVerdict(
     rootId: string,
@@ -51,20 +77,40 @@ export interface TicketMailboxGateway {
 
 export type MailboxRow = {
   readonly id: string;
-  /** 一行读得完的称呼：提案的首句，或工单的要求。 */
+  /** 一行读得完的称呼：提案的首句，或托付的要求。 */
   readonly title: string;
   /** 补充事实：来自哪份文档、几个 slice。 */
   readonly detail: string;
+  /** 作者钉住的单：不参与后续排序，新单进来也压不下去。 */
+  readonly pinned: boolean;
+};
+
+/** 一格的样子：缩略给侧栏，全量给管理页，`hidden` 是「还有 N 封」那个数。 */
+export type MailboxGroup = {
+  readonly peek: readonly MailboxRow[];
+  readonly all: readonly MailboxRow[];
+  readonly hidden: number;
 };
 
 export type MailboxView = {
-  readonly draft: readonly MailboxRow[];
-  readonly unread: readonly MailboxRow[];
-  readonly done: readonly MailboxRow[];
+  readonly draft: MailboxGroup;
+  readonly unread: MailboxGroup;
+  readonly done: MailboxGroup;
   readonly unreadCount: number;
 };
 
-type Box = "draft" | "unread" | "done";
+export type Box = "draft" | "unread" | "done";
+
+export const BOXES: readonly Box[] = ["draft", "unread", "done"];
+
+/**
+ * 侧栏一格显示几条。一个数、一处定义。
+ *
+ * 三格 × 5 行给侧栏一个上界，底部导航因此永远在屏内——实测未加上界时
+ * 二十单就把整组全局导航挤出可视区（1440×900 下 scrollHeight 1320、
+ * 底部导航 top 1081），两百单则是两百个 DOM 节点。
+ */
+export const MAILBOX_PEEK = 5;
 
 const TITLE_CHARS = 18;
 
@@ -78,8 +124,11 @@ export class TicketMailbox extends Broadcast {
   #unjudged: ProposalDto[] = [];
   /** 仍在批次里的裁决：只有它们可以回溯。 */
   #staged = new Set<string>();
-  /** 作者的次序：每格一串 id，新到的排在末尾。 */
-  #order: Record<Box, string[]> = { draft: [], unread: [], done: [] };
+  /**
+   * 作者的安排，读自 Rust。位次缺席表示他没排过这一单——那一格的自然次序
+   * 说了算，所以未排过的跟在排过的后面。
+   */
+  #standing = new Map<string, { rank: number | null; pinned: boolean; discarded: boolean }>();
 
   constructor(private readonly gateway: TicketMailboxGateway) {
     super();
@@ -92,21 +141,37 @@ export class TicketMailbox extends Broadcast {
 
   view(): MailboxView {
     return {
-      draft: this.#boxes.draft,
-      unread: this.#boxes.unread,
-      done: this.#boxes.done,
+      draft: group(this.#boxes.draft),
+      unread: group(this.#boxes.unread),
+      done: group(this.#boxes.done),
       unreadCount: this.#boxes.unread.length,
     };
   }
 
-  /** 重读世界。次序不因刷新而丢：作者排过的单还在原来的位置。 */
+  /**
+   * 重读世界。次序不因刷新而丢，也不因关窗而丢：安排读自 Rust。
+   *
+   * 弃置过的单在这一步就被滤掉——它们仍在库里、仍可取回，只是不再占着
+   * 作者的视线。
+   */
   async refresh(rootId: string, path: string): Promise<void> {
     this.#rootId = rootId;
     this.#path = path;
-    const [host, review] = await Promise.all([
+    const [host, review, standings] = await Promise.all([
       this.gateway.hostState(rootId),
       this.gateway.reviewState(rootId, path),
+      this.gateway.standings(rootId),
     ]);
+    this.#standing = new Map(
+      standings.map((row) => [
+        row.entryId,
+        {
+          rank: row.rank ?? null,
+          pinned: row.pinned,
+          discarded: row.discardedAt !== null,
+        },
+      ]),
+    );
 
     const judged = new Set<string>();
     this.#verdictsOf = new Map();
@@ -121,36 +186,128 @@ export class TicketMailbox extends Broadcast {
     this.#boxes = {
       draft: host.tasks
         .filter((task) => task.progress === "draft")
-        .map((task) => ({ id: task.id, title: task.prompt, detail: task.document })),
+        .map((task) => ({
+          id: task.id,
+          title: task.prompt,
+          detail: task.document,
+          pinned: this.#standing.get(task.id)?.pinned ?? false,
+        })),
       unread: review.proposals
         .filter((proposal) => !judged.has(proposal.id))
-        .map((row) => proposalRow(row)),
+        .map((row) => this.#proposalRow(row)),
       done: review.proposals
         .filter((proposal) => judged.has(proposal.id))
-        .map((row) => proposalRow(row)),
+        .map((row) => this.#proposalRow(row)),
     };
-    for (const box of ["draft", "unread", "done"] as const) {
-      this.#boxes[box] = this.#ordered(box, this.#boxes[box]);
+    for (const box of BOXES) {
+      this.#boxes[box] = this.#arranged(this.#boxes[box]);
     }
     this.emit();
   }
 
-  /** 置顶或置底：只动一格之内的次序。 */
-  moveWithinBox(id: string, edge: "top" | "bottom"): void {
-    for (const box of ["draft", "unread", "done"] as const) {
-      const rows = this.#boxes[box];
-      const index = rows.findIndex((row) => row.id === id);
-      if (index < 0) continue;
-      const next = [...rows];
-      const [row] = next.splice(index, 1);
-      if (row === undefined) return;
-      if (edge === "top") next.unshift(row);
-      else next.push(row);
-      this.#boxes = { ...this.#boxes, [box]: next };
-      this.#order[box] = next.map((entry) => entry.id);
-      this.emit();
-      return;
+  /**
+   * 置顶或置底：只动一格之内的次序，并把整格的新次序写穿到 Rust。
+   *
+   * 整格一起写，而不是只写被动的那一行：位次是「在这一列里排第几」，
+   * 逐行写会让两次调用交错成谁也没要过的次序。
+   */
+  async moveWithinBox(id: string, edge: "top" | "bottom"): Promise<void> {
+    const box = this.#boxOf(id);
+    if (box === null) return;
+    const rows = this.#boxes[box];
+    const index = rows.findIndex((row) => row.id === id);
+    if (index < 0) return;
+    const next = [...rows];
+    const [row] = next.splice(index, 1);
+    if (row === undefined) return;
+    if (edge === "top") next.unshift(row);
+    else next.push(row);
+
+    // 「置顶」的意思是排在可排序的那些之前，不是排在钉住的单之前——
+    // 钉住的单不参与排序，这正是 Pin 与置顶的分别。所以写下的位次只覆盖
+    // 未钉住的行；把钉住的行一起编号，会让它此刻的显示位置变成它解 Pin
+    // 之后的位次，作者从未这样要求过。
+    const sortable = next.filter((entry) => !entry.pinned);
+    for (const [rank, entry] of sortable.entries()) {
+      const standing = this.#standing.get(entry.id);
+      this.#standing.set(entry.id, {
+        rank,
+        pinned: false,
+        discarded: standing?.discarded ?? false,
+      });
     }
+    // 本地这一步走与刷新同一条排序规则，否则屏幕上会出现一个下次刷新
+    // 就消失的次序。
+    this.#boxes = { ...this.#boxes, [box]: this.#arranged(next) };
+    this.emit();
+    await this.#persistOrder(box, sortable);
+  }
+
+  /**
+   * Pin 或解 Pin。与置顶不是同一件事：置顶是一次排序，新单进来照样压得下去；
+   * Pin 说的是这一单不参与后续排序。两个方向都写穿——钉住是作者的意图，
+   * 取消也是。
+   */
+  async setPinned(id: string, pinned: boolean): Promise<void> {
+    const box = this.#boxOf(id);
+    if (box === null || this.#rootId === null) return;
+    await this.gateway.setPinned(this.#rootId, box, id, pinned);
+    if (this.#path !== null) await this.refresh(this.#rootId, this.#path);
+  }
+
+  /**
+   * 弃置若干单：作者放弃这批提案。
+   *
+   * **只做软删除**——提案行、账本、磁盘上的字节全都不动（INV-4：任何一层
+   * 都没有永久删除）。它们从视线里退出，`restore` 把它们请回来。
+   */
+  async discard(ids: readonly string[]): Promise<void> {
+    if (this.#rootId === null || ids.length === 0) return;
+    const byBox = new Map<Box, string[]>();
+    for (const id of ids) {
+      const box = this.#boxOf(id);
+      if (box === null) continue;
+      byBox.set(box, [...(byBox.get(box) ?? []), id]);
+    }
+    for (const [box, entryIds] of byBox) {
+      await this.gateway.discard(this.#rootId, box, entryIds);
+    }
+    if (this.#path !== null) await this.refresh(this.#rootId, this.#path);
+  }
+
+  /** 取回一单：弃置的回头路。返回 false 表示它本来就没被弃置。 */
+  async restore(id: string): Promise<boolean> {
+    if (this.#rootId === null) return false;
+    const restored = await this.gateway.restore(this.#rootId, id);
+    if (restored && this.#path !== null) await this.refresh(this.#rootId, this.#path);
+    return restored;
+  }
+
+  /** 批量置顶：多选之后的一次动作，整格只写一遍。 */
+  async pinMany(ids: readonly string[], pinned: boolean): Promise<void> {
+    if (this.#rootId === null) return;
+    for (const id of ids) {
+      const box = this.#boxOf(id);
+      if (box === null) continue;
+      await this.gateway.setPinned(this.#rootId, box, id, pinned);
+    }
+    if (this.#path !== null) await this.refresh(this.#rootId, this.#path);
+  }
+
+  #boxOf(id: string): Box | null {
+    for (const box of BOXES) {
+      if (this.#boxes[box].some((row) => row.id === id)) return box;
+    }
+    return null;
+  }
+
+  async #persistOrder(box: Box, rows: readonly MailboxRow[]): Promise<void> {
+    if (this.#rootId === null) return;
+    await this.gateway.setOrder(
+      this.#rootId,
+      box,
+      rows.map((row) => row.id),
+    );
   }
 
   /**
@@ -205,7 +362,7 @@ export class TicketMailbox extends Broadcast {
   }
 
   /**
-   * 回溯一单：它的全部裁决退回未读。不在批次里的裁决不动——那可能已经是
+   * 回溯一单：它的全部裁决退回已回复。不在批次里的裁决不动——那可能已经是
    * 正文，而信箱不删历史。返回给作者读的一句话；null 表示静默完成。
    */
   async revert(id: string): Promise<string | null> {
@@ -220,22 +377,38 @@ export class TicketMailbox extends Broadcast {
     return null;
   }
 
-  /** 按作者排过的次序归位；没排过的跟在后面。 */
-  #ordered(box: Box, rows: MailboxRow[]): MailboxRow[] {
-    const rank = new Map(this.#order[box].map((id, index) => [id, index]));
-    return [...rows].sort((left, right) => {
-      const a = rank.get(left.id) ?? Number.MAX_SAFE_INTEGER;
-      const b = rank.get(right.id) ?? Number.MAX_SAFE_INTEGER;
-      return a - b;
+  /**
+   * 按作者的安排归位：弃置的移出视线，Pin 的在最前，其余按位次；
+   * 没排过的跟在后面。
+   *
+   * 「没排过的跟在后面」不是排序细节：位次缺席与位次为 0 在数值上相邻，
+   * 直接比较会把从未被碰过的单顶到作者亲手排在首位的单前面。
+   */
+  #arranged(rows: MailboxRow[]): MailboxRow[] {
+    const visible = rows.filter((row) => !(this.#standing.get(row.id)?.discarded ?? false));
+    const rankOf = (id: string): number => this.#standing.get(id)?.rank ?? Number.MAX_SAFE_INTEGER;
+    return visible.sort((left, right) => {
+      if (left.pinned !== right.pinned) return left.pinned ? -1 : 1;
+      return rankOf(left.id) - rankOf(right.id);
     });
+  }
+
+  #proposalRow(proposal: { id: string; before: string; baseline: string }): MailboxRow {
+    const firstLine = proposal.before.split("\n").find((line) => line.trim() !== "") ?? "";
+    return {
+      id: proposal.id,
+      title: firstLine.slice(0, TITLE_CHARS) || "（空白段）",
+      detail: proposal.baseline,
+      pinned: this.#standing.get(proposal.id)?.pinned ?? false,
+    };
   }
 }
 
-function proposalRow(proposal: { id: string; before: string; baseline: string }): MailboxRow {
-  const firstLine = proposal.before.split("\n").find((line) => line.trim() !== "") ?? "";
+/** 一格的三种读法：侧栏读缩略，管理页读全量，格尾读被折起的条数。 */
+function group(rows: readonly MailboxRow[]): MailboxGroup {
   return {
-    id: proposal.id,
-    title: firstLine.slice(0, TITLE_CHARS) || "（空白段）",
-    detail: proposal.baseline,
+    peek: rows.slice(0, MAILBOX_PEEK),
+    all: rows,
+    hidden: Math.max(0, rows.length - MAILBOX_PEEK),
   };
 }

@@ -94,7 +94,7 @@ export const commands = {
 	 */
 	setReviewBatch: (rootId: string, path: string, cursor: number, batch: string[]) => typedError<null, RefrainError>(__TAURI_INVOKE("set_review_batch", { rootId, path, cursor, batch })),
 	/**
-	 *  Recall staged verdicts to unread （工单信箱的回溯）. Only verdicts still in
+	 *  Recall staged verdicts to unread （托付信箱的回溯）. Only verdicts still in
 	 *  the batch pass — anything already merged into the text stays history.
 	 */
 	revertVerdicts: (rootId: string, path: string, verdictIds: string[]) => typedError<number, RefrainError>(__TAURI_INVOKE("revert_verdicts", { rootId, path, verdictIds })),
@@ -105,6 +105,24 @@ export const commands = {
 	 *  The batch and cursor clear; candidates stay for the audit.
 	 */
 	commitDecisionBatch: (rootId: string, path: string) => typedError<TextTransitionDto, RefrainError>(__TAURI_INVOKE("commit_decision_batch", { rootId, path })),
+	/**  The author's standing arrangement: order, pins, and what was discarded. */
+	mailboxStandings: (rootId: string) => typedError<MailboxStanding_Serialize[], RefrainError>(__TAURI_INVOKE("mailbox_standings", { rootId })),
+	/**
+	 *  Write one box's order. The whole box arrives at once: rank is a position
+	 *  within a list, and writing them one at a time would let two callers
+	 *  interleave into an order neither asked for.
+	 */
+	setMailboxOrder: (rootId: string, boxName: string, entryIds: string[]) => typedError<null, RefrainError>(__TAURI_INVOKE("set_mailbox_order", { rootId, boxName, entryIds })),
+	/**  Pin or unpin. Both directions are the author speaking, so both persist. */
+	setMailboxPinned: (rootId: string, boxName: string, entryId: string, pinned: boolean) => typedError<null, RefrainError>(__TAURI_INVOKE("set_mailbox_pinned", { rootId, boxName, entryId, pinned })),
+	/**
+	 *  Discard tickets. This is a soft delete and the only delete there is: the
+	 *  proposals stay, the ledger stays, and `restore_mailbox_entry` brings the
+	 *  entry back. Nothing on disk is touched.
+	 */
+	discardMailboxEntries: (rootId: string, boxName: string, entryIds: string[]) => typedError<null, RefrainError>(__TAURI_INVOKE("discard_mailbox_entries", { rootId, boxName, entryIds })),
+	/**  Bring a discarded ticket back. Returns false when it was never discarded. */
+	restoreMailboxEntry: (rootId: string, entryId: string) => typedError<boolean, RefrainError>(__TAURI_INVOKE("restore_mailbox_entry", { rootId, entryId })),
 	/**  Draft the collaboration: prompt, document, and the head it pins (Q27). */
 	draftReviewTask: (rootId: string, path: string, prompt: string) => typedError<TaskDto, RefrainError>(__TAURI_INVOKE("draft_review_task", { rootId, path, prompt })),
 	/**  The manifest the author reads before the click (SPEC 9.6: 逐块字节清单). */
@@ -740,6 +758,40 @@ export type KaraState = { kind: "off" } | { kind: "entering"; value: {
 export type KaraTransition = {
 	machine: KaraMachine,
 	effects: KaraEffect[],
+};
+
+/**  信箱三格。格名进数据库，所以它在这里定形，不由调用方拼字符串。 */
+export type MailboxBoxName = "draft" | "unread" | "done";
+
+/**  一条安排。`rank` 缺席表示作者没排过它——那一格的自然次序说了算。 */
+export type MailboxStanding = MailboxStanding_Serialize | MailboxStanding_Deserialize;
+
+/**  一条安排。`rank` 缺席表示作者没排过它——那一格的自然次序说了算。 */
+export type MailboxStanding_Deserialize = {
+	entryId: string,
+	boxName: MailboxBoxName,
+	/**
+	 *  位次。`u32` 而非 `i64`：位次是列表里的下标，非负，而桥上不许
+	 *  BigInt 型（Specta 会拒绝导出）。
+	 */
+	rank: number | null,
+	pinned: boolean,
+	/**  弃置时刻（Unix 毫秒）。有值即已弃置，而行仍在。 */
+	discardedAt: string | null,
+};
+
+/**  一条安排。`rank` 缺席表示作者没排过它——那一格的自然次序说了算。 */
+export type MailboxStanding_Serialize = {
+	entryId: string,
+	boxName: MailboxBoxName,
+	/**
+	 *  位次。`u32` 而非 `i64`：位次是列表里的下标，非负，而桥上不许
+	 *  BigInt 型（Specta 会拒绝导出）。
+	 */
+	rank: number | null,
+	pinned: boolean,
+	/**  弃置时刻（Unix 毫秒）。有值即已弃置，而行仍在。 */
+	discardedAt: string | null,
 };
 
 /**  One manifest row: a section, its source, its digest, its size. */

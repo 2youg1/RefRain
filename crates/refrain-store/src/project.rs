@@ -99,6 +99,25 @@ pub mod u64_string {
     }
 }
 
+/// The same encoding for an optional instant. Absence stays absence: a
+/// discarded-at that never happened is `None`, not the string "0".
+pub mod u64_string_option {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(value: &Option<u64>, serializer: S) -> Result<S::Ok, S::Error> {
+        value.map(|inner| inner.to_string()).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<u64>, D::Error> {
+        let text = Option::<String>::deserialize(deserializer)?;
+        text.map(|inner| inner.parse::<u64>())
+            .transpose()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 /// What a file looked like when this application last agreed with it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -483,6 +502,12 @@ impl ProjectStore {
     #[must_use]
     pub fn ledger(&self) -> crate::ledger::VerdictLedger<'_> {
         crate::ledger::VerdictLedger::new(&self.db)
+    }
+
+    /// The author's standing arrangement of the mailbox (SPEC 9.6).
+    #[must_use]
+    pub fn mailbox(&self) -> crate::mailbox::MailboxStandings<'_> {
+        crate::mailbox::MailboxStandings::new(&self.db)
     }
 
     /// The absolute path of a document inside this Root, containment-checked.

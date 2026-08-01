@@ -37,7 +37,7 @@ requireFacts(writing, "Settings and installed-font E2E", [
 requireFacts(writing, "annotation and ticket E2E", [
   'clickButton("建立高亮")',
   'clickButton("添加批注")',
-  'clickButton("将所选批注转为派发工单")',
+  'clickButton("将所选批注转为派发托付")',
   "annotations to project after restart",
 ]);
 requireFacts(dispatch, "guided Harness E2E", [
