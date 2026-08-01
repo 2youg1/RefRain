@@ -123,7 +123,38 @@ try {
       selection.addRange(range);
     };
 
-    select(first.firstChild, 0, first.firstChild, 5);
+    /**
+     * 段落里第 `offset` 个字符落在哪个文本节点的第几位。
+     *
+     * 此前这个门禁直接用 `paragraph.firstChild` 加一个偏移，那假设「一个段落
+     * 就是一个文本节点」。行内标记渲染上线后段落被切成若干 span，`firstChild`
+     * 变成一个两字符的标记符元素，`setStart(node, 5)` 于是抛
+     * `IndexSizeError: There is no child at offset 2`。
+     *
+     * 产品自己走的就是这条路（`locateOffset` 用 TreeWalker 累加文本节点长度），
+     * 门禁跟着走才是在测同一个坐标系。
+     */
+    const at = (paragraph: HTMLElement, offset: number): { node: Node; offset: number } => {
+      const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT);
+      let remaining = offset;
+      let node = walker.nextNode();
+      while (node !== null) {
+        const length = node.textContent?.length ?? 0;
+        if (remaining <= length) return { node, offset: remaining };
+        remaining -= length;
+        node = walker.nextNode();
+      }
+      throw new Error(`offset ${offset} 超出段落文本长度`);
+    };
+
+    /** 按字符偏移选中一段，跨节点也成立。 */
+    const selectRange = (paragraph: HTMLElement, start: number, end: number): void => {
+      const from = at(paragraph, start);
+      const to = at(paragraph, end);
+      select(from.node, from.offset, to.node, to.offset);
+    };
+
+    selectRange(first, 0, 5);
     const context = handle.context(first);
     const formatted = handle.formatSelection("strong");
     const firstAction = actions[0] ?? null;
@@ -132,22 +163,23 @@ try {
     // Toggle, not wrap: press bold again over the same characters and the text
     // must return to what the author typed. The marker moved the selection, so
     // the second request re-reads the context from the marked range.
-    const boldedText = first.firstChild;
-    if (boldedText === null) throw new Error("bolded block text missing");
-    select(boldedText, 2, boldedText, 7);
+    // 加粗之后文本是 `**Alpha** beta`，「Alpha」落在 2..7。段落此时已被切成
+    // 多个节点，所以按偏移定位而不是拿 firstChild。
+    selectRange(first, 2, 7);
     handle.context(first);
     const unformatted = handle.formatSelection("strong");
     const unformattedText = first.textContent;
     const unformatAction = actions[1] ?? null;
 
-    const firstText = first.firstChild;
-    const secondText = second.firstChild;
-    if (firstText === null || secondText === null) throw new Error("block text missing");
-    select(firstText, 0, firstText, 0);
+    // 这里文本已经切回无标记的原文，`firstChild` 眼下仍然成立——但它是同一个
+    // 过时假设，留着就是等下一次语料带标记时再炸一遍。统一走偏移定位。
+    selectRange(first, 0, 0);
     const collapsed = handle.context(first);
     const collapsedFormatted = handle.formatSelection("emphasis");
 
-    select(firstText, 0, secondText, 5);
+    const crossStart = at(first, 0);
+    const crossEnd = at(second, 5);
+    select(crossStart.node, crossStart.offset, crossEnd.node, crossEnd.offset);
     const crossBlock = handle.context(first);
     const crossBlockFormatted = handle.formatSelection("emphasis");
 

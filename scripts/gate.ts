@@ -50,6 +50,7 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["verify:cross-block-selection", ["bun", "apps/desktop/e2e/cross-block-selection.ts"]],
   ["verify:change-highlight-render", ["bun", "apps/desktop/e2e/change-highlight-render.ts"]],
   ["verify:linebreak-takeover", ["bun", "apps/desktop/e2e/verify-linebreak-takeover.ts"]],
+  ["verify:inline-marks", ["bun", "apps/desktop/e2e/verify-inline-marks.ts"]],
   ["verify:hanging-render", ["bun", "apps/desktop/e2e/verify-hanging-render.ts"]],
   ["verify:font-licenses", ["bun", "scripts/verify-font-licenses.ts"]],
   ["verify:font-fallback", ["bun", "scripts/verify-font-fallback.ts"]],
@@ -104,6 +105,7 @@ const headlessEvidence = new Set([
   "verify:change-highlight-render",
   // 断行接管断的是屏幕上真实断在哪，切分层测不到它。
   "verify:linebreak-takeover",
+  "verify:inline-marks",
   "verify:hanging-render",
   "verify:font-fallback",
   // 侧栏缩进量的是渲染结果，所以它要一台浏览器和一个跑着的 dev server。

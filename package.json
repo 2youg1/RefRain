@@ -28,6 +28,7 @@
     "verify:no-network": "bun scripts/verify-no-network.ts",
     "verify:change-highlight-render": "bun apps/desktop/e2e/change-highlight-render.ts",
     "verify:linebreak-takeover": "bun apps/desktop/e2e/verify-linebreak-takeover.ts",
+    "verify:inline-marks": "bun apps/desktop/e2e/verify-inline-marks.ts",
     "verify:hanging-render": "bun apps/desktop/e2e/verify-hanging-render.ts",
     "verify:bridge": "bun scripts/verify-bridge.ts",
     "verify:logo": "bun scripts/verify-logo.ts",

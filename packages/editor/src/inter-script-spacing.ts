@@ -62,6 +62,8 @@ import {
   type TypesetPreset,
 } from "@refrain/typeset";
 
+import type { InlineSpan, InlineStyle } from "./inline-render.ts";
+
 /** 间距元素带的类名。渲染与门禁都引用这一个常量。 */
 export const GAP_CLASS = "cjk-gap";
 
@@ -78,6 +80,17 @@ export const GAP_CLASS = "cjk-gap";
  * 的表现是段落里多一个看不见的换行。一个我们独有的类名没有这个问题。
  */
 export const BREAK_CLASS = "cjk-break";
+
+/** 标记符本身的类名。视图层把它画淡（`--ink-faint`），内容不受影响。 */
+export const MARKER_CLASS = "md-marker";
+
+/** 每种行内样式对应的类名。样式由 CSS 给，这里只负责贴对标签。 */
+const STYLE_CLASS: Readonly<Record<InlineStyle, string>> = {
+  strong: "md-strong",
+  emphasis: "md-emphasis",
+  code: "md-code",
+  strikethrough: "md-strikethrough",
+};
 
 /**
  * 悬挂元素带的类名。
@@ -219,23 +232,34 @@ export function paintSpacedText(
   text: string,
   language: string,
   measureEm = 0,
+  marks: readonly InlineSpan[] = [],
 ): void {
   const preset = presetOf(language);
   const runs = spacedRuns(text, preset, measureEm);
 
-  // 快路径：没有混排边界也不需要换行，就是一个文本节点，与不开这个功能时
-  // 完全一样。
-  if (runs.length === 1) {
+  // 快路径：没有混排边界、不需要换行、也没有行内标记，就是一个文本节点，
+  // 与不开这些功能时完全一样。
+  //
+  // `marks.length === 0` 这个条件是后加的，而它一度缺失：接线之后 536 个单测
+  // 全绿而屏幕上一个粗体都没有——纯中文段落走快路径直接写 `textContent`，
+  // 标记根本没机会画。`verify:inline-marks` 当场抓到，这正是渲染门禁存在的
+  // 理由：解析对不对与画没画出来是两个命题。
+  if (runs.length === 1 && marks.length === 0) {
     element.textContent = text;
     return;
   }
 
   const document_ = element.ownerDocument;
   const fragment = document_.createDocumentFragment();
+  // 行内标记与 run 切分是两套独立的切点，标记区间会横跨 run 边界（一段跨行的
+  // 加粗必须在换行处断开，否则加粗元素会包住断行元素）。这里逐 run 地把落在
+  // 该 run 内的标记片段取出来——合成仍是扁平的，没有任何嵌套。
+  const spans = marks.length === 0 ? [] : marks;
+  let consumed = 0;
   for (const run of runs) {
     if (run.text !== "") {
       if (run.hangEm === 0) {
-        fragment.appendChild(document_.createTextNode(run.text));
+        appendMarked(fragment, run.text, consumed, spans, document_);
       } else {
         // 悬挂：把行尾那一个字符单独包进一个 span，用负 margin 把它推出版心。
         //
@@ -303,7 +327,56 @@ export function paintSpacedText(
       lineBreak.contentEditable = "false";
       fragment.appendChild(lineBreak);
     }
+    consumed += run.text.length;
   }
   element.textContent = "";
   element.appendChild(fragment);
+}
+
+/**
+ * 把一个 run 的文本按行内标记切开后追加进 `fragment`。
+ *
+ * `offset` 是这个 run 在整块文本里的起始下标——标记区间是按全块算的，而 run
+ * 只是其中一截，两者必须换算到同一坐标系才对得上。
+ *
+ * 标记符本身也进 DOM，只是套上 `MARKER_CLASS` 画淡。它们是作者写下的字节，
+ * 摘掉就会让屏幕字符序与源码字节序错开，光标定位随之失准。
+ */
+function appendMarked(
+  fragment: DocumentFragment,
+  text: string,
+  offset: number,
+  spans: readonly InlineSpan[],
+  document_: Document,
+): void {
+  if (spans.length === 0) {
+    fragment.appendChild(document_.createTextNode(text));
+    return;
+  }
+  // 切点：标记区间的四个端点落在这个 run 内的部分。
+  const cuts = new Set<number>([0, text.length]);
+  for (const span of spans) {
+    for (const point of [span.start, span.contentStart, span.contentEnd, span.end]) {
+      const local = point - offset;
+      if (local > 0 && local < text.length) cuts.add(local);
+    }
+  }
+  const ordered = [...cuts].sort((left, right) => left - right);
+  for (let index = 0; index < ordered.length - 1; index += 1) {
+    const from = ordered[index] as number;
+    const to = ordered[index + 1] as number;
+    const piece = text.slice(from, to);
+    if (piece === "") continue;
+    const absolute = offset + from;
+    const owner = spans.find((span) => span.start <= absolute && absolute < span.end);
+    if (owner === undefined) {
+      fragment.appendChild(document_.createTextNode(piece));
+      continue;
+    }
+    const marker = absolute < owner.contentStart || absolute >= owner.contentEnd;
+    const element = document_.createElement("span");
+    element.className = marker ? MARKER_CLASS : STYLE_CLASS[owner.style];
+    element.textContent = piece;
+    fragment.appendChild(element);
+  }
 }

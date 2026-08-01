@@ -3449,3 +3449,39 @@ kbd {
   font-size: 10px;
   letter-spacing: 0.18em;
 }
+
+/* ── 行内 Markdown 标记 ────────────────────────────────────────────────
+   标记符（`**`、`` ` ``、`~~`）不隐藏，只画淡。字节即正本：它们是作者写下的
+   字符，摘掉会让屏幕字符序与源码字节序错开，光标定位随之失准。留着画淡则
+   两个序列始终一一对应，`locateOffset` 数 `textContent` 长度即可。
+
+   颜色取 `--ink-faint`——七套主题各自的四锚点推导已经给出这一级，不必为
+   Markdown 另配一套色。用户可调的是不透明度而非颜色，见 `--marker-opacity`。 */
+
+.editor-host .md-marker {
+  color: var(--ink-faint);
+  /* 作者可在排版设置里调 0–100%。默认 0.55：够淡到不与正文抢注意力，
+     又够清楚到能一眼看出这里有一个标记。 */
+  opacity: var(--marker-opacity, 0.55);
+}
+
+.editor-host .md-strong {
+  font-weight: 700;
+}
+
+.editor-host .md-emphasis {
+  font-style: italic;
+}
+
+.editor-host .md-strikethrough {
+  text-decoration: line-through;
+}
+
+/* 行内代码不换字体族大小，只加一层极淡的底与等宽字。换字号会改变行高，
+   而行高一变整段的断行就要重算——那是排版层的事，不该由一个行内标记触发。 */
+.editor-host .md-code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  background: var(--paper-sunk);
+  border-radius: 2px;
+  padding: 0 0.15em;
+}

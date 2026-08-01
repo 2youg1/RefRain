@@ -4,6 +4,7 @@ import { applyBlockPrefix, type BlockPrefix } from "./block-prefix";
 import { ADDED_HIGHLIGHT, ChangeHighlights } from "./change-highlights";
 import { type CodeTheme, fenceLanguage, forgetHighlights, tokenizeCode } from "./code-highlight";
 import { applyInlineMark } from "./inline-mark";
+import { inlineSpans } from "./inline-render.ts";
 import { paintSpacedText } from "./inter-script-spacing";
 import type {
   Block,
@@ -461,7 +462,7 @@ export class VirtualManuscriptView {
     this.#submit([{ kind: "replace", blocks: [block.id], text: next }]);
     const mounted = this.#byId.get(block.id);
     if (mounted !== undefined) {
-      this.#paintText(mounted, next);
+      this.#paintText(mounted, next, block.isFence === true);
       this.#element.focus({ preventScroll: true });
       placeCaret(mounted, next.length);
     }
@@ -488,9 +489,17 @@ export class VirtualManuscriptView {
    * 自己是日文，而两种语言的间距值确实不同：CSS Text 4 §8.4.1 的 1/8 ic
    * 对 JIS 的 1/4 em。没有任何 `lang` 时 `presetOf` 落到简中。
    */
-  #paintText(paragraph: HTMLElement, text: string): void {
+  #paintText(paragraph: HTMLElement, text: string, fence = false): void {
     const measureEm = this.#measureEm();
-    paintSpacedText(paragraph, text, this.#declaredLanguage(paragraph), measureEm);
+    // 围栏代码块不做行内解析：整块交给 `#highlightFence`，而在代码里 `*` 就是
+    // 乘号，把它当强调会让一段 C 指针声明半截变粗。围栏最终会被高亮覆盖，但
+    // 在那之前 `#paintText` 已经画过一遍——不挡住这里，作者会看到代码先变粗
+    // 再被改回来。
+    //
+    // 判据取自块自己的 `isFence`（`BlockShape` 在 Rust 侧判的），不是从 DOM
+    // 读的属性：段落在 `#paragraphFor` 里造出来时还没有任何 dataset。
+    const marks = fence ? [] : inlineSpans(text);
+    paintSpacedText(paragraph, text, this.#declaredLanguage(paragraph), measureEm, marks);
     // 记下这一段是按哪个版心断的行。文本没变但版心变了（窗口缩放、字号、
     // 版心设置）时，行必须重断——而只比对文本的重画条件看不见这件事，
     // 表现是换完窗口大小之后行还留在旧断点上，直到作者碰了那一段才更新。
@@ -597,7 +606,7 @@ export class VirtualManuscriptView {
     this.#submit([{ kind: "replace", blocks: [block.id], text: edit.text }]);
     const paragraph = this.#byId.get(block.id);
     if (paragraph !== undefined) {
-      this.#paintText(paragraph, edit.text);
+      this.#paintText(paragraph, edit.text, block.isFence === true);
       paragraph.focus({ preventScroll: true });
       placeCaret(paragraph, edit.end);
     }
@@ -640,7 +649,7 @@ export class VirtualManuscriptView {
     this.#contextSelection = null;
     this.#submit([{ kind: "replace", blocks: [block.id], text }]);
     const paragraph = this.#byId.get(block.id);
-    if (paragraph !== undefined) this.#paintText(paragraph, text);
+    if (paragraph !== undefined) this.#paintText(paragraph, text, block.isFence === true);
     return true;
   }
 
@@ -673,7 +682,10 @@ export class VirtualManuscriptView {
       const id = change.blocks[0];
       if (id === undefined) continue;
       const paragraph = this.#byId.get(id);
-      if (paragraph !== undefined) this.#paintText(paragraph, change.text);
+      const converted = this.#known(id);
+      if (paragraph !== undefined) {
+        this.#paintText(paragraph, change.text, converted?.isFence === true);
+      }
     }
     return changes.length;
   }
@@ -818,7 +830,7 @@ export class VirtualManuscriptView {
     // selection can cross paragraph boundaries. Per-paragraph contentEditable
     // makes each one its own host and the browser collapses any drag that
     // leaves it — the author watches the selection stop at the block edge.
-    this.#paintText(paragraph, block.text);
+    this.#paintText(paragraph, block.text, block.isFence === true);
     paragraph.style.minHeight = "1em";
     // `pre` 而不是 `pre-wrap`：折行由 `optimizedLineStarts` 决定，画成断行
     // 元素（见 inter-script-spacing.ts）。留着 `pre-wrap` 浏览器会在我们的
@@ -1321,7 +1333,7 @@ export class VirtualManuscriptView {
           (paragraph.textContent !== block.text ||
             paragraph.dataset.measureEm !== String(this.#measureEm()))
         ) {
-          this.#paintText(paragraph, block.text);
+          this.#paintText(paragraph, block.text, block.isFence === true);
           delete paragraph.dataset.highlighted;
         }
         // A fence the author is not inside gets coloured. The caret's own
