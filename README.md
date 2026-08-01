@@ -79,6 +79,14 @@ presets for Chinese, Japanese and English, and room for your own. Fenced code is
 syntax-highlighted across eight languages and six palettes, all embedded at
 build time so that highlighting never reaches the network.
 
+Markdown renders in place rather than in a preview pane beside your text.
+Emphasis, strong, code and strikethrough are drawn while their markers stay
+visible and dimmed, so what you see is still what is in the file. A GFM table
+aligns its columns without a single space being added to the source. A
+`mermaid` or `nomnoml` fence is drawn as a diagram next to its own source — and
+a diagram type the renderer does not know keeps its fence and shows as text,
+because a diagram that cannot be drawn must not make your words disappear.
+
 Smaller things that matter daily: punctuation width suggestions, empty-paragraph
 cleanup, three-state inline formatting that never leaves `****` behind, headings
 and quotes and lists as three-state commands, annotations that ask to be
@@ -161,6 +169,7 @@ bun run gate
 | **Identity** | [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) digests, [UUID](https://github.com/uuid-rs/uuid) v7 |
 | **Bindings** | [Serde](https://serde.rs) and [Specta](https://github.com/specta-rs/specta), which generates the TypeScript types |
 | **Highlighting** | [Shiki](https://shiki.style), entry points registered precisely so nothing reaches the network |
+| **Diagrams** | [nomnoml](https://github.com/skanaar/nomnoml) at 26 KB gzipped, with a translator that accepts Mermaid flowchart syntax |
 | **Build and release** | [Bun](https://bun.sh) and [Node.js](https://nodejs.org), build-time only; [ScriptC](https://github.com/vercel-labs/scriptc) compiles the release policy into a native executable |
 
 Why the search index uses bigrams rather than trigrams or a tokeniser — with the
@@ -176,6 +185,11 @@ measurements that decided it — is in
 **[Shiki](https://shiki.style)** (MIT) for syntax highlighting. RefRain
 registers its entry points precisely so that highlighting never reaches the
 network — the library made that possible rather than fighting it.
+
+**[nomnoml](https://github.com/skanaar/nomnoml)** (MIT, Daniel Kallin) for
+diagrams. It draws a flowchart in 26 KB of pure JavaScript, with no WASM and no
+request — a diagram library that could be bundled whole into an application
+that never reaches the network. The nearest alternative was 36× larger.
 
 The bundled typefaces, all under the
 [SIL Open Font License 1.1](https://openfontlicense.org):

@@ -68,6 +68,11 @@ RefRain 取第三种立场：**智能体提议，你裁决，而谁裁决了什�
 日、英各有预设，也留了你自己的位置。围栏代码块支持八种语言六套配色，全部在构建期
 内嵌，所以高亮永远不会去联网取任何东西。
 
+Markdown 就地渲染，不在旁边另开一块预览。强调、加粗、行内代码、删除线都画出来，
+而标记符仍然留在原处、画淡——你看到的仍然是文件里的东西。GFM 表格的列会对齐，
+而源文本一个空格都没有多。`mermaid` 或 `nomnoml` 围栏会在它自己的源码旁画成一张
+图；渲染器不认识的图种保留围栏、按文本显示——画不出的图不该让你的文字消失。
+
 还有些每天都会碰到的小事：标点宽度建议、空段清理、不会留下 `****` 残渣的三态行内
 格式、标题引用列表的三态命令、宁可请你重新锚定也不乱猜的批注，以及保存失败时告诉
 你下一步该做什么。
@@ -142,6 +147,7 @@ bun run gate
 | **标识** | [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) 摘要、[UUID](https://github.com/uuid-rs/uuid) v7 |
 | **类型桥** | [Serde](https://serde.rs) 与 [Specta](https://github.com/specta-rs/specta)，TypeScript 类型由后者生成 |
 | **高亮** | [Shiki](https://shiki.style)，入口精确注册，运行期不触网 |
+| **图表** | [nomnoml](https://github.com/skanaar/nomnoml)，gzip 后 26 KB，另有一层转换接受 Mermaid 流程图语法 |
 | **构建与发布** | [Bun](https://bun.sh) 与 [Node.js](https://nodejs.org)，仅构建期使用；[ScriptC](https://github.com/vercel-labs/scriptc) 把发布策略编译成原生可执行文件 |
 
 搜索索引为什么用 bigram 而不是 trigram 或分词器——连同定下这件事的实测数据——写在
@@ -155,6 +161,10 @@ bun run gate
 
 **[Shiki](https://shiki.style)**（MIT）提供语法高亮。RefRain 精确注册它的入口，使
 高亮永不触网——这一点是这个库让我们做到的，而不是我们跟它较劲得来的。
+
+**[nomnoml](https://github.com/skanaar/nomnoml)**（MIT，Daniel Kallin）提供图表
+渲染。它用 26 KB 纯 JavaScript 画出一张流程图，不带 WASM，不发一个请求——一个
+可以整个打进「永不触网」的应用里的图表库。次近的备选比它大 36 倍。
 
 内嵌的字体，均遵循
 [SIL 开放字体许可 1.1](https://openfontlicense.org)：

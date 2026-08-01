@@ -224,6 +224,72 @@ only ever receive `Short`.
 | **Scanning** | [memchr](https://github.com/BurntSushi/memchr) |
 | **Errors** | [thiserror](https://github.com/dtolnay/thiserror) |
 | **Highlighting** | [Shiki](https://shiki.style), with an explicit offline language and theme set |
+| **Diagrams** | [nomnoml](https://github.com/skanaar/nomnoml), with a thin translator that accepts the Mermaid flowchart subset |
+
+### Why the editor renders tables as aligned text, not as a table
+
+A GFM table could become a real `<table>`. It would look better: cells wrap
+inside their own column, so a wide table never overflows the measure. RefRain
+does not do this, and the reason is a second coordinate system.
+
+The editor holds one invariant above the others: **a caret offset is a byte
+offset**. Everything downstream depends on it — the change ledger stores byte
+ranges, the line breaker walks a character array, `locateOffset` counts text
+node lengths. A real table replaces that single axis with "row 2, cell 3":
+
+- A caret would need translation between table coordinates and byte offsets.
+- A selection across two cells is **discontinuous** in the source, because it
+  steps over a `|`.
+- The change ledger and the line breaker would both need new range types.
+
+Instead each cell gets an inline-block shell, and cells in one column share a
+`min-width`. **No byte is added.** The source text enters the DOM unchanged and
+the columns still line up. The cost is that a table wider than the measure
+scrolls horizontally, and that columns shift while the author types and settle
+when they stop.
+
+Two measurements shaped the implementation, and neither was visible to unit
+tests:
+
+- The delimiter row does not **contribute** a column width — the length of
+  `|---|` is whatever the author happened to type — but it must **receive** one.
+  Treating those as one fact left the delimiter row's four segments bunched at
+  24px each while the rows above and below were correct.
+- Column width is measured on the **untrimmed** cell. The spaces in `| 概念 |`
+  really do occupy the DOM. Trimming first produced identical `min-width` values
+  on every row and columns that were still 80px against 96px apart on screen.
+
+### Why nomnoml, not Mermaid
+
+Measured as bundled output, minified and gzipped — not as the size of the entry
+file:
+
+| Library | gzip | Note |
+|---|---|---|
+| `mermaid` | 952 KB | `mermaid.core.mjs` bundles to the same 3.49MB raw; core does not split by diagram type |
+| `@viz-js/viz` | 534 KB | Carries WASM |
+| `flowchart.js` | 42 KB | Flowcharts only |
+| **`nomnoml`** | **26 KB** | Pure JS, no WASM |
+
+A 36× difference. Because RefRain never reaches the network, a rendering
+library is bundled whole: those 952 KB are a resident cost for every user, not
+a cost paid by authors who draw diagrams.
+
+Mermaid syntax is still accepted. A translator maps the flowchart subset —
+nodes, directed edges, dashed edges, edge labels — onto nomnoml. **The dash
+notation is inverted between the two**: Mermaid writes a dashed edge `-.->`
+while nomnoml writes it `-->`. Copying the arrow through would silently invert
+what the diagram means.
+
+Anything the translator does not recognise — `sequenceDiagram`, `gantt`,
+`classDiagram` — keeps its fence and renders as source. A diagram that cannot
+be drawn must not make the author's text disappear.
+
+The SVG hangs **beside** the paragraph rather than replacing its content,
+because a dozen call sites read `paragraph.textContent` as the block text. It
+also passes through `DOMParser` and `importNode` rather than `innerHTML`: the
+author's words are inside those node labels, and `verify:no-html-sink` treats
+the manuscript as user input.
 
 ### Why bigram, not trigram or a tokeniser
 
@@ -248,8 +314,14 @@ Measured on 22,410 real files (252MB), not chosen from documentation:
 
 ## Gates
 
-`bun run gate` runs 48 stages over the 42 gate scripts on disk. The Rust checks
-are **not** among them and must be run separately:
+`bun run gate` runs every gate script on disk; `verify:gates-run` compares the
+two lists and fails when a script exists that nothing invokes. The count is
+deliberately not written here — a number in prose has no gate behind it and
+drifts. Run the command to see it.
+
+Gates that need a browser are held back into `bun run evidence:headless`, so a
+green `gate` run is not the whole story. The Rust checks are **not** among
+either and must be run separately:
 
 ```sh
 cargo fmt --all --check
