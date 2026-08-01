@@ -10,7 +10,7 @@
 
 import type { CharClass } from "./char-class.ts";
 import type { BreakStrictness, TypesetPreset } from "./preset.ts";
-import { type AdjustedChar, lineEndAdjustment } from "./spacing.ts";
+import { type AdjustedChar, advanceOf, lineEndAdjustment } from "./spacing.ts";
 
 /** 一个候选断点：在第 `index` 个字符**之前**可以换行。 */
 export type BreakCandidate = {
@@ -187,11 +187,7 @@ export function lineStarts(
     // 从「万不得已」变成「乐意」。
     if (penalty !== undefined && penalty <= ACCEPTABLE_PENALTY) lastCandidate = index;
 
-    const advance =
-      character.spaceBefore +
-      (character.kind === "latin" || character.kind === "digit" || character.kind === "space"
-        ? 0.5
-        : 1);
+    const advance = advanceOf(character);
 
     // 行尾调整必须参与「放不放得下」这个判断。
     //

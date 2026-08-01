@@ -59,6 +59,7 @@ export {
 } from "./preset.ts";
 export {
   type AdjustedChar,
+  advanceOf,
   lineEndAdjustment,
   measure,
   widthEm,

@@ -71,7 +71,7 @@
 import { candidates, lineStarts } from "./line-break.ts";
 import type { BreakStrictness, TypesetPreset } from "./preset.ts";
 import type { AdjustedChar } from "./spacing.ts";
-import { lineEndAdjustment } from "./spacing.ts";
+import { advanceOf, lineEndAdjustment } from "./spacing.ts";
 
 /**
  * 触发局部最优的最小不可断跨度（字）。
@@ -100,16 +100,6 @@ const UNIFORMITY_WEIGHT = 2;
  * 一个字符的宽度差。
  */
 const SLACK_QUANTUM = 0.25;
-
-/** 一个字符占多宽。与 `line-break.ts` 的 advance 同规则——两处必须一致。 */
-function advanceOf(character: AdjustedChar): number {
-  return (
-    character.spaceBefore +
-    (character.kind === "latin" || character.kind === "digit" || character.kind === "space"
-      ? 0.5
-      : 1)
-  );
-}
 
 /**
  * 一行从 `from` 到 `to`（左闭右开）的墨宽，含行尾调整。

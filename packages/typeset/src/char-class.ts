@@ -142,3 +142,27 @@ export function isFullWidthPunctuation(kind: CharClass): boolean {
 export function isWesternSide(kind: CharClass): boolean {
   return kind === "latin" || kind === "digit";
 }
+
+/**
+ * 这个字符占半个字身还是一个字身。
+ *
+ * **与 `isWesternSide` 是两件事，虽然它们曾经是同一个判断。** 间距问的是
+ * 「这里有没有跨 script 的边界」，宽度问的是「这个字画出来有多宽」。ASCII
+ * 标点在两个问题上的答案相反：`*` 与中文之间不该插入混排间距（它不是西文
+ * 单词的一部分），但它画出来确确实实只有半个字身。
+ *
+ * 把两者绑在 `kind` 的同一次判定上，代价是 `classOf` 的 `other` 兜底会把每
+ * 一个 ASCII 标点按全角计。实测：`**加粗**` 的四个星号被算作 4em 而实际约
+ * 2em，那一行因此少放两个字。Markdown 标记符进入正文渲染之后这个偏差每段
+ * 都会出现，所以宽度必须自己判自己的。
+ *
+ * 判据是 code point 而非 `CharClass`：全角标点（`，` `。`）已经被 `classOf`
+ * 分进 stop/close，走不到这里；而 `other` 里既有 ASCII 标点也有别的东西，
+ * 只有原字符知道自己是哪个。
+ */
+export function isHalfWidth(character: string): boolean {
+  const point = character.codePointAt(0);
+  if (point === undefined) return false;
+  // ASCII 可打印区间（含空格）整体是半角。上界 0x7e 是 `~`。
+  return point >= 0x20 && point <= 0x7e;
+}

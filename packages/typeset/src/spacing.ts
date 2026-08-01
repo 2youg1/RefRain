@@ -13,7 +13,7 @@
  * 上就无法违反它。
  */
 
-import { type CharClass, classOf, isWesternSide } from "./char-class.ts";
+import { type CharClass, classOf, isHalfWidth, isWesternSide } from "./char-class.ts";
 import type { TypesetPreset } from "./preset.ts";
 import { isInsideUnbreakable, unbreakableRanges } from "./unbreakable.ts";
 
@@ -53,6 +53,23 @@ export type AdjustedChar = {
  *    密度均等而不是某个固定数值。间距值来自预设，因为简中（1/8 ic）与
  *    日文（1/4 em）的规范值本来就不同。
  */
+/**
+ * 一个字符占多宽，单位 em，含它之前的空白。
+ *
+ * **此前这段算式在 `line-break.ts` 与 `optimal-break.ts` 各写了一遍**，后者
+ * 的注释还写着「两处必须一致」——那句话本身就是第二权威的自白：没有任何
+ * 东西会在它们漂开时报错。宽度是 `AdjustedChar` 自己的性质，所以它跟着类型
+ * 定义走，两个断行器都只读这一个。
+ *
+ * 半角判定用 `isHalfWidth(text)` 而不是看 `kind`：`kind` 是为**间距**分的类，
+ * 而 ASCII 标点在间距与宽度上的答案相反——`*` 不该触发混排间距，但它确实
+ * 只占半个字身。旧写法只认 latin/digit/space，于是每个 ASCII 标点都按全角
+ * 计，`**加粗**` 的四个星号被算成 4em 而实际约 2em。
+ */
+export function advanceOf(character: AdjustedChar): number {
+  return character.spaceBefore + (isHalfWidth(character.text) ? 0.5 : 1);
+}
+
 export function measure(text: string, preset: TypesetPreset): readonly AdjustedChar[] {
   const characters = [...text];
   const result: AdjustedChar[] = [];
