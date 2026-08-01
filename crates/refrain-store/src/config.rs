@@ -102,6 +102,21 @@ pub struct AppearanceConfig {
     /// digest lives in the application data assets directory.
     #[serde(default)]
     pub icon_digest: Option<String>,
+    /// How opaque the small floating surfaces are — the context menu and the
+    /// stale-proposal panel that stand beside the manuscript.
+    ///
+    /// The author sometimes wants to see what is underneath them rather than
+    /// the surface itself. Percent, because a persisted `0.75` reads as a
+    /// ratio of something unnamed while `75` next to the field name does not.
+    /// Default 100: a translucent default reads as a rendering fault to
+    /// someone opening the application for the first time.
+    #[serde(default = "full_opacity")]
+    pub bento_opacity_percent: u16,
+}
+
+/// The default for a surface nobody has asked to fade.
+const fn full_opacity() -> u16 {
+    100
 }
 
 impl Default for AppearanceConfig {
@@ -119,6 +134,7 @@ impl Default for AppearanceConfig {
             panel_side: PanelSide::default(),
             panel_animation: true,
             icon_digest: None,
+            bento_opacity_percent: full_opacity(),
         }
     }
 }
@@ -625,6 +641,9 @@ impl ConfigV1 {
                 panel_width: PanelWidth::default(),
                 rail_width: RailWidth::default(),
                 icon_digest: self.appearance.icon_digest,
+                // v1 的小窗口不能调透明度，所以迁移过来的配置是不透明的
+                // ——那是它一直以来的样子，不是一个新选择。
+                bento_opacity_percent: full_opacity(),
             },
             harness_connections: self.harness_connections,
             agents: self.agents,

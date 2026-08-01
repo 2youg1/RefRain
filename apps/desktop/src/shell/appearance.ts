@@ -41,6 +41,13 @@ export function applyAppearance(root: HTMLElement, appearance: AppearanceConfig)
   // large fullscreen surfaces lives behind that layer).
   root.dataset.panelMaterial = appearance.panel_material ?? "solid";
 
+  // 小饭盒的不透明度：作者有时想看见它底下的东西。
+  //
+  // 百分比进来、比值出去，换算只在这一处发生——两处换算就会有一处是
+  // 0.75 而另一处是 75，而那个错误只在某一个面板上看得见。
+  const bentoOpacity = Math.min(100, Math.max(0, appearance.bento_opacity_percent ?? 100)) / 100;
+  root.style.setProperty("--bento-opacity", String(bentoOpacity));
+
   // Lamp position is the authority for highlights, shadows, and the lit panel edge.
   const lamp = lampPlacement(appearance.night_lamp ?? "off", motion.side);
   root.dataset.lamp = appearance.night_lamp ?? "off";

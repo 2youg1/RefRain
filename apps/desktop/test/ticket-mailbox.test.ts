@@ -1,7 +1,7 @@
 /**
- * 托付信箱：三格状态机是应用里「下一步做什么」的唯一权威。
+ * 发送信箱：三格状态机是应用里「下一步做什么」的唯一权威。
  *
- * 待托付——起了草还没交出去的单（Task 停在 draft）。
+ * 待发送——起了草还没交出去的单（Task 停在 draft）。
  * 未读——提案到了、还没有一句裁决的单（徽标计数就是它）。
  * 已裁决——判过的单。还在批次里的可以回溯：退回已回复，批次与账本同时放手。
  */
@@ -126,7 +126,9 @@ function fixture(world: Partial<World>) {
     },
     async setOrder(_rootId, box, entryIds) {
       calls.push(`order:${box}:${entryIds.join("+")}`);
-      entryIds.forEach((entryId, index) => upsert(entryId, { rank: index }, box));
+      entryIds.forEach((entryId, index) => {
+        upsert(entryId, { rank: index }, box);
+      });
     },
     async setPinned(_rootId, box, entryId, pinned) {
       calls.push(`pin:${entryId}:${pinned}`);
@@ -148,8 +150,8 @@ function fixture(world: Partial<World>) {
   return { gateway, calls, state };
 }
 
-describe("托付信箱", () => {
-  test("三格各归各：草稿进待托付，未判进已回复，判过进已裁决", async () => {
+describe("发送信箱", () => {
+  test("三格各归各：草稿进待发送，未判进已回复，判过进已裁决", async () => {
     const { gateway } = fixture({
       tasks: [task("t1", "draft"), task("t2", "open")],
       proposals: [proposal("p1", "第一句"), proposal("p2", "第二句")],

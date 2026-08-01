@@ -1,0 +1,212 @@
+/**
+ * 排版引擎的向量。
+ *
+ * 每条钉住的失败：中日两地共用了同一张错表、三档禁则其实是同一档、挤压跑在
+ * 断点之后、或者悬挂参与了行宽计算于是断点自己震荡。
+ *
+ * 这些全部是纯函数，所以不需要浏览器——这正是把引擎做成零依赖零 DOM 的
+ * 直接收益：数值可以被断言，而不是被截图。
+ */
+
+import { describe, expect, test } from "bun:test";
+
+import {
+  candidates,
+  classOf,
+  hangingAt,
+  JA,
+  lineEndAdjustment,
+  lineStarts,
+  measure,
+  presetOf,
+  widthEm,
+  ZH_HANS,
+  ZH_HANT,
+} from "../src/index.ts";
+
+describe("字符类", () => {
+  test("按排版怎么对待它分类，而不是按 Unicode 通用类别", () => {
+    // 开与闭必须分开：一个行尾不可留，一个行首不可现。同归「标点」这一类
+    // 就问不出这个区别。
+    expect(classOf("「")).toBe("open");
+    expect(classOf("」")).toBe("close");
+    expect(classOf("。")).toBe("stop");
+    expect(classOf("・")).toBe("middle");
+    expect(classOf("…")).toBe("extender");
+  });
+
+  test("假名与汉字同类：它们之间没有 script 边界", () => {
+    // 混排间距问的是「这里有没有跨 script 的边界」。把假名单列一类，
+    // 「日本語のテキスト」每个假名与汉字之间都会被插进空隙。
+    expect(classOf("日")).toBe("ideograph");
+    expect(classOf("あ")).toBe("ideograph");
+    expect(classOf("ア")).toBe("ideograph");
+  });
+
+  test("全角数字跟着表意文字走，半角数字才是西文一侧", () => {
+    // 全角数字占一个字身，它与汉字之间没有需要补白的边界。
+    expect(classOf("１")).toBe("ideograph");
+    expect(classOf("1")).toBe("digit");
+  });
+});
+
+describe("挤压与混排间距", () => {
+  test("连续标点压半个字身，压的是两个内白挨在一起的那几种组合", () => {
+    const measured = measure("」「", ZH_HANS);
+    expect(measured[1]?.spaceBefore).toBe(-0.5);
+
+    const stopClose = measure("。」", ZH_HANS);
+    expect(stopClose[1]?.spaceBefore).toBe(-0.5);
+  });
+
+  test("开括号连开括号不压：它们的内白都在左侧，中间本来就没有空洞", () => {
+    // 一律压「相邻的两个全角标点」会让 `「「` 挤在一起。这条区分是按类
+    // 定规矩而不是按「是不是标点」定规矩的理由。
+    const measured = measure("「「", ZH_HANS);
+    expect(measured[1]?.spaceBefore).toBe(0);
+  });
+
+  test("混排间距两个方向都加：同一句话的两端不该疏密不同", () => {
+    const before = measure("中abc", ZH_HANS);
+    const after = measure("abc中", ZH_HANS);
+    expect(before[1]?.spaceBefore).toBe(ZH_HANS.interScriptSpacingEm);
+    expect(after[3]?.spaceBefore).toBe(ZH_HANS.interScriptSpacingEm);
+  });
+
+  test("中日混排间距取各自规范的值，不是同一个数", () => {
+    // CSS Text 4 §8.4.1 的规范值是 1/8 ic；JIS 是 1/4 em。常见做法把两者
+    // 都写成 1/4（CLREQ §6.3.3 的 1/4 是**上界**而非默认），中文因此偏松。
+    expect(ZH_HANS.interScriptSpacingEm).toBe(0.125);
+    expect(JA.interScriptSpacingEm).toBe(0.25);
+
+    const zh = measure("中a", ZH_HANS);
+    const ja = measure("中a", JA);
+    expect(zh[1]?.spaceBefore).not.toBe(ja[1]?.spaceBefore);
+  });
+});
+
+describe("两地规矩不能共用一张表", () => {
+  /**
+   * 这一条是整个 preset 设计的理由。
+   *
+   * GB/T 15834 §5.1.10：行尾全角标点压半个字身。
+   * JLREQ §3.1.9：句点是「半角字身 + 后置半角空白」，**行尾这段空白原则上保留**。
+   *
+   * 两条规矩方向相反，同一张表处理中日必有一边是错的。
+   */
+  test("行尾标点：简中压半字，日文保留后置空白", () => {
+    expect(lineEndAdjustment("stop", ZH_HANS)).toBe(-0.5);
+    expect(lineEndAdjustment("stop", JA)).toBe(0);
+    expect(lineEndAdjustment("stop", ZH_HANS)).not.toBe(lineEndAdjustment("stop", JA));
+  });
+
+  test("悬挂：中文横排默认关，日文句读点可挂", () => {
+    // CLREQ §6.1.3 说中文多数出版物不用，繁体横排尤其不宜；JLREQ 把它放在
+    // 解说而非规范正文。所以这不是一个全局开关。
+    const zhText = measure("第一句。", ZH_HANS);
+    const jaText = measure("第一句。", JA);
+    expect(hangingAt(zhText, zhText.length - 1, ZH_HANS)).toBeNull();
+    expect(hangingAt(zhText, zhText.length - 1, ZH_HANT)).toBeNull();
+    expect(hangingAt(jaText, jaText.length - 1, JA)?.amountEm).toBe(0.5);
+  });
+
+  test("闭括号不挂：挂出去会让一对括号一半在版心内一半在外", () => {
+    const measured = measure("「引用」", JA);
+    expect(hangingAt(measured, measured.length - 1, JA)).toBeNull();
+  });
+});
+
+describe("候选断点与禁则", () => {
+  test("行首不可现的类，前面就不是候选断点", () => {
+    // 断在 `。` 之前会让它成为下一行的第一个字。
+    const measured = measure("第一句。第二句。", ZH_HANS);
+    const stopIndex = 3;
+    expect(candidates(measured, ZH_HANS).some((entry) => entry.index === stopIndex)).toBe(false);
+  });
+
+  test("行尾不可留的类，后面就不是候选断点", () => {
+    // `「` 在下标 2；断在下标 3 会让它孤零零留在行尾。
+    const measured = measure("他说「你好」", ZH_HANS);
+    const afterOpen = 3;
+    expect(measured[afterOpen - 1]?.kind).toBe("open");
+    expect(candidates(measured, ZH_HANS).some((entry) => entry.index === afterOpen)).toBe(false);
+  });
+
+  test("数字与西文内部绝不断开：那是数据读起来的损坏", () => {
+    const measured = measure("价格12.5元", ZH_HANS);
+    const found = candidates(measured, ZH_HANS).map((entry) => entry.index);
+    // `12.5` 占下标 2..5，它内部一处都不能断。
+    for (const inside of [3, 4, 5]) expect(found).not.toContain(inside);
+  });
+
+  test("三档禁则产生可见不同的断点集合——相同这个选项就是装饰", () => {
+    // 含长音、连续标点与西文的日文：三档在这句上必须各不相同。
+    const measured = measure("これは……テスト・ケース123です。", JA);
+    const loose = candidates(measured, JA, "loose").map((entry) => entry.index);
+    const normal = candidates(measured, JA, "normal").map((entry) => entry.index);
+    const strict = candidates(measured, JA, "strict").map((entry) => entry.index);
+
+    // 严格档比常规档少：它连数字与西文两侧都不断。
+    expect(strict.length).toBeLessThan(normal.length);
+    // 宽松档与常规档的断点集合相同，但代价不同——宽松档愿意在长标点处断。
+    const loosePenalty = candidates(measured, JA, "loose").find((entry) => entry.penalty === 1);
+    const normalPenalty = candidates(measured, JA, "normal").find((entry) => entry.penalty === 1);
+    expect(loosePenalty).toBeDefined();
+    expect(normalPenalty).toBeUndefined();
+    expect(loose.length).toBeGreaterThanOrEqual(normal.length);
+  });
+
+  test("同一句话在中日两预设下的断行结果不同", () => {
+    // 这一条是 verify:preset-divergence 的单元测试版本：两个预设在同一份
+    // 语料上产生相同结果，就说明它们共用了一张表。
+    // **语料必须有区分力**：一句话在两个预设下结果相同，往往是语料的问题
+    // 而不是实现的问题（附录 A.4 的方法学修正）。第一版语料在 6/7/8/10/12
+    // em 下两边逐字相同，量下去才发现差异要到 5.25em 才跨过临界——间距差
+    // 每处只有 0.125em，稀疏的边界攒不到一个字身。
+    //
+    // 所以这里用中西边界**密集**的语料：每两个字就跨一次 script，差值因此
+    // 在任何常见行宽下都累积得出来。
+    const text = "a中a中a中a中a中a中a中a中。";
+    for (const measureEm of [6, 8, 10, 12]) {
+      const zh = lineStarts(measure(text, ZH_HANS), ZH_HANS, measureEm);
+      const ja = lineStarts(measure(text, JA), JA, measureEm);
+      expect(zh).not.toEqual(ja);
+    }
+  });
+});
+
+describe("折行", () => {
+  test("放不下就退到上一个候选断点，不在禁则位置硬断", () => {
+    const measured = measure("第一句话。第二句话。第三句话。", ZH_HANS);
+    const starts = lineStarts(measured, ZH_HANS, 6);
+    expect(starts[0]).toBe(0);
+    expect(starts.length).toBeGreaterThan(1);
+    // 每一行的起点都不能是行首禁则的类。
+    for (const start of starts) {
+      const character = measured[start];
+      if (character === undefined) continue;
+      expect(ZH_HANS.forbiddenAtLineStart.has(character.kind)).toBe(false);
+    }
+  });
+
+  test("行宽量的是调整之后的宽度，不是字符个数", () => {
+    // 挤压压掉的半个字身要算进去，否则「放不放得下」这个判断用的是另一份
+    // 版面的数字。
+    const squeezed = measure("」「", ZH_HANS);
+    expect(widthEm(squeezed)).toBe(1.5);
+    const plain = measure("你好", ZH_HANS);
+    expect(widthEm(plain)).toBe(2);
+  });
+});
+
+describe("预设查表", () => {
+  test("三种内建预设各自可取", () => {
+    expect(presetOf("zh-hans").id).toBe("zh-hans");
+    expect(presetOf("zh-hant").id).toBe("zh-hant");
+    expect(presetOf("ja").id).toBe("ja");
+  });
+
+  test("未知语言落到简中，而不是抛错或落到日文", () => {
+    expect(presetOf("ko").id).toBe("zh-hans");
+  });
+});

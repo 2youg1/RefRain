@@ -1,4 +1,4 @@
-// 托付信箱的管理页：侧栏放不下的那些在这里，全套邮件管理动作也在这里。
+// 发送信箱的管理页：侧栏放不下的那些在这里，全套邮件管理动作也在这里。
 //
 // 侧栏那格只挂前几条（MAILBOX_PEEK），因为它同时还得让底部那组全局导航留在
 // 屏内。作者要一次处理很多单时来这里：整格全量、分页翻、多选批量。
@@ -21,7 +21,7 @@ export type MailboxManagerProps = {
 };
 
 const LABELS: Readonly<Record<Box, string>> = {
-  draft: "待托付",
+  draft: "待发送",
   unread: "已回复",
   done: "已裁决",
 };
@@ -72,7 +72,7 @@ export function MailboxManager(props: MailboxManagerProps): JSX.Element {
   return (
     <section class="mailbox-manager">
       <header class="mailbox-manager-head">
-        <h2>托付信箱</h2>
+        <h2>发送信箱</h2>
         <nav class="mailbox-manager-tabs">
           <For each={["draft", "unread", "done"] as const}>
             {(box) => (
@@ -138,7 +138,7 @@ export function MailboxManager(props: MailboxManagerProps): JSX.Element {
                 onDblClick={() => props.onOpen(row, props.box)}
               >
                 <Show when={row.pinned}>
-                  <span class="mailbox-pin" aria-label="已固定">
+                  <span class="mailbox-pin" role="img" aria-label="已固定">
                     ◆
                   </span>
                 </Show>

@@ -26,6 +26,157 @@
   --lamp-reach: 100%;
   --lamp-power: 0;
   --lamp-facing: 0;
+
+  /*
+   * 角。数字的唯一权威是 shell/corners.ts，这里只是把它抄成 CSS 变量，
+   * 由 verify:corner-authority 保证两边一致。
+   *
+   * 每一档给两个值：半径与形状。半径承载边框与投影（`mask` 与 `clip-path`
+   * 都会把边框和投影一起裁掉，而小饭盒正是靠边缘那圈光表达厚度的）；形状
+   * 承载 G4 的曲率连续。两者必须同档，所以由同一份数据生成。
+   */
+  --corner-bento: 12px;
+  --corner-shape-bento: polygon(
+    100% 50%,
+    99.18% 76.27%,
+    96.69% 85.94%,
+    92.39% 92.39%,
+    85.94% 96.69%,
+    76.27% 99.18%,
+    50% 100%,
+    23.73% 99.18%,
+    14.06% 96.69%,
+    7.61% 92.39%,
+    3.31% 85.94%,
+    0.82% 76.27%,
+    0% 50%,
+    0.82% 23.73%,
+    3.31% 14.06%,
+    7.61% 7.61%,
+    14.06% 3.31%,
+    23.73% 0.82%,
+    50% 0%,
+    76.27% 0.82%,
+    85.94% 3.31%,
+    92.39% 7.61%,
+    96.69% 14.06%,
+    99.18% 23.73%
+  );
+  --corner-panel: 10px;
+  --corner-shape-panel: polygon(
+    100% 50%,
+    99.14% 75.44%,
+    96.53% 85.36%,
+    92.04% 92.04%,
+    85.36% 96.53%,
+    75.44% 99.14%,
+    50% 100%,
+    24.56% 99.14%,
+    14.64% 96.53%,
+    7.96% 92.04%,
+    3.47% 85.36%,
+    0.86% 75.44%,
+    0% 50%,
+    0.86% 24.56%,
+    3.47% 14.64%,
+    7.96% 7.96%,
+    14.64% 3.47%,
+    24.56% 0.86%,
+    50% 0%,
+    75.44% 0.86%,
+    85.36% 3.47%,
+    92.04% 7.96%,
+    96.53% 14.64%,
+    99.14% 24.56%
+  );
+  --corner-card: 7px;
+  --corner-shape-card: polygon(
+    100% 50%,
+    99.05% 73.6%,
+    96.16% 84.02%,
+    91.24% 91.24%,
+    84.02% 96.16%,
+    73.6% 99.05%,
+    50% 100%,
+    26.4% 99.05%,
+    15.98% 96.16%,
+    8.76% 91.24%,
+    3.84% 84.02%,
+    0.95% 73.6%,
+    0% 50%,
+    0.95% 26.4%,
+    3.84% 15.98%,
+    8.76% 8.76%,
+    15.98% 3.84%,
+    26.4% 0.95%,
+    50% 0%,
+    73.6% 0.95%,
+    84.02% 3.84%,
+    91.24% 8.76%,
+    96.16% 15.98%,
+    99.05% 26.4%
+  );
+  --corner-control: 5px;
+  --corner-shape-control: polygon(
+    100% 50%,
+    98.93% 71.48%,
+    95.7% 82.42%,
+    90.26% 90.26%,
+    82.42% 95.7%,
+    71.48% 98.93%,
+    50% 100%,
+    28.52% 98.93%,
+    17.58% 95.7%,
+    9.74% 90.26%,
+    4.3% 82.42%,
+    1.07% 71.48%,
+    0% 50%,
+    1.07% 28.52%,
+    4.3% 17.58%,
+    9.74% 9.74%,
+    17.58% 4.3%,
+    28.52% 1.07%,
+    50% 0%,
+    71.48% 1.07%,
+    82.42% 4.3%,
+    90.26% 9.74%,
+    95.7% 17.58%,
+    98.93% 28.52%
+  );
+  --corner-pill: 999px;
+  --corner-shape-pill: polygon(
+    100% 50%,
+    98.3% 62.94%,
+    93.3% 75%,
+    85.36% 85.36%,
+    75% 93.3%,
+    62.94% 98.3%,
+    50% 100%,
+    37.06% 98.3%,
+    25% 93.3%,
+    14.64% 85.36%,
+    6.7% 75%,
+    1.7% 62.94%,
+    0% 50%,
+    1.7% 37.06%,
+    6.7% 25%,
+    14.64% 14.64%,
+    25% 6.7%,
+    37.06% 1.7%,
+    50% 0%,
+    62.94% 1.7%,
+    75% 6.7%,
+    85.36% 14.64%,
+    93.3% 25%,
+    98.3% 37.06%
+  );
+
+  /*
+   * 小饭盒的不透明度。作者可调——有时候他不想看到这个小窗口，只想看到
+   * 底下的正文或设置项。默认 1：默认状态不该是一个半透明的东西，那会让
+   * 第一次打开的人以为软件坏了。
+   */
+  --bento-opacity: 1;
 }
 
 /* ── src/App.tsx ─────────────────────────── */
@@ -248,9 +399,9 @@
 .settings-hero,
 .dispatch .ticket-head,
 /*
- * 批注那一行的动作。类名从 `.actions` 改出来，因为托付台也叫 `.actions`，
+ * 批注那一行的动作。类名从 `.actions` 改出来，因为发送台也叫 `.actions`，
  * 两条规则隔着六百行各写各的，实测双向泄漏：批注侧声明的 gap:12px 被下面那条
- * 覆写成 8px 并多出 margin-top，托付侧则拿到了它从未声明的 align-items 与
+ * 覆写成 8px 并多出 margin-top，发送侧则拿到了它从未声明的 align-items 与
  * justify-content。改任一处都会静默影响另一个组件。
  */
 .annotation-actions {
@@ -581,7 +732,7 @@
 
 /* ── src/ui/DispatchSurface.tsx ─────────────────────────── */
 /*
- * 托付台是一块**停在正文旁边**的面板，不是罩住正文的一张半透明纸。
+ * 发送台是一块**停在正文旁边**的面板，不是罩住正文的一张半透明纸。
  *
  * 它原本写作 `position: fixed; inset: 0` + 78% 纸色 + blur 14px，并被上面那条
  * 「面板打开时正文让开」的规则用 `:not(.dispatch)` 显式豁免。两件事合起来的
@@ -590,8 +741,8 @@
  * 底稿让作者分不清「我打的字」与「底下的原稿」。
  *
  * 这不是把不透明度调高就能修的——重叠面积是布局造成的，材质只决定重叠得多
- * 难看。正确的修法是让托付台走**与其余四区同一条**路径：站在一侧，正文平移
- * 让开，行宽不变。上面那条规则的注释本来就写着这是正确性而非观感，托付台
+ * 难看。正确的修法是让发送台走**与其余四区同一条**路径：站在一侧，正文平移
+ * 让开，行宽不变。上面那条规则的注释本来就写着这是正确性而非观感，发送台
  * 是唯一一个绕过它的面板，而它恰恰是唯一一个作者要边看正文边填的面板。
  */
 .stage-row > .dispatch {
@@ -628,9 +779,9 @@
 }
 
 /*
- * 托付摘要：跟着可用宽度排，不跟着字段个数排。
+ * 发送摘要：跟着可用宽度排，不跟着字段个数排。
  *
- * 五等分是给全屏铺开写的；托付台收回 400px 那一竖条之后每格只剩约 70px，
+ * 五等分是给全屏铺开写的；发送台收回 400px 那一竖条之后每格只剩约 70px，
  * 「手动往返」被折成「手动往 / 返」、「所选 1 块」折成「所选 1 / 块」，末字单独成行。
  */
 .ticket {
@@ -897,6 +1048,15 @@
 }
 
 /* ── src/ui/EditorContextMenu.tsx ─────────────────────────── */
+/*
+ * 小饭盒：停在正文旁边的那个小窗口。
+ *
+ * **G4 弧边**（`.bento` 那一节给出实现）。它与正文那条直边并排，角上的曲率
+ * 突变在这种并排关系里最显眼，所以这一档的超椭圆指数是全套里最高的。
+ *
+ * **不透明度可调**：作者有时不想看到这个窗口，只想看到底下的东西。默认
+ * 不透明——半透明的默认会让第一次打开的人以为软件坏了。
+ */
 .context-menu {
   position: fixed;
   /* 右键菜单盖得住书脊——脊只是退到后面的面板留下的痕迹。 */
@@ -907,9 +1067,37 @@
   box-sizing: border-box;
   background: var(--paper-raised);
   border: 1px solid var(--rule-strong);
-  border-radius: 4px;
+  border-radius: var(--corner-bento);
   box-shadow: 0 12px 32px color-mix(in oklab, var(--ink) 14%, transparent);
   padding: 4px;
+  opacity: var(--bento-opacity);
+}
+
+/*
+ * G4 的形状叠在 border-radius 之上，而不是替换它。
+ *
+ * `mask` 与 `clip-path` 都会把边框与投影一起裁掉，而小饭盒正是靠边缘那圈
+ * 光与它下面那层影子表达厚度的——裁掉之后它会读成一张贴纸。所以：
+ * border-radius 承载边框与投影，mask 只负责把背景那一层修成曲率连续。
+ *
+ * 不支持 `mask-image` 的机器落到纯 border-radius，那是一个 G1 的角，比
+ * 直边好，比 G4 差——降级路径要能看，而不是要能跑。
+ */
+@supports (mask-image: paint(x)) or (-webkit-mask-image: none) {
+  .context-menu::before {
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    background: var(--paper-raised);
+    clip-path: var(--corner-shape-bento);
+    content: "";
+  }
+}
+
+/* 作者把它调透明时，鼠标移上去仍然要看得清——否则调低之后就没法用了。 */
+.context-menu:hover,
+.context-menu:focus-within {
+  opacity: 1;
 }
 
 .context-menu.kara {
@@ -919,7 +1107,7 @@
 .context-menu button {
   border: none;
   flex: 0 0 auto;
-  border-radius: 2px;
+  border-radius: var(--corner-control);
   padding: 6px 12px;
   text-align: left;
 }
@@ -1292,6 +1480,37 @@
   content: "";
 }
 
+/*
+ * 指针底下那一项的回应。
+ *
+ * 三样东西一起动，每样都压到刚好看得见：颜色向正文墨走、字号涨 1.5%、
+ * 整体右移 1px。**轻微才有高级感**——涨 10% 或移 4px 会让这一排在鼠标
+ * 经过时抖动，那是廉价感的来源，而不是精致感。
+ *
+ * 用 scale 而不是改 font-size：改字号会触发重排，一排按钮会互相推挤；
+ * transform 只在合成层上动，旁边的项一动不动。
+ *
+ * `prefers-reduced-motion` 下只留颜色：位移与缩放是这条规则里唯一会让
+ * 前庭不适的部分，而颜色变化不会。
+ */
+.settings-tabs button {
+  transform-origin: left center;
+  transition:
+    color 160ms var(--ease),
+    transform 160ms var(--ease);
+}
+
+.settings-tabs button:hover:not(.current) {
+  color: var(--ink-soft);
+  transform: translateX(1px) scale(1.015);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-tabs button:hover:not(.current) {
+    transform: none;
+  }
+}
+
 .settings-tabs button.current {
   color: var(--ink);
 }
@@ -1329,7 +1548,7 @@
 .settings-card {
   min-width: 0;
   border: 1px solid var(--rule);
-  border-radius: 10px;
+  border-radius: var(--corner-panel);
   background: color-mix(in oklab, var(--paper-raised) 92%, transparent);
   padding: clamp(20px, 3vw, 30px);
   box-shadow: 0 18px 48px color-mix(in oklab, var(--ink) 5%, transparent);
@@ -2300,7 +2519,7 @@ kbd {
   /*
    * 一把缩进尺，四档。侧栏此前每一档各写各的 padding，实测文字起点是
    * 组标题 22 / 文档 26 / 信箱头 20 / 空态 32——**信箱头比它自己的组标题还靠左**，
-   * 于是「待托付」读起来与「托付信箱」平级甚至更高，而「空的。」又缩得比谁都深。
+   * 于是「待发送」读起来与「发送信箱」平级甚至更高，而「空的。」又缩得比谁都深。
    * 层级是靠这四个数之间的**关系**读出来的，各写各的就没有关系可读。
    */
   --rail-indent-group: 10px;
@@ -2519,7 +2738,7 @@ kbd {
  * An open panel path forms one stack on one side.
  * shell/panel-motion.ts owns direction and motion; data-quarter declares membership.
  *
- * 托付台曾被 `:not(.dispatch)` 排除在外，于是它是唯一一块压在版心上的面板。
+ * 发送台曾被 `:not(.dispatch)` 排除在外，于是它是唯一一块压在版心上的面板。
  * 豁免撤销后，材质、边、影、让位全部只有这一条路径。
  */
 .stage-row > [data-quarter] {
@@ -2707,7 +2926,7 @@ kbd {
   font-size: 13px;
 }
 
-/* ── 托付信箱（TicketMailboxPanel） ── */
+/* ── 发送信箱（TicketMailboxPanel） ── */
 .mailbox {
   border-top: 1px solid var(--rail-rule);
   padding-top: 6px;
@@ -2716,7 +2935,7 @@ kbd {
 .mailbox-badge {
   margin-left: 6px;
   padding: 0 6px;
-  border-radius: 8px;
+  border-radius: var(--corner-pill);
   background: var(--seal);
   color: var(--paper);
   font-size: 10px;
@@ -2822,13 +3041,14 @@ kbd {
   color: var(--rail-ink);
 }
 
-/* ── 托付信箱管理页（MailboxManager） ── */
+/* ── 发送信箱管理页（MailboxManager） ── */
 .mailbox-manager {
   display: flex;
   position: absolute;
-  z-index: 20;
+  z-index: var(--z-quarter);
   inset: 0;
   flex-direction: column;
+  border-radius: var(--corner-panel);
   background: var(--paper);
   padding: 18px 22px;
   gap: 12px;
@@ -2853,7 +3073,7 @@ kbd {
 
 .mailbox-manager-tabs button {
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--corner-control);
   padding: 3px 10px;
   color: var(--rail-faint);
   font-size: 12px;
@@ -2886,7 +3106,7 @@ kbd {
 
 .mailbox-manager-actions button {
   border: 1px solid var(--rail-rule);
-  border-radius: 4px;
+  border-radius: var(--corner-control);
   padding: 3px 10px;
   font-size: 12px;
 }
@@ -2937,7 +3157,7 @@ kbd {
 
 .mailbox-manager-pager button {
   border: 1px solid var(--rail-rule);
-  border-radius: 4px;
+  border-radius: var(--corner-control);
   padding: 2px 10px;
   font-size: 11.5px;
 }
@@ -2977,13 +3197,15 @@ kbd {
   padding-left: var(--rail-indent-child);
 }
 
+/* 信箱的右键菜单与正文的右键菜单是同一种东西，所以走同一档角。 */
 .mailbox-menu {
   position: fixed;
   z-index: var(--z-modal);
   display: grid;
   min-width: 120px;
   border: 1px solid var(--rule);
-  border-radius: 4px;
+  border-radius: var(--corner-bento);
+  opacity: var(--bento-opacity);
   background: var(--paper-raised);
   box-shadow: 0 8px 24px color-mix(in oklab, var(--ink) 14%, transparent);
   padding: 4px;

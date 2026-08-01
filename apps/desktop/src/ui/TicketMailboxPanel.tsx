@@ -1,4 +1,4 @@
-// 托付信箱的树：待托付 / 已回复（徽标计数）/ 已裁决 三格，可折叠。
+// 发送信箱的树：待发送 / 已回复（徽标计数）/ 已裁决 三格，可折叠。
 //
 // 侧栏那一格是**缩略**：只挂前 MAILBOX_PEEK 条，其余折进管理页，格尾一行
 // 「还有 N 封 →」是进入口。上界让侧栏有了高度上限，底部那组全局导航因此
@@ -13,7 +13,7 @@ export type MailboxBox = Box;
 
 export type TicketMailboxPanelProps = {
   view: MailboxView;
-  /** 点开一单：去它该在的地方（草稿→托付台，其余→逐句裁决）。 */
+  /** 点开一单：去它该在的地方（草稿→发送台，其余→逐句裁决）。 */
   onOpen: (row: MailboxRow, box: MailboxBox) => void;
   onMove: (id: string, edge: "top" | "bottom") => void;
   onRevert: (id: string) => void;
@@ -26,7 +26,7 @@ export type TicketMailboxPanelProps = {
 };
 
 const GROUPS: readonly { box: MailboxBox; label: string }[] = [
-  { box: "draft", label: "待托付" },
+  { box: "draft", label: "待发送" },
   { box: "unread", label: "已回复" },
   { box: "done", label: "已裁决" },
 ];
@@ -95,7 +95,7 @@ export function TicketMailboxPanel(props: TicketMailboxPanelProps): JSX.Element 
   return (
     <div class="mailbox" onPointerLeave={() => setMenu(null)}>
       <div class="rail-group">
-        托付信箱
+        发送信箱
         <Show when={props.view.unreadCount > 0}>
           <span class="mailbox-badge">{props.view.unreadCount}</span>
         </Show>
@@ -131,7 +131,7 @@ export function TicketMailboxPanel(props: TicketMailboxPanelProps): JSX.Element 
                         }}
                       >
                         <Show when={row.pinned}>
-                          <span class="mailbox-pin" aria-label="已固定">
+                          <span class="mailbox-pin" role="img" aria-label="已固定">
                             ◆
                           </span>
                         </Show>

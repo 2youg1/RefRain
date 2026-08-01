@@ -639,7 +639,7 @@ const aiEngineer = async (): Promise<void> => {
   )?.id;
   if (kimiAgent === undefined) throw new Error("the partner was not persisted");
   await clickButton("返回手稿");
-  await clickButton("托付");
+  await clickButton("发送");
   await waitFor("the dispatch surface", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch") !== null`, [])),
   );
@@ -715,7 +715,7 @@ const soloOwner = async (): Promise<void> => {
   await openManuscript("长章.md");
   await invoke("persist_revision", { rootId, path: "长章.md", expected: null });
 
-  await clickButton("托付");
+  await clickButton("发送");
   await waitFor("the dispatch surface", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch") !== null`, [])),
   );
@@ -840,7 +840,7 @@ const editor = async (): Promise<void> => {
   );
   check("the source file imported as a Material", true);
 
-  await clickButton("托付");
+  await clickButton("发送");
   await waitFor("the materials checklist", async () =>
     Boolean(await execute(`return document.querySelector(".material-row input") !== null`, [])),
   );
@@ -1022,7 +1022,7 @@ const professor = async (): Promise<void> => {
   );
   check("the field material imported as a Material", true);
 
-  await clickButton("托付");
+  await clickButton("发送");
   await waitFor("the materials checklist", async () =>
     Boolean(await execute(`return document.querySelector(".material-row input") !== null`, [])),
   );
@@ -1174,7 +1174,7 @@ const student = async (): Promise<void> => {
   ).revision;
   const basisRef = `课文.md@${revision}`;
 
-  await clickButton("托付");
+  await clickButton("发送");
   await waitFor("the dispatch surface", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch") !== null`, [])),
   );

@@ -84,7 +84,7 @@ for (const [source, fact, message] of [
     "a surface can close without returning to writing",
   ],
   [reducer, 'case "documentSelected":', "document selection does not restore writing"],
-  // 换项目必须脱钩 hasDocument，否则逐句裁决与托付对着一份不存在的稿子开放。
+  // 换项目必须脱钩 hasDocument，否则逐句裁决与发送对着一份不存在的稿子开放。
   [reducer, 'case "projectChanged":', "project change does not detach the document axis"],
   // 「打开到哪一层」已从 reducer 移入 PanelStack：栈顶即屏幕，不再有第二处记录。
   // 断言那条规矩现在住的地方——点栈内层是回到它，而不是压一个副本。
@@ -239,7 +239,7 @@ const railFooter = railFooterSource
 
 // 一词一义：批注 / KARA / 连接 / 设置 是栏脚的四个稳定目的地。
 //
-// 逐句裁决与托付台**不在这里**：它们只从信箱进入（v0.2.3 第一章）。作者
+// 逐句裁决与发送台**不在这里**：它们只从信箱进入（v0.2.3 第一章）。作者
 // 要去的是「有三单未读」，而栏脚给不出计数。这两条因此反向断言——它们
 // 若回到栏脚，就是同一个目的地又有了两个入口。
 // 取的是按钮之间的文本，不是某一种缩进写法：钉住「这里有哪些目的地」这个
@@ -248,10 +248,9 @@ const railLabels = new Set(
   [...railFooter.matchAll(/>\s*([^<>{}\s][^<>{}]*?)\s*</g)].map((match) => match[1]?.trim() ?? ""),
 );
 for (const label of ["批注", "KARA", "连接", "设置"]) {
-  if (!railLabels.has(label))
-    failures.push(`the Rail is missing the stable ${label} destination`);
+  if (!railLabels.has(label)) failures.push(`the Rail is missing the stable ${label} destination`);
 }
-for (const mailboxOnly of ["逐句裁决", "托付"]) {
+for (const mailboxOnly of ["逐句裁决", "发送"]) {
   if (railFooter.includes(mailboxOnly))
     failures.push(`${mailboxOnly} has a second entrance in the Rail; the mailbox owns it`);
 }

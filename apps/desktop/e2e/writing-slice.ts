@@ -776,7 +776,7 @@ const run = async (): Promise<void> => {
     ),
   );
 
-  await clickButton("将所选批注转为派发托付");
+  await clickButton("将所选批注转为派发发送");
   await waitFor("the annotation dispatch ticket", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch-prompt") !== null`)),
   );

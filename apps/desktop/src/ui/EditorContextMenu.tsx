@@ -65,7 +65,7 @@ export function EditorContextMenu(props: EditorContextMenuProps): JSX.Element {
               (props.context.canDeleteEmpty ? 32 : 0) +
               (props.context.selection === null ? 0 : props.relocating ? 32 : 64) +
               props.context.punctuation.length * 32 +
-              // 「攒进托付」与「取消」。
+              // 「攒进发送」与「取消」。
               64,
           ),
         },
@@ -171,12 +171,12 @@ export function EditorContextMenu(props: EditorContextMenuProps): JSX.Element {
             将批注迁到这里
           </button>
         </Show>
-        {/* 段落工具：只记录，不跳走——送出集中在托付台。 */}
+        {/* 段落工具：只记录，不跳走——送出集中在发送台。 */}
         <div class="menu-section" role="presentation">
           段落
         </div>
         <button type="button" role="menuitem" onClick={() => props.onAccumulate()}>
-          攒进托付
+          攒进发送
         </button>
         <button type="button" role="menuitem" onClick={() => props.onClose()}>
           取消

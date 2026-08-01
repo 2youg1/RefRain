@@ -1810,7 +1810,7 @@ fn set_review_batch(
     })
 }
 
-/// Recall staged verdicts to unread （托付信箱的回溯）. Only verdicts still in
+/// Recall staged verdicts to unread （发送信箱的回溯）. Only verdicts still in
 /// the batch pass — anything already merged into the text stays history.
 #[tauri::command(async)]
 #[specta::specta]

@@ -12,7 +12,7 @@
 export interface StubOptions {
   /** KARA 是否处于工作态：图三那层滤镜只在这时候出现。 */
   readonly kara?: boolean;
-  /** 打开托付台（Agent 区），即图一。 */
+  /** 打开发送台（Agent 区），即图一。 */
   readonly dispatch?: boolean;
   readonly theme?: string;
   readonly material?: "solid" | "acrylic" | "liquid";

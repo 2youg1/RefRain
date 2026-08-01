@@ -1,7 +1,7 @@
 /**
- * 托付信箱（SPEC 9.6 的收件面）：三格状态机的唯一权威。
+ * 发送信箱（SPEC 9.6 的收件面）：三格状态机的唯一权威。
  *
- * - 待托付：起了草还没交出去的单（Task 停在 draft）。
+ * - 待发送：起了草还没交出去的单（Task 停在 draft）。
  * - 已回复：提案到了、还没有一句裁决的单。徽标计数就是它。
  * - 已裁决：判过的单。还在批次里的可以回溯——退回已回复，批次与账本同时放手。
  *
@@ -77,7 +77,7 @@ export interface TicketMailboxGateway {
 
 export type MailboxRow = {
   readonly id: string;
-  /** 一行读得完的称呼：提案的首句，或托付的要求。 */
+  /** 一行读得完的称呼：提案的首句，或发送的要求。 */
   readonly title: string;
   /** 补充事实：来自哪份文档、几个 slice。 */
   readonly detail: string;

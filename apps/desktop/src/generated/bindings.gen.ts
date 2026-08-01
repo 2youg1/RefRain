@@ -94,7 +94,7 @@ export const commands = {
 	 */
 	setReviewBatch: (rootId: string, path: string, cursor: number, batch: string[]) => typedError<null, RefrainError>(__TAURI_INVOKE("set_review_batch", { rootId, path, cursor, batch })),
 	/**
-	 *  Recall staged verdicts to unread （托付信箱的回溯）. Only verdicts still in
+	 *  Recall staged verdicts to unread （发送信箱的回溯）. Only verdicts still in
 	 *  the batch pass — anything already merged into the text stays history.
 	 */
 	revertVerdicts: (rootId: string, path: string, verdictIds: string[]) => typedError<number, RefrainError>(__TAURI_INVOKE("revert_verdicts", { rootId, path, verdictIds })),
@@ -350,6 +350,17 @@ export type AppearanceConfig = {
 	 *  digest lives in the application data assets directory.
 	 */
 	icon_digest?: string | null,
+	/**
+	 *  How opaque the small floating surfaces are — the context menu and the
+	 *  stale-proposal panel that stand beside the manuscript.
+	 *
+	 *  The author sometimes wants to see what is underneath them rather than
+	 *  the surface itself. Percent, because a persisted `0.75` reads as a
+	 *  ratio of something unnamed while `75` next to the field name does not.
+	 *  Default 100: a translucent default reads as a rendering fault to
+	 *  someone opening the application for the first time.
+	 */
+	bento_opacity_percent?: number,
 };
 
 /**

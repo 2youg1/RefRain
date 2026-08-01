@@ -94,7 +94,7 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): JSX.Element {
       </Show>
       <Show when={comments().length > 0}>
         <button type="button" class="dispatch" onClick={dispatchSelected}>
-          将所选批注转为派发托付
+          将所选批注转为派发发送
         </button>
       </Show>
     </aside>

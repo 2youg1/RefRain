@@ -83,11 +83,11 @@ const SCENES: readonly Scene[] = [
     name: "composer",
     act: async (page) => {
       await selectAndContext(page);
-      const dispatch = page.locator("text=攒进托付").first();
+      const dispatch = page.locator("text=攒进发送").first();
       if (await dispatch.count()) await dispatch.click();
       await page.waitForTimeout(300);
-      /* 「攒进托付」只把段落记进托付，托付台要从侧栏那一格进。 */
-      const stage = page.locator(".rail-foot button", { hasText: "托付" }).first();
+      /* 「攒进发送」只把段落记进发送，发送台要从侧栏那一格进。 */
+      const stage = page.locator(".rail-foot button", { hasText: "发送" }).first();
       if (await stage.count()) await stage.click();
       await page.waitForTimeout(700);
       if ((await page.locator(".dispatch").count()) === 0)

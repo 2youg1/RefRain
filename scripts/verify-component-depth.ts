@@ -12,7 +12,9 @@ const BODY_CEILING = 200;
  */
 const BODY_DEBT: Readonly<Record<string, number>> = {
   // Shell composition; lifecycle, command mapping, and domain rules live in dedicated modules.
-  "Workbench.tsx": 590,
+  // 588：栏脚不再持有 onOpenStage 与 stage——逐句裁决与发送台只从信箱进入，
+  // 那两个参数随之无人调用。额度跟着落到实测值，把这次改善锁住。
+  "Workbench.tsx": 588,
   // Typography preview reads the same CSS variables as the manuscript.
   "TypographyPanel.tsx": 478,
   "DispatchSurface.tsx": 304,

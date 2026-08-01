@@ -10,7 +10,7 @@ export type WorkbenchReference =
  *
  * 「打开到哪一层面板」不在这里——那是 `PanelStack` 的事。它一度也住在这个 state 里，
  * 于是同一件事有两份记录：栈压了一层，reducer 也存了一个 reference，谁对看调用次序。
- * 现在这里只留下栈无法回答的事：作者在哪个场景（写作/逐句裁决/托付），
+ * 现在这里只留下栈无法回答的事：作者在哪个场景（写作/逐句裁决/发送），
  * 以及手上有没有一份打开的稿子。
  */
 export interface WorkbenchState {
