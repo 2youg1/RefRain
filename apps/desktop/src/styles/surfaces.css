@@ -270,7 +270,26 @@
   letter-spacing: var(--manuscript-tracking, 0.01em);
   word-spacing: var(--manuscript-word-spacing, 0);
   text-align: var(--manuscript-align, left);
-  hanging-punctuation: allow-end last;
+  /* 标点悬挂**不在这里**，因为 Chromium 根本没有实现它。
+   *
+   * 此处原本是 `hanging-punctuation: allow-end last`，本机实测（Chromium）：
+   *
+   * | 探针 | 结果 |
+   * |---|---|
+   * | `CSS.supports("hanging-punctuation", "allow-end")` | **false** |
+   * | `CSS.supports("hanging-punctuation", "last")` | **false** |
+   * | `CSS.supports("hanging-punctuation", "none")` | **false** |
+   *
+   * 连 `none` 都不支持，即整个属性没有实现——那一行从写下的第一天起就是死的，
+   * 而它读起来像「悬挂已经开了」。一条不生效的声明比没有更坏：它让后来者以为
+   * 这件事已经做完，于是不会再去做。
+   *
+   * 悬挂的规则归 `@refrain/typeset` 的 `hangingAt()`，且它**不是一个全局开关**：
+   * JLREQ §2.5.1/§3.8.2 明说悬挂不在 JIS X 4051 规范正文里、不适合日欧混排，
+   * CLREQ §6.1.3 说中文多数出版物不用、繁体横排尤其不宜。所以预设里中文两档
+   * 是 `none`、日文是 `stops`——把它做成一个跨语言的 CSS 属性，等于把一条只在
+   * 某一种排版传统里成立的做法强加给另一种。
+   */
 
   /* 标点挤压由 `@refrain/typeset` 独占，浏览器那一份必须关掉。
    *
