@@ -3,6 +3,8 @@ import { BlockHeightIndex } from "./block-height-index";
 import { applyBlockPrefix, type BlockPrefix } from "./block-prefix";
 import { ADDED_HIGHLIGHT, ChangeHighlights } from "./change-highlights";
 import { type CodeTheme, fenceLanguage, forgetHighlights, tokenizeCode } from "./code-highlight";
+import { declaredFenceLanguage } from "./code-highlight.ts";
+import { isDiagramLanguage, renderDiagram } from "./diagram-render.ts";
 import { applyInlineMark } from "./inline-mark";
 import { inlineSpans } from "./inline-render.ts";
 import { paintSpacedText } from "./inter-script-spacing";
@@ -18,6 +20,7 @@ import type {
 } from "./model";
 import { applyLocally, PENDING_ID_PREFIX, projectionIndex } from "./projection";
 import { applyPunctuationFinding, convertPunctuation, findPunctuation } from "./punctuation";
+import { paintTableText, tableLayout } from "./table-render.ts";
 
 const BLOCK_TAG = "p";
 
@@ -498,6 +501,14 @@ export class VirtualManuscriptView {
     //
     // 判据取自块自己的 `isFence`（`BlockShape` 在 Rust 侧判的），不是从 DOM
     // 读的属性：段落在 `#paragraphFor` 里造出来时还没有任何 dataset。
+    // 表格自己管对齐：单元格按列共用宽度，而折行会把一行单元格拆到两行上、
+    // 列当场散架。所以表格不进断行那条路，`measureEm` 传 0 关掉断行。
+    const table = fence ? null : tableLayout(text);
+    if (table) {
+      paintTableText(paragraph, text, table, this.#declaredLanguage(paragraph));
+      paragraph.dataset.measureEm = String(measureEm);
+      return;
+    }
     const marks = fence ? [] : inlineSpans(text);
     paintSpacedText(paragraph, text, this.#declaredLanguage(paragraph), measureEm, marks);
     // 记下这一段是按哪个版心断的行。文本没变但版心变了（窗口缩放、字号、
@@ -868,6 +879,14 @@ export class VirtualManuscriptView {
    * accumulates their lengths, so it never assumed a single node.
    */
   async #highlightFence(paragraph: HTMLElement, block: Block): Promise<void> {
+    // 图表判据必须在 `#fenceLanguage` **之前**：那个函数带着 `isHighlightable`
+    // 过滤，而高亮器根本没注册 mermaid/nomnoml，图表围栏在它眼里是 null。
+    const declared = block.isFence === true ? declaredFenceLanguage(block.text) : null;
+    if (declared !== null && isDiagramLanguage(declared)) {
+      this.#renderDiagram(paragraph, block, declared);
+      return;
+    }
+
     const language = this.#fenceLanguage(block);
     if (language === null) return;
 
@@ -893,6 +912,112 @@ export class VirtualManuscriptView {
       paragraph.appendChild(fragment);
       paragraph.dataset.highlighted = before;
     }
+  }
+
+  /**
+   * 图表围栏画成 SVG。
+   *
+   * # SVG 是旁挂的，源文本一个字节都不动
+   *
+   * 代码高亮把段落内容整个换成染色的 span——那对代码是对的（染色不改字节）。
+   * 图表不行：一张图和它的源码是两种东西，把源码换成图就等于让作者失去了
+   * 编辑它的入口，光标也无处可落。
+   *
+   * 所以 SVG 挂在段落**内部末尾**（一个 `contentEditable=false` 的子元素），
+   * 源文本仍在段落里原样待着。代价是屏幕上源码与图同时出现；收益是光标、
+   * 选区、改动着色、断行四处一个字都不用改——与表格选等宽对齐同一个理由。
+   *
+   * 曾经把它挂成段落的**兄弟**，图当场消失且一点痕迹都不留（实测：SVG 生成
+   * 成功 2408 字节、`after()` 也调了，门禁仍报「零张图」）。原因在渲染循环
+   * 末尾那个清扫：不在 `ordered` 里的子节点一律 `remove()`，而 `ordered` 只
+   * 收段落与占位。子元素则安全——渲染循环不进段落内部。
+   *
+   * # 画不出来时保留原文
+   *
+   * 语法错、图种不支持、库抛异常，三种情况都退回「只显示源码」。图表画不出
+   * 不该让作者的文字消失。
+   */
+  #renderDiagram(paragraph: HTMLElement, block: Block, language: string): void {
+    // 与 `#highlightFence` 同一组守卫：作者正在这一段里打字时不要动 DOM。
+    if (this.#interaction.kind === "composing") return;
+    if (paragraph === this.#paragraphAtCaret()) return;
+
+    const source = this.#fenceBody(block);
+    const document_ = paragraph.ownerDocument;
+    const existing = paragraph.nextElementSibling;
+    const mounted =
+      existing instanceof HTMLElement && existing.dataset.diagramFor === block.id ? existing : null;
+    // 源码没变就不重画。重画会让图闪一下，而作者可能只是改了别的段落。
+    if (mounted?.dataset.diagramSource === source) return;
+
+    const rendered = renderDiagram(source, language, this.#diagramColours());
+    if (rendered.kind === "unsupported") {
+      // 画不出来就把已有的图撤掉——留着一张过期的图比没有图更误导。
+      mounted?.remove();
+      paragraph.dataset.diagramFallback = rendered.reason;
+      return;
+    }
+    delete paragraph.dataset.diagramFallback;
+
+    const host = mounted ?? document_.createElement("div");
+    host.className = "md-diagram";
+    host.dataset.diagramFor = block.id;
+    host.dataset.diagramSource = source;
+    // 图不进编辑坐标系：光标不该能落进 SVG 里。
+    host.contentEditable = "false";
+    // 不走 `innerHTML`：`verify:no-html-sink` 守着「手稿是用户输入，HTML 字符串
+    // 进 DOM 就是一条执行路径」。这里的 SVG 虽然由 nomnoml 生成而非作者直接
+    // 写的，但作者的文字**在里面**（节点标签），而且给这条规则开一个例外等于
+    // 让后来者以为它可以有例外。
+    //
+    // `DOMParser` 解析成 SVG 文档再 `importNode` 搬过来：解析出的文档是惰性的
+    // ——脚本不执行、外部资源不加载。
+    const parsed = new DOMParser().parseFromString(rendered.svg, "image/svg+xml");
+    const root = parsed.documentElement;
+    // 解析失败时 documentElement 是 `<parsererror>`，把它搬进来会在版面上留下
+    // 一段红色报错文字。
+    if (root.nodeName === "parsererror" || root.nodeName.toLowerCase() !== "svg") {
+      mounted?.remove();
+      paragraph.dataset.diagramFallback = "图表 SVG 解析失败";
+      return;
+    }
+    host.replaceChildren(document_.importNode(root, true));
+    if (mounted === null) paragraph.after(host);
+  }
+
+  /**
+   * 围栏里的正文——去掉 ``` 那两行。
+   *
+   * 图表库要的是图的源码，把 ``` 一起喂进去它会当成语法错。
+   */
+  #fenceBody(block: Block): string {
+    const lines = block.text.split("\n");
+    const start = lines[0]?.startsWith("```") === true ? 1 : 0;
+    const end =
+      lines.length > start && lines[lines.length - 1]?.trim() === "```"
+        ? lines.length - 1
+        : lines.length;
+    return lines.slice(start, end).join("\n");
+  }
+
+  /**
+   * 图表配色：从当前主题的 CSS 自定义属性解析出实际色值。
+   *
+   * 不写死颜色——写死会让图在夜间主题里刺眼，而且那是第二个配色权威。七套
+   * 主题各自的四锚点已经定义了纸墨印，图跟着它们走。
+   */
+  #diagramColours(): { fill: string; stroke: string; text: string; font: string } {
+    const styles = getComputedStyle(this.#element);
+    const read = (name: string, fallback: string): string => {
+      const value = styles.getPropertyValue(name).trim();
+      return value === "" ? fallback : value;
+    };
+    return {
+      fill: read("--paper-raised", "#f9f3e7"),
+      stroke: read("--ink-soft", "#405d89"),
+      text: read("--ink", "#19345c"),
+      font: read("--font-sans", "sans-serif"),
+    };
   }
 
   /**
@@ -1349,6 +1474,18 @@ export class VirtualManuscriptView {
         }
         this.#byId.set(block.id, paragraph);
         ordered.push(paragraph);
+        // 图表 SVG 是段落的兄弟节点，必须一并列进 `ordered`——末尾那个清扫
+        // 循环会把不在列表里的子节点全部 `remove()`。曾经漏了这一步，现象是
+        // 图生成成功（实测 2408 字节）、`after()` 也调了，屏幕上却什么都没有，
+        // 而且不留任何痕迹。
+        //
+        // 图必须是兄弟而不是段落的子元素：十几处代码把 `paragraph.textContent`
+        // 当作块文本读（第 1442 行的重画判据、光标偏移、改动着色区间）。SVG 的
+        // 文字混进去会让那个判据恒真，段落每帧重画、图每帧被删再重建。
+        const diagram = paragraph.nextElementSibling;
+        if (diagram instanceof HTMLElement && diagram.dataset.diagramFor === block.id) {
+          ordered.push(diagram);
+        }
         nextIndex = index + 1;
       }
       if (nextIndex < this.#blocks.length) {

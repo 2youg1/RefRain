@@ -3473,6 +3473,38 @@ kbd {
   font-style: italic;
 }
 
+/* 图表：SVG 旁挂在源码之后，不进编辑坐标系。 */
+.editor-host .md-diagram {
+  display: block;
+  margin: 0.6rem 0 1rem;
+  padding: 0.8rem;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  overflow-x: auto;
+  user-select: none;
+}
+
+.editor-host .md-diagram svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+/* 表格：单元格外壳承载列宽。等宽字体是列对齐的前提——比例字体下同样多的
+   字符宽度不同，min-width 再准也对不齐。 */
+.editor-host [data-table] {
+  font-family: var(--font-mono);
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.editor-host .md-table-cell {
+  display: inline-block;
+  /* 单元格内不再折行：折行会把一行的单元格拆到两行上，列当场散架。 */
+  white-space: pre;
+}
+
 .editor-host .md-strikethrough {
   text-decoration: line-through;
 }

@@ -10,6 +10,9 @@ packages — whose MIT licence requires its notice to travel with every copy. Al
 three carry the same copyright lines; the full text is reproduced once under
 "Software" below, taken verbatim from the packages' own LICENSE files.
 
+It also ships nomnoml, which draws the diagrams. nomnoml is MIT and RefRain does
+not modify it.
+
 Nothing else in a RefRain release carries a third-party notice requirement: the
 application binary and its Rust dependencies are covered by the project LICENSE
 and their own permissive terms, and no other asset is redistributed.
@@ -21,6 +24,31 @@ and their own permissive terms, and no other asset is redistributed.
 | `shiki` | 4.3.1 | MIT | Copyright (c) 2021 Pine Wu; Copyright (c) 2023 Anthony Fu |
 | `@shikijs/langs` | 4.3.1 | MIT | Copyright (c) 2021 Pine Wu; Copyright (c) 2023 Anthony Fu |
 | `@shikijs/themes` | 4.3.1 | MIT | Copyright (c) 2021 Pine Wu; Copyright (c) 2023 Anthony Fu |
+| `nomnoml` | 1.7.0 | MIT | Copyright (c) 2020 Daniel Kallin |
+
+### MIT License (nomnoml)
+
+```
+Copyright (c) 2020 Daniel Kallin
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
 
 ### MIT License (Shiki, @shikijs/langs, @shikijs/themes)
 

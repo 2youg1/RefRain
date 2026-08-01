@@ -267,11 +267,24 @@ export function isHighlightable(lang: string): boolean {
  * 构建期内嵌，运行期不会为了一个陌生语言去取任何东西。
  */
 export function fenceLanguage(text: string): string | null {
+  const declared = declaredFenceLanguage(text);
+  return declared !== null && isHighlightable(declared) ? declared : null;
+}
+
+/**
+ * 围栏第一行声明的语言，不管有没有人认得它。
+ *
+ * 与 `fenceLanguage` 的区别是那一层 `isHighlightable` 过滤：高亮器只认它注册
+ * 过的语言，而图表围栏（`mermaid`/`nomnoml`）本来就不该由高亮器处理。把图表
+ * 判据挂在 `fenceLanguage` 下游会让它永远读到 null——实测就是这样，门禁报
+ * 「零张图」而所有单测全绿。
+ */
+export function declaredFenceLanguage(text: string): string | null {
   const breakAt = text.indexOf("\n");
   const firstLine = breakAt === -1 ? text : text.slice(0, breakAt);
   const info = firstLine.replace(/^[`~]+/, "").trim();
   const language = info.split(/\s+/)[0] ?? "";
-  return language !== "" && isHighlightable(language) ? language : null;
+  return language === "" ? null : language;
 }
 
 /**
