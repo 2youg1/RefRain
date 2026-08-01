@@ -55,7 +55,7 @@
  */
 
 import {
-  type AdjustedChar,
+  hangingAt,
   measure,
   optimizedLineStarts,
   presetOf,
@@ -80,6 +80,15 @@ export const GAP_CLASS = "cjk-gap";
 export const BREAK_CLASS = "cjk-break";
 
 /**
+ * 悬挂元素带的类名。
+ *
+ * 与间距、断行元素**不同族**：这个 span 里装的是真实文本（行尾那一个句读
+ * 点），不是空的装饰。所以它不设 `contenteditable="false"`——那会让作者无法
+ * 把光标停到段落最后一个字符之后。类名只用于门禁定位与调试，不承载行为。
+ */
+export const HANG_CLASS = "cjk-hang";
+
+/**
  * 一段文本按混排边界与**断行**切开的结果。
  *
  * `gapAfter` 是这一段之后要插入的间距（em）；最后一段是 0。**可以是负数**
@@ -101,6 +110,16 @@ export interface SpacedRun {
   readonly text: string;
   readonly gapAfter: number;
   readonly breakAfter: boolean;
+  /**
+   * 这一段的最后一个字符挂出版心多少 em。0 表示不挂。
+   *
+   * 只有行尾的段会非零——悬挂是排版的第 8 步，作用对象是**行**的最后一个
+   * 字符，不是任意一段的末尾。判定整个留在 `hangingAt` 里：预设关掉悬挂、
+   * 行尾不是句读点、闭括号不挂（挂出去会让一对括号一半在版心内一半在外），
+   * 这些规则这一层一条都不复述。复述它们等于把 JLREQ §2.5.1 与 CLREQ §6.1.3
+   * 的判据抄成两份，而两份迟早会漂开。
+   */
+  readonly hangEm: number;
 }
 
 /**
@@ -126,7 +145,7 @@ export function spacedRuns(
   preset: TypesetPreset,
   measureEm = 0,
 ): readonly SpacedRun[] {
-  if (text === "") return [{ text: "", gapAfter: 0, breakAfter: false }];
+  if (text === "") return [{ text: "", gapAfter: 0, breakAfter: false, hangEm: 0 }];
 
   // `measure` 按**码位**返回，每项自带 text。不要用下标去 slice 原串：
   // emoji 与增补平面汉字在 UTF-16 里占两格，按码位下标切会切进代理对中间，
@@ -136,6 +155,19 @@ export function spacedRuns(
   const starts = measureEm > 0 ? new Set(optimizedLineStarts(adjusted, preset, measureEm)) : null;
   const runs: SpacedRun[] = [];
   let pending = "";
+  // 这一段第一个字符的码位下标。行尾下标 = 段首 + 段内码位数 − 1，用它去问
+  // `hangingAt`。不能用 `pending.length`：那是 UTF-16 长度，遇到代理对会多算。
+  let runStart = 0;
+  let pendingCodePoints = 0;
+
+  /**
+   * 这一段的行尾要挂多少。`atLineEnd` 为假时直接 0——段中间的标点不是行尾，
+   * 问都不该问。
+   */
+  const hangEmOf = (atLineEnd: boolean): number => {
+    if (!atLineEnd || pendingCodePoints === 0) return 0;
+    return hangingAt(adjusted, runStart + pendingCodePoints - 1, preset)?.amountEm ?? 0;
+  };
 
   adjusted.forEach((character, index) => {
     // 行首意味着**上一段到此为止**，且那一段之后要换行。
@@ -153,13 +185,22 @@ export function spacedRuns(
         // 的行尾空白是另一回事（它是标点自带的后置空白，不是混排间距）。
         gapAfter: startsLine ? 0 : character.spaceBefore,
         breakAfter: startsLine,
+        // 只有换行处才是行尾。因 `spaceBefore` 切开的段落在行中间，它的末字
+        // 后面还跟着同一行的内容，挂出去会把字压到后半行上。
+        hangEm: hangEmOf(startsLine),
       });
       pending = "";
+      runStart = index;
+      pendingCodePoints = 0;
     }
     pending += character.text;
+    pendingCodePoints += 1;
   });
 
-  runs.push({ text: pending, gapAfter: 0, breakAfter: false });
+  // 最后一段永远是行尾——段落的最后一个字符没有后续内容。它不在任何
+  // 「下一行行首减一」里，所以必须单独问一次；漏掉它时这段日文仍有别的可挂
+  // 行，测试会照样全绿。
+  runs.push({ text: pending, gapAfter: 0, breakAfter: false, hangEm: hangEmOf(true) });
   return runs;
 }
 
@@ -192,7 +233,45 @@ export function paintSpacedText(
   const document_ = element.ownerDocument;
   const fragment = document_.createDocumentFragment();
   for (const run of runs) {
-    if (run.text !== "") fragment.appendChild(document_.createTextNode(run.text));
+    if (run.text !== "") {
+      if (run.hangEm === 0) {
+        fragment.appendChild(document_.createTextNode(run.text));
+      } else {
+        // 悬挂：把行尾那一个字符单独包进一个 span，用负 margin 把它推出版心。
+        //
+        // 负 margin 而不是 `position: relative` 的偏移：相对定位只挪画面不改
+        // 布局盒，这里要的正是「这个字符不再占用版心内的宽度」——否则行宽
+        // 计算里它还在，断点会因为它而提前，而屏幕上它已经在外面了。
+        //
+        // 只包最后一个字符，不包整段：包整段会让整段跟着左移。用码位切，
+        // 因为增补平面的标点在 UTF-16 里占两格。
+        const characters = [...run.text];
+        const hung = characters.at(-1) ?? "";
+        const rest = characters.slice(0, -1).join("");
+        if (rest !== "") fragment.appendChild(document_.createTextNode(rest));
+        const hang = document_.createElement("span");
+        hang.className = HANG_CLASS;
+        // `position: relative` 的偏移，不是负 margin。
+        //
+        // 负 margin-right 在这里**完全不产生位移**——实测（`probe-hang-css.ts`）
+        // 挂出去的字符右沿与对照组逐像素相同（255px vs 255px），因为行尾那个
+        // 字符后面已经没有内容了，负 margin 只是收窄一个不影响任何东西的
+        // 后续间隙。`margin-left` 负值倒是会动，但方向反了（238px，缩进版心内）。
+        // 只有相对定位真的把它推了出去（255→272px，正好 1em）。
+        //
+        // 相对定位不改布局盒，这正是悬挂要的：那个字符不再参与行宽，而行宽
+        // 早在 `optimizedLineStarts` 里算过了——那里已经把它算进去。悬挂是
+        // 排版第 8 步，只调整最后一个字符的位置，不回头影响断点。
+        hang.style.position = "relative";
+        hang.style.left = `${run.hangEm}em`;
+        // 这个 span 里是**真实文本**，不是装饰。所以它不能
+        // `contentEditable = "false"`——那会让作者无法把光标放到段落最后一个
+        // 字符之后，也就无法在句号后面继续写。间距与断行元素是空的，可以关掉
+        // 编辑；这个不行，两者不是同一类东西。
+        hang.textContent = hung;
+        fragment.appendChild(hang);
+      }
+    }
     if (run.gapAfter !== 0) {
       const gap = document_.createElement("span");
       gap.className = GAP_CLASS;

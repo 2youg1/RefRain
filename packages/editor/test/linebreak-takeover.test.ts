@@ -108,7 +108,7 @@ describe("断行切分", () => {
 
   test("空串不崩，也不产出换行", () => {
     const runs = spacedRuns("", ZH_HANS, 20);
-    expect(runs).toEqual([{ text: "", gapAfter: 0, breakAfter: false }]);
+    expect(runs).toEqual([{ text: "", gapAfter: 0, breakAfter: false, hangEm: 0 }]);
   });
 
   test("短到放得下的一行不换行", () => {
