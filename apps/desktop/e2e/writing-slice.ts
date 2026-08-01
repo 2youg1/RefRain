@@ -269,6 +269,7 @@ const run = async (): Promise<void> => {
           // browser process dies before it opens its devtools port.
           args: [
             `--user-data-dir=${join(dataDir, "webview-args")}`,
+            ...(process.env.CI ? ["--no-sandbox", "--disable-gpu"] : []),
             "--enable-logging=stderr",
             "--v=0",
             "--no-first-run",
