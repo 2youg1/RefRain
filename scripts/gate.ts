@@ -24,6 +24,8 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["verify:body-metrics", ["bun", "scripts/verify-body-metrics.ts"]],
   ["verify:byte-invariance", ["bun", "scripts/verify-byte-invariance.ts"]],
   ["verify:preset-divergence", ["bun", "scripts/verify-preset-divergence.ts"]],
+  ["verify:mailbox-scale", ["bun", "scripts/verify-mailbox-scale.ts"]],
+  ["verify:layout-parity", ["bun", "scripts/verify-layout-parity.ts"]],
   ["verify:inter-script-spacing", ["bun", "apps/desktop/e2e/inter-script-spacing.ts"]],
   ["verify:typeset-purity", ["bun", "scripts/verify-typeset-purity.ts"]],
   ["verify:rail-indent", ["bun", "scripts/verify-rail-indent.ts"]],
