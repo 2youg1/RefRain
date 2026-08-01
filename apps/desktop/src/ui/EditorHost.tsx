@@ -26,6 +26,7 @@ import {
   type EditorChangeDto,
   type OpenDocumentDto_Serialize,
 } from "../generated/bindings.gen";
+import { useKara } from "../shell/kara-state";
 
 /**
  * What the shell may ask of the open editor.
@@ -78,6 +79,7 @@ const toDto = (action: EditorAction): EditorChangeDto[] =>
   );
 
 export function EditorHost(props: EditorHostProps) {
+  const kara = useKara();
   let host: HTMLDivElement | undefined;
   let editor: EditorHandle | null = null;
   let confirmedRevision = props.document.revision;
@@ -173,6 +175,7 @@ export function EditorHost(props: EditorHostProps) {
     editor.setProposalMarks(props.proposalMarks ?? []);
     editor.onProposalMark((id) => props.onProposalMark?.(id));
     if (props.codeTheme !== undefined) editor.setCodeTheme(props.codeTheme);
+    editor.setDiffPresentation(kara.engaged.value ? "result" : "marks");
     editor.focus();
     props.onReady({
       focus: () => editor?.focus(),
@@ -218,6 +221,22 @@ export function EditorHost(props: EditorHostProps) {
     const theme = props.codeTheme;
     if (theme !== undefined) editor?.setCodeTheme(theme);
   });
+
+  /**
+   * Kara 期间改动着色只画成品，不堆叠增删标记（KL9 2026-08-01 裁定）。
+   *
+   * 直接订阅 `useKara()` 而不是让 Workbench 转发一个 prop：那台状态机是模块级
+   * 单例（`kara-state.ts` 明写「第二次调用共享同一台机器」），多一层转发只是
+   * 把同一个事实再抄一遍，而抄件与正本漂开时没有任何东西会报错。
+   *
+   * `packages/editor` 仍然不认识 Kara——它只知道「这份判定画成哪一种」。
+   * 认识 Kara 的是外壳，而这个文件属于外壳。
+   */
+  onCleanup(
+    kara.subscribe(() => {
+      editor?.setDiffPresentation(kara.engaged.value ? "result" : "marks");
+    }),
+  );
 
   onCleanup(() => {
     props.onReady(null);

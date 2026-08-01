@@ -94,6 +94,9 @@ export function mountEditor(
     setProposalMarks(marks) {
       view.setProposalMarks(marks);
     },
+    setDiffPresentation(presentation) {
+      view.setDiffPresentation(presentation);
+    },
     onProposalMark(listener) {
       return view.onProposalMark(listener);
     },

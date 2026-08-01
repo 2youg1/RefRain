@@ -48,6 +48,7 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["verify:editor-context", ["bun", "apps/desktop/e2e/editor-context.ts"]],
   ["verify:editor-host-identity", ["bun", "apps/desktop/e2e/editor-host-identity.ts"]],
   ["verify:cross-block-selection", ["bun", "apps/desktop/e2e/cross-block-selection.ts"]],
+  ["verify:change-highlight-render", ["bun", "apps/desktop/e2e/change-highlight-render.ts"]],
   ["verify:font-licenses", ["bun", "scripts/verify-font-licenses.ts"]],
   ["verify:font-fallback", ["bun", "scripts/verify-font-fallback.ts"]],
   ["verify:e2e-coverage", ["bun", "scripts/verify-e2e-coverage.ts"]],
@@ -97,6 +98,8 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
 
 const headlessEvidence = new Set([
   "verify:cross-block-selection",
+  // 改动着色断的是屏幕上的像素几何，数据层测不到它。
+  "verify:change-highlight-render",
   "verify:font-fallback",
   // 侧栏缩进量的是渲染结果，所以它要一台浏览器和一个跑着的 dev server。
   "verify:rail-indent",

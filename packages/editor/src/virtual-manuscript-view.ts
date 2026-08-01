@@ -1,5 +1,7 @@
+import type { DiffPresentation } from "@refrain/typeset";
 import { BlockHeightIndex } from "./block-height-index";
 import { applyBlockPrefix, type BlockPrefix } from "./block-prefix";
+import { ADDED_HIGHLIGHT, ChangeHighlights } from "./change-highlights";
 import { type CodeTheme, fenceLanguage, forgetHighlights, tokenizeCode } from "./code-highlight";
 import { applyInlineMark } from "./inline-mark";
 import { paintSpacedText } from "./inter-script-spacing";
@@ -112,30 +114,44 @@ function caretWithin(block: HTMLElement): number | null {
   return probe.toString().length;
 }
 
+/**
+ * 把一个字符偏移落到具体的文本节点上。
+ *
+ * 段落里不止一个文本节点：混排间距的空元素、代码围栏的着色 span 都会把文本
+ * 切成几段，而间距元素本身不含文本节点，于是它对偏移是透明的。遍历只看文本
+ * 节点，累加长度——这个坐标系与 `textContent`、与领域给的块文本完全一致。
+ *
+ * 落在两个节点交界处时归给前一个（`remaining <= length`），因为一个区间的
+ * 终点更常是「上一段的末尾」而不是「下一段的开头」，光标定位同理。
+ */
+function locateOffset(block: HTMLElement, offset: number): { node: Node; offset: number } | null {
+  const walker = block.ownerDocument.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+  let remaining = offset;
+  let node = walker.nextNode();
+  while (node) {
+    const length = (node.textContent ?? "").length;
+    if (remaining <= length) return { node, offset: remaining };
+    remaining -= length;
+    node = walker.nextNode();
+  }
+  return null;
+}
+
 function placeCaret(block: HTMLElement, offset: number): void {
   const selection = block.ownerDocument.getSelection();
   if (!selection) return;
   const range = block.ownerDocument.createRange();
-  const walker = block.ownerDocument.createTreeWalker(block, NodeFilter.SHOW_TEXT);
-  let remaining = offset;
-  let node = walker.nextNode();
-  let last: Node | null = null;
-  while (node) {
-    const length = (node.textContent ?? "").length;
-    if (remaining <= length) {
-      range.setStart(node, remaining);
-      range.collapse(true);
-      selection.removeAllRanges();
-      selection.addRange(range);
-      return;
-    }
-    remaining -= length;
-    last = node;
-    node = walker.nextNode();
+  const located = locateOffset(block, offset);
+  if (located !== null) {
+    range.setStart(located.node, located.offset);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return;
   }
   range.selectNodeContents(block);
   range.collapse(false);
-  if (last === null) range.setStart(block, 0);
+  if (block.firstChild === null) range.setStart(block, 0);
   selection.removeAllRanges();
   selection.addRange(range);
 }
@@ -212,6 +228,11 @@ export class VirtualManuscriptView {
    */
   #proposalMarks: readonly ProposalMark[] = [];
   #proposalMarkListeners: ((id: string) => void)[] = [];
+  /**
+   * 外部改动的着色账。作者自己的编辑不进这本账——见 change-highlights.ts
+   * 的说明：`#submit` 已把它们落进投影，比对时按构造为零区间。
+   */
+  readonly #changeHighlights = new ChangeHighlights();
   #blocks: Block[];
   #heightIndex: BlockHeightIndex;
   #contextBlock: { readonly blockId: string; readonly sourceText: string } | null = null;
@@ -317,6 +338,9 @@ export class VirtualManuscriptView {
       if (previous?.text !== block.text) this.#measuredHeights.delete(block.id);
     }
     this.#blocks = [...blocks];
+    // 改动着色在这里记账，而不是在 #submit：到这一刻为止，作者自己的编辑
+    // 早已通过 applyLocally 进了 previousBlocks，于是只有外部改动比得出差异。
+    this.#changeHighlights.observe(previousBlocks, this.#blocks, Date.now());
     const adopted = this.#adoptPending(previousBlocks);
     this.#rebuildHeightIndex();
     if (this.#interaction.kind === "idle") {
@@ -660,6 +684,19 @@ export class VirtualManuscriptView {
     this.#syncProposalMarks();
   }
 
+  /**
+   * 改动着色的呈现模式。
+   *
+   * 普通模式标出增删；Kara 只画改动后的成品。**两者读的是同一份判定**，
+   * 这里换的只是过滤器——各算一次的话，同一处改动可能在两个模式下标出不同的
+   * 范围，而那种不一致没有任何东西会报错。
+   */
+  setDiffPresentation(presentation: DiffPresentation): void {
+    if (presentation === this.#changeHighlights.presentation()) return;
+    this.#changeHighlights.setPresentation(presentation);
+    this.#projectChangeHighlights();
+  }
+
   /** 印点被点开。返回退订。 */
   onProposalMark(listener: (id: string) => void): () => void {
     this.#proposalMarkListeners.push(listener);
@@ -752,6 +789,10 @@ export class VirtualManuscriptView {
       if (frame !== null) this.#view.cancelAnimationFrame(frame);
     }
     this.#clearAnnotations();
+    // 改动着色是全局注册的 Highlight，不随元素销毁而消失：不撤下来，下一份
+    // 稿子会带着上一份的颜色开场。
+    this.#changeHighlights.clear();
+    this.#projectChangeHighlights();
     // Never leave a save awaiting a composition that can no longer end.
     const waiting = this.#settledWaiters;
     this.#settledWaiters = [];
@@ -945,6 +986,57 @@ export class VirtualManuscriptView {
     if (commentRanges.length > 0) {
       css.highlights.set("refrain-comment", new HighlightConstructor(...commentRanges));
     }
+  }
+
+  /**
+   * 把「刚被外部改过的地方」画出来，并撤下已经消退的。
+   *
+   * 与批注同走 Highlight API，但账本不同：批注是领域的持久对象，改动着色是
+   * 一段会自行消失的短期状态。共用一个注册名会让两者互相覆盖——后写的那次
+   * `set` 整个替换前一次的 Range 集合。
+   *
+   * 零区间时仍要 `delete`：改动消退之后没有任何东西会再来清理它，颜色会一直
+   * 留在版面上，而那正是「颜色必须消退」要防的。
+   */
+  #projectChangeHighlights(): void {
+    const css = (this.#view as unknown as { CSS?: unknown }).CSS as
+      | {
+          highlights?: { set(name: string, highlight: unknown): void; delete(name: string): void };
+        }
+      | undefined;
+    if (css?.highlights === undefined) return;
+    const HighlightConstructor = (
+      this.#view as unknown as { Highlight?: new (...ranges: Range[]) => unknown }
+    ).Highlight;
+    if (HighlightConstructor === undefined) return;
+
+    css.highlights.delete(ADDED_HIGHLIGHT);
+    for (const paragraph of this.#byId.values()) delete paragraph.dataset.changed;
+    if (this.#changeHighlights.isEmpty()) return;
+
+    const added: Range[] = [];
+    for (const [blockId, spans] of this.#changeHighlights.current(Date.now())) {
+      const paragraph = this.#byId.get(blockId);
+      if (paragraph === undefined) continue; // 滚出窗口的块没有节点可画。
+      let removed = false;
+      for (const span of spans) {
+        if (span.kind === "removed") {
+          // 零宽区间画不出像素（实测见 change-highlights.ts 的常量注释），
+          // 所以删除标在段落上，不进 Range 集合。
+          removed = true;
+          continue;
+        }
+        const start = locateOffset(paragraph, span.start);
+        const end = locateOffset(paragraph, span.end);
+        if (start === null || end === null) continue;
+        const range = this.#element.ownerDocument.createRange();
+        range.setStart(start.node, start.offset);
+        range.setEnd(end.node, end.offset);
+        added.push(range);
+      }
+      paragraph.dataset.changed = removed ? "removed" : "added";
+    }
+    if (added.length > 0) css.highlights.set(ADDED_HIGHLIGHT, new HighlightConstructor(...added));
   }
 
   /**
@@ -1237,6 +1329,7 @@ export class VirtualManuscriptView {
     }
     this.#projectAnnotations();
     this.#syncProposalMarks();
+    this.#projectChangeHighlights();
     if (pinnedId !== null && activeOffset !== null) {
       const restored = this.#byId.get(pinnedId);
       if (restored !== undefined) {

@@ -1,5 +1,6 @@
 /** Public editor contract. The Rust domain owns canonical bytes; these values are projections. */
 
+import type { DiffPresentation } from "@refrain/typeset";
 import type { CodeTheme } from "./code-highlight";
 
 /**
@@ -109,6 +110,13 @@ export interface EditorHandle {
   setRevision(revision: string): void;
   /** Project a different document after a switch or an external change. */
   replace(document: EditorDocument): void;
+  /**
+   * 改动着色画成什么。
+   *
+   * `marks` 标出增删；`result` 只画改动后的成品。两者读同一份判定，换的只是
+   * 过滤器——Kara 期间的目的是颜色不堆叠、行数不跳动。
+   */
+  setDiffPresentation(presentation: DiffPresentation): void;
   /** Put the caret in a block, at an optional character offset. */
   focus(blockId?: string, offset?: number): void;
   /** Return the collapsed caret, or null when the selection is elsewhere. */

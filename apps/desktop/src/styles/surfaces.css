@@ -437,6 +437,41 @@
   box-shadow: inset 2px 0 color-mix(in oklab, var(--focus) 45%, transparent);
 }
 
+/*
+ * 改动着色。用 --accepted / --refused 而不是自造色：主题里这两个变量本来就
+ * 是「被接受的」与「被否掉的」，七套主题各自定义过，语义与色相一并跟着走。
+ *
+ * 只上 wash 底色，不加下划线、不加边框、不改字重——每一样都会让行盒尺寸或
+ * 字形位置变动，而这套着色的目的正是版面安定。底色不占位。
+ */
+.editor-host::highlight(refrain-diff-added) {
+  background: color-mix(in oklab, var(--accepted-wash) 78%, transparent);
+}
+
+/*
+ * 删除标记不能走 Highlight。
+ *
+ * 纯删除的区间是零宽的（被删的文本在新版里不存在，没有字符可着色），而
+ * **零宽 Range 上 Highlight 画不出任何像素**——实测而非推理，探针
+ * `e2e/probe-zero-width-highlight.ts`：零宽 Range 的 getBoundingClientRect
+ * 宽 0px 高 24px，同页对照组三字区间宽 48px。底色、下划线、边框都需要一段
+ * 宽度，三者一并落空。
+ *
+ * 所以删除标在段落上：右缘一道细线，说「这一段里有东西被删了」。它不假装
+ * 自己知道删在哪一个字之间——零宽区间本来也指不出可见位置。
+ *
+ * 用 `box-shadow` 的内嵌边线而不是绝对定位的 `::after`：段落上没有
+ * `position: relative`（见上面 `p[data-block-id]` 的规则），绝对定位会挂到
+ * 最近的定位祖先上，标记落在整个编辑区的边上而不是这一段旁边。内嵌阴影不
+ * 参与布局，行盒尺寸与行数因此不受影响——这正是「版面安定」要保的东西。
+ *
+ * Kara 模式下这条根本不会出现：`forPresentation` 已在数据层滤掉 removed，
+ * `data-changed` 也就取不到 "removed" 这个值，不必再用选择器关一次。
+ */
+.editor-host p[data-changed="removed"] {
+  box-shadow: inset -2px 0 color-mix(in oklab, var(--refused) 55%, transparent);
+}
+
 .editor-host p[data-annotation="highlight"] {
   box-shadow: inset 2px 0 color-mix(in oklab, var(--seal) 42%, transparent);
 }

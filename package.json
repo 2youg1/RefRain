@@ -26,6 +26,7 @@
     "verify:no-spec-upload": "bun scripts/verify-no-spec-upload.ts",
     "verify:readme-parity": "bun scripts/verify-readme-parity.ts",
     "verify:no-network": "bun scripts/verify-no-network.ts",
+    "verify:change-highlight-render": "bun apps/desktop/e2e/change-highlight-render.ts",
     "verify:bridge": "bun scripts/verify-bridge.ts",
     "verify:logo": "bun scripts/verify-logo.ts",
     "verify:window-chrome": "bun scripts/verify-window-chrome.ts",
