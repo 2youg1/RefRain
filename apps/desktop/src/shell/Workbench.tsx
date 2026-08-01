@@ -51,7 +51,7 @@ import { type PanelLayout, panelLayout } from "./panel-spine";
 import { PanelStack } from "./panel-stack";
 import { ProjectSession } from "./project-session";
 import { QuarterMemory, runQuarterKey } from "./quarter-navigation";
-import { takesWholeStage } from "./quarters";
+import { dispatchBesideManuscript, takesWholeStage } from "./quarters";
 import { browserTimer, RailPresence } from "./rail-presence";
 import { railScroll } from "./rail-scroll";
 import { browserRunWatchGateway, RunWatch } from "./run-watch";
@@ -816,22 +816,15 @@ export function Workbench(props: WorkbenchProps) {
     panelTick();
     return panels.top?.content ?? null;
   });
-  /**
-   * 这条路径此刻在屏幕上的样子：让开多宽、算不算开着。
-   *
-   * 工单台不在面板栈里（它是舞台的一个 stage，不是 `panels.open` 推进来的一层），
-   * 但它在屏幕上占的正是同一条竖带，所以正文让位必须把它算进来。少算这一层，
-   * 正文就不让位，面板与版心同列——那就是「字叠字」那张图。
-   */
-  const dispatchOpen = createMemo(
-    () => state().stage === "dispatch" && reference()?.kind !== "annotations",
-  );
+  const scene = createMemo(() => ({
+    reference: reference()?.kind ?? null,
+    stage: state().stage,
+  }));
+  const dispatchOpen = createMemo(() => dispatchBesideManuscript(scene()));
+  /** 这条路径此刻在屏幕上的样子：让开多宽、算不算开着。 */
   const layout = createMemo(() => {
     panelTick();
-    return panelLayout(
-      panels.depth + (dispatchOpen() ? 1 : 0),
-      takesWholeStage({ reference: reference()?.kind ?? null, stage: state().stage }),
-    );
+    return panelLayout(panels.depth + (dispatchOpen() ? 1 : 0), takesWholeStage(scene()));
   });
   const annotationsOpen = createMemo(() => reference()?.kind === "annotations");
   const commandsForMenu = createMemo(() =>

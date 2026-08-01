@@ -63,7 +63,11 @@ for (const [source, fact, message] of [
     // 判定本身已搬进 shell/quarters.ts 的 takesWholeStage——「谁占满舞台」是层的
     // 语义，不是渲染代码的知识。门禁跟着搬：断言组件问的是那个函数，而函数里
     // 那两个场景由下面一条单独钉住。
-    "takesWholeStage({",
+    //
+    // 只写函数名不带 `({`：调用点传的是一个字面量还是一个已投影的 scene，
+    // 与「组件有没有自己判断」无关。写死括号形状会在把实参提成变量时变红，
+    // 而那次改动恰恰没有动这条规则——门禁该测的是它问了谁，不是它怎么写参数。
+    "takesWholeStage(",
     "Settings or Review destroys the mounted editor instead of hiding it",
   ],
   // Two return

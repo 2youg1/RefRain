@@ -3,6 +3,16 @@
 // 这里没有业务分支，没有跨桥调用，也没有「先怎样再怎样」的次序——那些都在
 // shell/dispatch-session.ts 里，并且在没有浏览器的情况下被测试。这个文件只回答
 // 一个问题：当下这份 view 应该长什么样。
+//
+// 两条已经踩过的排布约束，写在这里以免下次又改回去：
+//
+// 一、段落预览不在 JS 里截断。`.block-row .peek` 已有 text-overflow: ellipsis，
+//    按**可用宽度**截并留省略号；在这里 slice(0, 20) 会把半句直接切掉且不留记号，
+//    作者读起来像原文就这么短，而且两处都截会让 CSS 那条永远触发不了。
+//
+// 二、「送出」跟在要求输入之后，不在顶部那行只读摘要里。动线是
+//    勾段落 → 选编排 → 写要求 → 送出；按钮排在最前面时，作者读到它的时候
+//    还没有任何东西可送。
 import {
   createEffect,
   createMemo,
@@ -289,12 +299,6 @@ export function DispatchSurface(props: DispatchSurfaceProps): JSX.Element {
                   }}
                 />
                 <span class="ordinal">b{index() + 1}</span>
-                {/*
-                  截断交给 CSS 的 ellipsis（`.block-row .peek` 已经写着），不在这里切。
-                  在 JS 里切 20 个字符会把「他没有」这样的半句直接断掉且不留省略号，
-                  作者读起来像原文就这么短；而 CSS 那条按**可用宽度**截，面板变宽时
-                  自动多显示一些。两处都截还会先被 JS 截短、再也触发不了 ellipsis。
-                */}
                 <span class="peek">{block.text}</span>
                 <span class="count">{block.text.length} 字</span>
               </label>
@@ -373,10 +377,6 @@ export function DispatchSurface(props: DispatchSurfaceProps): JSX.Element {
           value={model().prompt}
           onInput={(event) => session.proposePrompt(event.currentTarget.value)}
         />
-        {/*
-          送出跟在要求后面，因为它是这条动线的终点：勾段落 → 选编排 → 写要求 → 送出。
-          它原本排在最上面那行只读摘要里，作者读到按钮时还没有任何东西可送。
-        */}
         <div class="cell send">
           <button
             class="dispatch-send"
