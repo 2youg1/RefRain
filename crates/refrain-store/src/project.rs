@@ -604,6 +604,9 @@ impl ProjectStore {
             digest: Some(stamp.digest.clone()),
             current_head: None,
             head_block_ids: None,
+            // Authored in RefRain, not imported from anywhere.
+            source_digest: None,
+            source_format: None,
         };
         self.upsert_document(&row)?;
         Ok(OpenDocument {
@@ -733,6 +736,9 @@ impl ProjectStore {
             digest: Some(stamp.digest.clone()),
             current_head: None,
             head_block_ids: None,
+            // Reconciliation found a file on disk; no import recorded it.
+            source_digest: None,
+            source_format: None,
         };
         self.upsert_document(&row)?;
         Ok(row)
@@ -741,49 +747,19 @@ impl ProjectStore {
     fn find_document(&self, relative: &str) -> Result<Option<DocumentRow>, ProjectFailure> {
         self.db
             .query_row(
-                "SELECT id, path, role, digest, current_head, head_block_ids
+                "SELECT id, path, role, digest, current_head, head_block_ids,
+                        source_digest, source_format
                  FROM documents WHERE path = ?1",
                 params![relative],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, Option<String>>(3)?,
-                        row.get::<_, Option<String>>(4)?,
-                        row.get::<_, Option<String>>(5)?,
-                    ))
-                },
+                // The same columns and the same decode as every other document
+                // read. This carried its own copy of the tuple and the id/role
+                // parsing, so schema v10 had to add a column in two places and
+                // the second one is exactly the kind that gets missed.
+                catalog::stored_document,
             )
             .optional()
             .map_err(crate::schema::StoreError::from)?
-            .map(|(id, path, role, digest, current_head, head_block_ids)| {
-                let id = id
-                    .parse::<uuid::Uuid>()
-                    .map(Id::from_uuid)
-                    .map_err(|error| {
-                        ProjectFailure::Domain(RefrainError::new(
-                            ErrorCode::StateUnavailable,
-                            "read a document row",
-                            format!("{path}: {error}"),
-                        ))
-                    })?;
-                let role = DocumentRole::from_wire(&role).ok_or_else(|| {
-                    ProjectFailure::Domain(RefrainError::new(
-                        ErrorCode::StateUnavailable,
-                        "read a document role",
-                        format!("{path}: {role}"),
-                    ))
-                })?;
-                Ok(DocumentRow {
-                    id,
-                    path,
-                    role,
-                    digest,
-                    current_head,
-                    head_block_ids,
-                })
-            })
+            .map(|stored| catalog::decode_document(stored).map_err(ProjectFailure::Domain))
             .transpose()
     }
 
@@ -864,9 +840,38 @@ impl ProjectStore {
         Ok(())
     }
 
+    /// Record which file a Material was imported from.
+    ///
+    /// Only import calls this. Creation and reconciliation go through
+    /// `upsert_document`, which coalesces these columns rather than setting
+    /// them — they have no source to record and must not clear one.
+    pub fn record_imported_source(
+        &mut self,
+        path: &str,
+        digest: &str,
+        format: &str,
+    ) -> Result<(), ProjectFailure> {
+        self.db
+            .execute(
+                "UPDATE documents SET source_digest = ?1, source_format = ?2 WHERE path = ?3",
+                params![digest, format, path],
+            )
+            .map_err(crate::schema::StoreError::from)?;
+        Ok(())
+    }
+
     fn upsert_document(&mut self, row: &DocumentRow) -> Result<(), ProjectFailure> {
         self.db
             .execute(
+                // The source columns are deliberately absent here. Both
+                // callers create a document — nothing arrives with a source to
+                // write, so listing the columns would only add a NULL that
+                // could overwrite a real one later. `record_imported_source`
+                // is the single writer, and reconciliation's own insert uses
+                // `ON CONFLICT DO NOTHING`, so an existing row keeps what it
+                // has. Measured: a COALESCE here could not be made to fail —
+                // removing it changed no test, because no caller ever reaches
+                // this statement with a source in hand.
                 "INSERT INTO documents (id, path, role, digest) VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT(path) DO UPDATE SET digest = excluded.digest",
                 params![row.id.to_string(), row.path, row.role.as_str(), row.digest],

@@ -60,6 +60,65 @@ pub fn prepare_material_source(
     Ok(PreparedMaterialSource { material, clone })
 }
 
+/// Read back the immutable clone of an imported source.
+///
+/// The clone is what `prepare_material_source` wrote, named `{digest}.{ext}`.
+/// Reading it is how a reader sees the original pages of a PDF while writing
+/// in their own manuscript — RefRain projects text out of a source but never
+/// writes back into one, so the clone is the only faithful copy it can show.
+///
+/// This is a **read** of `SOURCE_BACKUP_DIR`. Nothing here creates or replaces
+/// a file: the backup is written once at import and is never touched again.
+///
+/// The digest is checked against the bytes on the way out. A clone whose
+/// content no longer matches its own name is not shown, because the caller
+/// asked for one specific document and would otherwise render a different one.
+///
+/// **Which guard actually holds**: the digest check is the load-bearing one.
+/// A traversal that escapes this directory reaches some other file, and that
+/// file will not hash to the name that was asked for — so the digest refuses
+/// it even with the character check removed (measured: deleting the character
+/// check alone left every test green; both had to go before the traversal
+/// test could fail). The character check is defence in depth and a clearer
+/// error, not the thing standing between a crafted row and an arbitrary read.
+/// Anyone tempted to drop the digest check to save a hash should read that
+/// sentence again.
+pub fn read_material_clone(
+    clone_dir: &std::path::Path,
+    digest: &str,
+    extension: &str,
+) -> Result<Vec<u8>, ProjectFailure> {
+    // The digest and extension both reach this function from a stored row, but
+    // they still travel through a path join. Reject anything that could leave
+    // the clone directory rather than trusting the caller.
+    let safe = |value: &str| {
+        !value.is_empty()
+            && value
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric())
+    };
+    if !safe(digest) || !safe(extension) {
+        return Err(ProjectFailure::Domain(refrain_core::RefrainError::new(
+            refrain_core::ErrorCode::UnsupportedFormat,
+            "read an imported source",
+            "clone name",
+        )));
+    }
+    let path = clone_dir.join(format!("{digest}.{extension}"));
+    let bytes = std::fs::read(&path).map_err(|source| ProjectFailure::Io {
+        path: path.clone(),
+        source,
+    })?;
+    if refrain_core::digest::content_hex(&bytes) != digest {
+        return Err(ProjectFailure::Domain(refrain_core::RefrainError::new(
+            refrain_core::ErrorCode::UnsupportedFormat,
+            "read an imported source",
+            "clone digest mismatch",
+        )));
+    }
+    Ok(bytes)
+}
+
 impl ProjectStore {
     pub fn material_draft_insert(&mut self, row: &MaterialDraftRow) -> Result<(), ProjectFailure> {
         self.db.execute(
@@ -165,6 +224,145 @@ mod tests {
             store.material_draft_take("d1").is_err(),
             "a resolved draft is gone"
         );
+    }
+
+    #[test]
+    fn a_recorded_source_survives_reconciliation() {
+        // The whole point of storing the source on the row: the reader resolves
+        // the original pages from these two columns. Reconciliation walks the
+        // folder and upserts every document it finds, knowing nothing about
+        // imports — without the COALESCE in `upsert_document` that pass writes
+        // NULL over the record and every Material silently loses its original.
+        let mut store = scratch_store();
+        let created = store
+            .create(&crate::project::CreateDocument {
+                title: "参考".to_string(),
+                role: refrain_core::DocumentRole::Material,
+            })
+            .unwrap();
+        let path = created.row.path.clone();
+        assert!(
+            created.row.source_digest.is_none(),
+            "a freshly created document has no source"
+        );
+
+        store
+            .record_imported_source(&path, "abc123", "pdf")
+            .unwrap();
+        let find = |store: &ProjectStore| {
+            store
+                .documents()
+                .unwrap()
+                .into_iter()
+                .find(|row| row.path == path)
+                .expect("the row is there")
+        };
+        let after_import = find(&store);
+        assert_eq!(after_import.source_digest.as_deref(), Some("abc123"));
+        assert_eq!(after_import.source_format.as_deref(), Some("pdf"));
+
+        // Reconciliation walks the folder and inserts every document it finds,
+        // knowing nothing about imports. It is guarded by `ON CONFLICT DO
+        // NOTHING`; if that ever becomes an upsert that writes its own NULL
+        // columns through, every Material loses the pointer to its original on
+        // the next scan and the reader silently falls back to plain text.
+        //
+        // The reconciler caches a fingerprint of the scan, so calling it twice
+        // in a row returns early. Touching the file changes the scan and makes
+        // the second pass do real work — without this the assertion below
+        // passes on a code path that never ran.
+        store.refresh_documents().unwrap();
+        let extra = store.permit().canonical_path.join("另一份.md");
+        std::fs::write(&extra, "第二份稿子。").unwrap();
+        store.refresh_documents().unwrap();
+
+        let after_scan = find(&store);
+        assert_eq!(
+            after_scan.source_digest.as_deref(),
+            Some("abc123"),
+            "a scan that knows nothing about imports must not erase one"
+        );
+        assert_eq!(after_scan.source_format.as_deref(), Some("pdf"));
+    }
+
+    #[test]
+    fn an_imported_source_reads_back_byte_for_byte() {
+        let store = scratch_store();
+        let clone_dir = store.layout().source_backup_dir.join("materials");
+        let dir = std::env::temp_dir().join(format!("refrain-read-{}", refrain_core::Id::new()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("参考.html");
+        let original = "<p>原件的字节。</p>";
+        std::fs::write(&source, original).unwrap();
+        let prepared = prepare_material_source(&source, &clone_dir).unwrap();
+
+        let read = read_material_clone(&clone_dir, &prepared.material.source_digest, "html")
+            .expect("the clone reads back");
+        assert_eq!(
+            read,
+            original.as_bytes(),
+            "the reader sees the original bytes, not the projected text"
+        );
+    }
+
+    #[test]
+    fn a_clone_whose_bytes_no_longer_match_its_name_is_refused() {
+        // The digest is the file's own name. If the two disagree the caller
+        // would be shown a different document than the one it asked for, so
+        // this refuses rather than rendering the wrong pages.
+        let store = scratch_store();
+        let clone_dir = store.layout().source_backup_dir.join("materials");
+        std::fs::create_dir_all(&clone_dir).unwrap();
+        let digest = refrain_core::digest::content_hex(b"the real bytes");
+        let path = clone_dir.join(format!("{digest}.html"));
+        std::fs::write(&path, b"different bytes entirely").unwrap();
+
+        assert!(
+            read_material_clone(&clone_dir, &digest, "html").is_err(),
+            "a clone that does not hash to its own name is refused"
+        );
+    }
+
+    #[test]
+    fn a_clone_name_cannot_leave_its_directory() {
+        // Both parts reach the join from a stored row, but a stored row is not
+        // a reason to skip the check — this is the one place a path is built
+        // from data.
+        //
+        // The traversal target must **exist and be readable**, or this test
+        // passes for the wrong reason: a name that escapes the directory and
+        // then hits a missing file fails at `fs::read`, so removing the guard
+        // changes nothing and the assertion never sees the branch it claims to
+        // cover. Measured: with a non-existent target, deleting the guard left
+        // all five tests green.
+        let store = scratch_store();
+        let clone_dir = store.layout().source_backup_dir.join("materials");
+        std::fs::create_dir_all(&clone_dir).unwrap();
+        let outside = clone_dir.parent().unwrap().join("outside.html");
+        std::fs::write(&outside, b"bytes the caller must never receive").unwrap();
+        // `../outside` + `html` joins to `materials/../outside.html`, which
+        // resolves to the file written above. Measured, because two earlier
+        // attempts did not: `..` alone joins to `materials/...html` (a name
+        // inside the directory) and a percent-encoded `..%2F` is never decoded,
+        // so both left the guard untested while reading as if they covered it.
+        assert!(
+            read_material_clone(&clone_dir, "../outside", "html").is_err(),
+            "`../outside.html` is refused before it becomes a path"
+        );
+        // The guard rejects on character class, so cover each way a name can
+        // leave the set rather than only the traversal shape.
+        for (digest, extension) in [
+            ("", "html"),
+            ("abc", ""),
+            ("a/b", "html"),
+            ("abc", "ht/ml"),
+            ("a.b", "html"),
+        ] {
+            assert!(
+                read_material_clone(&clone_dir, digest, extension).is_err(),
+                "{digest}.{extension} is refused"
+            );
+        }
     }
 
     #[test]

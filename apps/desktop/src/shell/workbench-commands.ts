@@ -19,6 +19,7 @@ export type WorkbenchCommandId =
   | "save-document"
   | "open-dispatch"
   | "open-connections"
+  | "open-source"
   | "open-appearance"
   | "open-typography"
   | "open-shortcuts"
@@ -41,6 +42,13 @@ export interface WorkbenchCommand {
 interface CommandContext {
   hasProject: boolean;
   hasDocument: boolean;
+  /**
+   * 打开的这篇是不是导入来的，且原件还在。
+   *
+   * 比 `hasDocument` 严：作者自己写的稿子没有原件可看，把「看原件」列成可用
+   * 只会让他点开一个空面板。
+   */
+  hasImportedSource: boolean;
 }
 
 const command = (
@@ -172,6 +180,14 @@ export function commandCatalog(context: CommandContext): WorkbenchCommand[] {
       ["connections", "agents", "harness", "codex", "claude", "连接"],
       context.hasProject,
       projectStep,
+    ),
+    command(
+      "open-source",
+      "reference",
+      "看原件",
+      ["source", "original", "pdf", "原件", "原文", "扫描", "页面"],
+      context.hasImportedSource,
+      context.hasImportedSource ? null : "这篇不是从文件导入的，没有原件可看",
     ),
     command(
       "open-appearance",

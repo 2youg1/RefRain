@@ -53,6 +53,8 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["verify:inline-marks", ["bun", "apps/desktop/e2e/verify-inline-marks.ts"]],
   ["verify:table-render", ["bun", "apps/desktop/e2e/verify-table-render.ts"]],
   ["verify:diagram-render", ["bun", "apps/desktop/e2e/verify-diagram-render.ts"]],
+  ["verify:settings-search", ["bun", "apps/desktop/e2e/verify-settings-search.ts"]],
+  ["verify:pdf-render", ["bun", "apps/desktop/e2e/verify-pdf-render.ts"]],
   ["verify:hanging-render", ["bun", "apps/desktop/e2e/verify-hanging-render.ts"]],
   ["verify:font-licenses", ["bun", "scripts/verify-font-licenses.ts"]],
   ["verify:font-fallback", ["bun", "scripts/verify-font-fallback.ts"]],
@@ -110,6 +112,8 @@ const headlessEvidence = new Set([
   "verify:inline-marks",
   "verify:table-render",
   "verify:diagram-render",
+  "verify:settings-search",
+  "verify:pdf-render",
   "verify:hanging-render",
   "verify:font-fallback",
   // 侧栏缩进量的是渲染结果，所以它要一台浏览器和一个跑着的 dev server。

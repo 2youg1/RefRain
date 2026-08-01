@@ -81,6 +81,22 @@ export const commands = {
 	 *  empty string (INV-3's discipline).
 	 */
 	universalIcon: () => __TAURI_INVOKE<number[] | null>("universal_icon"),
+	/**
+	 *  The immutable clone of an imported source, for reading its original pages.
+	 *
+	 *  A Material carries the projected text; this returns the bytes the file was
+	 *  imported from. The two are different things and the difference matters: for
+	 *  a PDF the projection is text with no page, no column and no figure, so an
+	 *  author checking a quotation against the original needs the original.
+	 *
+	 *  **Read only.** RefRain never writes back into a source (owner's ruling) and
+	 *  never writes into the backup directory after import.
+	 *
+	 *  Absent is a value: a Material imported before clones were kept, or one whose
+	 *  clone was removed, answers `None` rather than an error. The caller shows the
+	 *  text it already has.
+	 */
+	importedSourceBytes: (rootId: string, digest: string, format: string) => __TAURI_INVOKE<number[] | null>("imported_source_bytes", { rootId, digest, format }),
 	/**  Every candidate for a document, newest last, for the review surface. */
 	listProposals: (rootId: string, path: string) => typedError<ProposalDto[], RefrainError>(__TAURI_INVOKE("list_proposals", { rootId, path })),
 	/**
@@ -171,6 +187,14 @@ export const commands = {
 	/**  The confirmed revision id and lineage paired with the digest. */
 	currentHead: string | null,
 	headBlockIds: string | null,
+	/**
+	 *  For an imported Material: the digest of the file it came from, which
+	 *  names its immutable clone. `None` for anything not imported, and for
+	 *  Materials imported before schema v10.
+	 */
+	sourceDigest: string | null,
+	/**  The imported file's format, which completes the clone's filename. */
+	sourceFormat: string | null,
 } | null, RefrainError>(__TAURI_INVOKE("commit_material_action", { rootId, draftId, editedBody, dismiss })),
 	agentReadingLedger: (rootId: string) => typedError<AgentReadingDto_Serialize[], RefrainError>(__TAURI_INVOKE("agent_reading_ledger", { rootId })),
 	/**
@@ -198,6 +222,14 @@ export const commands = {
 	/**  The confirmed revision id and lineage paired with the digest. */
 	currentHead: string | null,
 	headBlockIds: string | null,
+	/**
+	 *  For an imported Material: the digest of the file it came from, which
+	 *  names its immutable clone. `None` for anything not imported, and for
+	 *  Materials imported before schema v10.
+	 */
+	sourceDigest: string | null,
+	/**  The imported file's format, which completes the clone's filename. */
+	sourceFormat: string | null,
 } | null, RefrainError>(__TAURI_INVOKE("choose_and_import_material", { rootId })),
 	listAgents: () => __TAURI_INVOKE<AgentDto[]>("list_agents"),
 	/**
@@ -523,6 +555,14 @@ export type DocumentRow = {
 	/**  The confirmed revision id and lineage paired with the digest. */
 	currentHead: string | null,
 	headBlockIds: string | null,
+	/**
+	 *  For an imported Material: the digest of the file it came from, which
+	 *  names its immutable clone. `None` for anything not imported, and for
+	 *  Materials imported before schema v10.
+	 */
+	sourceDigest: string | null,
+	/**  The imported file's format, which completes the clone's filename. */
+	sourceFormat: string | null,
 };
 
 /**  The editor's settled input, as it crosses the bridge. */

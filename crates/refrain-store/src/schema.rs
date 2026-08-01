@@ -436,6 +436,36 @@ impl Database for ProjectDb {
                     )
                 },
             },
+            Migration {
+                version: SchemaVersion(10),
+                name: "imported-source-identity",
+                apply: |tx| {
+                    // Which file a Material was imported from, and in what
+                    // format.
+                    //
+                    // Import already keeps an immutable clone of the original
+                    // bytes, named by its digest. Until now the only record of
+                    // that digest was a sentence in the Material's own body
+                    // ("> 来源：… blake3 abc123def456；原件克隆：…"), truncated
+                    // to twelve characters and sitting in text the author is
+                    // free to rewrite. Reading the clone back therefore meant
+                    // parsing prose for a value that was both incomplete and
+                    // editable — the projection standing in for a fact.
+                    //
+                    // These two columns hold the fact. The sentence stays,
+                    // because a reader opening the Material should see where
+                    // it came from, but it is now a rendering of these columns
+                    // rather than their only home.
+                    //
+                    // NULL is a value: Materials imported before this version,
+                    // and every document that was not imported at all, have no
+                    // source. The reader shows the text it already has.
+                    tx.execute_batch(
+                        "ALTER TABLE documents ADD COLUMN source_digest TEXT;
+                         ALTER TABLE documents ADD COLUMN source_format TEXT;",
+                    )
+                },
+            },
         ]
     }
 }

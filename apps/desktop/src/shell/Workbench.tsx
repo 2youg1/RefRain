@@ -36,6 +36,7 @@ import { RailPrompt } from "../ui/RailPrompt";
 import { type RailCatalog, RailShelf } from "../ui/RailShelf";
 import { ReviewSurface } from "../ui/ReviewSurface";
 import { SettingsSurface } from "../ui/SettingsSurface";
+import { SourceSurface } from "../ui/SourceSurface";
 import { StatusLine } from "../ui/StatusLine";
 import { UniversalMenu } from "../ui/UniversalMenu";
 import { VerdictBento } from "../ui/VerdictBento";
@@ -391,6 +392,32 @@ function SettingsReference(props: {
 }
 
 /**
+ * 原件面板的接线，一处。
+ *
+ * 与 `SettingsReference` 同构，理由也相同：它是一层面板的全部接线，写在
+ * `StageRow` 体内会让那个组件继续长——而 `verify:component-depth` 的额度只
+ * 允许下调，不允许为新功能抬高。模块级函数不计入组件体，这不是钻空子：一层
+ * 面板的「什么时候出现、要哪些数据」本来就是它自己的性质，不是舞台的编排。
+ */
+function SourceReference(props: {
+  open: boolean;
+  document: { sourceDigest: string | null; sourceFormat: string | null };
+  readBytes: (digest: string, format: string) => Promise<Uint8Array | null>;
+  onClose: () => void;
+}): JSX.Element {
+  return (
+    <Show when={props.open}>
+      <SourceSurface
+        sourceDigest={props.document.sourceDigest}
+        sourceFormat={props.document.sourceFormat}
+        readBytes={props.readBytes}
+        onClose={props.onClose}
+      />
+    </Show>
+  );
+}
+
+/**
  * 饭盒的全部状态：印点投影、正在打开的那一只、以及裁决动作。
  * 信箱由 MailboxSection 交出（onMailboxReady），这里只认它，不认桥。
  */
@@ -534,6 +561,8 @@ function WritingStageRow(props: {
   onMaterialSaved: (row: DocumentRow) => void;
   onDispatchClosed: () => void;
   connectionsOpen: boolean;
+  sourceOpen: boolean;
+  readSourceBytes: (digest: string, format: string) => Promise<Uint8Array | null>;
   settings: JSX.Element;
 }): JSX.Element {
   return (
@@ -585,6 +614,12 @@ function WritingStageRow(props: {
       <Show when={props.connectionsOpen}>
         <ConnectionsSurface rootId={props.rootId} onClosed={props.onCloseReference} />
       </Show>
+      <SourceReference
+        open={props.sourceOpen}
+        document={props.openDocument.document}
+        readBytes={props.readSourceBytes}
+        onClose={props.onCloseReference}
+      />
       {props.settings}
     </div>
   );
@@ -822,7 +857,11 @@ export function Workbench(props: WorkbenchProps) {
   });
   const annotationsOpen = createMemo(() => reference()?.kind === "annotations");
   const commandsForMenu = createMemo(() =>
-    commandCatalog({ hasProject: project() !== null, hasDocument: active() !== null }),
+    commandCatalog({
+      hasProject: project() !== null,
+      hasDocument: active() !== null,
+      hasImportedSource: active()?.document.sourceDigest != null,
+    }),
   );
   const karaEngaged = createMemo(() => {
     karaTick();
@@ -900,6 +939,7 @@ export function Workbench(props: WorkbenchProps) {
   };
 
   const importMaterial = (): Promise<void> => projectSession.importMaterial();
+  const readSourceBytes = projectSession.importedSourceBytes.bind(projectSession);
 
   const save = (): void => void documentSession.save();
 
@@ -964,6 +1004,7 @@ export function Workbench(props: WorkbenchProps) {
       "save-document": save,
       "open-dispatch": () => openStage("dispatch"),
       "open-connections": () => openReference({ kind: "connections" }),
+      "open-source": () => openReference({ kind: "source" }),
       "open-appearance": () => openReference({ kind: "settings", section: "appearance" }),
       "open-typography": () => openReference({ kind: "settings", section: "typography" }),
       "open-shortcuts": () => openReference({ kind: "settings", section: "shortcuts" }),
@@ -1172,6 +1213,8 @@ export function Workbench(props: WorkbenchProps) {
                     onMaterialSaved={(row) => projectSession.add(row)}
                     onDispatchClosed={() => openStage("writing")}
                     connectionsOpen={reference()?.kind === "connections"}
+                    sourceOpen={reference()?.kind === "source"}
+                    readSourceBytes={readSourceBytes}
                     settings={settingsPanel()}
                   />
                 )}

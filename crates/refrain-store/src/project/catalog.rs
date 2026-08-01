@@ -80,30 +80,56 @@ pub struct DocumentRow {
     /// The confirmed revision id and lineage paired with the digest.
     pub current_head: Option<String>,
     pub head_block_ids: Option<String>,
+    /// For an imported Material: the digest of the file it came from, which
+    /// names its immutable clone. `None` for anything not imported, and for
+    /// Materials imported before schema v10.
+    pub source_digest: Option<String>,
+    /// The imported file's format, which completes the clone's filename.
+    pub source_format: Option<String>,
 }
 
-type StoredDocument = (
-    String,
-    String,
-    String,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-);
-
-fn stored_document(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredDocument> {
-    Ok((
-        row.get(0)?,
-        row.get(1)?,
-        row.get(2)?,
-        row.get(3)?,
-        row.get(4)?,
-        row.get(5)?,
-    ))
+/// One `documents` row as SQLite hands it over, before the id and role are
+/// parsed.
+///
+/// A struct rather than a tuple: five of these eight fields are
+/// `Option<String>`, so a tuple lets two of them swap places without the
+/// compiler noticing — the reader would see one document's lineage attached to
+/// another's source. Names cost nothing here and the swap becomes impossible.
+pub(super) struct StoredDocument {
+    id: String,
+    path: String,
+    role: String,
+    digest: Option<String>,
+    current_head: Option<String>,
+    head_block_ids: Option<String>,
+    source_digest: Option<String>,
+    source_format: Option<String>,
 }
 
-fn decode_document(stored: StoredDocument) -> Result<DocumentRow, RefrainError> {
-    let (id, path, role, digest, current_head, head_block_ids) = stored;
+pub(super) fn stored_document(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredDocument> {
+    Ok(StoredDocument {
+        id: row.get(0)?,
+        path: row.get(1)?,
+        role: row.get(2)?,
+        digest: row.get(3)?,
+        current_head: row.get(4)?,
+        head_block_ids: row.get(5)?,
+        source_digest: row.get(6)?,
+        source_format: row.get(7)?,
+    })
+}
+
+pub(super) fn decode_document(stored: StoredDocument) -> Result<DocumentRow, RefrainError> {
+    let StoredDocument {
+        id,
+        path,
+        role,
+        digest,
+        current_head,
+        head_block_ids,
+        source_digest,
+        source_format,
+    } = stored;
     let id = id
         .parse::<uuid::Uuid>()
         .map(Id::from_uuid)
@@ -121,6 +147,8 @@ fn decode_document(stored: StoredDocument) -> Result<DocumentRow, RefrainError> 
         digest,
         current_head,
         head_block_ids,
+        source_digest,
+        source_format,
     })
 }
 
@@ -413,7 +441,7 @@ impl ProjectStore {
         let mut statement = self
             .db
             .prepare(
-                "SELECT id, path, role, digest, current_head, head_block_ids
+                "SELECT id, path, role, digest, current_head, head_block_ids, source_digest, source_format
                  FROM documents ORDER BY path",
             )
             .map_err(|error| {
@@ -465,7 +493,7 @@ impl ProjectStore {
         let mut statement = self
             .db
             .prepare(
-                "SELECT id, path, role, digest, current_head, head_block_ids
+                "SELECT id, path, role, digest, current_head, head_block_ids, source_digest, source_format
                  FROM documents
                  WHERE (?1 IS NULL OR path > ?1)
                  ORDER BY path
@@ -653,7 +681,7 @@ impl ProjectStore {
         let mut statement = self
             .db
             .prepare(
-                "SELECT id, path, role, digest, current_head, head_block_ids
+                "SELECT id, path, role, digest, current_head, head_block_ids, source_digest, source_format
                  FROM documents WHERE path = ?1",
             )
             .map_err(|error| {

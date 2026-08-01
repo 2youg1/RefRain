@@ -3,7 +3,9 @@ export type SettingsSection = "appearance" | "typography" | "shortcuts";
 export type WorkbenchReference =
   | { readonly kind: "connections" }
   | { readonly kind: "settings"; readonly section: SettingsSection }
-  | { readonly kind: "annotations" };
+  | { readonly kind: "annotations" }
+  /** 导入来源的原始页面，与投影出的文本并排。 */
+  | { readonly kind: "source" };
 
 /**
  * 工作台的两条轴。

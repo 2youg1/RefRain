@@ -31,6 +31,8 @@
     "verify:inline-marks": "bun apps/desktop/e2e/verify-inline-marks.ts",
     "verify:table-render": "bun apps/desktop/e2e/verify-table-render.ts",
     "verify:diagram-render": "bun apps/desktop/e2e/verify-diagram-render.ts",
+    "verify:settings-search": "bun apps/desktop/e2e/verify-settings-search.ts",
+    "verify:pdf-render": "bun apps/desktop/e2e/verify-pdf-render.ts",
     "verify:hanging-render": "bun apps/desktop/e2e/verify-hanging-render.ts",
     "verify:bridge": "bun scripts/verify-bridge.ts",
     "verify:logo": "bun scripts/verify-logo.ts",
@@ -102,6 +104,7 @@
     "@shikijs/langs": "4.3.1",
     "@shikijs/themes": "4.3.1",
     "nomnoml": "1.7.0",
+    "pdfjs-dist": "6.2.108",
     "shiki": "4.3.1"
   }
 }

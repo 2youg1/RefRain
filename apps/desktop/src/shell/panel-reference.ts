@@ -18,9 +18,26 @@ export function panelKey(reference: WorkbenchReference): string {
   return reference.kind === "settings" ? `settings/${reference.section}` : reference.kind;
 }
 
-/** 批注锚在正文上，没有打开的文档就没有可锚之处。 */
+/**
+ * 这一层此刻能不能打开。
+ *
+ * 批注锚在正文上，没有打开的文档就没有可锚之处；原件是这份文档导入自哪个
+ * 文件，同样要先有文档。
+ *
+ * 写成穷举的 `switch` 而不是 `!==` 链：加一种面板时编译器会在这里停下来问
+ * 它需不需要文档。实测加 `source` 变体时，全仓类型检查一处都没报——没有
+ * 任何地方对这个联合做穷举，新面板于是默认「随时可开」，而那对一半的面板
+ * 是错的。
+ */
 export function canOpen(reference: WorkbenchReference, hasDocument: boolean): boolean {
-  return reference.kind !== "annotations" || hasDocument;
+  switch (reference.kind) {
+    case "annotations":
+    case "source":
+      return hasDocument;
+    case "connections":
+    case "settings":
+      return true;
+  }
 }
 
 /**

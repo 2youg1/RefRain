@@ -42,6 +42,13 @@ export interface ProjectAcquisitionPort {
   createProject(name: string): Promise<ProjectOpenedDto | null>;
   createDocument(rootId: string, title: string, role: "chapter" | "material"): Promise<DocumentRow>;
   importMaterial(rootId: string): Promise<DocumentRow | null>;
+  /**
+   * 一份导入来源的原始字节，供只读地看它的原件。
+   *
+   * `null` 是一个值：早于 schema v10 导入的 Material，或克隆件已被移走。
+   * 调用方显示手上已有的文本，不当作错误。
+   */
+  importedSourceBytes(rootId: string, digest: string, format: string): Promise<Uint8Array | null>;
 }
 
 export interface DelayPort {
@@ -107,6 +114,12 @@ const productionAcquisition: ProjectAcquisitionPort = {
     return picked === null
       ? unwrap(commands.chooseAndImportMaterial(rootId))
       : debugCommands.importMaterial(rootId, picked);
+  },
+  async importedSourceBytes(rootId, digest, format) {
+    // 桥上是 `number[]`（IPC 没有二进制）。转成 `Uint8Array` 在这里做一次，
+    // 而不是让每个调用方各转一次。
+    const bytes = await commands.importedSourceBytes(rootId, digest, format);
+    return bytes === null ? null : new Uint8Array(bytes);
   },
 };
 
@@ -281,6 +294,18 @@ export class ProjectSession extends Session<ProjectOperation> {
    * 返回新条目的路径，好让外壳接着把它打开——由调用者决定打不打开，因为「建好
    * 之后要不要跳过去」是外壳的编排，不是名录的事。
    */
+  /**
+   * 一份导入来源的原始字节。
+   *
+   * 不走 `exclusive`：这是只读的，也不改任何会话状态，而排他会让「看原件」
+   * 在保存或导入正忙时干等。
+   */
+  async importedSourceBytes(digest: string, format: string): Promise<Uint8Array | null> {
+    const open = this.#state;
+    if (open.kind !== "open") return null;
+    return await this.#acquire.importedSourceBytes(open.project.rootId, digest, format);
+  }
+
   async createDocument(title: string, role: "chapter" | "material"): Promise<string | null> {
     const open = this.#state;
     const trimmed = title.trim();

@@ -494,7 +494,8 @@
 }
 
 /* ── src/ui/AnnotationSurface.tsx ─────────────────────────── */
-.annotations {
+.annotations,
+.source-pages {
   width: min(380px, 38vw);
   min-width: 300px;
   overflow-y: auto;
@@ -503,7 +504,24 @@
   padding: 20px;
 }
 
+/* 原件页面：画布按面板宽度缩放，一页一页往下排。 */
+.source-pages canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-bottom: 12px;
+  border: 1px solid var(--rule);
+  /* 纸色底：PDF 页面本身多半是白的，透出面板的暖纸色会显脏。 */
+  background: #fff;
+}
+
+.source-pages .source-note {
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
 .annotations header,
+.source-pages header,
 .connections header,
 .review-surface header,
 .settings-hero,
@@ -1591,10 +1609,77 @@
   text-align: right;
 }
 
+/* 设置搜索：只导航，不写值。命中列表压在标签栏之上，选中即跳到那一页。 */
+.settings-search {
+  position: relative;
+  margin-top: 34px;
+}
+
+.settings-search input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  background: var(--paper-sunk);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+
+.settings-search input::placeholder {
+  color: var(--ink-ghost);
+}
+
+.settings-search-hits {
+  position: absolute;
+  /* 命中列表浮在设置面板之上，与菜单同层：它也是「点一下就消失的临时层」。 */
+  z-index: var(--z-menu);
+  width: 100%;
+  max-height: 260px;
+  margin: 4px 0 0;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--rule-strong);
+  border-radius: 2px;
+  background: var(--paper-raised);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 12%);
+  list-style: none;
+}
+
+.settings-search-hits button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-search-hits button:hover {
+  background: var(--paper-sunk);
+}
+
+.settings-search-hits small {
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
+.settings-search-empty {
+  padding: 6px 10px;
+  color: var(--ink-faint);
+  font-size: 12px;
+}
+
 .settings-tabs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin-top: 42px;
+  margin-top: 20px;
   border-bottom: 1px solid var(--rule-strong);
 }
 

@@ -1007,6 +1007,35 @@ fn universal_icon(state: tauri::State<'_, AppState>) -> Option<Vec<u8>> {
     refrain_store::icons::read_icon(&icon_assets_dir(&state), &digest).ok()
 }
 
+/// The immutable clone of an imported source, for reading its original pages.
+///
+/// A Material carries the projected text; this returns the bytes the file was
+/// imported from. The two are different things and the difference matters: for
+/// a PDF the projection is text with no page, no column and no figure, so an
+/// author checking a quotation against the original needs the original.
+///
+/// **Read only.** RefRain never writes back into a source (owner's ruling) and
+/// never writes into the backup directory after import.
+///
+/// Absent is a value: a Material imported before clones were kept, or one whose
+/// clone was removed, answers `None` rather than an error. The caller shows the
+/// text it already has.
+#[tauri::command(async)]
+#[specta::specta]
+fn imported_source_bytes(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    digest: String,
+    format: String,
+) -> Option<Vec<u8>> {
+    let clone_dir = state
+        .with_project(&root_id, |_state, entry| {
+            Ok(entry.store.layout().source_backup_dir.join("materials"))
+        })
+        .ok()?;
+    refrain_store::materials::read_material_clone(&clone_dir, &digest, &format).ok()
+}
+
 /// Installed families and the weights the machine can actually draw. The
 /// catalog is scanned once per application session and never launches a shell.
 #[tauri::command]
@@ -1478,6 +1507,7 @@ macro_rules! refrain_commands {
         list_builtin_typography_presets,
         set_universal_icon,
         universal_icon,
+        imported_source_bytes,
         $($debug_command,)*
         list_proposals,
         record_verdict,
@@ -3451,12 +3481,25 @@ fn list_material_drafts(
 /// write its body through the same journaled text path the editor uses,
 /// persist. Used by draft resolution, by source import (C12.3), and by
 /// drag-drop manuscript import (C12.6).
+/// Where a Material's bytes came from, when it was imported rather than
+/// authored.
+///
+/// A struct rather than two `Option<String>` parameters: the digest and the
+/// format are both optional strings, so as arguments they can be swapped
+/// without the compiler noticing, and the failure would surface much later as
+/// a clone that cannot be found.
+struct ImportedFrom<'a> {
+    digest: &'a str,
+    format: &'a str,
+}
+
 fn create_material_with_body(
     state: &AppState,
     entry: &mut ProjectEntry,
     title: &str,
     body: &str,
     role: DocumentRole,
+    imported_from: Option<ImportedFrom<'_>>,
 ) -> Result<DocumentRow, RefrainError> {
     let created = entry
         .store
@@ -3542,13 +3585,56 @@ fn create_material_with_body(
         }
     }
     match persist_in_entry(entry, &created.row.path, None)? {
-        SaveOutcomeDto::Saved { .. } => Ok(created.row),
+        SaveOutcomeDto::Saved { .. } => {
+            let Some(source) = imported_from else {
+                return Ok(created.row);
+            };
+            // Record which file this came from, now that the document exists.
+            // The body already names the source in a sentence a reader can
+            // see; these columns are what the reader's PDF pane resolves, so
+            // that showing the original never depends on parsing prose the
+            // author is free to rewrite.
+            let row = DocumentRow {
+                source_digest: Some(source.digest.to_string()),
+                source_format: Some(source.format.to_string()),
+                ..created.row
+            };
+            entry
+                .store
+                .record_imported_source(&row.path, source.digest, source.format)
+                .map_err(into_domain)?;
+            Ok(row)
+        }
         SaveOutcomeDto::ChangedUnderneath { .. } => Err(RefrainError::new(
             ErrorCode::Io,
             "confirm a new material",
             "the file moved underneath",
         )),
     }
+}
+
+/// One unresolved draft by id.
+///
+/// Its own function because "no such draft" is a distinct outcome with a
+/// distinct message, and reading it inline put two concerns — finding the
+/// draft, and acting on it — in one body.
+fn draft_by_id(
+    entry: &mut ProjectEntry,
+    draft_id: &str,
+) -> Result<refrain_store::materials::MaterialDraftRow, RefrainError> {
+    entry
+        .store
+        .material_drafts()
+        .map_err(into_domain)?
+        .into_iter()
+        .find(|row| row.id == draft_id)
+        .ok_or_else(|| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "resolve a draft",
+                "no such draft",
+            )
+        })
 }
 
 /// The only way a draft becomes a Material (SPEC 8.7: a Human Material
@@ -3565,19 +3651,7 @@ fn commit_material_action(
     dismiss: bool,
 ) -> Result<Option<DocumentRow>, RefrainError> {
     state.with_project(&root_id, |state, entry| {
-        let draft = entry
-            .store
-            .material_drafts()
-            .map_err(into_domain)?
-            .into_iter()
-            .find(|row| row.id == draft_id)
-            .ok_or_else(|| {
-                RefrainError::new(
-                    ErrorCode::StateUnavailable,
-                    "resolve a draft",
-                    "no such draft",
-                )
-            })?;
+        let draft = draft_by_id(entry, &draft_id)?;
         if dismiss {
             entry
                 .store
@@ -3587,8 +3661,9 @@ fn commit_material_action(
         }
 
         let body = edited_body.unwrap_or_else(|| draft.body.clone());
-        let row =
-            create_material_with_body(state, entry, &draft.title, &body, DocumentRole::Material)?;
+        // `None`: an agent's draft has no imported file behind it.
+        let material = DocumentRole::Material;
+        let row = create_material_with_body(state, entry, &draft.title, &body, material, None)?;
         entry
             .store
             .material_draft_take(&draft_id)
@@ -3691,7 +3766,17 @@ async fn import_material_at(
     );
     let body = format!("{header}\n\n{}", ingested.text);
     state.with_project(&root_id, |state, entry| {
-        create_material_with_body(state, entry, &ingested.title, &body, DocumentRole::Material)
+        create_material_with_body(
+            state,
+            entry,
+            &ingested.title,
+            &body,
+            DocumentRole::Material,
+            Some(ImportedFrom {
+                digest: &ingested.source_digest,
+                format: ingested.format.as_str(),
+            }),
+        )
     })
 }
 
@@ -3736,7 +3821,9 @@ async fn import_manuscript_at(
         .with_detail(error.to_string())
     })??;
     state.with_project(&root_id, |state, entry| {
-        create_material_with_body(state, entry, &title, &text, DocumentRole::Chapter)
+        // Dropped UTF-8 text becomes a chapter: the text *is* the manuscript,
+        // so there is no separate original to read alongside it.
+        create_material_with_body(state, entry, &title, &text, DocumentRole::Chapter, None)
     })
 }
 

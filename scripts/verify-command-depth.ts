@@ -41,7 +41,7 @@ const DEBT: Readonly<Record<string, { readonly lines: number; readonly errors: n
   upsert_harness_connection: { lines: 45, errors: 4 },
   probe_connection: { lines: 42, errors: 4 },
   record_verdict: { lines: 41, errors: 1 },
-  commit_material_action: { lines: 39, errors: 1 },
+  commit_material_action: { lines: 28, errors: 0 },
   preview_dispatch: { lines: 37, errors: 1 },
   draft_review_task: { lines: 33, errors: 1 },
   current_document: { lines: 24, errors: 1 },
