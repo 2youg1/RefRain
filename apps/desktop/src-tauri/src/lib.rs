@@ -1334,6 +1334,7 @@ fn now_millis() -> u64 {
 
 /// The production registry has one source. Debug builds may splice in the
 /// fixture command; release and generated bindings never receive it.
+/// The single command registry.
 macro_rules! refrain_commands {
     ($($debug_command:ident),* $(,)?) => {
         collect_commands![

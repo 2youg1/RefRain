@@ -17,7 +17,8 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 interface Injection {
   readonly gate: string;
@@ -144,6 +145,11 @@ for (const injection of INJECTIONS) {
 
   try {
     if (created) {
+      // Created injections may name a path whose directory does not exist in
+      // a fresh checkout (legacy/ is not tracked). Make the parent, or the
+      // injection fails before any gate could bite it.
+      const parent = dirname(injection.file);
+      if (parent !== ".") mkdirSync(parent, { recursive: true });
       writeFileSync(injection.file, injection.content ?? "");
     } else {
       if (injection.anchor === undefined || injection.replacement === undefined) {
