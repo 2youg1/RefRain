@@ -58,11 +58,25 @@ const editorJavaScript = await bundle.outputs[0].text();
 const MIXED = "他在Notebook上写下42，改成forty-two，最后写回汉字。";
 /** 纯中文：不该产生任何间距元素。反向断言，防止规则变成「到处都插」。 */
 const PURE = "这一段是纯中文的正文，不该出现任何间距元素。";
+/**
+ * 连续全角标点：每一对都该被压掉半个字身。
+ *
+ * 五对相邻标点（`、。`/`。！`/`！？`/`？；`/`；：`）。选这个形状是因为挤压
+ * 规则真正被判定的就是「两个相邻的全角标点」——CLREQ §6.3.2 说的是原占 2 字
+ * 压到 1.5 字宽，不按开闭分类。
+ */
+const SQUEEZE = "、。！？；：";
 
 const html = `<!doctype html>
 <meta charset="utf-8">
 <html lang="zh-Hans">
-<style>body{margin:0} #editor{font:17px/1.9 system-ui}</style>
+<style>
+  body{margin:0}
+  /* 与 surfaces.css 的正文同款：浏览器自带的挤压必须关掉，否则它与自研挤压
+     叠加，每对压掉一整个字身而不是半个。门禁若不设这一行，量到的是两套规则
+     的和，而产品里只有一套。 */
+  #editor{font:100px/1.9 system-ui; text-spacing-trim: space-all}
+</style>
 <div id="editor"></div>
 <script type="module">
   import * as editor from "/editor.js";
@@ -91,7 +105,7 @@ try {
   });
 
   await page.evaluate(
-    ([mixed, pure]) => {
+    ([mixed, pure, squeeze]) => {
       const api = window as unknown as {
         editorApi: {
           mountEditor(
@@ -112,80 +126,120 @@ try {
           blocks: [
             { id: "mixed", text: mixed as string },
             { id: "pure", text: pure as string },
+            { id: "squeeze", text: squeeze as string },
           ],
         },
         { submit: () => undefined },
       );
     },
-    [MIXED, PURE],
+    [MIXED, PURE, SQUEEZE],
   );
 
   await page.waitForSelector('[data-block-id="mixed"]', { timeout: 15_000 });
 
   const measured = await page.evaluate(
-    ([mixed, pure]) => {
+    ([mixed, pure, squeeze]) => {
       const block = (id: string) =>
         document.querySelector(`[data-block-id="${id}"]`) as HTMLElement | null;
       const mixedBlock = block("mixed");
       const pureBlock = block("pure");
-      if (mixedBlock === null || pureBlock === null) return null;
+      const squeezeBlock = block("squeeze");
+      if (mixedBlock === null || pureBlock === null || squeezeBlock === null) return null;
 
       const gaps = [...mixedBlock.querySelectorAll(".cjk-gap")] as HTMLElement[];
 
-      // 光标往返：每个 textContent 偏移放进去再读回来，必须原样。
-      const place = (offset: number) => {
-        const selection = getSelection();
-        if (selection === null) return;
-        const range = document.createRange();
-        const walker = document.createTreeWalker(mixedBlock, NodeFilter.SHOW_TEXT);
-        let remaining = offset;
-        let node = walker.nextNode();
-        while (node !== null) {
-          const length = (node.textContent ?? "").length;
-          if (remaining <= length) {
-            range.setStart(node, remaining);
-            range.collapse(true);
-            selection.removeAllRanges();
-            selection.addRange(range);
-            return;
-          }
-          remaining -= length;
-          node = walker.nextNode();
-        }
-      };
-      const read = () => {
-        const selection = getSelection();
-        if (selection === null || selection.rangeCount === 0) return -1;
-        const range = selection.getRangeAt(0);
-        const probe = document.createRange();
-        probe.selectNodeContents(mixedBlock);
-        probe.setEnd(range.startContainer, range.startOffset);
-        return probe.toString().length;
-      };
+      // 挤压量必须量**渲染出来的像素**，不是引擎返回的数字——引擎那一侧本来
+      // 就是对的，一直缺的是「这些数字有没有被画出来」。参照物是同一页里一个
+      // 不带任何间距元素的纯文本节点：两者的差就是挤压真正生效的量。
+      const reference = document.createElement("div");
+      reference.style.cssText = getComputedStyle(squeezeBlock).cssText;
+      reference.style.position = "absolute";
+      reference.style.visibility = "hidden";
+      reference.style.whiteSpace = "pre";
+      reference.style.width = "auto";
+      reference.style.display = "inline-block";
+      reference.textContent = squeeze as string;
+      squeezeBlock.parentElement?.appendChild(reference);
+      const referenceWidth = reference.getBoundingClientRect().width;
 
-      const text = mixedBlock.textContent ?? "";
-      const caretMismatches: string[] = [];
-      for (let offset = 0; offset <= text.length; offset += 1) {
-        place(offset);
-        const got = read();
-        if (got !== offset) caretMismatches.push(`${offset}→${got}`);
-      }
+      const painted = document.createElement("div");
+      painted.style.cssText = reference.style.cssText;
+      for (const node of [...squeezeBlock.childNodes]) painted.appendChild(node.cloneNode(true));
+      squeezeBlock.parentElement?.appendChild(painted);
+      const paintedWidth = painted.getBoundingClientRect().width;
+
+      const fontSize = Number.parseFloat(getComputedStyle(squeezeBlock).fontSize);
+      reference.remove();
+      painted.remove();
 
       return {
         gapCount: gaps.length,
         gapWidths: [...new Set(gaps.map((gap) => getComputedStyle(gap).width))],
-        mixedText: text,
-        mixedMatches: text === (mixed as string),
+        mixedText: mixedBlock.textContent ?? "",
+        mixedMatches: (mixedBlock.textContent ?? "") === (mixed as string),
         pureText: pureBlock.textContent ?? "",
         pureMatches: (pureBlock.textContent ?? "") === (pure as string),
         pureGapCount: pureBlock.querySelectorAll(".cjk-gap").length,
         allUneditable: gaps.every((gap) => gap.getAttribute("contenteditable") === "false"),
-        caretMismatches,
-        caretPositions: text.length + 1,
+        squeezeGapCount: squeezeBlock.querySelectorAll(".cjk-gap").length,
+        squeezeText: squeezeBlock.textContent ?? "",
+        squeezeMatches: (squeezeBlock.textContent ?? "") === (squeeze as string),
+        referenceWidth,
+        paintedWidth,
+        fontSize,
+        caretMismatches: [] as string[],
+        caretPositions: 0,
       };
     },
-    [MIXED, PURE],
+    [MIXED, PURE, SQUEEZE],
   );
+
+  // 光标往返单独量：它要读 selection，与上面那段量宽度的互不相干。
+  const caret = await page.evaluate(() => {
+    const mixedBlock = document.querySelector('[data-block-id="mixed"]') as HTMLElement | null;
+    if (mixedBlock === null) return { caretMismatches: [] as string[], caretPositions: 0 };
+    const place = (offset: number) => {
+      const selection = getSelection();
+      if (selection === null) return;
+      const range = document.createRange();
+      const walker = document.createTreeWalker(mixedBlock, NodeFilter.SHOW_TEXT);
+      let remaining = offset;
+      let node = walker.nextNode();
+      while (node !== null) {
+        const length = (node.textContent ?? "").length;
+        if (remaining <= length) {
+          range.setStart(node, remaining);
+          range.collapse(true);
+          selection.removeAllRanges();
+          selection.addRange(range);
+          return;
+        }
+        remaining -= length;
+        node = walker.nextNode();
+      }
+    };
+    const read = () => {
+      const selection = getSelection();
+      if (selection === null || selection.rangeCount === 0) return -1;
+      const range = selection.getRangeAt(0);
+      const probe = document.createRange();
+      probe.selectNodeContents(mixedBlock);
+      probe.setEnd(range.startContainer, range.startOffset);
+      return probe.toString().length;
+    };
+    const text = mixedBlock.textContent ?? "";
+    const caretMismatches: string[] = [];
+    for (let offset = 0; offset <= text.length; offset += 1) {
+      place(offset);
+      const got = read();
+      if (got !== offset) caretMismatches.push(`${offset}→${got}`);
+    }
+    return { caretMismatches, caretPositions: text.length + 1 };
+  });
+  if (measured !== null) {
+    measured.caretMismatches = caret.caretMismatches;
+    measured.caretPositions = caret.caretPositions;
+  }
 
   if (measured === null) {
     failures.push("编辑器没有挂载出这两个块");
@@ -225,6 +279,41 @@ try {
     if (measured.pureGapCount !== 0) {
       failures.push(`纯中文块里出现了 ${measured.pureGapCount} 个间距元素，规则插得太宽`);
     }
+
+    // 五、标点挤压必须真的把版面压窄，且刚好压掉半个字身。
+    //
+    // 引擎侧的 `measure()` 一直算得对，缺的是这些数字有没有被画出来：接线前
+    // 探针实测 `「引用」，然后……` 引擎给出净调整 −0.5em、画进 DOM 的是 0em，
+    // 因为渲染只收 `spaceBefore > 0`，负值被整个丢掉且不报错。
+    //
+    // 先断样本数：零个间距元素与「挤压完全没接上」输出相同。
+    const SQUEEZE_PAIRS = 5;
+    if (measured.squeezeGapCount !== SQUEEZE_PAIRS) {
+      failures.push(
+        `标点块里有 ${measured.squeezeGapCount} 个挤压元素，语料「${SQUEEZE}」是 ${SQUEEZE_PAIRS} 对相邻标点。` +
+          "零个与挤压完全没接上的读数相同。",
+      );
+    } else {
+      const shrunk = measured.referenceWidth - measured.paintedWidth;
+      const perPair = shrunk / SQUEEZE_PAIRS;
+      const expected = measured.fontSize * 0.5;
+      // CLREQ §6.3.2：两个相邻标点原占 2 字，压到 1.5 字宽——也就是每对压掉
+      // 半个字身。容差 1px 吸收亚像素舍入。
+      if (Math.abs(perPair - expected) > 1) {
+        failures.push(
+          `每对相邻标点压缩了 ${perPair.toFixed(1)}px，CLREQ §6.3.2 要求半个字身即 ${expected}px。` +
+            `\n      无挤压参照 ${measured.referenceWidth}px，渲染后 ${measured.paintedWidth}px。` +
+            "\n      压过头通常是浏览器的 text-spacing-trim 没关，两套规则叠加。",
+        );
+      }
+    }
+
+    // 六、挤压同样不许碰字节。挤压是渲染派生物，不写回 `.md`。
+    if (!measured.squeezeMatches) {
+      failures.push(
+        `标点块的 textContent 与作者写的不同：\n      作者: ${SQUEEZE}\n      渲染: ${measured.squeezeText}`,
+      );
+    }
   }
 
   if (failures.length > 0) {
@@ -234,7 +323,8 @@ try {
   } else {
     console.log(
       `PASS  verify:inter-script-spacing  (${measured?.gapCount} 个间距 @ ${measured?.gapWidths.join(",")}，` +
-        `${measured?.caretPositions} 个光标位置零错位，字节逐字不变)`,
+        `${measured?.caretPositions} 个光标位置零错位，字节逐字不变；` +
+        `${measured?.squeezeGapCount} 对标点各压 ${(((measured?.referenceWidth ?? 0) - (measured?.paintedWidth ?? 0)) / 5).toFixed(0)}px = 半字身)`,
     );
   }
 } finally {

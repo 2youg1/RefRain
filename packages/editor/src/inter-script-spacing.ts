@@ -62,8 +62,10 @@ export const GAP_CLASS = "cjk-gap";
 /**
  * 一段文本按混排边界切开的结果。
  *
- * `gapAfter` 是这一段之后要插入的间距（em）；最后一段是 0。切分本身不改
- * 变任何字符——把所有 `text` 顺序拼起来必须逐字等于原文，这条由
+ * `gapAfter` 是这一段之后要插入的间距（em）；最后一段是 0。**可以是负数**
+ * ——那是标点挤压：连续两个全角标点各自的内白挨在一起，中间形成一个可见的
+ * 空洞，CLREQ §6.3.2 要求把这一对压到 1.5 字宽。切分本身不改变任何字符——
+ * 把所有 `text` 顺序拼起来必须逐字等于原文，这条由
  * `packages/editor/test/inter-script-spacing.test.ts` 守着。
  *
  * 引擎那边记的是 `spaceBefore`（这个字符**之前**的空白），这里转成
@@ -77,10 +79,18 @@ export interface SpacedRun {
 }
 
 /**
- * 按预设把一段文本切成若干段，并标出每段之后的混排间距。
+ * 按预设把一段文本切成若干段，并标出每段之后的混排间距与标点挤压量。
  *
- * 没有任何间距时返回单元素数组，调用方据此走「一个文本节点」的快路径——
+ * 没有任何调整时返回单元素数组，调用方据此走「一个文本节点」的快路径——
  * 纯中文或纯英文的段落是多数，不该为它们建一串 DOM 节点。
+ *
+ * **正负都要收**。第一版只收 `spaceBefore > 0`，于是引擎算出来的挤压量被
+ * 整个丢在这一层，而且不报错——探针实测 `「引用」，然后……` 引擎给出净调整
+ * −0.5em、画进 DOM 的是 0em，`、。！？；：` 差额高达 −2.5em。表现是标点之间
+ * 挂着可见的空洞，也就是 Plan 3.2-3 那条判据说的「无可见空洞」的反面。
+ *
+ * 这是「引擎有、接线无」的典型形态：`packages/typeset` 的单元测试断言的是
+ * `measure()` 的返回值，它一直是对的；没有任何测试问过那些数字有没有被画出来。
  */
 export function spacedRuns(text: string, preset: TypesetPreset): readonly SpacedRun[] {
   if (text === "") return [{ text: "", gapAfter: 0 }];
@@ -94,7 +104,7 @@ export function spacedRuns(text: string, preset: TypesetPreset): readonly Spaced
 
   for (const character of adjusted) {
     // spaceBefore 记在「这个字符之前」，所以看到它就意味着**上一段到此为止**。
-    if (character.spaceBefore > 0 && pending !== "") {
+    if (character.spaceBefore !== 0 && pending !== "") {
       runs.push({ text: pending, gapAfter: character.spaceBefore });
       pending = "";
     }
@@ -124,13 +134,21 @@ export function paintSpacedText(element: HTMLElement, text: string, language: st
   const fragment = document_.createDocumentFragment();
   for (const run of runs) {
     if (run.text !== "") fragment.appendChild(document_.createTextNode(run.text));
-    if (run.gapAfter > 0) {
+    if (run.gapAfter !== 0) {
       const gap = document_.createElement("span");
       gap.className = GAP_CLASS;
       // 行内块而不是 letter-spacing：后者会作用到整段，而这里要的是
       // 精确落在两个 script 之间的一处。
       gap.style.display = "inline-block";
-      gap.style.width = `${run.gapAfter}em`;
+      if (run.gapAfter > 0) {
+        gap.style.width = `${run.gapAfter}em`;
+      } else {
+        // 挤压用负 margin，不能用负 width——`width: -0.5em` 是非法值，浏览器
+        // 整条声明丢弃且不报错，表现与「挤压没实现」完全相同。宽度置 0 之后
+        // 由 margin 把后一段往回拉，这是唯一能在行内产生负位移的机制。
+        gap.style.width = "0";
+        gap.style.marginLeft = `${run.gapAfter}em`;
+      }
       // 没有这一行，光标可以停进这个 span，作者会遇到一个按方向键不动的
       // 位置——而它在屏幕上是空白，看不出为什么。
       gap.contentEditable = "false";
