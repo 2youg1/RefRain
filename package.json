@@ -6,7 +6,8 @@
   "license": "MPL-2.0",
   "workspaces": [
     "apps/desktop",
-    "packages/editor"
+    "packages/editor",
+    "packages/typeset"
   ],
   "scripts": {
     "dev": "cd apps/desktop && bun run dev",

@@ -49,37 +49,64 @@ const authority = requireMatch(
 );
 
 const surfaces: Array<[string, string]> = [];
-for (const file of [files.tauri, files.desktop, files.editor] as const) {
+
+/**
+ * 工作区成员取自根 package.json 的 workspaces，不是手抄一份清单。
+ *
+ * 手抄的那份不会跟着新包长：`packages/typeset` 加进来的时候，它的版本与
+ * 其余各处不一致，而这道门禁一声不响地通过了——因为它检查的是一张写死的
+ * 名单，而新包不在名单上。域要取自权威。
+ */
+const rootManifest: unknown = JSON.parse(readFileSync("package.json", "utf8"));
+const workspaceGlobs: readonly string[] =
+  typeof rootManifest === "object" &&
+  rootManifest !== null &&
+  "workspaces" in rootManifest &&
+  Array.isArray((rootManifest as { workspaces: unknown }).workspaces)
+    ? ((rootManifest as { workspaces: string[] }).workspaces satisfies string[])
+    : [];
+if (workspaceGlobs.length === 0) {
+  failures.push("package.json: 读不出 workspaces；这道门禁失去了它的检查域");
+}
+
+for (const file of [files.tauri, ...workspaceGlobs.map((dir) => `${dir}/package.json`)]) {
   surfaces.push([file, requireJsonVersion(readFileSync(file, "utf8"), file)]);
 }
 
-// bun.lock is JSONC (trailing commas), so parse the two workspace records by
-// their exact names rather than pretending JSON.parse accepts its grammar.
+// bun.lock is JSONC (trailing commas), so parse the workspace records by their
+// exact paths rather than pretending JSON.parse accepts its grammar.
 const bunLock = readFileSync(files.bunLock, "utf8");
-for (const [path, name] of [
-  ["apps/desktop", "@refrain/desktop"],
-  ["packages/editor", "@refrain/editor"],
-] as const) {
+for (const path of workspaceGlobs) {
   const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const version = requireMatch(
     bunLock,
     new RegExp(`"${escaped}"\\s*:\\s*\\{[\\s\\S]*?"version"\\s*:\\s*"([^"]+)"`),
     files.bunLock,
-    `${name} workspace version`,
+    `${path} workspace version`,
   );
   surfaces.push([`${files.bunLock}:${path}`, version]);
 }
 
-// Cargo.lock can contain unrelated dependencies at any version. Only the five
-// local workspace package records are relevant.
+// Cargo.lock can contain unrelated dependencies at any version. Only the local
+// workspace package records are relevant — and which ones those are comes from
+// Cargo.toml's members, for the same reason as above: a new crate must not be
+// able to drift unnoticed because nobody remembered to add it to a list here.
 const cargoLock = readFileSync(files.cargoLock, "utf8");
-for (const name of [
-  "refrain-core",
-  "refrain-store",
-  "refrain-host",
-  "refrain-app",
-  "refrain-desktop",
-]) {
+const memberBlock = cargo.match(/members\s*=\s*\[([\s\S]*?)\]/)?.[1] ?? "";
+const crateNames = [...memberBlock.matchAll(/"([^"]+)"/g)]
+  .map((match) => match[1] ?? "")
+  .filter((dir) => dir !== "")
+  // 包名读自各成员自己的 Cargo.toml，不从目录名推：`apps/desktop/src-tauri`
+  // 里住的是 `refrain-desktop`，按目录名去 Cargo.lock 里找会找不到，而
+  // 「找不到」与「版本对不上」在输出里长得一样。
+  .map(
+    (dir) => readFileSync(`${dir}/Cargo.toml`, "utf8").match(/^name\s*=\s*"([^"]+)"/m)?.[1] ?? "",
+  )
+  .filter((name) => name !== "");
+if (crateNames.length === 0) {
+  failures.push("Cargo.toml: 读不出 workspace members；Rust 那半失去了检查域");
+}
+for (const name of crateNames) {
   const version = requireMatch(
     cargoLock,
     new RegExp(`name = "${name}"\\nversion = "([^"]+)"`),
