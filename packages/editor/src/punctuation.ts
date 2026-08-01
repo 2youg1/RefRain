@@ -140,3 +140,34 @@ export function applyPunctuationFinding(text: string, finding: PunctuationFindin
   }
   return `${text.slice(0, finding.start)}${finding.suggested}${text.slice(finding.end)}`;
 }
+
+/**
+ * 把一个块里所有该转的标点一次转完，返回新文本；无一处可转时返回 null。
+ *
+ * ## 为什么复用 `findPunctuation` 而不是另写一套替换
+ *
+ * **要设计的是例外，不是转换**（Plan 3.2-1）。真正难的那部分全在这里：
+ * 代码块与行内代码绝不转（`arr[0]` → `arr［0］` 是数据损坏而不是排版）、
+ * 数字之间的 `.`（`3.14`）、缩写里的 `.`（`e.g.`）、连续的点（`...` 是作者
+ * 用 ASCII 敲的省略号，逐个判会得到 `。.。` 这种三个字符三种命运的结果）、
+ * URL 与路径。
+ *
+ * 这些规则已经在 `findPunctuation` 里逐条实现并被测试钉住。一键切换若自己
+ * 再写一遍匹配，就是**同一事实的第二个权威**——而两者漂开时没有任何东西会
+ * 报错，表现是右键菜单说该转的地方一键切换不转，或者反过来。
+ *
+ * 所以这个函数只做一件事：把找到的 finding 从后往前套用。**从后往前**是因为
+ * 全角与半角标点在 UTF-16 里都占一格、下标不会移动，但这个前提哪天不成立
+ * （比如将来加入 `……` 这类一对多的规则）时，倒序仍然正确而正序会全错。
+ */
+export function convertPunctuation(blockId: string, text: string): string | null {
+  const findings = findPunctuation(blockId, text);
+  if (findings.length === 0) return null;
+  let converted = text;
+  for (let index = findings.length - 1; index >= 0; index -= 1) {
+    const finding = findings[index];
+    if (finding === undefined) continue;
+    converted = applyPunctuationFinding(converted, finding);
+  }
+  return converted === text ? null : converted;
+}

@@ -14,7 +14,7 @@ import type {
   SelectionMeasure,
 } from "./model";
 import { applyLocally, PENDING_ID_PREFIX, projectionIndex } from "./projection";
-import { applyPunctuationFinding, findPunctuation } from "./punctuation";
+import { applyPunctuationFinding, convertPunctuation, findPunctuation } from "./punctuation";
 
 const BLOCK_TAG = "p";
 
@@ -613,6 +613,40 @@ export class VirtualManuscriptView {
     const paragraph = this.#byId.get(block.id);
     if (paragraph !== undefined) this.#paintText(paragraph, text);
     return true;
+  }
+
+  /**
+   * 全稿标点全半角一键切换。返回改动的块数；一处也不该改时返回 0。
+   *
+   * **一次 EditorAction 覆盖所有块**，这不是为了省事：Plan 3.2-1 的判据是
+   * 「一次撤销完全还原」。`EditorChange` 的 `blocks` 本来就是数组，所以把
+   * 二百个块的改动拆成二百个 action 才是额外的选择——而那样作者要按二百次
+   * 撤销，中途停手就留下半篇转过、半篇没转的稿子。
+   *
+   * 逐块调 `convertPunctuation`，它内部复用右键菜单那套 finding 规则，所以
+   * 例外（代码块、行内代码、`3.14`、`e.g.`、`...`、URL）只有一份定义。
+   *
+   * 不改的块不进 changes：一个「替换成完全相同的文本」的改动会让账本记下一
+   * 笔什么也没发生的事，而作者回头看历史时无从分辨它和真改动。
+   */
+  convertPunctuationEverywhere(): number {
+    if (this.#interaction.kind === "composing") return 0;
+    const changes: EditorChange[] = [];
+    for (const block of this.#blocks) {
+      const converted = convertPunctuation(block.id, block.text);
+      if (converted === null) continue;
+      changes.push({ kind: "replace", blocks: [block.id], text: converted });
+    }
+    if (changes.length === 0) return 0;
+    this.#submit(changes);
+    for (const change of changes) {
+      if (change.kind !== "replace" || change.text === null) continue;
+      const id = change.blocks[0];
+      if (id === undefined) continue;
+      const paragraph = this.#byId.get(id);
+      if (paragraph !== undefined) this.#paintText(paragraph, change.text);
+    }
+    return changes.length;
   }
 
   setAnnotations(annotations: readonly EditorAnnotationProjection[]): void {

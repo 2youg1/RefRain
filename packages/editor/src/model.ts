@@ -130,6 +130,14 @@ export interface EditorHandle {
   /** Confirm one still-current punctuation finding through one EditorAction. */
   applyPunctuation(finding: PunctuationFinding): boolean;
   /**
+   * Convert every convertible punctuation mark in the manuscript in one action.
+   *
+   * Returns the number of blocks changed. One action, so one undo restores the
+   * whole manuscript — a per-block action would make the author press undo once
+   * per block and leave a half-converted draft if they stopped partway.
+   */
+  convertPunctuationEverywhere(): number;
+  /**
    * Observe how much text is selected, for a low-noise readout.
    *
    * Not `context()`: that answers for one right-click target and captures a

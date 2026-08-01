@@ -79,6 +79,9 @@ export function mountEditor(
     applyPunctuation(finding: PunctuationFinding) {
       return view.applyPunctuation(finding);
     },
+    convertPunctuationEverywhere() {
+      return view.convertPunctuationEverywhere();
+    },
     onSelectionMeasured(listener: (measure: SelectionMeasure | null) => void) {
       return view.onSelectionMeasured(listener);
     },
