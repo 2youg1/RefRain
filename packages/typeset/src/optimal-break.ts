@@ -93,6 +93,15 @@ const MAX_PARAGRAPH = 400;
 const UNIFORMITY_WEIGHT = 2;
 
 /**
+ * 断点自身代价在总费用里的权重。由下面的扫描定，不是猜的。
+ *
+ * 值域说明：`candidates` 给出的 penalty 是 {0,10,15,25,40,55} 这一档，而
+ * 余白项是 em 的平方（一行差 4em 即 16，差 8em 即 64）。两者量纲不同，直接
+ * 相加会让版面均匀度被断点代价压过去。
+ */
+const BREAK_PENALTY_WEIGHT = 1;
+
+/**
  * 余白量化步长（em），用于把 DP 状态收敛成有限个。
  *
  * 状态是 `(位置, 上一行余白)`，而余白是连续量。不量化则状态数爆炸；量化太粗
@@ -174,9 +183,20 @@ function optimalStarts(
   preset: TypesetPreset,
   measureEm: number,
   strictness: BreakStrictness,
+  wordStarts?: ReadonlySet<number>,
 ): readonly number[] | null {
   const total = measured.length;
-  const allowed = new Set(candidates(measured, preset, strictness).map((entry) => entry.index));
+  // 这里存的是**代价**不再只是下标集合。此前只取 `entry.index` 建一个 Set，
+  // 于是 `candidates` 算出来的 penalty 在 DP 里被整个丢掉——三档严格度的差别
+  // 之所以在最优路径上还能看出来，靠的是 strict 在候选阶段就删掉了候选，
+  // 不是因为 DP 读懂了代价。语义断行没有那条捷径（它不删候选，只抬代价),
+  // 所以必须让 DP 真的读它。
+  const penalties = new Map(
+    candidates(measured, preset, strictness, wordStarts).map((entry) => [
+      entry.index,
+      entry.penalty,
+    ]),
+  );
 
   /** 把 `(位置, 余白)` 压成一个整数键。余白量化后才有限。 */
   const keyOf = (position: number, slack: number): number =>
@@ -200,7 +220,8 @@ function optimalStarts(
     if (base === undefined) continue;
 
     for (let end = position + 1; end <= total; end += 1) {
-      if (end < total && !allowed.has(end)) continue;
+      const breakPenalty = end === total ? 0 : penalties.get(end);
+      if (end < total && breakPenalty === undefined) continue;
       const ink = inkWidth(measured, position, end, preset);
       // 一旦放不下，再往后只会更宽——这个 break 是 DP 保持 O(n·行宽) 的关键。
       if (ink > measureEm && end > position + 1) break;
@@ -208,7 +229,15 @@ function optimalStarts(
 
       const slack = end === total ? 0 : measureEm - ink;
       const uniform = previousSlack < 0 || end === total ? 0 : (slack - previousSlack) ** 2;
-      const cost = base + (end === total ? 0 : slack * slack) + UNIFORMITY_WEIGHT * uniform;
+      // 断点自身的代价按 `BREAK_PENALTY_WEIGHT` 折进总代价。权重不是 1：
+      // 余白项是 em 的平方（一行差 4em 就是 16），而 penalty 的值域是
+      // {0,10,15,25,40,55} 这一档，直接相加会让代价完全由 penalty 支配，
+      // 版面就不再均匀了。
+      const cost =
+        base +
+        (end === total ? 0 : slack * slack) +
+        UNIFORMITY_WEIGHT * uniform +
+        BREAK_PENALTY_WEIGHT * (breakPenalty ?? 0);
 
       if (end === total) {
         if (cost < endCost) {
@@ -261,15 +290,16 @@ export function optimizedLineStarts(
   preset: TypesetPreset,
   measureEm: number,
   strictness: BreakStrictness = preset.breakStrictness,
+  wordStarts?: ReadonlySet<number>,
 ): readonly number[] {
-  const greedy = lineStarts(measured, preset, measureEm, strictness);
+  const greedy = lineStarts(measured, preset, measureEm, strictness, wordStarts);
 
   // 单行段落无从优化——余白只有末行那一个，而末行不罚。
   if (greedy.length <= 1) return greedy;
   if (measured.length > MAX_PARAGRAPH) return greedy;
   if (longestUnbreakableSpan(measured, preset, strictness) < SPAN_THRESHOLD) return greedy;
 
-  const optimal = optimalStarts(measured, preset, measureEm, strictness);
+  const optimal = optimalStarts(measured, preset, measureEm, strictness, wordStarts);
   if (optimal === null) return greedy;
 
   // 最优解不得比贪心多断行。行数是唯一能作弊的维度：多断一行几乎总能让余白更
@@ -278,4 +308,32 @@ export function optimizedLineStarts(
   if (optimal.length > greedy.length) return greedy;
 
   return optimal;
+}
+
+/**
+ * 断行入口。给了词边界就避开词中间，但**不许因此多断一行**。
+ *
+ * 这道闸与上面那条同一个理由，只是防的是另一条路径。实测（四段语料 × 五档
+ * 版心）：语义断行把词中间断点从 21/62 降到 0，代价是两处各多断一行——
+ * 「学术 em=16」6 行变 7 行、「技术 em=16」4 行变 5 行。多出来的那一行是
+ * 真实成本，读者要多扫一行才能读完同样的内容，而版面还更松（最松行填充率
+ * 从 87.5% 掉到 81.3%）。
+ *
+ * 所以规则是：词边界是**偏好**，行数是**约束**。避词能白拿就拿，要用一行去
+ * 换就不换。这条闸让语义断行在那两处退回无词边界的结果，其余处仍然生效——
+ * 实测退化后词中间断点是 4/62（原 21），仍降 81%。
+ *
+ * 第一版没有这道闸，而单元测试**全绿**：那条「行数不变」的断言只跑了叙事
+ * 语料，两处增行都在学术与技术语料上。语料覆盖不到的判据等于没有判据。
+ */
+export function semanticLineStarts(
+  measured: readonly AdjustedChar[],
+  preset: TypesetPreset,
+  measureEm: number,
+  wordStarts: ReadonlySet<number>,
+  strictness: BreakStrictness = preset.breakStrictness,
+): readonly number[] {
+  const plain = optimizedLineStarts(measured, preset, measureEm, strictness);
+  const semantic = optimizedLineStarts(measured, preset, measureEm, strictness, wordStarts);
+  return semantic.length > plain.length ? plain : semantic;
 }

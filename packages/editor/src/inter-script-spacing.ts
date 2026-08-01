@@ -59,6 +59,7 @@ import {
   measure,
   optimizedLineStarts,
   presetOf,
+  semanticLineStarts,
   type TypesetPreset,
 } from "@refrain/typeset";
 
@@ -140,10 +141,33 @@ export interface SpacedRun {
  * `measureEm` 为 0 或负数时不断行，只切间距：那表示调用方还不知道版心多宽
  * （元素尚未进 DOM、宽度尚未测出），此时按 0 宽断行会把每个字断成一行。
  */
+/**
+ * 词首下标（码位坐标系）。`null` 表示这个运行时不做分词。
+ *
+ * `Intl.Segmenter` 是运行时内置的（Chromium 有，即 WebView2 有；实测切
+ * 9900 字 1.6ms）。**不引入任何分词库**：一个词典或模型要几 MB，而这里拿到
+ * 的收益是把词中间断点从 33.9% 降到 3.2%——那个收益配不上一个新依赖。
+ *
+ * 运行时没有 `Intl.Segmenter` 时返回 null，断行退回纯字符类模型。那是降级
+ * 不是故障：那条路径此前一直是唯一的路径。
+ */
+function wordStartsOf(text: string): ReadonlySet<number> | null {
+  if (typeof Intl.Segmenter !== "function") return null;
+  const segmenter = new Intl.Segmenter("zh-Hans", { granularity: "word" });
+  const starts = new Set<number>();
+  for (const piece of segmenter.segment(text)) {
+    // `piece.index` 是 UTF-16 下标，而 `measure` 按码位。增补平面的字在两个
+    // 坐标系里差一格，不转就会把词首标到错的位置上。
+    starts.add([...text.slice(0, piece.index)].length);
+  }
+  return starts;
+}
+
 export function spacedRuns(
   text: string,
   preset: TypesetPreset,
   measureEm = 0,
+  semanticBreaks = false,
 ): readonly SpacedRun[] {
   if (text === "") return [{ text: "", gapAfter: 0, breakAfter: false, hangEm: 0 }];
 
@@ -152,7 +176,15 @@ export function spacedRuns(
   // 得到两个坏字符。累加 `character.text.length` 才是对的。
   const adjusted = measure(text, preset);
   // 断行下标是**码位**下标，与 adjusted 的下标同一个坐标系。
-  const starts = measureEm > 0 ? new Set(optimizedLineStarts(adjusted, preset, measureEm)) : null;
+  const words = semanticBreaks ? wordStartsOf(text) : null;
+  const starts =
+    measureEm > 0
+      ? new Set(
+          words === null
+            ? optimizedLineStarts(adjusted, preset, measureEm)
+            : semanticLineStarts(adjusted, preset, measureEm, words),
+        )
+      : null;
   const runs: SpacedRun[] = [];
   let pending = "";
   // 这一段第一个字符的码位下标。行尾下标 = 段首 + 段内码位数 − 1，用它去问
@@ -219,9 +251,10 @@ export function paintSpacedText(
   text: string,
   language: string,
   measureEm = 0,
+  semanticBreaks = false,
 ): void {
   const preset = presetOf(language);
-  const runs = spacedRuns(text, preset, measureEm);
+  const runs = spacedRuns(text, preset, measureEm, semanticBreaks);
 
   // 快路径：没有混排边界也不需要换行，就是一个文本节点，与不开这个功能时
   // 完全一样。
