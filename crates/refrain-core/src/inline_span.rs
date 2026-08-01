@@ -149,6 +149,36 @@ pub fn inline_spans(text: &str) -> Vec<InlineSpan> {
     spans
 }
 
+/// 去掉行内标记符，保留其余全部字节。
+///
+/// 搜索索引用。作者写 `这是**加粗**的文字`，bigram 切出来是
+/// `这是 ** 加粗 ** 的文 文字`——星号自己成了一个永远没人搜的 token，更糟的是
+/// 它**切断了词的连续性**：`是加` 这个 bigram 不存在，于是作者搜「这是加粗」
+/// 搜不到自己写的句子（实测命中 false）。
+///
+/// 剥掉之后是 `这是加粗的文字`，与作者心里的那句话一致。
+///
+/// **只删标记符，不删内容。** 返回串与原文的字节偏移因此不再对齐，所以它只能
+/// 喂给索引——高亮要用原文偏移的话，得拿 [`inline_spans`] 自己算。索引侧不需要
+/// 偏移对齐：`block_search_state` 记的是块的 `start_byte`/`bytes`，块内定位由
+/// 前端拿查询串在原文里 `indexOf`，不经过这个变换。
+#[must_use]
+pub fn strip_inline_markers(text: &str) -> String {
+    let spans = inline_spans(text);
+    if spans.is_empty() {
+        return text.to_owned();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut cursor = 0usize;
+    for span in spans {
+        out.push_str(&text[cursor..span.start]);
+        out.push_str(&text[span.content_start..span.content_end]);
+        cursor = span.end;
+    }
+    out.push_str(&text[cursor..]);
+    out
+}
+
 /// 从 `at` 起连续多少个 `byte`。
 fn run_length(bytes: &[u8], at: usize, byte: u8) -> usize {
     let mut length = 0usize;
@@ -300,6 +330,35 @@ mod tests {
         let spans = inline_spans("**跨\n行的粗**");
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].style, InlineStyle::Strong);
+    }
+
+    #[test]
+    fn 剥掉标记符之后是作者心里的那句话() {
+        use super::strip_inline_markers;
+        assert_eq!(strip_inline_markers("这是**加粗**的文字"), "这是加粗的文字");
+        assert_eq!(strip_inline_markers("行内`代码`混排"), "行内代码混排");
+        assert_eq!(strip_inline_markers("~~删除~~线"), "删除线");
+        // 没有标记就原样返回，一个字节都不动。
+        assert_eq!(strip_inline_markers("纯正文"), "纯正文");
+        // 未配对的标记符是作者的字面文本，不能剥。
+        assert_eq!(strip_inline_markers("公式 a * b"), "公式 a * b");
+    }
+
+    #[test]
+    fn 剥标记修好了搜不到自己写的句子这个缺陷() {
+        use super::strip_inline_markers;
+        use crate::chinese_index::bigram;
+
+        // 缺陷原状：`**` 切断词的连续性，`是加` 这个 bigram 不存在，
+        // 于是作者搜「这是加粗」在自己写的句子里搜不到。
+        let raw = bigram("这是**加粗**的文字");
+        assert!(!raw.split_whitespace().any(|token| token == "是加"));
+
+        // 剥掉之后连续性恢复。
+        let stripped = bigram(&strip_inline_markers("这是**加粗**的文字"));
+        assert!(stripped.split_whitespace().any(|token| token == "是加"));
+        // 标记符自己也不再是 token——没有人会搜 `**`。
+        assert!(!stripped.split_whitespace().any(|token| token == "**"));
     }
 
     #[test]

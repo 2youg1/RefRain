@@ -39,6 +39,7 @@
 
 use refrain_core::block_shape::{BlockKind, HeadingLevel};
 use refrain_core::chinese_index::{Precision, bigram, match_expression_with};
+use refrain_core::inline_span::strip_inline_markers;
 use refrain_core::searchable_block::blocks_of;
 use refrain_core::{ErrorCode, RefrainError};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -161,7 +162,10 @@ pub fn index_document(
     // The rowid runs alongside the blocks: FTS5 needs one per row and an
     // external-content table has none of its own to autoincrement from.
     for (rowid, block) in (next_rowid(db)?..).zip(blocks_of(text)) {
-        let indexed_body = bigram(block.text);
+        // 先剥行内标记符再 bigram。`**` 不只是一个没人搜的 token，它还切断
+        // 词的连续性：`这是**加粗**` 切出来没有 `是加`，作者搜「这是加粗」就
+        // 搜不到自己写的句子。剥掉之后索引的是「这是加粗的文字」。
+        let indexed_body = bigram(&strip_inline_markers(block.text));
         db.execute(
             "INSERT INTO block_search(rowid, path, body) VALUES (?1, ?2, ?3)",
             params![rowid, indexed_path, indexed_body],
