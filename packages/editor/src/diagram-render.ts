@@ -56,7 +56,20 @@ export function mermaidToNomnoml(source: string): string | null {
   // 语义差太远，硬译必然失真。
   if (!/^(graph|flowchart)\b/i.test(head)) return null;
 
-  const output: string[] = [];
+  // Mermaid 里同一个节点第一次出现时带标签（`B[编辑视图]`），后续引用只写
+  // ID（`B --> C`）。不记住这个映射，后续引用就会画出一个叫「B」的新节点，
+  // 图被拆成几条互不相连的短链——实测正是如此：`作者 → 编辑视图` 之后就断了，
+  // 而 `B`、`C` 各自成了孤立节点。
+  // 两遍扫：Mermaid 不要求先声明后引用，`A --> B` 可以出现在 `B[编辑视图]`
+  // 之前。一遍扫会让那种写法里的 B 停在裸 ID 上。
+  const labels = new Map<string, string>();
+  for (const line of lines.slice(1)) {
+    for (const found of line.matchAll(/([^\s[({>|-]+)[[({]([^\])}]*)[\])}]/g)) {
+      if (found[1] !== undefined && found[2] !== undefined) labels.set(found[1], found[2]);
+    }
+  }
+
+  const body: string[] = [];
   for (const line of lines.slice(1)) {
     const text = line.trim();
     if (text === "" || text.startsWith("%%")) continue;
@@ -73,19 +86,20 @@ export function mermaidToNomnoml(source: string): string | null {
       // 有标签时它夹在连接符与目标节点之间；没有标签时不能留下双空格
       // （`-> ` + ` [` 会得到 `->  [`），nomnoml 虽能忍但输出不该有垃圾。
       const middle = label === undefined || label.trim() === "" ? "" : ` ${label.trim()}`;
-      output.push(`[${nodeLabel(from)}] ${connector}${middle} [${nodeLabel(to)}]`);
+      body.push(`[${remember(labels, from)}] ${connector}${middle} [${remember(labels, to)}]`);
       continue;
     }
 
     // 独立节点声明 `A[标签]`。边里已经出现过的节点不必再声明，但作者可能只
     // 声明不连线。
     const node = /^(\S+?)[[({]([^\])}]*)[\])}]$/.exec(text);
-    if (node?.[2] !== undefined) {
-      output.push(`[${node[2]}]`);
+    if (node?.[1] !== undefined && node[2] !== undefined) {
+      labels.set(node[1], node[2]);
+      body.push(`[${node[2]}]`);
     }
   }
 
-  return output.length === 0 ? null : output.join("\n");
+  return body.length === 0 ? null : body.join("\n");
 }
 
 /**
@@ -116,10 +130,20 @@ export function renderDiagram(
   }
 }
 
-/** `A[风景的发现]` → `风景的发现`；裸 `A` → `A`。 */
-function nodeLabel(token: string): string {
-  const labelled = /^[^[({]*[[({]([^\])}]*)[\])}]$/.exec(token);
-  return labelled?.[1] ?? token;
+/**
+ * 解析一个节点记号并记住它的标签。
+ *
+ * `B[编辑视图]` 记下 B→编辑视图 并返回「编辑视图」；后来的裸 `B` 查表也返回
+ * 「编辑视图」，于是两处指的是同一个节点。查不到的裸 ID 原样返回——那是作者
+ * 从没给过标签的节点，用 ID 当名字是它唯一可显示的形态。
+ */
+function remember(labels: Map<string, string>, token: string): string {
+  const labelled = /^([^[({]*)[[({]([^\])}]*)[\])}]$/.exec(token);
+  if (labelled?.[1] !== undefined && labelled[2] !== undefined) {
+    labels.set(labelled[1], labelled[2]);
+    return labelled[2];
+  }
+  return labels.get(token) ?? token;
 }
 
 /**

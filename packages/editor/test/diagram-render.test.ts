@@ -36,6 +36,30 @@ describe("Mermaid → nomnoml", () => {
     expect(out).toBe("[A] --> [B]");
   });
 
+  test("节点 ID 只声明一次，后续引用沿用它的标签", () => {
+    // 实测缺陷：Mermaid 里 `B[编辑视图]` 之后可以只写 `B`。不记住这个映射，
+    // 后续引用会画出一个叫「B」的新节点，图被拆成几条互不相连的短链
+    // ——截图上就是 `作者 → 编辑视图` 之后断掉，`B`、`C` 各自孤立。
+    const out = mermaidToNomnoml(
+      "graph TD\n  A[作者] --> B[编辑视图]\n  B --> C[裁决账本]\n  C --> D[手稿字节]",
+    );
+    expect(out).toBe("[作者] -> [编辑视图]\n[编辑视图] -> [裁决账本]\n[裁决账本] -> [手稿字节]");
+    // 一条裸 ID 都不该剩下。
+    expect(out).not.toMatch(/\[[A-Z]\]/);
+  });
+
+  test("标签可以出现在引用之后——两遍扫", () => {
+    // Mermaid 不要求先声明后引用。一遍扫会让这里的 B 停在裸 ID 上。
+    const out = mermaidToNomnoml("graph TD\n  A --> B\n  B[编辑视图]\n  A[作者]");
+    expect(out).toContain("[作者] -> [编辑视图]");
+  });
+
+  test("从没给过标签的节点用 ID 当名字", () => {
+    // 反向断言：查不到就原样返回，不能变成空节点 `[]`。
+    const out = mermaidToNomnoml("graph TD\n  X --> Y");
+    expect(out).toBe("[X] -> [Y]");
+  });
+
   test("注释与空行跳过", () => {
     const out = mermaidToNomnoml("graph TD\n  %% 这是注释\n\n  A --> B");
     expect(out).toBe("[A] -> [B]");
