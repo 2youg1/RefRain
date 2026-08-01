@@ -45,6 +45,19 @@ const RULES: readonly Rule[] = [
     synonyms: ["Visibility", "Permission", "AccessLevel"],
     scope: ["crates/refrain-core/src/material_listing.rs"],
   },
+  {
+    // 面向公众的散文与产品术语漂开过一次：`4222cc5` 把「工单」改称「托付」、
+    // `4a6b702` 又定为「发送」，而 README.zh-CN.md 三处「工单」一直留到 v0.2.3
+    // ——**因为这道门禁的作用域只有源码**。Plan 1.2 的判据写的是「全仓 grep
+    // 工单零命中」，而当时全仓里没有任何东西在读那条判据。
+    //
+    // 读者拿到的第一份文档用的是产品里已经不存在的词，比源码里的同义词更贵：
+    // 源码的读者会去看定义，README 的读者没有第二处可对照。
+    concept: "把一批提案交给智能体这件事",
+    canonical: "发送 / 发送台 / 发送信箱（UI 与散文同一个词）",
+    synonyms: ["工单", "托付", "委派"],
+    scope: ["README.md", "README.zh-CN.md", "docs/"],
+  },
 ];
 
 const files: string[] = [];
@@ -53,6 +66,20 @@ for await (const file of new Glob("{crates,apps,packages}/**/*.{rs,ts,tsx}").sca
   const normalised = file.split(/[/\\]/).join("/");
   if (normalised.includes("node_modules/") || normalised.includes("/target/")) continue;
   files.push(normalised);
+}
+// Public prose is in scope too. A term the product renamed must not survive in
+// the first document a reader opens — that regression already happened once and
+// no gate could see it, because this list had source files only.
+//
+// Two scans, not one brace pattern: `{README.md,docs/**/*.md}` matches nothing
+// under Bun's Glob (a `**` alternative inside braces silently yields an empty
+// set). The rule's own scope check caught that — an empty scope reads as
+// "the files this rule covers are no longer checked", which is exactly right.
+for await (const file of new Glob("README*.md").scan({ cwd: "." })) {
+  files.push(file.split(/[/\\]/).join("/"));
+}
+for await (const file of new Glob("docs/**/*.md").scan({ cwd: "." })) {
+  files.push(file.split(/[/\\]/).join("/"));
 }
 
 const failures: string[] = [];
@@ -74,14 +101,23 @@ for (const rule of RULES) {
     const text = readFileSync(file, "utf8");
     const lines = text.split("\n");
     for (const synonym of rule.synonyms) {
-      // Match either initial case at a word boundary.
       const first = synonym.charAt(0);
       if (first === "") {
         failures.push(`规则「${rule.concept}」包含空同义词`);
         continue;
       }
-      const head = `[${first.toUpperCase()}${first.toLowerCase()}]`;
-      const pattern = new RegExp(`\\b${head}${synonym.slice(1)}`);
+      // `\b` is defined on ASCII word characters, so it never matches beside a
+      // CJK ideograph: `\b工单` finds nothing in `派出工单。` and the rule silently
+      // passes. Both injections stayed green until this branch existed — an
+      // assertion that cannot fail is not weaker than a missing one, it is worse,
+      // because it reports coverage it does not have.
+      //
+      // CJK terms are matched as plain substrings (there are no word boundaries
+      // to respect); Latin terms keep the boundary + either-initial-case rule.
+      const isCjk = /[\u3400-\u9fff\uf900-\ufaff]/.test(first);
+      const pattern = isCjk
+        ? new RegExp(synonym)
+        : new RegExp(`\\b[${first.toUpperCase()}${first.toLowerCase()}]${synonym.slice(1)}`);
       lines.forEach((line, index) => {
         if (!pattern.test(line)) return;
         if (rule.except?.some((allowed) => line.includes(allowed))) return;

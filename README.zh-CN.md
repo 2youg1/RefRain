@@ -23,10 +23,10 @@
 RefRain 取第三种立场：**智能体提议，你裁决，而谁裁决了什么本身就是文稿的一部分。**
 
 <p align="center">
-  <img src="docs/images/composer.png" alt="工单台：一层半透明表面浮在正文之上" width="720">
+  <img src="docs/images/composer.png" alt="发送台：一层半透明表面浮在正文之上" width="720">
 </p>
 <p align="center">
-  <img src="docs/images/rail-and-menu.png" alt="侧栏与工单信箱，以及两分区的右键工作区" width="720">
+  <img src="docs/images/rail-and-menu.png" alt="侧栏与发送信箱，以及两分区的右键工作区" width="720">
 </p>
 <p align="center">
   <img src="docs/images/kara.png" alt="KARA：屏幕顶部 20% 的渐透明滤镜" width="720">
@@ -75,7 +75,7 @@ RefRain 取第三种立场：**智能体提议，你裁决，而谁裁决了什�
 ### 与智能体协作
 
 本地 harness 会被自动发现并连上，你不需要知道任何路径。你可以直接从一条批注派出
-工单。
+一单。
 
 一轮里可以有多个智能体：互不相干各答一遍的**并列**、读取上游产物的**承接**、以及
 审阅他人工作的**校验**——校验者可以报告问题，但不能提议改动。
