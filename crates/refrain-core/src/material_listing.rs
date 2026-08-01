@@ -189,7 +189,9 @@ impl MaterialListing {
                         .to_string(),
                     level: level.get(),
                 }),
-                BlockKind::Paragraph | BlockKind::Fence => None,
+                // 表格不是标题：它有内容但不标记位置，进大纲会让读者以为
+                // 那里开了一节。
+                BlockKind::Paragraph | BlockKind::Fence | BlockKind::Table(_) => None,
             })
             .collect();
 

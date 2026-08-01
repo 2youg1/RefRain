@@ -37,6 +37,7 @@
 //! pairs so that ordinary token matching works and bm25 keeps its
 //! discrimination. See `review/search-probe-results.md`.
 
+use refrain_core::block_shape::TableShape;
 use refrain_core::block_shape::{BlockKind, HeadingLevel};
 use refrain_core::chinese_index::{Precision, bigram, match_expression_with};
 use refrain_core::inline_span::strip_inline_markers;
@@ -112,6 +113,11 @@ fn kind_name(kind: BlockKind) -> String {
         // below. `ensure_indexed` rebuilds them on next open anyway.
         BlockKind::Heading(level) => format!("heading:{}", level.get()),
         BlockKind::Fence => "fence".to_string(),
+        // 列数不进名字：它是关于这一块的另一个事实（这张表有几列），不是
+        // 「这是哪一种块」的一部分。标题层级进名字是因为层级**就是**它是
+        // 哪一级标题；把列数塞进去会让 `table:3` 与 `table:4` 读作两种块，
+        // 而排序、大纲、索引没有一处需要区分它们。
+        BlockKind::Table(_) => "table".to_string(),
     }
 }
 
@@ -128,6 +134,10 @@ fn kind_of(name: &str) -> BlockKind {
     match name {
         "heading" => BlockKind::Heading(HeadingLevel::from_level(1).expect("1 is a level")),
         "fence" => BlockKind::Fence,
+        // 反解时列数已经丢了（写入时就没存），给一个最小的合法形状。索引只
+        // 用 kind 做排序权重，读不到列数不影响任何判断；真要排版时视图层
+        // 拿块文本重新识别，那才是权威。
+        "table" => BlockKind::Table(TableShape::minimal()),
         // A row written by a newer build carrying a kind this one does not
         // know reads as prose. That is the honest floor: it ranks the block
         // by its words rather than claiming structure this build cannot see.

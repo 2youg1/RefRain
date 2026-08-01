@@ -193,6 +193,7 @@ fn main() {
                 BlockKind::Paragraph => 0,
                 BlockKind::Heading(_) => 1,
                 BlockKind::Fence => 2,
+                BlockKind::Table(_) => 3,
             };
             kinds[slot] += 1;
         }

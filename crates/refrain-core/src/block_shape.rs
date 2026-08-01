@@ -17,6 +17,15 @@ pub enum BlockKind {
     Paragraph,
     /// 围栏代码块：不折行（或按代码规则折），且通常有独立的行距。
     Fence,
+    /// GFM 表格：整块按列对齐排版，不按行宽折行。
+    ///
+    /// 载荷是列数。它与标题的层级同性质——**结构信息，扫描时顺带得到**：
+    /// 边界判定本来就逐字节走过首行，顺手数竖线是零额外扫描，而让视图层
+    /// 重新解析一遍就会有第二个权威。
+    ///
+    /// 表格不需要 `SourceLayout` 做任何改动：块由空行分隔，而 GFM 表格内部
+    /// 没有空行，所以它天然已经是一个完整的块（实测）。
+    Table(TableShape),
     /// 标题：字号更大，且几乎不折行。
     ///
     /// 载荷是层级（`#` 的个数，1..=6）。它不是排版信息而是**结构信息**：
@@ -25,6 +34,195 @@ pub enum BlockKind {
     /// 首行、顺手数 `#` 是零额外扫描；让上层再解析一遍就会有第二个权威，
     /// 而两份判定漂开时没有任何东西会报错。
     Heading(HeadingLevel),
+}
+
+/// 表格的形状：列数与对齐。
+///
+/// 只记排版需要的那两件事。单元格内容不在这里——那是文本，视图层拿块文本
+/// 自己切；把内容复制进形状会造出第二个权威，而两份漂开时没有任何东西会报错。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TableShape {
+    /// 列数，取自分隔行。至少 1。
+    columns: u8,
+    /// 数据行数（不含表头与分隔行）。
+    rows: u16,
+}
+
+impl TableShape {
+    /// GFM 表格允许的最大列数。
+    ///
+    /// 超过这个数的「表格」几乎必然是作者在正文里画了一串竖线，而不是真的
+    /// 要排一张 33 列的表。把它当表格排会得到一张挤成一团的东西，当段落排
+    /// 反而是作者想要的。
+    pub const MAX_COLUMNS: u8 = 32;
+
+    /// 一张 1 列 0 行的表。
+    ///
+    /// 给的是**从持久化索引读回**这条路径：写入时只存了「这是表格」，列数
+    /// 当时就没存（索引不需要它）。读回时给一个最小合法形状而不是 `Option`，
+    /// 因为调用方要的是「这块是不是表格」，让每个使用点各自去想「列数为空
+    /// 意味着什么」只会把一个不存在的问题散播出去。真要排版时视图层拿块
+    /// 文本重新识别，那才是权威。
+    #[must_use]
+    pub fn minimal() -> Self {
+        Self {
+            columns: 1,
+            rows: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn columns(self) -> usize {
+        self.columns as usize
+    }
+
+    #[must_use]
+    pub fn rows(self) -> usize {
+        self.rows as usize
+    }
+
+    /// 从整块文本识别 GFM 表格。不是表格返回 `None`。
+    ///
+    /// 判据取 GFM §4.10 的核心三条，不做完整实现：
+    ///
+    /// 1. 至少两行——表头与分隔行。只有表头的不是表格。
+    /// 2. 第二行是分隔行：只由 `|`、`-`、`:`、空白组成，且至少有一个 `-`。
+    /// 3. 分隔行的列数与表头一致。
+    ///
+    /// 第 3 条是刻意的严格：GFM 允许数据行列数不一致（多余的截断、缺的补空），
+    /// 但**表头与分隔行不一致时整块不是表格**。这条挡住了正文里的竖线：
+    /// 「他说|我说|大家说」下一行恰好是「----」时，列数对不上就不会被误判。
+    #[must_use]
+    pub fn of(text: &str) -> Option<Self> {
+        let mut lines = text.lines();
+        let header = lines.next()?;
+        let delimiter = lines.next()?;
+
+        let columns = cell_count(header)?;
+        if columns != cell_count(delimiter)? {
+            return None;
+        }
+        if !is_delimiter_row(delimiter) {
+            return None;
+        }
+
+        let rows = lines.filter(|line| !line.trim().is_empty()).count();
+        Some(Self {
+            columns: columns as u8,
+            // 行数只用于估高，饱和即可——一张 65535 行的表在屏幕上已经是
+            // 「很长」，多出来的部分不改变任何排版决定。
+            rows: u16::try_from(rows).unwrap_or(u16::MAX),
+        })
+    }
+}
+
+/// 一行有几个单元格。首尾的竖线是可选的，两种写法都要数出同一个数。
+fn cell_count(line: &str) -> Option<usize> {
+    let trimmed = line.trim();
+    let inner = trimmed
+        .strip_prefix('|')
+        .unwrap_or(trimmed)
+        .strip_suffix('|')
+        .unwrap_or_else(|| trimmed.strip_prefix('|').unwrap_or(trimmed));
+    if !trimmed.contains('|') {
+        return None;
+    }
+    let count = inner.split('|').count();
+    if count == 0 || count > TableShape::MAX_COLUMNS as usize {
+        return None;
+    }
+    Some(count)
+}
+
+/// 这一行是不是分隔行：只由 `|`、`-`、`:`、空白组成，且至少有一个 `-`。
+fn is_delimiter_row(line: &str) -> bool {
+    let mut saw_dash = false;
+    for character in line.chars() {
+        match character {
+            '-' => saw_dash = true,
+            '|' | ':' | ' ' | '\t' => {}
+            _ => return false,
+        }
+    }
+    saw_dash
+}
+
+#[cfg(test)]
+mod table_tests {
+    use super::{BlockKind, BlockShape, TableShape};
+
+    #[test]
+    fn 认出标准的三列表格() {
+        let shape =
+            TableShape::of("| 甲 | 乙 | 丙 |\n|---|---|---|\n| 1 | 2 | 3 |").expect("这是一张表");
+        assert_eq!(shape.columns(), 3);
+        assert_eq!(shape.rows(), 1);
+    }
+
+    #[test]
+    fn 首尾竖线可省() {
+        // GFM 两种写法都合法，列数必须数成同一个。
+        let with = TableShape::of("| 甲 | 乙 |\n|---|---|\n| 1 | 2 |").expect("有边框");
+        let without = TableShape::of("甲 | 乙\n---|---\n1 | 2").expect("无边框");
+        assert_eq!(with.columns(), without.columns());
+    }
+
+    #[test]
+    fn 对齐冒号不影响识别() {
+        let shape =
+            TableShape::of("| 左 | 中 | 右 |\n|:---|:---:|---:|\n| a | b | c |").expect("带对齐");
+        assert_eq!(shape.columns(), 3);
+    }
+
+    #[test]
+    fn 只有表头不是表格() {
+        assert!(TableShape::of("| 甲 | 乙 |").is_none());
+    }
+
+    #[test]
+    fn 分隔行必须含横线() {
+        // `| : | : |` 全是合法字符但没有横线，不是分隔行。
+        assert!(TableShape::of("| 甲 | 乙 |\n| : | : |\n| 1 | 2 |").is_none());
+    }
+
+    #[test]
+    fn 正文里的竖线不被误判为表格() {
+        // 这条是整组测试的目的。作者在正文里用竖线分隔词语、下一行恰好是
+        // 破折号时，列数对不上就不该变成一张表。
+        assert!(TableShape::of("他说|我说|大家说\n----").is_none());
+        // 列数一致但第二行不是分隔行（有正文字符）。
+        assert!(TableShape::of("甲 | 乙\n丙 | 丁").is_none());
+    }
+
+    #[test]
+    fn 超过列数上限的按段落处理() {
+        // 33 根竖线几乎必然是作者在画分隔线，不是要排一张 33 列的表。
+        let many = "|".repeat(40);
+        let text = format!("{many}\n{}", "-|".repeat(40));
+        assert!(TableShape::of(&text).is_none());
+    }
+
+    #[test]
+    fn 块形状把表格认成表格而不是段落() {
+        let shape = BlockShape::of("| 甲 | 乙 |\n|---|---|\n| 1 | 2 |");
+        assert!(matches!(shape.kind, BlockKind::Table(_)));
+    }
+
+    #[test]
+    fn 表格不折行() {
+        // 表格按列对齐排版，一行就是一行。此前 `wrapped_lines` 用 `_` 兜底，
+        // 表格会落进折行分支被估成十几行高，虚拟视口据此留白。
+        let shape = BlockShape::of("| 很长的一列标题 | 另一列也不短 |\n|---|---|\n| a | b |");
+        // 三个硬行，窄版心下仍是三行。
+        assert_eq!(shape.wrapped_lines(4), 3);
+    }
+
+    #[test]
+    fn 围栏里的竖线不是表格() {
+        // 围栏先判定，表格识别只在段落上试。
+        let shape = BlockShape::of("```\n| 甲 | 乙 |\n|---|---|\n```");
+        assert!(matches!(shape.kind, BlockKind::Fence));
+    }
 }
 
 /// 标题层级：`#` 的个数。
@@ -115,7 +313,20 @@ impl BlockShape {
             }
             accumulator.push_line(bytes, fenced || marker);
         }
-        accumulator.finish()
+        let shape = accumulator.finish();
+        // 表格识别放在这里而不是累加器里：判据要看**整块**（表头与分隔行的
+        // 列数是否一致），而累加器是逐行推进的，它手里从来没有完整的两行。
+        //
+        // 只在段落上试：围栏里的竖线是代码，标题里的竖线是标题文字。
+        if shape.kind == BlockKind::Paragraph
+            && let Some(table) = TableShape::of(text)
+        {
+            return BlockShape {
+                kind: BlockKind::Table(table),
+                ..shape
+            };
+        }
+        shape
     }
 
     /// 这一块在给定行宽下至少占多少行。
@@ -132,7 +343,13 @@ impl BlockShape {
         match self.kind {
             // 代码块不折行：作者写多少行就是多少行。
             BlockKind::Fence => hard,
-            _ => {
+            // 表格同理：它按列对齐排版，一行就是一行。此前这里是 `_` 兜底，
+            // 表格会落进折行分支被当成一大段连续文本——那会把一张宽表估成
+            // 十几行高，虚拟视口据此留白，作者滚动时看到一大片空。
+            //
+            // 这正是 catch-all 的代价：加一个变体不会报错，只会静默算错。
+            BlockKind::Table(_) => hard,
+            BlockKind::Paragraph | BlockKind::Heading(_) => {
                 let per_hard = self.width_units.div_ceil(hard.max(1));
                 let wrapped = per_hard.div_ceil(line_units).max(1);
                 hard * wrapped

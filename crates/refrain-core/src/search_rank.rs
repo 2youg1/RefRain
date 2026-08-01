@@ -166,6 +166,10 @@ pub fn score(candidate: &Candidate) -> f64 {
         // A fence is a deliberate insertion — code, a quoted document — and
         // carries more intent than running prose.
         BlockKind::Fence => cap::BODY * 0.75,
+        // 表格与围栏同类：作者刻意排进去的结构化内容，比行文更有意图。
+        // 给同一个系数而不是新造一档——两者在「这是被安排过的东西」这件事
+        // 上没有区别，凭空拉开差距会让排序反映一个我们没有证据的判断。
+        BlockKind::Table(_) => cap::BODY * 0.75,
         BlockKind::Paragraph => 0.0,
     };
 
