@@ -117,7 +117,22 @@ export function lineStarts(
   measureEm: number,
   strictness: BreakStrictness = preset.breakStrictness,
 ): readonly number[] {
-  const breakable = new Set(candidates(measured, preset, strictness).map((entry) => entry.index));
+  // 代价必须参与选择，不能只看「在不在候选集里」。
+  //
+  // 实测（`他想说什么……可是又停住了……最后什么也没说。`）：loose 与 normal
+  // 的候选集**完全相同**，17 个下标一模一样，唯一的差别是长标点处的代价
+  // 1 对 40。第一版这里只建了一个 Set，于是那个差别在最后一步被整个丢掉，
+  // 三档里只有 strict 分得出来——而 strict 之所以分得出来，是因为它在
+  // `candidates` 里就把候选删掉了，不是因为这里读懂了代价。
+  //
+  // 换句话说，宽松档当时是个装饰品：它改的量没有任何东西会读。
+  const penalties = new Map(
+    candidates(measured, preset, strictness).map((entry) => [entry.index, entry.penalty]),
+  );
+
+  /** 断在这里划不划算。代价越低越愿意，超过这个值就宁可往前退。 */
+  const ACCEPTABLE_PENALTY = 20;
+
   const starts: number[] = [0];
   let width = 0;
   let lastCandidate: number | null = null;
@@ -125,7 +140,11 @@ export function lineStarts(
   for (let index = 0; index < measured.length; index += 1) {
     const character = measured[index];
     if (character === undefined) continue;
-    if (breakable.has(index)) lastCandidate = index;
+    const penalty = penalties.get(index);
+    // 代价高的断点仍然是断点——放不下时它总比撑破版心好——但只要还有更便宜
+    // 的选择，就不该用它。宽松档把长标点与中点的代价压到 1，正是让这些位置
+    // 从「万不得已」变成「乐意」。
+    if (penalty !== undefined && penalty <= ACCEPTABLE_PENALTY) lastCandidate = index;
 
     const advance =
       character.spaceBefore +

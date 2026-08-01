@@ -199,6 +199,50 @@ describe("折行", () => {
   });
 });
 
+describe("禁则三档", () => {
+  // Plan §3.2-4 的判据：三档必须产生**可见不同**的断行，结果相同这个选项
+  // 就是装饰。第一版实测下来它确实是装饰的一半——strict 分得开（它在
+  // `candidates` 里就删候选），而 loose 与 normal 的候选集完全相同，17 个
+  // 下标一模一样，唯一差别是代价 1 对 40，而 `lineStarts` 只读集合成员、
+  // 从不读代价。宽松档改的量没有任何东西会读。
+
+  test("宽松档愿意在长标点处断，标准档宁可撑到边界", () => {
+    // 语料要让长标点成为**唯一**的低代价选择。夹在中文里不行：表意文字之间
+    // 代价是 0、到处都能断，长标点那个位置永远轮不到，于是三档看起来全同。
+    // 两侧换成西文（西文内部绝不可断）之后，差异才显出来。
+    const text = "alpha・beta・gamma・delta";
+    const measured = measure(text, ZH_HANS);
+
+    const loose = lineStarts(measured, ZH_HANS, 8, "loose");
+    const normal = lineStarts(measured, ZH_HANS, 8, "normal");
+
+    expect(loose, `宽松与标准给出相同断行 ${JSON.stringify(loose)}，宽松档没有生效`).not.toEqual(
+      normal,
+    );
+    // 宽松档断在中点上；标准档撑过它，断得更靠后。
+    expect(loose[1]).toBeLessThan(normal[1] ?? Number.POSITIVE_INFINITY);
+  });
+
+  test("严格档连数字与西文之间也不断", () => {
+    const text = "总计有1234567890个，还要再加上98765条记录。";
+    const measured = measure(text, ZH_HANS);
+    const normal = lineStarts(measured, ZH_HANS, 6, "normal");
+    const strict = lineStarts(measured, ZH_HANS, 6, "strict");
+    expect(strict).not.toEqual(normal);
+  });
+
+  test("放不下时高代价断点仍然可用，不会撑破版心", () => {
+    // 代价参与选择之后要防的反向缺陷：把高代价断点整个排除，会让本来能断的
+    // 地方断不了。这里每一行的起点都必须真的前进，否则就是死循环或长行。
+    const text = "wordwordwordword……wordwordwordword";
+    const starts = lineStarts(measure(text, ZH_HANS), ZH_HANS, 6, "normal");
+    for (let index = 1; index < starts.length; index += 1) {
+      expect(starts[index]).toBeGreaterThan(starts[index - 1] ?? -1);
+    }
+    expect(starts.length).toBeGreaterThan(1);
+  });
+});
+
 describe("预设查表", () => {
   test("三种内建预设各自可取", () => {
     expect(presetOf("zh-hans").id).toBe("zh-hans");
