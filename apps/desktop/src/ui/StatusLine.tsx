@@ -13,7 +13,6 @@ export type SaveState = {
 
 export type StatusLineProps = {
   state: SaveState;
-  path: string | null;
   /** How much is selected right now, or null when nothing is. */
   selection?: { characters: number; blocks: number } | null;
   /**
@@ -22,13 +21,22 @@ export type StatusLineProps = {
    * sessions' working states and the RunWatch; this component infers nothing.
    */
   activity?: string | null;
+  /** 上次落盘的时刻。null 表示这一份还没有存过。 */
+  savedAt?: Date | null;
 };
+
+/** 保存时刻精确到秒：作者问的是「刚才那次改动进磁盘了吗」。 */
+const clockText = (at: Date): string =>
+  `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}:${String(at.getSeconds()).padStart(2, "0")}`;
 
 export function StatusLine(props: StatusLineProps): JSX.Element {
   const text = createMemo(() => {
     switch (props.state.kind) {
-      case "clean":
-        return "已保存";
+      case "clean": {
+        const at = props.savedAt;
+        // 一个点加一个时刻就够了：「已保存」三个字不比 14:32:07 多说明任何事。
+        return at === null || at === undefined ? "已保存" : clockText(at);
+      }
       case "dirty":
         return "未保存";
       case "saving":
@@ -75,7 +83,6 @@ export function StatusLine(props: StatusLineProps): JSX.Element {
           </span>
         )}
       </Show>
-      <span class="path">{props.path ?? ""}</span>
     </footer>
   );
 }

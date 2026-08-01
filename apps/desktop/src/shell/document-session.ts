@@ -47,6 +47,14 @@ export interface Conflict {
 export interface DocumentSessionView {
   readonly document: OpenDocumentDto_Serialize | null;
   readonly save: SaveState;
+  /**
+   * 上一次真正落盘的时刻，没存过则为 null。
+   *
+   * 状态栏用它取代「已保存」三个字：那三个字与一个时刻带的信息量不同——
+   * 作者问的是「刚才那次改动进磁盘了吗」，而时刻回答得了，一个形容词回答不了。
+   * 时刻只在这里记，因为只有这里知道写入什么时候返回的。
+   */
+  readonly savedAt: Date | null;
   readonly conflict: Conflict | null;
   readonly annotations: readonly AnnotationDto[];
   readonly relocating: AnnotationDto | null;
@@ -160,6 +168,8 @@ export class DocumentSession extends Session {
   #document: OpenDocumentDto_Serialize | null = null;
   #stamp: FileStamp_Serialize | null = null;
   #save: SaveState = { kind: "clean" };
+  /** 只在写入返回成功时更新——它记的是磁盘的事实，不是界面的状态。 */
+  #savedAt: Date | null = null;
   #conflict: Conflict | null = null;
   #annotations: readonly AnnotationDto[] = [];
   #relocating: AnnotationDto | null = null;
@@ -182,6 +192,7 @@ export class DocumentSession extends Session {
     return {
       document: this.#document,
       save: this.#save,
+      savedAt: this.#savedAt,
       conflict: this.#conflict,
       annotations: this.#annotations,
       relocating: this.#relocating,
@@ -245,6 +256,8 @@ export class DocumentSession extends Session {
       if (outcome.kind === "saved") {
         this.#stamp = outcome.value.stamp;
         this.#save = { kind: "clean" };
+        // 磁盘确认之后才记时刻：写入返回失败时它必须保持上一次的值。
+        this.#savedAt = new Date();
         if (outcome.value.recoveryEvidence) {
           this.notices.notice(`恢复了一份中断的写入：${outcome.value.recoveryEvidence}`);
         }

@@ -1,10 +1,9 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createSignal, onCleanup, onMount } from "solid-js";
 import { cancelScheduledFrame, scheduleFrame } from "../frame-scheduler";
 import { commands, type DisplayProfile } from "../generated/bindings.gen";
 
 interface WindowChromeProps {
-  title?: string;
   onCloseRequested: () => void;
   onError: (message: string) => void;
 }
@@ -14,8 +13,6 @@ export function WindowChrome(props: WindowChromeProps) {
   const [maximized, setMaximized] = createSignal(false);
   const [fullscreen, setFullscreen] = createSignal(false);
   const unlisten: Array<() => void> = [];
-
-  const title = (): string => props.title ?? "RefRain";
 
   const report = (error: unknown): void => {
     props.onError(error instanceof Error ? error.message : String(error));
@@ -102,66 +99,49 @@ export function WindowChrome(props: WindowChromeProps) {
   });
 
   return (
-    // Double-click is a pointer shortcut for native titlebar maximize. The
-    // adjacent maximize button owns the keyboard-accessible action.
-    // biome-ignore lint/a11y/noStaticElementInteractions: native titlebar pointer gesture
-    <header class="window-chrome" data-tauri-drag-region onDblClick={onTitlebarDoubleClick}>
-      <div class="brand" data-tauri-drag-region>
-        <svg
-          class="logo-mark"
-          width={24}
-          height={24}
-          viewBox="0 0 48 48"
-          fill="none"
-          role="img"
-          aria-label="RefRain"
-        >
-          <g stroke="currentColor" stroke-width="1.6">
-            <path d="M10 11v26" stroke-width="3.2" />
-            <path d="M13.6 11v26" stroke-width="1" />
-            <path d="M23 13l-3.5 13M31 13l-3.5 13M39 13l-3.5 13" />
-          </g>
-          <path d="M18 33h23" stroke="var(--seal, #c1542f)" stroke-width="2" />
-        </svg>
-        <span class="wordmark" data-tauri-drag-region>
-          RefRain
-        </span>
-        <Show when={title() !== "RefRain"}>
-          <span class="document-title" data-tauri-drag-region>
-            {title()}
-          </span>
-        </Show>
-      </div>
-      <nav class="window-actions" aria-label="窗口控制">
-        <button type="button" aria-label="最小化" title="最小化" onClick={minimize}>
-          <span class="minimize-glyph" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          aria-label={maximized() ? "还原窗口" : "最大化窗口"}
-          title={maximized() ? "还原窗口" : "最大化窗口"}
-          onClick={toggleMaximize}
-        >
-          <span class="maximize-glyph" classList={{ restored: maximized() }} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          aria-label={fullscreen() ? "退出全屏" : "进入全屏"}
-          title={fullscreen() ? "退出全屏（F11）" : "进入全屏（F11）"}
-          onClick={toggleFullscreen}
-        >
-          <span class="fullscreen-glyph" classList={{ active: fullscreen() }} aria-hidden="true" />
-        </button>
-        <button
-          class="close"
-          type="button"
-          aria-label="关闭"
-          title="关闭"
-          onClick={() => props.onCloseRequested()}
-        >
-          <span class="close-glyph" aria-hidden="true" />
-        </button>
-      </nav>
-    </header>
+    <>
+      {/* 贴屏幕最上沿的触发带：边框收起后高度为零，需要一条常在的带子接 hover。 */}
+      <div class="chrome-edge" aria-hidden="true" />
+      {/* Double-click is a pointer shortcut for native titlebar maximize. The
+          adjacent maximize button owns the keyboard-accessible action. */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: native titlebar pointer gesture */}
+      <header class="window-chrome" data-tauri-drag-region onDblClick={onTitlebarDoubleClick}>
+        <div class="brand" data-tauri-drag-region />
+        <nav class="window-actions" aria-label="窗口控制">
+          <button type="button" aria-label="最小化" title="最小化" onClick={minimize}>
+            <span class="minimize-glyph" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            aria-label={maximized() ? "还原窗口" : "最大化窗口"}
+            title={maximized() ? "还原窗口" : "最大化窗口"}
+            onClick={toggleMaximize}
+          >
+            <span class="maximize-glyph" classList={{ restored: maximized() }} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            aria-label={fullscreen() ? "退出全屏" : "进入全屏"}
+            title={fullscreen() ? "退出全屏（F11）" : "进入全屏（F11）"}
+            onClick={toggleFullscreen}
+          >
+            <span
+              class="fullscreen-glyph"
+              classList={{ active: fullscreen() }}
+              aria-hidden="true"
+            />
+          </button>
+          <button
+            class="close"
+            type="button"
+            aria-label="关闭"
+            title="关闭"
+            onClick={() => props.onCloseRequested()}
+          >
+            <span class="close-glyph" aria-hidden="true" />
+          </button>
+        </nav>
+      </header>
+    </>
   );
 }

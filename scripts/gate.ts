@@ -20,6 +20,8 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["verify:command-depth", ["bun", "scripts/verify-command-depth.ts"]],
   ["verify:typography", ["bun", "scripts/verify-typography.ts"]],
   ["verify:strata", ["bun", "scripts/verify-strata.ts"]],
+  ["verify:rail-indent", ["bun", "scripts/verify-rail-indent.ts"]],
+  ["verify:chrome-reveal", ["bun", "scripts/verify-chrome-reveal.ts"]],
   ["verify:fonts", ["bun", "scripts/verify-fonts.ts"]],
   ["verify:universal-menu", ["bun", "scripts/verify-universal-menu.ts"]],
   ["verify:connections", ["bun", "scripts/verify-connections.ts"]],
@@ -85,7 +87,13 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["verify:gates-run", ["bun", "scripts/verify-gates-run.ts"]],
 ];
 
-const headlessEvidence = new Set(["verify:cross-block-selection", "verify:font-fallback"]);
+const headlessEvidence = new Set([
+  "verify:cross-block-selection",
+  "verify:font-fallback",
+  // 侧栏缩进量的是渲染结果，所以它要一台浏览器和一个跑着的 dev server。
+  "verify:rail-indent",
+  "verify:chrome-reveal",
+]);
 const performanceEvidence = new Set([
   "verify:project-performance",
   "verify:large-input-performance",

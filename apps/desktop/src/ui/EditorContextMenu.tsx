@@ -40,9 +40,18 @@ export function EditorContextMenu(props: EditorContextMenuProps): JSX.Element {
           top: props.pointerY,
           bottom: props.pointerY,
         };
+    /*
+     * 菜单要让开的是**版心**，不只是选区。让开了选区却落在下一段上，字照样被
+     * 挡住，而「不与锚点相交」的断言全部仍为真——那正是它在真机上挡住三行正文
+     * 的原因。版心从 DOM 量，而不是从窗口宽度推：它随面板开合、字号、行宽变。
+     */
+    const host = document.querySelector(".editor-host");
+    const box = host?.getBoundingClientRect() ?? null;
+    const column =
+      box === null ? null : { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
     setPlacement(
       placeContextMenu(
-        anchor,
+        { anchor, column },
         { x: props.pointerX, y: props.pointerY },
         { width: window.innerWidth, height: window.innerHeight },
         {

@@ -30,8 +30,7 @@ import { ConnectionsSurface } from "../ui/ConnectionsSurface";
 import { DispatchSurface, type DispatchSurfaceProps } from "../ui/DispatchSurface";
 import { EditorContextMenu, type EditorContextMenuProps } from "../ui/EditorContextMenu";
 import { EditorHost, type EditorHostHandle } from "../ui/EditorHost";
-import { KaraSurface } from "../ui/KaraSurface";
-import { LogoMark } from "../ui/LogoMark";
+import { KaraSurface, KaraVeil } from "../ui/KaraSurface";
 import { MailboxSection } from "../ui/MailboxSection";
 import { RailPrompt } from "../ui/RailPrompt";
 import { type RailCatalog, RailShelf } from "../ui/RailShelf";
@@ -193,9 +192,17 @@ function RailNav(props: {
       ref={props.rail.ref}
       onScroll={props.rail.onScroll}
     >
-      <button type="button" class="brand" onClick={props.onBrandToggle}>
-        <LogoMark size={28} label="RefRain" />
-      </button>
+      {/*
+        侧栏不再挂第二个印：窗口边框那一处已经在同一屏上，两个同形的标记并排出现
+        只是重复。这个按钮保留下来做收起/展开的把手，标签给读屏器。
+      */}
+      <button
+        type="button"
+        class="brand"
+        aria-label="收起或展开侧栏"
+        title="收起或展开侧栏"
+        onClick={props.onBrandToggle}
+      />
       <div class="rail-actions">
         <button type="button" onClick={props.onCreateChapter}>
           新章
@@ -809,11 +816,20 @@ export function Workbench(props: WorkbenchProps) {
     panelTick();
     return panels.top?.content ?? null;
   });
-  /** 这条路径此刻在屏幕上的样子：让开多宽、算不算开着。 */
+  /**
+   * 这条路径此刻在屏幕上的样子：让开多宽、算不算开着。
+   *
+   * 工单台不在面板栈里（它是舞台的一个 stage，不是 `panels.open` 推进来的一层），
+   * 但它在屏幕上占的正是同一条竖带，所以正文让位必须把它算进来。少算这一层，
+   * 正文就不让位，面板与版心同列——那就是「字叠字」那张图。
+   */
+  const dispatchOpen = createMemo(
+    () => state().stage === "dispatch" && reference()?.kind !== "annotations",
+  );
   const layout = createMemo(() => {
     panelTick();
     return panelLayout(
-      panels.depth,
+      panels.depth + (dispatchOpen() ? 1 : 0),
       takesWholeStage({ reference: reference()?.kind ?? null, stage: state().stage }),
     );
   });
@@ -1041,11 +1057,7 @@ export function Workbench(props: WorkbenchProps) {
 
   return (
     <div class="workbench">
-      <WindowChrome
-        title={active()?.document.path ?? "RefRain"}
-        onCloseRequested={requestClose}
-        onError={setNotice}
-      />
+      <WindowChrome onCloseRequested={requestClose} onError={setNotice} />
       <Show when={commandMenuOpen()}>
         <UniversalMenu
           entries={commandsForMenu()}
@@ -1120,6 +1132,8 @@ export function Workbench(props: WorkbenchProps) {
             />
 
             <main class="stage">
+              {/* 滤镜属于稿纸这一区，所以它渲染在这里，而不是那层全窗外壳。 */}
+              <KaraVeil />
               <Show when={notice()}>{(text) => <p class="notice">{text()}</p>}</Show>
               <Show when={closePending()}>
                 <CloseConfirmBar
@@ -1162,7 +1176,7 @@ export function Workbench(props: WorkbenchProps) {
                     onDeleteAnnotation={(id) => void documentSession.deleteAnnotation(id)}
                     onRelocate={beginRelocation}
                     onDispatchAnnotations={dispatchAnnotations}
-                    dispatchOpen={state().stage === "dispatch" && !annotationsOpen()}
+                    dispatchOpen={dispatchOpen()}
                     materials={materials().map((row) => ({ path: row.path, label: row.path }))}
                     seed={[...dispatchSeed().blockIds]}
                     initialPrompt={dispatchSeed().prompt}
@@ -1227,7 +1241,7 @@ export function Workbench(props: WorkbenchProps) {
             </Show>
             <StatusLine
               state={documentView().save}
-              path={active()?.document.path ?? null}
+              savedAt={documentView().savedAt ?? null}
               selection={selectionMeasure()}
               activity={activityLine()}
             />

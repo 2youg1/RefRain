@@ -51,7 +51,8 @@ export function TicketMailboxPanel(props: TicketMailboxPanelProps): JSX.Element 
         {(group) => (
           <section class="mailbox-group">
             <button type="button" class="mailbox-head" onClick={() => toggle(group.box)}>
-              <span>{collapsed().has(group.box) ? "▸" : "▾"}</span>
+              {/* 三角挂在缩进槽里，标签才与同级的文档行对齐——它跟着标签走就会把标签推右。 */}
+              <span class="mailbox-twist">{collapsed().has(group.box) ? "▸" : "▾"}</span>
               {group.label}
               <span class="mailbox-count">{rowsOf(group.box).length}</span>
             </button>
@@ -75,9 +76,6 @@ export function TicketMailboxPanel(props: TicketMailboxPanelProps): JSX.Element 
                     </li>
                   )}
                 </For>
-                <Show when={rowsOf(group.box).length === 0}>
-                  <li class="mailbox-empty">空的。</li>
-                </Show>
               </ul>
             </Show>
           </section>

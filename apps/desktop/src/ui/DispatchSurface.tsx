@@ -257,16 +257,6 @@ export function DispatchSurface(props: DispatchSurfaceProps): JSX.Element {
           <span class="name">范围</span>
           <span class="value">{cells().range}</span>
         </div>
-        <div class="cell send">
-          <button
-            class="dispatch-send"
-            type="button"
-            disabled={!cells().ready || busy()}
-            onClick={() => void session.send()}
-          >
-            送出
-          </button>
-        </div>
       </header>
       <Show when={activityText()}>{(text) => <p class="notice">{text()}</p>}</Show>
 
@@ -299,7 +289,13 @@ export function DispatchSurface(props: DispatchSurfaceProps): JSX.Element {
                   }}
                 />
                 <span class="ordinal">b{index() + 1}</span>
-                <span class="peek">{block.text.slice(0, 20)}</span>
+                {/*
+                  截断交给 CSS 的 ellipsis（`.block-row .peek` 已经写着），不在这里切。
+                  在 JS 里切 20 个字符会把「他没有」这样的半句直接断掉且不留省略号，
+                  作者读起来像原文就这么短；而 CSS 那条按**可用宽度**截，面板变宽时
+                  自动多显示一些。两处都截还会先被 JS 截短、再也触发不了 ellipsis。
+                */}
+                <span class="peek">{block.text}</span>
                 <span class="count">{block.text.length} 字</span>
               </label>
             )}
@@ -377,6 +373,20 @@ export function DispatchSurface(props: DispatchSurfaceProps): JSX.Element {
           value={model().prompt}
           onInput={(event) => session.proposePrompt(event.currentTarget.value)}
         />
+        {/*
+          送出跟在要求后面，因为它是这条动线的终点：勾段落 → 选编排 → 写要求 → 送出。
+          它原本排在最上面那行只读摘要里，作者读到按钮时还没有任何东西可送。
+        */}
+        <div class="cell send">
+          <button
+            class="dispatch-send"
+            type="button"
+            disabled={!cells().ready || busy()}
+            onClick={() => void session.send()}
+          >
+            送出
+          </button>
+        </div>
       </Show>
 
       <Show when={model().drafts.length > 0}>
