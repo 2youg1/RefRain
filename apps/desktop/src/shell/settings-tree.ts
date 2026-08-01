@@ -149,6 +149,12 @@ export const SETTINGS_TREE: readonly SettingsNode[] = [
         hint: "0 关闭；1–6 表示每几行画一条",
       },
       { label: "缩放", section: "typography", leaf: "appearance.typography.zoom_percent" },
+      {
+        label: "自定义排版预设",
+        section: "typography",
+        leaf: "appearance.typography_presets",
+        hint: "存下当前这套排版，之后一键换回",
+      },
     ],
   },
   {

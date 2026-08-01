@@ -19,12 +19,16 @@ import {
   type PreferencesChangeDto,
 } from "../generated/bindings.gen";
 import { divergedPaths, leavesOf, readLeaf, writeLeaf } from "../shell/config-leaves";
+import type { SettingsSection } from "../shell/settings-tree";
 import { IconPicker } from "./IconPicker";
+import { SettingsSearch } from "./SettingsSearch";
 import { ShortcutsPanel } from "./ShortcutsPanel";
 import { ThemePicker } from "./ThemePicker";
 import { TypographyPanel } from "./TypographyPanel";
 
-type Section = "appearance" | "typography" | "shortcuts";
+// 分类由 `settings-tree.ts` 定义。这里曾经自己写了一遍同样的三个字面量
+// ——同一份事实的第二个权威，两边漂开时没有任何东西会红。
+type Section = SettingsSection;
 
 type SettingsSurfaceProps = {
   initialSection?: Section;
@@ -86,6 +90,31 @@ function SettingsHeader(props: {
         </button>
       </div>
     </header>
+  );
+}
+
+/** 分类标签栏。与搜索同性质：自成一体的一段，不属于外壳的编排。 */
+function SettingsTabs(props: {
+  current: Section;
+  onPick: (section: Section) => void;
+}): JSX.Element {
+  return (
+    <div class="settings-tabs" aria-label="设置分类" role="tablist">
+      <For each={SECTIONS}>
+        {(entry) => (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={props.current === entry.id}
+            classList={{ current: props.current === entry.id }}
+            onClick={() => props.onPick(entry.id)}
+          >
+            <span>{entry.label}</span>
+            <small>{entry.detail}</small>
+          </button>
+        )}
+      </For>
+    </div>
   );
 }
 
@@ -241,22 +270,8 @@ export function SettingsSurface(props: SettingsSurfaceProps) {
           onDone={() => props.onClosed?.()}
         />
 
-        <div class="settings-tabs" aria-label="设置分类" role="tablist">
-          <For each={SECTIONS}>
-            {(entry) => (
-              <button
-                type="button"
-                role="tab"
-                aria-selected={section() === entry.id}
-                classList={{ current: section() === entry.id }}
-                onClick={() => setSection(entry.id)}
-              >
-                <span>{entry.label}</span>
-                <small>{entry.detail}</small>
-              </button>
-            )}
-          </For>
-        </div>
+        <SettingsSearch onJump={setSection} />
+        <SettingsTabs current={section()} onPick={setSection} />
 
         <div class="settings-panel" role="tabpanel" aria-label={current().label}>
           <Show when={section() === "appearance"}>

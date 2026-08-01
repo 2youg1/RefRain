@@ -44,6 +44,21 @@ describe("设置树", () => {
     }
   });
 
+  test("配置里的每个字段都在树上有位置", () => {
+    // **反向的那一半。** 上一条只查「树上写的在配置里存在」，漏写不会红——
+    // `typography_presets` 就是这样漏了整整一版：配置里有它、`APPEARANCE_KEYS`
+    // 里也有它，而树上没有，于是作者的自定义排版预设在设置索引里不存在，
+    // 没有任何东西会因此变红。
+    //
+    // 单向检查只能证明「树上没有假路径」，证明不了「树覆盖了配置」。两条
+    // 合起来才是一个双射。
+    const covered = new Set(settingsLeaves().map((node) => (node.leaf ?? "").split(".")[1] ?? ""));
+    const missing = APPEARANCE_KEYS.filter((key) => !covered.has(key));
+    expect(missing).toEqual([]);
+    // 断样本数：树若被清空，上面那条会平凡通过。
+    expect(covered.size).toBeGreaterThanOrEqual(APPEARANCE_KEYS.length);
+  });
+
   test("分组不带路径：它不是一个可改的值", () => {
     const groups = SETTINGS_TREE.filter((node) => node.children !== undefined);
     expect(groups.length).toBeGreaterThan(0);
