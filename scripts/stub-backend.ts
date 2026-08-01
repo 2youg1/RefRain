@@ -143,6 +143,9 @@ export function stubScript(options: StubOptions = {}): string {
     list_harnesses: [],
     list_material_drafts: [],
     review_state: { proposals: [], verdicts: [], cursor: 0, batch: [] },
+    // 空数组而不是缺席：信箱拿到 undefined 会在 standings.map 上抛错，
+    // 而那个错误没有堆栈指向这里——它看起来像信箱坏了。
+    mailbox_standings: [],
     agent_reading_ledger: [],
     preview_dispatch: { manifest: [], digest: "0".repeat(16), requestMd: "" },
   };

@@ -20,11 +20,11 @@
 import { readFileSync } from "node:fs";
 import {
   CORNER_SCALES,
+  cornerContinuity,
   cornerDeclarations,
   cornerExponent,
   cornerRadius,
   cornerVar,
-  squirclePath,
 } from "../apps/desktop/src/shell/corners";
 
 const css = readFileSync("apps/desktop/src/styles/surfaces.css", "utf8");
@@ -77,24 +77,34 @@ for (const scale of CORNER_SCALES) {
   }
 }
 
-// 四、G4 必须真的是 G4。
+// 四、每一档必须达到它声称的连续阶。
 //
-// 超椭圆退回正圆是这套设计最容易发生也最难看出来的失效：路径字符串仍然
-// 合法、页面仍然渲染、角仍然是圆的——只是曲率又不连续了。所以直接量
-// 形状：45° 处的点在正圆上是 85.36%，超椭圆必须明显更外（更方）。
+// 判据是**阶数**，不是「看起来够不够方」。κ ∝ s^(n−2)，κ 从第 (n−2) 阶
+// 导数开始跳变，所以连续阶是 n − 1：n=3 → G2，n=4 → G3，n=5 → G4。
+//
+// 第一版断言写的是「45° 处的点要比正圆的 85.36% 更外」——那量的是外观，
+// 而 n=4.2 与 n=5 都能过，于是一个约 G3.2 的角被称作 G4 也不会红。断言
+// 要能区分它想区分的东西，否则它只是在确认「这不是正圆」。
+const REQUIRED_CONTINUITY: Readonly<Record<string, number>> = {
+  // 小饭盒与正文那条直边并排，突变最显眼：只有它需要 G4。
+  bento: 4,
+  panel: 3,
+  card: 2,
+  control: 2,
+};
 for (const scale of CORNER_SCALES) {
   if (scale === "pill") continue; // 徽标本来就该是正圆。
-  const exponent = cornerExponent(scale);
-  if (exponent <= 2) {
-    failures.push(`档 ${scale} 的指数是 ${exponent}，那是正圆——G4 的曲率连续没有了`);
+  const required = REQUIRED_CONTINUITY[scale];
+  if (required === undefined) {
+    failures.push(`档 ${scale} 没有声明它要到哪一阶：这道断言对它什么也没验`);
     continue;
   }
-  const path = squirclePath(scale, 8);
-  // 8 点采样的第二个点正是 45°。
-  const corner = path.match(/polygon\([^,]+,\s*([\d.]+)%/)?.[1];
-  const at45 = Number(corner ?? 0);
-  if (at45 <= 86) {
-    failures.push(`档 ${scale} 在 45° 处只到 ${at45}%，与正圆（85.36%）无异`);
+  const actual = cornerContinuity(scale);
+  if (actual < required) {
+    failures.push(
+      `档 ${scale} 只到 G${actual}（指数 ${cornerExponent(scale)}），要求 G${required}；` +
+        `κ ∝ s^(n−2)，G${required} 需要指数 ${required + 1}`,
+    );
   }
 }
 

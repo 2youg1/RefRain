@@ -139,10 +139,23 @@ export function EditorContextMenu(props: EditorContextMenuProps): JSX.Element {
           <div class="menu-section" role="presentation">
             选区
           </div>
+          {/*
+            记号在前，名字在后，快捷键靠右。
+
+            只给有**公认记号**的项配符号：B 与 I 全世界的编辑器都这么写，
+            作者不必学。「攒进发送」没有这样的记号，硬配一个图形只会让他
+            对着它猜——那比多几个字更费神。
+          */}
           <button type="button" role="menuitem" onClick={() => props.onFormat("strong")}>
+            <span class="menu-glyph" aria-hidden="true">
+              B
+            </span>
             加粗
           </button>
           <button type="button" role="menuitem" onClick={() => props.onFormat("emphasis")}>
+            <span class="menu-glyph menu-glyph-italic" aria-hidden="true">
+              I
+            </span>
             斜体
           </button>
         </Show>
@@ -160,10 +173,16 @@ export function EditorContextMenu(props: EditorContextMenuProps): JSX.Element {
         </For>
         <Show when={props.context.selection !== null && !props.relocating}>
           <button type="button" role="menuitem" onClick={() => props.onHighlight()}>
-            建立高亮
+            <span class="menu-glyph" aria-hidden="true">
+              ▤
+            </span>
+            高亮
           </button>
           <button type="button" role="menuitem" onClick={() => props.onComment()}>
-            添加批注
+            <span class="menu-glyph" aria-hidden="true">
+              ✎
+            </span>
+            批注
           </button>
         </Show>
         <Show when={props.context.selection !== null && props.relocating}>
@@ -180,6 +199,7 @@ export function EditorContextMenu(props: EditorContextMenuProps): JSX.Element {
         </button>
         <button type="button" role="menuitem" onClick={() => props.onClose()}>
           取消
+          <span class="menu-keys">Esc</span>
         </button>
       </div>
     </Portal>
