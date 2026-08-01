@@ -59,11 +59,23 @@ describe("挤压与混排间距", () => {
     expect(stopClose[1]?.spaceBefore).toBe(-0.5);
   });
 
-  test("开括号连开括号不压：它们的内白都在左侧，中间本来就没有空洞", () => {
-    // 一律压「相邻的两个全角标点」会让 `「「` 挤在一起。这条区分是按类
-    // 定规矩而不是按「是不是标点」定规矩的理由。
-    const measured = measure("「「", ZH_HANS);
-    expect(measured[1]?.spaceBefore).toBe(0);
+  test("相邻的两个全角标点一律压半字，开闭不分类（CLREQ §6.3.2）", () => {
+    // 这条测试原来断言的是相反的结论——`「「` 不压，理由是「两个开括号的内白
+    // 都在左侧，中间本来就没有空洞」。那个推理讲得通，但它不是规范。
+    //
+    // CLREQ §6.3.2 的原文是「两个相邻标点（原占 2 字）压到 1.5 字宽」，没有
+    // 按开闭分类。真正做这个区分的是韩文——KLREQ §7.3.3 明写「开+开 / 闭+闭
+    // 排紧」，中文规范里没有对应条款。Chromium 实测也压（`「「` 24px vs
+    // space-all 下 32px）。
+    //
+    // 保留这条测试是为了记住它翻过案：推翻规范需要拿真实字体的 ink box 量出
+    // 证据，不能靠对字形内白的推理。
+    for (const pair of ["「「", "」」", "（（", "，，", "」「", "。」", "」，"]) {
+      const measured = measure(pair, ZH_HANS);
+      expect(measured[1]?.spaceBefore, `${pair} 未压`).toBe(-0.5);
+    }
+    // 省略号例外：它占满字身且是一个整体符号，Chromium 实测挤压量也是 0。
+    expect(measure("……", ZH_HANS)[1]?.spaceBefore).toBe(0);
   });
 
   test("混排间距两个方向都加：同一句话的两端不该疏密不同", () => {

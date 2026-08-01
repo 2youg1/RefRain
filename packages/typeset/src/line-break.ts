@@ -58,6 +58,11 @@ export function candidates(
     const after = measured[index];
     if (before === undefined || after === undefined) continue;
 
+    // 结构层禁令先于字符类禁令：URL、路径、行内代码、带单位的数值内部不断，
+    // 无论两侧字符是什么类。逐字规则看不见这个层级（`/` 与 `.` 单看都是普通
+    // 标点），所以它必须在这里作为一条独立的门槛出现。
+    if (after.joinedToPrevious) continue;
+
     // 行首不可现：断在这里会让 after 成为下一行的第一个字。
     if (preset.forbiddenAtLineStart.has(after.kind)) continue;
     // 行尾不可留：断在这里会让 before 成为这一行的最后一个字。
@@ -101,6 +106,42 @@ function penaltyAt(left: CharClass, right: CharClass, strictness: BreakStrictnes
   if (LOOSE_ALLOWS.has(left) || LOOSE_ALLOWS.has(right)) return 40;
 
   return 10;
+}
+
+/**
+ * 从 `overflowAt` 往后找这个不可分割单元的结束位置。
+ *
+ * 只在「这一行一个候选断点都没有」时调用。此时版心塞不下当前这个单元——
+ * 一个超长西文词、一串数字、一条 URL。三种处理里只有一种是对的：
+ *
+ * | 做法 | 结果 |
+ * |---|---|
+ * | 就地硬断 | 切出 `expi` + `alidocious` 两个不存在的词 |
+ * | 整行不断 | 后面的正文全跟着溢出 |
+ * | **让这个单元溢出，从它结束处起新行** | 词完整，溢出止于该词 |
+ *
+ * 第三种是 CSS `overflow-wrap: normal` 的语义，也是所有成熟排版器的默认。
+ * 返回值是下一行的起点：该单元之后第一个可断处。找不到就返回 `lineStart`，
+ * 调用方据此停止断行（整段确实无处可断）。
+ */
+function unbreakableEnd(
+  measured: readonly AdjustedChar[],
+  preset: TypesetPreset,
+  strictness: BreakStrictness,
+  lineStart: number,
+  overflowAt: number,
+): number {
+  const allowed = new Set(candidates(measured, preset, strictness).map((entry) => entry.index));
+  for (let index = overflowAt; index < measured.length; index += 1) {
+    if (index <= lineStart || !allowed.has(index)) continue;
+    // 空格归上一行。断在空格**前**会让下一行以空格开头，而行首悬着一个空格
+    // 是可见的瑕疵——溢出的长词后面跟着一行 `" "` 正是这个形状。正常路径不
+    // 会撞到它（候选天然偏好空格后），只有这条兜底会。
+    let start = index;
+    while (measured[start]?.kind === "space") start += 1;
+    return start > lineStart ? start : index;
+  }
+  return lineStart;
 }
 
 /**
@@ -160,10 +201,25 @@ export function lineStarts(
     // 数据里，却从未影响过任何一处版面。
     const trailing = lineEndAdjustment(character.kind, preset);
     if (width + advance + trailing > measureEm && width > 0) {
-      // 放不下：退到上一个候选断点；一个都没有就在这里硬断，因为一行放不下
-      // 一个字的版面已经不是排版问题了。
+      // 放不下时退到上一个候选断点。一个都没有的情况需要分开处理，第一版在这
+      // 里一律「就地硬断」，而那正好切在不可分割的单元中间。
+      //
+      // 实测 @12em：`supercalifragilisticexpialidocious antidisestablishment…`
+      // 被切成 `supercalifragilisticexpi` + `alidocious`。`candidates` 明明
+      // 已经禁止西文内部断开（西文与西文之间不生成候选），禁令却在最后一步被
+      // 兜底绕过——**候选集说了不能断的地方，兜底不该有权限断**。
+      //
+      // 一行放不下一个单词，正确行为是让它溢出（读者仍读得到完整的词，只是
+      // 越出版心），而不是切出两个不存在的词。CSS 的 `overflow-wrap: normal`
+      // 就是这个语义，它才是默认值；`break-all` 是要显式开的另一回事。
       const start =
-        lastCandidate !== null && lastCandidate > (starts.at(-1) ?? 0) ? lastCandidate : index;
+        lastCandidate !== null && lastCandidate > (starts.at(-1) ?? 0)
+          ? lastCandidate
+          : unbreakableEnd(measured, preset, strictness, starts.at(-1) ?? 0, index);
+      if (start <= (starts.at(-1) ?? 0)) {
+        // 整段到此都不可分：让它溢出，不再尝试断这一行。
+        break;
+      }
       starts.push(start);
       lastCandidate = null;
       // 重新从新行的起点量起。
