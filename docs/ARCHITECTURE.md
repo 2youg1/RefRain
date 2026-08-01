@@ -65,7 +65,7 @@ be true everywhere.
 | `refrain-core` | 27 | 7,862 | The domain: manuscripts, blocks, the agent protocol, ranking |
 | `refrain-store` | 25 | 10,009 | SQLite, the file catalogue, ingestion, search indexes |
 | `refrain-host` | 6 | 3,579 | Agents, Runs, orchestration edges, staging |
-| `refrain-app` | 8 | 1,532 | Use cases that need more than one of the above |
+| `refrain-app` | 7 | 1,273 | Use cases that need more than one of the above |
 | `apps/desktop/src-tauri` | — | 4,169 | The command bridge |
 | `apps/desktop/src`, `packages/editor` | — | 12,679 | The surface |
 

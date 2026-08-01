@@ -3448,7 +3448,7 @@ dependencies = [
 
 [[package]]
 name = "refrain-app"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "refrain-core",
  "refrain-host",
@@ -3463,7 +3463,7 @@ dependencies = [
 
 [[package]]
 name = "refrain-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "blake3",
  "memchr",
@@ -3476,7 +3476,7 @@ dependencies = [
 
 [[package]]
 name = "refrain-desktop"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "fontdb",
  "image",
@@ -3499,7 +3499,7 @@ dependencies = [
 
 [[package]]
 name = "refrain-host"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "nix",
  "refrain-core",
@@ -3512,7 +3512,7 @@ dependencies = [
 
 [[package]]
 name = "refrain-store"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "html5gum",
  "ignore",

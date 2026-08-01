@@ -25,6 +25,16 @@ back, and lose the thread every time.
 RefRain takes the third position: **the agent proposes, you decide, and the
 record of who decided what is part of the document.**
 
+<p align="center">
+  <img src="docs/images/composer.png" alt="The ticket composer, a translucent surface over the manuscript" width="720">
+</p>
+<p align="center">
+  <img src="docs/images/rail-and-menu.png" alt="The rail with the ticket mailbox, and the two-section context menu" width="720">
+</p>
+<p align="center">
+  <img src="docs/images/kara.png" alt="KARA's gradient filter over the top of the screen" width="720">
+</p>
+
 ## How it works
 
 You select the passages an agent may see. RefRain freezes those exact bytes into
