@@ -73,7 +73,12 @@ Markdown 就地渲染，不在旁边另开一块预览。强调、加粗、行�
 而源文本一个空格都没有多。`mermaid` 或 `nomnoml` 围栏会在它自己的源码旁画成一张
 图；渲染器不认识的图种保留围栏、按文本显示——画不出的图不该让你的文字消失。
 
-还有些每天都会碰到的小事：标点宽度建议、空段清理、不会留下 `****` 残渣的三态行内
+导入的 PDF 可以在稿子旁边打开，按它原本的版面一页页读。RefRain 永远不往那个文件
+写回去——导入抽的是文本，写回等于用一份残缺的模型覆盖原件。
+
+还有些每天都会碰到的小事：搜索结果会把命中的那句话显示出来、查询词标在里面——
+点一条就把光标放进那一块，而不是落在文件开头；标点宽度建议、空段清理、不会留下
+`****` 残渣的三态行内
 格式、标题引用列表的三态命令、宁可请你重新锚定也不乱猜的批注，以及保存失败时告诉
 你下一步该做什么。
 
@@ -148,6 +153,7 @@ bun run gate
 | **类型桥** | [Serde](https://serde.rs) 与 [Specta](https://github.com/specta-rs/specta)，TypeScript 类型由后者生成 |
 | **高亮** | [Shiki](https://shiki.style)，入口精确注册，运行期不触网 |
 | **图表** | [nomnoml](https://github.com/skanaar/nomnoml)，gzip 后 26 KB，另有一层转换接受 Mermaid 流程图语法 |
+| **导入的原件** | [pdf.js](https://mozilla.github.io/pdf.js/) 把导入的 PDF 画出来供阅读；四个取远程资源的入口一个都不传，worker 打进产物并从 blob URL 运行 |
 | **构建与发布** | [Bun](https://bun.sh) 与 [Node.js](https://nodejs.org)，仅构建期使用；[ScriptC](https://github.com/vercel-labs/scriptc) 把发布策略编译成原生可执行文件 |
 
 搜索索引为什么用 bigram 而不是 trigram 或分词器——连同定下这件事的实测数据——写在

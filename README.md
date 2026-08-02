@@ -87,7 +87,14 @@ aligns its columns without a single space being added to the source. A
 a diagram type the renderer does not know keeps its fence and shows as text,
 because a diagram that cannot be drawn must not make your words disappear.
 
-Smaller things that matter daily: punctuation width suggestions, empty-paragraph
+A PDF you imported can be opened beside your manuscript and read as its own
+pages, laid out the way its author set them. RefRain never writes back to that
+file — the import extracts text, so a save would overwrite the original with a
+partial model of it.
+
+Smaller things that matter daily: search results that show the sentence they
+matched with your query marked inside it — and clicking one puts the caret in
+that block, not at the top of the file; punctuation width suggestions, empty-paragraph
 cleanup, three-state inline formatting that never leaves `****` behind, headings
 and quotes and lists as three-state commands, annotations that ask to be
 re-anchored rather than guessing, and a failed save that tells you what to do
@@ -170,6 +177,7 @@ bun run gate
 | **Bindings** | [Serde](https://serde.rs) and [Specta](https://github.com/specta-rs/specta), which generates the TypeScript types |
 | **Highlighting** | [Shiki](https://shiki.style), entry points registered precisely so nothing reaches the network |
 | **Diagrams** | [nomnoml](https://github.com/skanaar/nomnoml) at 26 KB gzipped, with a translator that accepts Mermaid flowchart syntax |
+| **Imported sources** | [pdf.js](https://mozilla.github.io/pdf.js/) draws an imported PDF for reading; every remote entry point is left unset, and its worker is bundled and run from a blob URL |
 | **Build and release** | [Bun](https://bun.sh) and [Node.js](https://nodejs.org), build-time only; [ScriptC](https://github.com/vercel-labs/scriptc) compiles the release policy into a native executable |
 
 Why the search index uses bigrams rather than trigrams or a tokeniser — with the

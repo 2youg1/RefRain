@@ -225,6 +225,7 @@ only ever receive `Short`.
 | **Errors** | [thiserror](https://github.com/dtolnay/thiserror) |
 | **Highlighting** | [Shiki](https://shiki.style), with an explicit offline language and theme set |
 | **Diagrams** | [nomnoml](https://github.com/skanaar/nomnoml), with a thin translator that accepts the Mermaid flowchart subset |
+| **Imported sources** | [pdf.js](https://mozilla.github.io/pdf.js/) renders an imported PDF for reading only; RefRain never writes back to it |
 
 ### Why the editor renders tables as aligned text, not as a table
 
@@ -290,6 +291,50 @@ because a dozen call sites read `paragraph.textContent` as the block text. It
 also passes through `DOMParser` and `importNode` rather than `innerHTML`: the
 author's words are inside those node labels, and `verify:no-html-sink` treats
 the manuscript as user input.
+
+### Why an imported PDF is rendered but never written back
+
+Importing a PDF already extracts its text into the materials shelf, so the
+author can quote and edit it. What was missing is the **page**: the layout,
+the figures, the table that only makes sense in its original grid.
+
+RefRain now draws that page beside the manuscript. It never writes to the file.
+The reason is that the import is lossy by construction — `ingest/pdf.rs`
+extracts text, while glyph positions, embedded fonts and page boxes never enter
+memory. Writing back would overwrite the original with a partial model of it.
+The same ruling covers DOCX and EPUB: a minimal two-paragraph DOCX **loses
+90.4% of its bytes** on extraction, so there is no honest way to tell an author
+what a save would discard.
+
+The bytes come from a clone made at import time, not from the path the author
+picked. `materials.rs` stores every imported file as `{digest}.{ext}`, written
+once and never modified, and `documents.source_digest` / `source_format` name
+it. Two guards stand between a stored row and a file read; deleting each one in
+turn shows which carries the load:
+
+| Guard removed | Result |
+|---|---|
+| The character allowlist | All tests still pass — the digest check catches it |
+| The digest comparison | One test fails |
+| Both | Two fail, including the traversal case |
+
+So the **digest comparison is load-bearing**: a traversal path reaches some
+other file, and that file does not hash to the name that was asked for.
+
+Reaching the network is the other risk, and pdf.js has four entry points that
+fetch remote resources: `cMapUrl`, `standardFontDataUrl`, `iccUrl`, `wasmUrl`.
+**None of them has a default** — `getFactoryUrlProp` returns null for a
+non-string, so not passing them is what closes them. Passing `""` instead reads
+like closing the door and in fact throws, which no PDF survives. The worker is
+required and cannot be disabled, so its source is bundled and wrapped in a blob
+URL: same-origin, no request. `verify:no-network` and a source-level test both
+hold this shape, because the render gate cannot: it measures inked pixels, and
+a machine without glyph rasterisation reports zero for reasons unrelated to the
+network.
+
+The renderer lives in `apps/desktop/src/ui/`, not in `packages/editor`, which
+`verify:typeset-purity` requires to have zero external dependencies. pdf.js is
+both an external dependency and a consumer of `DOMMatrix` and `canvas`.
 
 ### Why bigram, not trigram or a tokeniser
 
