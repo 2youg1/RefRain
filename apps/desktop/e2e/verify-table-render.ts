@@ -31,6 +31,7 @@
 // 还原注入时不要用 `git checkout <file>`：这个文件当时尚未进 git，那条命令
 // 报 pathspec 错误后什么也没做，注入留在了树上。未跟踪的文件只能靠备份还原。
 
+import { mkdirSync } from "node:fs";
 import { type Browser, chromium } from "playwright";
 import { ensureNodeDriver } from "../../../scripts/pw-chromium.ts";
 
@@ -46,6 +47,9 @@ if (!bundle.success || bundle.outputs[0] === undefined) {
   throw new Error(`editor bundle failed: ${bundle.logs.map(String).join("\n")}`);
 }
 const editorJavaScript = await bundle.outputs[0].text();
+
+// 判据 6 要测的是产品样式表本身，不是这里抄的一副骨架——读真文件来喂。
+const surfacesCss = await Bun.file("apps/desktop/src/styles/surfaces.css").text();
 
 const FONT_PX = 16;
 const WIDTH_PX = 900;
@@ -93,12 +97,48 @@ const html = `<!doctype html>
   window.editorApi = editor;
 </script>`;
 
-const server = Bun.serve({
+/**
+ * 判据 6 的页面：同一份语料，挂的是产品的真样式表。
+ *
+ * 变量由这里补足——surfaces.css 只消费 `--ink`/`--font-mono`，定义在主题里，
+ * 而主题是另一份文件。测的是 `.md-table-pipe` 那一条规则，不是主题。
+ */
+const pipesHtml = `<!doctype html>
+<meta charset="utf-8">
+<link rel="stylesheet" href="/surfaces.css">
+<style>
+  :root {
+    --ink: #19345c;
+    --rule: #c8c0b0;
+    --font-mono: "Noto Sans Mono CJK SC", "Noto Sans Mono", ui-monospace, monospace;
+  }
+  body { margin: 0; }
+  #editor {
+    font: ${FONT_PX}px/1.9 "Noto Sans SC", sans-serif;
+    width: ${WIDTH_PX}px;
+    color: var(--ink);
+  }
+</style>
+<div class="editor-host"><div id="editor"></div></div>
+<script type="module">
+  import * as editor from "/editor.js";
+  window.editorApi = editor;
+</script>`;
+
+// await 不能省：Windows 上 node-gate 的 Bun.serve 替身是 async 的，
+// 不 await 拿到的 server 是 Promise，server.port 是 undefined。
+const server = await Bun.serve({
   port: 0,
   fetch(request) {
     const path = new URL(request.url).pathname;
     if (path === "/editor.js") {
       return new Response(editorJavaScript, { headers: { "content-type": "text/javascript" } });
+    }
+    if (path === "/surfaces.css") {
+      return new Response(surfacesCss, { headers: { "content-type": "text/css" } });
+    }
+    if (path === "/pipes") {
+      return new Response(pipesHtml, { headers: { "content-type": "text/html" } });
     }
     return new Response(html, { headers: { "content-type": "text/html" } });
   },
@@ -260,6 +300,128 @@ try {
       `判据 5：正文里带竖线的句子被当成了表格（data-table=${proseIsTable.table}，${proseIsTable.cells} 个单元格）`,
     );
   }
+
+  /*
+   * 判据 6：竖线读作连续的线，而文本一个字节没动（真 surfaces.css）。
+   *
+   * 断的是几何与文本，不是「有没有这条规则」：
+   * a. 字形透明、线由 border-left 画、border-right 为零——行尾竖线的 span
+   *    吞着换行符，border-right 会在下一行行首画出一截 1px 残桩。
+   * b. 每根竖线的边条盒高不矮于行距——矮了行间就断，读作虚线。
+   * c. 行尾竖线的下一行片段是零宽空盒——残桩没有别的来源。
+   * d. textContent 逐字节等于块文本——透明的是颜色，不是字符。
+   * e. 块没有竖向滚动条——竖向 padding 是视觉外延，不该撑出滚动区。
+   */
+  const pipesPage = await browser.newPage();
+  await pipesPage.goto(`http://127.0.0.1:${server.port}/pipes`, { waitUntil: "networkidle" });
+  await pipesPage.evaluate((table) => {
+    const api = window as unknown as {
+      editorApi: {
+        mountEditor(
+          element: HTMLElement,
+          document: { revision: string; blocks: Array<{ id: string; text: string }> },
+          port: { submit: (action: unknown) => void },
+        ): unknown;
+      };
+    };
+    api.editorApi.mountEditor(
+      document.getElementById("editor") as HTMLElement,
+      { revision: "r1", blocks: [{ id: "t1", text: table as string }] },
+      { submit: () => undefined },
+    );
+  }, TABLE);
+  await pipesPage.evaluate(() => document.fonts.ready);
+
+  const pipeFacts = await pipesPage.evaluate(() => {
+    const paragraph = document.querySelector("[data-block-id='t1']") as HTMLElement | null;
+    if (!paragraph) return null;
+    // 行距用单元格的行顶差来量：它是行盒自己的事，与竖线怎么画无关。
+    const rowTops = [
+      ...new Set(
+        [...paragraph.querySelectorAll(".md-table-cell")].map((cell) =>
+          Math.round(cell.getBoundingClientRect().top),
+        ),
+      ),
+    ].sort((a, b) => a - b);
+    const pitch = rowTops.length >= 2 ? (rowTops[1] ?? 0) - (rowTops[0] ?? 0) : 0;
+    return {
+      pitch,
+      text: paragraph.textContent,
+      scroll: { height: paragraph.scrollHeight, client: paragraph.clientHeight },
+      pipes: [...paragraph.querySelectorAll(".md-table-pipe")].map((pipe) => {
+        const computed = getComputedStyle(pipe);
+        return {
+          color: computed.color,
+          left: computed.borderLeftWidth,
+          right: computed.borderRightWidth,
+          fragments: [...pipe.getClientRects()].map((rect) => ({
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          })),
+        };
+      }),
+    };
+  });
+
+  if (pipeFacts === null) {
+    failures.push("判据 6：挂真样式表的页面里没有表格块");
+  } else {
+    if (pipeFacts.pipes.length === 0) {
+      failures.push("判据 6：一个 .md-table-pipe 都没有——竖线没包 span，规则无处生效");
+    }
+    for (const [index, pipe] of pipeFacts.pipes.entries()) {
+      if (pipe.color !== "rgba(0, 0, 0, 0)") {
+        failures.push(`判据 6a：第 ${index + 1} 根竖线字形颜色是 ${pipe.color}，不是透明`);
+      }
+      if (pipe.left !== "1px" || pipe.right !== "0px") {
+        failures.push(
+          `判据 6a：第 ${index + 1} 根竖线边条是 左${pipe.left}/右${pipe.right}——应是 左1px/右0px，右边条会在下一行行首画残桩`,
+        );
+      }
+      // 行尾竖线有两个片段（"|\n" 跨行），首个片段是线；其余竖线只有一个。
+      const rule = pipe.fragments[0];
+      if (rule === undefined || rule.height < pipeFacts.pitch - 1) {
+        failures.push(
+          `判据 6b：第 ${index + 1} 根竖线边条高 ${rule?.height ?? 0}px，行距 ${pipeFacts.pitch}px——行间会断开`,
+        );
+      }
+      const tail = pipe.fragments[1];
+      if (tail !== undefined && tail.width !== 0) {
+        failures.push(`判据 6c：第 ${index + 1} 根竖线的下一行片段宽 ${tail.width}px——残桩没堵住`);
+      }
+    }
+    if (pipeFacts.text !== TABLE) {
+      failures.push("判据 6d：挂了真样式表后 textContent 与源文本不符——字符被样式动了");
+    }
+    if (pipeFacts.scroll.height > pipeFacts.scroll.client + 1) {
+      failures.push(
+        `判据 6e：表格块出现竖向溢出（scrollHeight ${pipeFacts.scroll.height} > clientHeight ${pipeFacts.scroll.client}）`,
+      );
+    }
+  }
+
+  // 留证：线是不是真的连上了，截图比断言更接近人眼。存 probe-results 供回读。
+  // 用带余量的区域而不是元素盒——元素截图会把贴着盒子左缘的 1px 边条裁掉，
+  // 而表格的第一根竖线正好画在那里（实测：fullPage 里它在，元素截图里它没）。
+  const tableBox = await pipesPage.evaluate(() => {
+    const rect = document.querySelector("[data-block-id='t1']")?.getBoundingClientRect();
+    return rect === undefined || rect === null
+      ? null
+      : { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+  });
+  if (tableBox !== null) {
+    mkdirSync("probe-results", { recursive: true });
+    await pipesPage.screenshot({
+      path: "probe-results/table-pipes.png",
+      clip: {
+        x: Math.max(0, tableBox.x - 8),
+        y: Math.max(0, tableBox.y - 8),
+        width: tableBox.width + 16,
+        height: tableBox.height + 16,
+      },
+    });
+  }
+  await pipesPage.close();
 } finally {
   await browser?.close();
   server.stop(true);
@@ -270,5 +432,5 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  "verify:table-render PASS — 4 列左边缘对齐、textContent 逐字节一致、光标坐标系单一、表格不断行",
+  "verify:table-render PASS — 4 列左边缘对齐、textContent 逐字节一致、光标坐标系单一、表格不断行、竖线读作连续的线",
 );

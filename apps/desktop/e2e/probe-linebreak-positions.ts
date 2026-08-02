@@ -77,11 +77,7 @@ const browserStarts = async (text: string, widthPx: number): Promise<number[]> =
  * 宽度**而不是文字宽度，判据恒真。`width: max-content` 才让盒子收缩到内容，
  * 这时数字才是「这一行的文字有多宽」。
  */
-const lineWidths = async (
-  text: string,
-  starts: readonly number[],
-  widthPx: number,
-): Promise<number[]> =>
+const lineWidths = async (text: string, starts: readonly number[]): Promise<number[]> =>
   page.evaluate(
     ({ text, starts }) => {
       const paragraph = document.getElementById("probe") as HTMLElement;
@@ -111,7 +107,7 @@ for (const item of CORPUS) {
     const browser = await browserStarts(item.text, widthPx);
     const same = JSON.stringify([...engine]) === JSON.stringify(browser);
     if (!same) mismatches += 1;
-    const widths = await lineWidths(item.text, engine, widthPx);
+    const widths = await lineWidths(item.text, engine);
     const worst = Math.max(...widths);
     const ratio = worst / widthPx;
     if (ratio > 1.001) anyOverflow = true;

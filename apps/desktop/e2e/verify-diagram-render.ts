@@ -80,7 +80,8 @@ const html = `<!doctype html>
   window.editorApi = editor;
 </script>`;
 
-const server = Bun.serve({
+// await 不能省：Windows 上 node-gate 的 Bun.serve 替身是 async 的。
+const server = await Bun.serve({
   port: 0,
   fetch(request) {
     const path = new URL(request.url).pathname;

@@ -105,7 +105,10 @@ const html = `<!doctype html>
   import "/host.js";
 </script>`;
 
-const server = Bun.serve({
+// await 在真 Bun 下是恒等（Bun.serve 同步返回），在 Windows 的 Node 驱动
+// （scripts/node-gate.ts）下是必需——那里的 serve 是 async。不 await 的话，
+// server 是一个 Promise，port 与 stop 都不存在。
+const server = await Bun.serve({
   port: 0,
   fetch(request) {
     const path = new URL(request.url).pathname;

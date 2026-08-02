@@ -5,7 +5,11 @@
  * mid-flight (the run comes back recovery-required, the result written while
  * the app was down still collects) → proposals freeze → the C8 review loop
  * accepts them. Then the failure vectors: a malformed result fails the run
- * with a typed code, and the retry is a new run that completes.
+ * with a typed code, and the retry is a new run that completes. The
+ * orchestration edges follow: 并行 ×2 mints two independent runs of one frozen
+ * input; 接力 ×2 holds the second run until the first is terminal, then feeds
+ * it the upstream artifact; 校验 ×2 lands a proposal-less report and refuses
+ * a verifier's replacements whole.
  *
  * Run: `bun apps/desktop/e2e/dispatch-loop.ts <path-to-refrain.exe>`.
  */
@@ -375,7 +379,16 @@ const tickBlock = async (ordinal: number): Promise<void> => {
   // it as "not interactable"; the wrapping label owns the clickable pixels.
   const el = await elementOrNull(`(//label[contains(@class,'block-row')])[${ordinal}]`, true);
   if (el === null) throw new Error(`no block row ${ordinal}`);
-  await click(el);
+  try {
+    await click(el);
+  } catch (error) {
+    // 重挂票据的帧里，行可能被尚未退场的旧帧挡住（clickButton 记录在案的
+    // 同一类「not interactable」）：JS 点击驱动的是同一个 Solid handler。
+    console.error(
+      `NOTE  JS-click fallback for block row ${ordinal}: ${String(error).slice(0, 80)}`,
+    );
+    await execute(`arguments[0].click(); "js-click"`, [asElement(el)]);
+  }
 };
 
 // Selects render only when the composer model offers a choice (agents > 1),
@@ -396,15 +409,28 @@ const setSelect = async (selector: string, value: string): Promise<void> => {
 // settles the phase moves on and the reset path is close + reopen.
 const resetTicket = async (): Promise<void> => {
   if ((await elementOrNull(`//button[contains(.,'再发')]`, true)) !== null) {
-    await resetTicket();
+    await clickButton("再发");
     return;
   }
-  console.error("NOTE  再发 absent (phase settled) — resetting via 收起 + 发送");
+  console.error("NOTE  再发 absent (phase settled) — resetting via 收起 + 命令面板");
   await clickButton("收起");
-  await clickButton("发送");
+  await openViaCommand("交给 Agent");
   await waitFor("the ticket after reopen", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch") !== null`)),
   );
+};
+
+// 发送台与逐句裁决没有常驻按钮（v0.2.3 起：栏脚只留批注/历史/KARA/连接/设置，
+// 它们只从信箱与命令面板进）。命令面板是这里唯一能开一张空票据的入口——
+// 信箱里还没有单可点。真实按键走 review-loop 的证据；这里与 KARA 同一路，
+// 把 keydown 直接派给 .workbench。
+const openViaCommand = async (label: string): Promise<void> => {
+  await execute(
+    `document.querySelector(".workbench").dispatchEvent(
+       new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true })); "menu"`,
+    [],
+  );
+  await clickButton(label);
 };
 
 const setPrompt = async (text: string): Promise<void> => {
@@ -420,6 +446,39 @@ const writeResult = (workspace: string, runId: string, body: string): void => {
   const dir = join(fixture, ".refrain", workspace, "attempts", runId);
   if (!existsSync(dir)) throw new Error(`no attempt directory for run ${runId}`);
   writeFileSync(join(dir, "result.md"), body);
+};
+
+// 桥现在拒取消一张没有活句柄的已派发 L0 单（state-unavailable：没有进程
+// 可杀——恢复语义是给 harness 的）。收尾因此不是取消而是收一份结果到终态：
+// 后续段落数的是 dispatched 的数量，完成与取消同样让这单离开在途。
+const settleRun = async (rootId: string, run: HostRun, text: string): Promise<void> => {
+  const request = readFileSync(join(fixture, ".refrain", run.workspace, "request.md"), "utf8");
+  const scope = request.match(/<!-- scope ([^ ]+) -->/)?.[1] ?? "";
+  writeResult(
+    run.workspace,
+    run.id,
+    `<agent-result version="2"><replacement scope="${scope}">${text}</replacement></agent-result>\n`,
+  );
+  await clickButton("收取");
+  await waitFor(`run ${run.id} to settle`, async () => {
+    const s = await hostState(rootId);
+    return s.runs.find((r) => r.id === run.id)?.progress === "completed";
+  });
+};
+
+// harness 单的结果由生产者自己写：等它落盘，再收。与 settleRun 同一个理由。
+const settleHarnessRun = async (rootId: string, run: HostRun): Promise<void> => {
+  await waitFor(
+    "the harness result to land",
+    async () =>
+      existsSync(join(fixture, ".refrain", run.workspace, "attempts", run.id, "result.md")),
+    30_000,
+  );
+  await clickButton("收取");
+  await waitFor(`run ${run.id} to settle`, async () => {
+    const s = await hostState(rootId);
+    return s.runs.find((r) => r.id === run.id)?.progress === "completed";
+  });
 };
 
 const run = async (): Promise<void> => {
@@ -441,7 +500,7 @@ const run = async (): Promise<void> => {
   console.log(`revision at draft: ${revAtDraft.revision}`);
 
   // ── The ticket: two blocks, one prompt, one L0 agent. ──
-  await clickButton("发送");
+  await openViaCommand("交给 Agent");
   await waitFor("the dispatch surface", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch") !== null`)),
   );
@@ -526,7 +585,7 @@ const run = async (): Promise<void> => {
     revAfterRestart.revision === revAtDraft.revision,
     `${revAfterRestart.revision} != ${revAtDraft.revision}`,
   );
-  await clickButton("发送");
+  await openViaCommand("交给 Agent");
   await waitFor("the collect button", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch-collect") !== null`)),
   );
@@ -547,7 +606,7 @@ const run = async (): Promise<void> => {
   );
 
   // ── The C8 loop accepts it: the text actually changes. ──
-  await clickButton("逐句裁决");
+  await openViaCommand("继续 Review");
   await waitFor("the review surface", async () =>
     Boolean(await execute(`return document.querySelector(".review-surface") !== null`)),
   );
@@ -647,7 +706,7 @@ const run = async (): Promise<void> => {
     );
   } catch {
     // The ticket no longer remounts itself after a commit; open it explicitly.
-    await clickButton("发送");
+    await openViaCommand("交给 Agent");
     await waitFor("the dispatch surface again", async () =>
       Boolean(await execute(`return document.querySelector(".dispatch") !== null`)),
     );
@@ -897,19 +956,7 @@ const run = async (): Promise<void> => {
     tickedRequest.length,
   );
   // Leave no in-flight run behind: later sections count dispatched runs.
-  // Rows accumulate across the suite, so cancel THIS run's row, not the first.
-  {
-    const cancel = await elementOrNull(
-      `//div[contains(@class,'run-row')][.//code[contains(.,'${tickedRun.workspace}')]]//button[contains(.,'取消')]`,
-      true,
-    );
-    if (cancel === null) throw new Error("no cancel button on the ticked-material row");
-    await click(cancel);
-  }
-  await waitFor("the ticked-material run to cancel", async () => {
-    const s = await hostState(rootId);
-    return s.runs.find((r) => r.id === tickedRun.id)?.progress === "cancelled";
-  });
+  await settleRun(rootId, tickedRun, "带上人物卡的第一段。");
 
   // ── Parallel copies (并行 ×N): one ticket mints N runs of one agent — same
   // frozen input, distinct workspaces, no cross-visibility (SPEC 8.6). ──
@@ -1047,13 +1094,6 @@ const run = async (): Promise<void> => {
     if (run === undefined) throw new Error("no dispatched run");
     return run;
   };
-  const cancelRun = async (runId: string): Promise<void> => {
-    await clickButton("取消");
-    await waitFor("the run to cancel", async () => {
-      const s = await hostState(rootId);
-      return s.runs.find((r) => r.id === runId)?.progress === "cancelled";
-    });
-  };
   const requestOf = (run: HostRun): string =>
     readFileSync(join(fixture, ".refrain", run.workspace, "request.md"), "utf8");
 
@@ -1064,7 +1104,7 @@ const run = async (): Promise<void> => {
     "the full tier carries the whole manuscript and the verdict stream",
     fullRequest.includes("第1段原来如此。") && fullRequest.includes("<changes>"),
   );
-  await cancelRun(fullRun.id);
+  await settleRun(rootId, fullRun, "全文对照过的第二段。");
 
   await resetTicket();
   await setCarry("none");
@@ -1078,7 +1118,197 @@ const run = async (): Promise<void> => {
     "the none tier still carries the short contract",
     bareRequest.includes("One <replacement> per scope"),
   );
-  await cancelRun(bareRun.id);
+  await settleRun(rootId, bareRun, "只改过的第二段。");
+
+  // ── Relay (接力 ×2): the second run may not start before the first is
+  // terminal; when it does start, its request carries the first run's
+  // artifact (§8.5 Follows — order is enforced, content is fed). ──
+  await resetTicket();
+  await tickBlock(4);
+  await setPrompt("先改写第四段，下一棒接着润色。");
+  await setSelect(".dispatch-arrangement", "relay");
+  await clickButton("送出");
+  await waitFor("the relay manifest", async () =>
+    Boolean(await execute(`return document.querySelector(".manifest") !== null`)),
+  );
+  await clickButton("授权");
+  await waitFor("the first relay run to dispatch while the second waits", async () => {
+    const s = await hostState(rootId);
+    return (
+      s.runs.filter((r) => r.progress === "dispatched").length === 1 &&
+      s.awaitingLaunch.length === 1
+    );
+  });
+  state = await hostState(rootId);
+  const relayFirst = state.runs.find((r) => r.progress === "dispatched");
+  const relaySecondId = state.awaitingLaunch[0] ?? "";
+  if (relayFirst === undefined) throw new Error("no dispatched relay run");
+  check("the second relay run waits for the first", relaySecondId !== "");
+  const relayScope = requestOf(relayFirst).match(/<!-- scope ([^ ]+) -->/)?.[1] ?? "";
+  writeResult(
+    relayFirst.workspace,
+    relayFirst.id,
+    `<agent-result version="2"><replacement scope="${relayScope}">第一棒的第四段。</replacement></agent-result>\n`,
+  );
+  await clickButton("收取");
+  await waitFor("the second relay run to launch once the first is terminal", async () => {
+    const s = await hostState(rootId);
+    return s.runs.find((r) => r.id === relaySecondId)?.progress === "dispatched";
+  });
+  state = await hostState(rootId);
+  const relaySecond = state.runs.find((r) => r.id === relaySecondId);
+  if (relaySecond === undefined) throw new Error("the second relay run vanished");
+  check(
+    "the first relay run completed",
+    state.runs.find((r) => r.id === relayFirst.id)?.progress === "completed",
+  );
+  check(
+    "the follower's request carries the upstream artifact",
+    requestOf(relaySecond).includes("第一棒的第四段。"),
+  );
+  writeResult(
+    relaySecond.workspace,
+    relaySecond.id,
+    `<agent-result version="2"><replacement scope="${relayScope}">接过一棒的第四段。</replacement></agent-result>\n`,
+  );
+  await clickButton("收取");
+  await waitFor("the second relay run to complete", async () => {
+    const s = await hostState(rootId);
+    return s.runs.find((r) => r.id === relaySecondId)?.progress === "completed";
+  });
+  const relayProposals = (await invoke("list_proposals", { rootId, path: "长章.md" })) as {
+    after: string | null;
+  }[];
+  check(
+    "both relay legs froze into proposals",
+    relayProposals.some((p) => (p.after ?? "").includes("第一棒的第四段")) &&
+      relayProposals.some((p) => (p.after ?? "").includes("接过一棒的第四段")),
+    relayProposals.length,
+  );
+
+  // ── Verify (校验 ×2): the verifier waits for its subject, and reports
+  // without proposing. An artifact WITH replacements is refused whole —
+  // not trimmed, not partly kept (§8.5 Verifies). ──
+  await resetTicket();
+  await tickBlock(5);
+  await setPrompt("改写第五段，再请人校验。");
+  await setSelect(".dispatch-arrangement", "verify");
+  await clickButton("送出");
+  await waitFor("the verify manifest", async () =>
+    Boolean(await execute(`return document.querySelector(".manifest") !== null`)),
+  );
+  await clickButton("授权");
+  await waitFor("the subject to dispatch while the verifier waits", async () => {
+    const s = await hostState(rootId);
+    return (
+      s.runs.filter((r) => r.progress === "dispatched").length === 1 &&
+      s.awaitingLaunch.length === 1
+    );
+  });
+  state = await hostState(rootId);
+  const subject = state.runs.find((r) => r.progress === "dispatched");
+  const verifierId = state.awaitingLaunch[0] ?? "";
+  if (subject === undefined) throw new Error("no dispatched verify subject");
+  check("the verifier waits for its subject", verifierId !== "");
+  const verifyScope = requestOf(subject).match(/<!-- scope ([^ ]+) -->/)?.[1] ?? "";
+  writeResult(
+    subject.workspace,
+    subject.id,
+    `<agent-result version="2"><replacement scope="${verifyScope}">待校验的第五段。</replacement></agent-result>\n`,
+  );
+  await clickButton("收取");
+  await waitFor("the verifier to launch once its subject is terminal", async () => {
+    const s = await hostState(rootId);
+    return s.runs.find((r) => r.id === verifierId)?.progress === "dispatched";
+  });
+  state = await hostState(rootId);
+  const verifier = state.runs.find((r) => r.id === verifierId);
+  if (verifier === undefined) throw new Error("the verifier vanished");
+  check(
+    "the verifier's request carries the artifact under review",
+    requestOf(verifier).includes("待校验的第五段。"),
+  );
+  const proposalsBeforeReport = (
+    (await invoke("list_proposals", { rootId, path: "长章.md" })) as unknown[]
+  ).length;
+  writeResult(
+    verifier.workspace,
+    verifier.id,
+    `<agent-result version="2"><memo topic="校验">第五段改得到位，仅一处语气可再收。</memo></agent-result>\n`,
+  );
+  await clickButton("收取");
+  await waitFor("the verifier to complete on a report-only artifact", async () => {
+    const s = await hostState(rootId);
+    return s.runs.find((r) => r.id === verifierId)?.progress === "completed";
+  });
+  const proposalsAfterReport = (
+    (await invoke("list_proposals", { rootId, path: "长章.md" })) as unknown[]
+  ).length;
+  check(
+    "the verifier's proposal-less report lands — completed, no proposal",
+    proposalsAfterReport === proposalsBeforeReport,
+    `${proposalsBeforeReport} -> ${proposalsAfterReport}`,
+  );
+
+  // A verifier that proposes an edit is refused whole: the run fails typed,
+  // and nothing from the artifact survives — not even its memo.
+  await resetTicket();
+  await tickBlock(6);
+  await setPrompt("再改第六段，校验员这次越界。");
+  await setSelect(".dispatch-arrangement", "verify");
+  await clickButton("送出");
+  await waitFor("the second verify manifest", async () =>
+    Boolean(await execute(`return document.querySelector(".manifest") !== null`)),
+  );
+  await clickButton("授权");
+  await waitFor("the second subject to dispatch while its verifier waits", async () => {
+    const s = await hostState(rootId);
+    return (
+      s.runs.filter((r) => r.progress === "dispatched").length === 1 &&
+      s.awaitingLaunch.length === 1
+    );
+  });
+  state = await hostState(rootId);
+  const subject2 = state.runs.find((r) => r.progress === "dispatched");
+  const verifier2Id = state.awaitingLaunch[0] ?? "";
+  if (subject2 === undefined) throw new Error("no dispatched second verify subject");
+  const verifyScope2 = requestOf(subject2).match(/<!-- scope ([^ ]+) -->/)?.[1] ?? "";
+  writeResult(
+    subject2.workspace,
+    subject2.id,
+    `<agent-result version="2"><replacement scope="${verifyScope2}">第二题的第六段。</replacement></agent-result>\n`,
+  );
+  await clickButton("收取");
+  await waitFor("the second verifier to launch", async () => {
+    const s = await hostState(rootId);
+    return s.runs.find((r) => r.id === verifier2Id)?.progress === "dispatched";
+  });
+  state = await hostState(rootId);
+  const verifier2 = state.runs.find((r) => r.id === verifier2Id);
+  if (verifier2 === undefined) throw new Error("the second verifier vanished");
+  writeResult(
+    verifier2.workspace,
+    verifier2.id,
+    `<agent-result version="2"><replacement scope="${verifyScope2}">越界的改写。</replacement></agent-result>\n`,
+  );
+  await clickButton("收取");
+  await waitFor("the overstepping verifier to fail", async () => {
+    const s = await hostState(rootId);
+    return s.runs.find((r) => r.id === verifier2Id)?.progress === "failed";
+  });
+  state = await hostState(rootId);
+  check(
+    "a verifier artifact with replacements is refused whole",
+    state.runs.find((r) => r.id === verifier2Id)?.failure === "verifier-proposed-edit",
+    state.runs.find((r) => r.id === verifier2Id)?.failure,
+  );
+  const proposalsAfterRefusal = (await invoke("list_proposals", { rootId, path: "长章.md" })) as {
+    after: string | null;
+  }[];
+  check(
+    "the refused artifact left no proposal behind",
+    !proposalsAfterRefusal.some((p) => (p.after ?? "").includes("越界的改写")),
+  );
 
   // ── Connections (C12 roster): fixed candidate → guided connection →
   // named writing partner → dispatch → disconnect. No executable path crosses
@@ -1089,8 +1319,21 @@ const run = async (): Promise<void> => {
     Boolean(await execute(`return document.querySelector(".connections") !== null`)),
   );
   await screenshot("02-connections");
+  await waitFor("the fixed Kimi candidate to offer connect", async () =>
+    Boolean(await elementOrNull(".tool-card button.primary")),
+  );
   const connectButton = await elementOrNull(".tool-card button.primary");
-  if (connectButton === null) throw new Error("the fixed Kimi candidate was not available");
+  if (connectButton === null) {
+    console.error("connections surface state:", {
+      html: String(
+        await execute(
+          `return document.querySelector(".connections")?.innerHTML.slice(0, 1600) ?? null;`,
+        ),
+      ),
+      harnesses: await invoke("list_harnesses", {}),
+    });
+    throw new Error("the fixed Kimi candidate was not available");
+  }
   await click(connectButton);
   await waitFor("the fixed Kimi candidate to connect", async () =>
     Boolean(
@@ -1138,16 +1381,22 @@ const run = async (): Promise<void> => {
   );
   if (agent === undefined) throw new Error("the guided partner was not persisted");
   await clickButton("返回手稿");
-  await clickButton("发送");
+  await openViaCommand("交给 Agent");
   await waitFor("the remounted ticket", async () =>
     Boolean(await execute(`return document.querySelector(".dispatch-agent") !== null`)),
   );
   await setSelect(".dispatch-agent", agent.id);
   const connRun = await dispatchOnce("经登记连接改写第二段。");
   const connRequest = requestOf(connRun);
+  // 判据 1-6（Stage6 §4.4）：档位是**这个项目**的属性，不是某个 Agent 的。
+  // 这个项目此前已经跑过单（host 非空），所以这个伙伴的第一棒拿到的也是
+  // 指针行——「首轮给全文」只对一张白纸般的项目成立，Full 档本身由
+  // context_compiler 的测试钉住。
   check(
-    "a harness's first round carries the full generated protocol",
-    connRequest.includes("unsupported-version"),
+    "the contract tier is the project's: a project with runs hands the pointer even to a harness's first round",
+    connRequest.includes("按 RefRain 兼容格式输出") &&
+      !connRequest.includes("One <replacement> per scope"),
+    connRequest.slice(0, 200),
   );
   await waitFor(
     "the connection result to land",
@@ -1160,17 +1409,9 @@ const run = async (): Promise<void> => {
     const s = await hostState(rootId);
     return s.runs.find((r) => r.id === connRun.id)?.progress === "completed";
   });
-  const connProposals = (await invoke("list_proposals", { rootId, path: "长章.md" })) as {
-    after: string | null;
-  }[];
-  check(
-    "the connection's artifact froze into a proposal",
-    connProposals.filter((p) => (p.after ?? "").includes("伪 Agent 改写")).length >= 2,
-    connProposals.length,
-  );
 
-  // The same named partner has now run once. Its next request carries the
-  // short contract pointer rather than repeating the full generated protocol.
+  // The same named partner has now run once. Its next request also carries
+  // the pointer — the tier moves with the project, not with this agent.
   await resetTicket();
   await setSelect(".dispatch-agent", agent.id);
   await setCarry("diff");
@@ -1181,19 +1422,29 @@ const run = async (): Promise<void> => {
     pointerRequest.includes("按 RefRain 兼容格式输出") &&
       !pointerRequest.includes("One <replacement> per scope"),
   );
-  await cancelRun(pointerRun.id);
+  await settleHarnessRun(rootId, pointerRun);
+  const connProposals = (await invoke("list_proposals", { rootId, path: "长章.md" })) as {
+    after: string | null;
+  }[];
+  check(
+    "both harness rounds froze into proposals",
+    connProposals.filter((p) => (p.after ?? "").includes("伪 Agent 改写")).length >= 2,
+    connProposals.length,
+  );
 
   await clickButton("收起");
   await clickButton("连接");
   await waitFor("Connections to reopen for disconnect", async () =>
     Boolean(await execute(`return document.querySelector(".connections") !== null`)),
   );
-  const removePartner = await elementOrNull(".partner-card button.quiet");
-  if (removePartner === null) throw new Error("guided partner has no remove action");
-  await click(removePartner);
-  const disconnect = await elementOrNull(".tool-actions button.quiet");
-  if (disconnect === null) throw new Error("guided connection has no disconnect action");
-  await click(disconnect);
+  await waitFor("the guided partner's card to render", async () =>
+    Boolean(await elementOrNull(".partner-card button.quiet")),
+  );
+  await clickButton("移除");
+  await waitFor("the guided connection's actions to render", async () =>
+    Boolean(await elementOrNull(".tool-actions button.quiet")),
+  );
+  await clickButton("断开");
   await waitFor("the guided disconnect to clear Config", async () => {
     const snapshot = (await invoke("read_config", {})) as {
       config: { harness_connections: unknown[]; agents: unknown[] };
