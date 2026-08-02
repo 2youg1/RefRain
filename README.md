@@ -70,7 +70,10 @@ syntax-highlighted across eight languages and six palettes, all embedded at
 build time so that highlighting never reaches the network.
 
 Markdown renders in place rather than in a preview pane beside your text.
-Emphasis, strong, code and strikethrough are drawn while their markers stay
+Lines are broken by RefRain rather than by the browser, so a full-width
+punctuation mark is compressed at the end of a line and — in Japanese — hung in
+the margin, and the breaks come out the same on every platform. Emphasis,
+strong, code and strikethrough are drawn while their markers stay
 visible and dimmed, so what you see is still what is in the file. A GFM table
 aligns its columns without a single space being added to the source. A
 `mermaid` or `nomnoml` fence is drawn as a diagram next to its own source — and
@@ -188,6 +191,12 @@ network — the library made that possible rather than fighting it.
 diagrams. It draws a flowchart in 26 KB of pure JavaScript, with no WASM and no
 request — a diagram library that could be bundled whole into an application
 that never reaches the network. The nearest alternative was 36× larger.
+
+**[pdf.js](https://mozilla.github.io/pdf.js/)** (Apache-2.0, Mozilla) for
+reading an imported PDF as its own pages. Every entry point that would fetch a
+remote resource is optional rather than defaulted, so leaving them unset is
+what closes them — a library that lets an offline application stay offline
+without patching it.
 
 The bundled typefaces, all under the
 [SIL Open Font License 1.1](https://openfontlicense.org):

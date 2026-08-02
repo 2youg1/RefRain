@@ -227,6 +227,30 @@ only ever receive `Short`.
 | **Diagrams** | [nomnoml](https://github.com/skanaar/nomnoml), with a thin translator that accepts the Mermaid flowchart subset |
 | **Imported sources** | [pdf.js](https://mozilla.github.io/pdf.js/) renders an imported PDF for reading only; RefRain never writes back to it |
 
+### Why RefRain breaks its own lines
+
+The browser can wrap text. RefRain wraps it instead, because the two things it
+will not do are exactly what CJK typesetting needs: compress a full-width
+punctuation mark at the end of a line, and hang one in the margin.
+
+`packages/typeset` is pure arithmetic — zero dependencies, zero DOM, a string
+and a preset in, numbers out. The editor paints those breaks with empty block
+elements, so **not one byte enters the text**: a caret offset is still a byte
+offset. Two presets, because the rules genuinely conflict — Simplified Chinese
+compresses that mark by half an em (GB/T 15834 §5.1.10) where Japanese keeps
+the space and hangs the mark instead (JLREQ §3.1.9).
+
+The breaker is greedy, which measurement supports rather than excuses: Chinese
+breaks almost anywhere, so greedy already matches the whole-paragraph optimum
+while a dynamic program costs 960× more for nothing. The optimiser runs only on
+paragraphs holding a long unbreakable run — a Latin word, a URL, inline code.
+
+Computing breaks ourselves also makes them identical on every platform, which
+browser wrapping does not guarantee. `verify:layout-parity` freezes them into a
+fingerprint and recomputes it on Linux, Windows and macOS; its reverse criterion
+requires that switching the in-house rules off changes the result, or the gate
+would be measuring the browser instead of this code.
+
 ### Why the editor renders tables as aligned text, not as a table
 
 A GFM table could become a real `<table>`. It would look better: cells wrap
@@ -381,6 +405,20 @@ function was caught only by clippy while the gate was fully green.
 A gate here is expected to be **injection-verified**: break the thing it guards,
 watch it go red, restore, watch it go green. A gate that has never been seen to
 fail is a gate that has proven nothing — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+### A headless gate can fail for a reason that is not the code
+
+Some machines run a headless Chromium that draws shapes but **not glyphs**.
+Measured in one page: `fillRect` gives 400 opaque pixels, `fillText("A")` gives
+**0**, and `measureText` returns a width of **0**. Every gate that measures text
+geometry then fails for a reason unrelated to the product, while the diagram and
+settings gates still pass because they assert shapes and structure. Supplying a
+real font does not help — the fonts load and the widths stay zero.
+
+Before treating such a red as a defect, run the same gate on the base commit
+with no local changes; identical failure text is the evidence. Facts that must
+hold regardless — that the PDF renderer passes no remote URL, that a table adds
+no byte — are therefore also asserted by tests that need no browser.
 
 ---
 
