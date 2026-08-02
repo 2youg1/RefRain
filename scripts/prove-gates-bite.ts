@@ -66,8 +66,12 @@ const INJECTIONS: readonly Injection[] = [
     gate: "verify:write-path",
     file: "apps/desktop/src-tauri/src/lib.rs",
     anchor: "/// The single command registry.",
+    // 这个注入的命令必须真的调用写入函数。先前注入的是一个**空**函数
+    // （`fn save_chapter(_text: String) {}`），门禁照样通过——它没有说谎：
+    // 一个什么都不做的命令确实没有写任何字节。缺陷在注入样本，不在门禁。
+    // 注入要造出的那个世界是「未授权的路径写入手稿」，空函数造不出它。
     replacement:
-      "#[tauri::command]\n#[specta::specta]\nfn save_chapter(_text: String) {}\n\n/// The single command registry.",
+      "#[tauri::command]\n#[specta::specta]\nfn save_chapter(entry: &mut Entry, text: String) {\n    persist_in_entry(entry, text);\n}\n\n/// The single command registry.",
     expect: "save_chapter",
   },
   {
