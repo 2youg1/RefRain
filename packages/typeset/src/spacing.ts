@@ -15,7 +15,7 @@
 
 import { type CharClass, classOf, isHalfWidth, isWesternSide } from "./char-class.ts";
 import type { TypesetPreset } from "./preset.ts";
-import { isInsideUnbreakable, unbreakableRanges } from "./unbreakable.ts";
+import { unbreakableRanges } from "./unbreakable.ts";
 
 /** 一个字符在版面上的样子。位置按 code point 计，不按 UTF-16 单元。 */
 export type AdjustedChar = {
@@ -79,6 +79,12 @@ export function measure(text: string, preset: TypesetPreset): readonly AdjustedC
   // 码点。逐字符累加真实码元数来换算，不要拿 index 直接去查。
   const ranges = unbreakableRanges(text);
   let utf16Offset = 0;
+  // 区间按起点排序且互不重叠，`utf16Offset` 又单调前进，所以「这个字符落在
+  // 哪个区间里」用一只跟着循环走的游标回答。此前每个字符都从头扫一遍区间
+  // 表：一块 400KB 的导入材料能带三千多个数值/URL 区间，字符数乘上平均半张
+  // 表就是几亿次比较（实测 400K 字符 5,286ms——超线性的部分全在这里）。
+  // 游标把它降回 O(字符数 + 区间数)。
+  let rangeCursor = 0;
 
   for (let index = 0; index < characters.length; index += 1) {
     const character = characters[index];
@@ -87,11 +93,20 @@ export function measure(text: string, preset: TypesetPreset): readonly AdjustedC
     const previous = index === 0 ? null : (characters[index - 1] ?? null);
     const previousKind = previous === null ? null : classOf(previous);
 
+    while ((ranges[rangeCursor]?.end ?? Number.POSITIVE_INFINITY) <= utf16Offset) {
+      rangeCursor += 1;
+    }
+    const containing = ranges[rangeCursor];
+
     result.push({
       text: character,
       kind,
       spaceBefore: previousKind === null ? 0 : gapBetween(previousKind, kind, preset),
-      joinedToPrevious: index > 0 && isInsideUnbreakable(ranges, utf16Offset),
+      joinedToPrevious:
+        index > 0 &&
+        containing !== undefined &&
+        utf16Offset > containing.start &&
+        utf16Offset < containing.end,
     });
     utf16Offset += character.length;
   }

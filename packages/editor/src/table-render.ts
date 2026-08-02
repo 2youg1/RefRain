@@ -119,6 +119,61 @@ export function tableLayout(text: string): TableLayout | null {
 /** 单元格外壳的类名。列宽通过它上面的 `min-width` 生效。 */
 export const CELL_CLASS = "md-table-cell";
 
+/** 竖线的类名。每根竖线包一个 span，CSS 据此把列与列之间画成连续的线。 */
+export const PIPE_CLASS = "md-table-pipe";
+
+/** 画进 DOM 的一段：原文的一截、一根竖线（行尾那根连同换行符）、或一个单元格。 */
+export type TablePiece =
+  | { readonly kind: "text"; readonly start: number; readonly end: number }
+  | { readonly kind: "pipe"; readonly start: number; readonly end: number }
+  | { readonly kind: "cell"; readonly cell: TableCell };
+
+/**
+ * 把表格块切成要画的段：按位置升序、首尾相接、覆盖全文。
+ *
+ * 竖线逐根成段。夹在单元格之间的竖线是裸露的文本节点，一行几个单元格就有
+ * 几截断开的竖线，屏幕上读作一条虚掉的竖线。CSS 要把它画成连续的线，前提
+ * 是它先是一个自己的元素——包 span 只加元素壳，不动任何字节。
+ *
+ * 行尾那根竖线把紧跟的换行符一起吞进 span（内容是 `"|\n"` 而不是 `"|"`）。
+ * 换行符若自己独占一个文本节点，或成为一个节点的第一个字符，它的前面就是
+ * 元素边界，而浏览器在那个位置量不出光标矩形——门禁判据 3（每个字符都要
+ * 定得出坐标）当场变红。实测五种结构，只有「竖线与换行符同处一个 span」
+ * 既保住几何又不加字节。
+ *
+ * 与 `tableLayout` 同一坐标系：所有段都指向原文下标，拼回来逐字节等于原文。
+ */
+export function tablePieces(text: string, layout: TableLayout): readonly TablePiece[] {
+  const ordered = [...layout.cells].sort((left, right) => left.start - right.start);
+  const pieces: TablePiece[] = [];
+  // 单元格之外的一截（行首、行间、行尾）：竖线逐根切出，其余字节合成一段。
+  const pushGap = (start: number, end: number): void => {
+    let run = start;
+    let index = start;
+    while (index < end) {
+      if (text[index] !== "|") {
+        index += 1;
+        continue;
+      }
+      if (run < index) pieces.push({ kind: "text", start: run, end: index });
+      const next = index + 1;
+      const swallow = text[next] === "\n" ? next + 1 : next;
+      pieces.push({ kind: "pipe", start: index, end: swallow });
+      run = swallow;
+      index = swallow;
+    }
+    if (run < end) pieces.push({ kind: "text", start: run, end });
+  };
+  let cursor = 0;
+  for (const cell of ordered) {
+    pushGap(cursor, cell.start);
+    pieces.push({ kind: "cell", cell });
+    cursor = cell.end;
+  }
+  pushGap(cursor, text.length);
+  return pieces;
+}
+
 /**
  * 把表格画进段落：每个单元格包一个行内块，同一列共用一个 `min-width`。
  *
@@ -135,13 +190,21 @@ export function paintTableText(
   element.dataset.table = String(layout.columnWidths.length);
   element.lang = language;
 
-  // 单元格按位置排序后逐段吐出。单元格之间的字节（竖线、换行）原样补回，
-  // 这样拼起来才逐字节等于源文本。
-  const ordered = [...layout.cells].sort((left, right) => left.start - right.start);
-  let cursor = 0;
-  for (const cell of ordered) {
-    if (cell.start > cursor) {
-      element.append(document.createTextNode(text.slice(cursor, cell.start)));
+  for (const piece of tablePieces(text, layout)) {
+    if (piece.kind === "text") {
+      element.append(document.createTextNode(text.slice(piece.start, piece.end)));
+      continue;
+    }
+    if (piece.kind === "pipe") {
+      const pipe = document.createElement("span");
+      pipe.className = PIPE_CLASS;
+      // span 里是真实文本（行尾那根连同换行符），不是装饰：光标必须能落在
+      // 竖线上，所以它不像断行元素那样 `contentEditable = "false"`——理由
+      // 与悬挂 span 相同（见 inter-script-spacing.ts）。包一层只是给 CSS
+      // 一个钩子，字节不变。
+      pipe.append(document.createTextNode(text.slice(piece.start, piece.end)));
+      element.append(pipe);
+      continue;
     }
     const shell = document.createElement("span");
     shell.className = CELL_CLASS;
@@ -152,15 +215,11 @@ export function paintTableText(
     // 实测：只给非分隔行设 minWidth 时，分隔行四段各 24px 挤在左侧，与上下两
     // 行的列完全对不上。这两件事容易被当成一件（「分隔行不参与列宽」推不出
     // 「分隔行不需要列宽」），门禁判据 1 抓到的正是它。
-    const width = layout.columnWidths[cell.column] ?? 0;
+    const width = layout.columnWidths[piece.cell.column] ?? 0;
     // `ch` 在等宽字体下正好是一个半角字符宽，而 `displayWidth` 数的就是
     // 半角当量——两者同一把尺子，所以不需要换算系数。
     shell.style.minWidth = `${width}ch`;
-    shell.append(document.createTextNode(text.slice(cell.start, cell.end)));
+    shell.append(document.createTextNode(text.slice(piece.cell.start, piece.cell.end)));
     element.append(shell);
-    cursor = cell.end;
-  }
-  if (cursor < text.length) {
-    element.append(document.createTextNode(text.slice(cursor)));
   }
 }

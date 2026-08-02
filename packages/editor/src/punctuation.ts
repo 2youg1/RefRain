@@ -50,8 +50,17 @@ const isProtected = (
   ranges: readonly { readonly start: number; readonly end: number }[],
 ): boolean => ranges.some((range) => index >= range.start && index < range.end);
 
+/**
+ * A decimal separator sits between two digits. Both directions must hold: `3.14`
+ * must not become `3。14`, and `3。14` must not become `3.14`. An author who writes
+ * a version number with a full-width stop writes odd text, but converting it would
+ * rewrite the data — the rule cannot tell `版本 1。0` apart from a sentence stop
+ * that happens to land between two digits, so it leaves both alone.
+ */
 const isDecimal = (text: string, index: number): boolean =>
-  text[index] === "." && /\d/.test(text[index - 1] ?? "") && /\d/.test(text[index + 1] ?? "");
+  (text[index] === "." || text[index] === "。") &&
+  /\d/.test(text[index - 1] ?? "") &&
+  /\d/.test(text[index + 1] ?? "");
 
 const isAbbreviationPeriod = (text: string, index: number): boolean => {
   if (text[index] !== ".") return false;
@@ -109,6 +118,7 @@ export function findPunctuation(blockId: string, text: string): readonly Punctua
       rule = "cjk-full-width";
     } else if (
       asciiSuggestion !== undefined &&
+      !isDecimal(text, index) &&
       (original === "（"
         ? isLatinOrDigit(after)
         : original === "）"
@@ -131,6 +141,24 @@ export function findPunctuation(blockId: string, text: string): readonly Punctua
     }
   }
   return findings;
+}
+
+/**
+ * Keep only the findings inside [start, end) — what a right-click menu may offer
+ * while the author holds a selection.
+ *
+ * Judge over the whole block first, cut second. A mark at the selection edge still
+ * needs its neighbour outside the selection to be judged: the `,` in `甲,乙` is a
+ * finding because of the `甲` before it, and computing findings over the selected
+ * substring alone would lose that neighbour and silently change the answer. So the
+ * range never reaches `findPunctuation`; it filters the already-judged list.
+ */
+export function findingsWithin(
+  findings: readonly PunctuationFinding[],
+  start: number,
+  end: number,
+): readonly PunctuationFinding[] {
+  return findings.filter((finding) => finding.start >= start && finding.end <= end);
 }
 
 /** Apply exactly one still-current finding. A stale anchor is a refusal, not a search-and-replace. */

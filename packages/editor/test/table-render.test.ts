@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { tableLayout } from "../src/table-render.ts";
+import { PIPE_CLASS, tableLayout, tablePieces } from "../src/table-render.ts";
 
 /**
  * 表格切分。与 Rust 侧 `TableShape::of` 判据一致——两边都要判是因为消费者
@@ -107,5 +107,76 @@ describe("表格切分", () => {
         expect(current.end).toBeLessThanOrEqual(next.start);
       }
     }
+  });
+});
+
+describe("竖线成段", () => {
+  /** 把切出的段按原文下标拼回来——画进 DOM 的每一段都必须出自原文。 */
+  const reassemble = (text: string): string => {
+    const layout = tableLayout(text) as NonNullable<ReturnType<typeof tableLayout>>;
+    return tablePieces(text, layout)
+      .map((piece) =>
+        piece.kind === "cell"
+          ? text.slice(piece.cell.start, piece.cell.end)
+          : text.slice(piece.start, piece.end),
+      )
+      .join("");
+  };
+
+  test("所有段拼回来逐字节等于原文——包 span 不加一个字节", () => {
+    // 这条钉的是 textContent 不变量：DOM 侧的门禁是 verify:table-render 判据 2，
+    // 这里测的是它的纯函数一半——段拼得回去，画出来才逐字节相同。
+    // 验红：让 pushGap 丢掉竖线，拼接当场短一截。
+    expect(reassemble(TABLE)).toBe(TABLE);
+    // 首尾竖线可省的写法同样逐字节还原。
+    const bare = "甲 | 乙\n---|---\n1 | 2";
+    expect(reassemble(bare)).toBe(bare);
+  });
+
+  test("每一根竖线都是自己的段，且带着它在原文里的位置", () => {
+    const layout = tableLayout(TABLE) as NonNullable<ReturnType<typeof tableLayout>>;
+    const pieces = tablePieces(TABLE, layout);
+    const pipes = pieces.filter((piece) => piece.kind === "pipe");
+    const expected = [...TABLE.matchAll(/\|/g)].map((match) => match.index);
+    // 一根不多一根不少，位置逐一对应——包括分隔行里那几根。
+    expect(pipes.map((piece) => (piece.kind === "pipe" ? piece.start : -1))).toEqual(expected);
+    expect(pipes.length).toBeGreaterThan(6);
+  });
+
+  test("行尾竖线的段连同换行符——换行符不做孤立文本节点", () => {
+    // 换行符若独占一个文本节点，它前面是元素边界，浏览器在那个位置量不出
+    // 光标矩形（实测五结构探针）。所以行尾那根竖线的段是 `"|\n"` 两个字符。
+    const layout = tableLayout(TABLE) as NonNullable<ReturnType<typeof tableLayout>>;
+    const pipes = tablePieces(TABLE, layout).filter((piece) => piece.kind === "pipe");
+    const rowEnds = pipes.filter(
+      (piece) => piece.kind === "pipe" && TABLE[piece.start + 1] === "\n",
+    );
+    // 三行就是三个行尾（末行行尾的竖线后没有换行）。
+    expect(rowEnds.length).toBe(2);
+    for (const piece of rowEnds) {
+      expect(piece.kind === "pipe" ? piece.end - piece.start : 0).toBe(2);
+    }
+    // 其他任何段都不以换行符开头。
+    for (const piece of tablePieces(TABLE, layout)) {
+      const start = piece.kind === "cell" ? piece.cell.start : piece.start;
+      expect(TABLE[start]).not.toBe("\n");
+    }
+  });
+
+  test("段首尾相接、按位置升序——没有空洞也没有重叠", () => {
+    const layout = tableLayout(TABLE) as NonNullable<ReturnType<typeof tableLayout>>;
+    let cursor = 0;
+    for (const piece of tablePieces(TABLE, layout)) {
+      const start = piece.kind === "cell" ? piece.cell.start : piece.start;
+      const end = piece.kind === "cell" ? piece.cell.end : piece.end;
+      expect(start).toBe(cursor);
+      cursor = end;
+    }
+    expect(cursor).toBe(TABLE.length);
+  });
+
+  test("竖线段的类名是 CSS 的唯一钩子", () => {
+    // 改类名必须同时改 surfaces.css——这里钉住的是交接面。
+    expect(PIPE_CLASS).toBe("md-table-pipe");
   });
 });

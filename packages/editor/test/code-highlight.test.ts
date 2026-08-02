@@ -150,7 +150,6 @@ describe("惰性注册", () => {
     // 第一版断言八个结果彼此相等——那与要防的性质无关：重复编译得到的
     // 结果同样相等，它只是白花时间。实测把去重改成布尔之后，那一版照绿。
     // 要量的是 loadLanguage 被调用了几次，所以这里数它。
-    const { EMBEDDED_LANGUAGES } = await import("../src/code-highlight");
     const { createHighlighterCore } = await import("shiki/core");
     const { createJavaScriptRegexEngine } = await import("shiki/engine/javascript");
     const { default: light } = await import("@shikijs/themes/vitesse-light");

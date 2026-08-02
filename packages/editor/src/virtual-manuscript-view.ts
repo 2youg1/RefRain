@@ -2,7 +2,13 @@ import type { DiffPresentation } from "@refrain/typeset";
 import { BlockHeightIndex } from "./block-height-index";
 import { applyBlockPrefix, type BlockPrefix } from "./block-prefix";
 import { ADDED_HIGHLIGHT, ChangeHighlights } from "./change-highlights";
-import { type CodeTheme, fenceLanguage, forgetHighlights, tokenizeCode } from "./code-highlight";
+import {
+  type CodeTheme,
+  documentLanguage,
+  fenceLanguage,
+  forgetHighlights,
+  tokenizeCode,
+} from "./code-highlight";
 import { declaredFenceLanguage } from "./code-highlight.ts";
 import { isDiagramLanguage, renderDiagram } from "./diagram-render.ts";
 import { applyInlineMark } from "./inline-mark";
@@ -10,6 +16,7 @@ import { inlineSpans } from "./inline-render.ts";
 import { paintSpacedText } from "./inter-script-spacing";
 import type {
   Block,
+  DocumentFormat,
   EditorAnnotationProjection,
   EditorChange,
   EditorContext,
@@ -19,10 +26,33 @@ import type {
   SelectionMeasure,
 } from "./model";
 import { applyLocally, PENDING_ID_PREFIX, projectionIndex } from "./projection";
-import { applyPunctuationFinding, convertPunctuation, findPunctuation } from "./punctuation";
+import {
+  applyPunctuationFinding,
+  convertPunctuation,
+  findingsWithin,
+  findPunctuation,
+} from "./punctuation";
 import { paintTableText, tableLayout } from "./table-render.ts";
 
 const BLOCK_TAG = "p";
+
+/**
+ * 多行文本切成块。Markdown 按空行分段、去掉每段首尾空白——段落之间
+ * 的缩进不是内容。纯文本按行切，缩进与空行都是内容，一个字符不动；
+ * 只有行尾的 `\r` 不是行内容——与扫描器同一条规则。
+ *
+ * 模块级而不是方法：这条规则是粘贴路径唯一会把作者的代码吃掉的地方，
+ * 它必须能脱离 DOM 被测试钉住。
+ */
+export function splitPastedText(text: string, format: DocumentFormat): string[] {
+  if (format === "markdown") {
+    return text
+      .split(/\n\s*\n/)
+      .map((part) => part.trim())
+      .filter((part) => part !== "");
+  }
+  return text.split("\n").map((part) => (part.endsWith("\r") ? part.slice(0, -1) : part));
+}
 
 /**
  * How many lines a block is predicted to occupy, from its byte shape.
@@ -57,6 +87,19 @@ const makeSpacer = (document_: Document): HTMLElement => {
   return spacer;
 };
 const VIRTUALIZE_AFTER = 400;
+/**
+ * 整稿字符数超过这个量时，视口带之外的块先挂占位、延后排版。
+ *
+ * 阈值来自实测：180KB 的稿子同步挂载约 60–190ms，800KB 的 HTML 导入材料约
+ * 0.6–1.2s——排版（断行 + 间距元素）随字节数线性增长，越过这个量级「打开」
+ * 就从一次停顿变成一次冻结。带内的块照常同步排版；带外的块文本原样进 DOM
+ * （`textContent` 逐字节完整），占位高度取自高度索引，真正的排版由升级队列
+ * 在后续帧里逐块补上。虚拟化的稿子（> VIRTUALIZE_AFTER）不走这条路：窗口
+ * 本来就只挂一屏的块。
+ */
+const DEFER_TYPESET_TOTAL = 200_000;
+/** 延后排版的升级队列每帧的预算。 */
+const TYPESET_UPGRADE_BUDGET_MS = 8;
 /**
  * 窗口覆盖几屏。
  *
@@ -98,6 +141,7 @@ interface FrameHandles {
   render: number | null;
   measurement: number | null;
   layout: number | null;
+  typeset: number | null;
 }
 
 interface ContextSelection {
@@ -223,7 +267,14 @@ export class VirtualManuscriptView {
   readonly #submitChanges: (changes: readonly EditorChange[]) => void;
   readonly #byId = new Map<string, HTMLElement>();
   readonly #measuredHeights = new Map<string, number>();
-  readonly #frames: FrameHandles = { render: null, measurement: null, layout: null };
+  readonly #frames: FrameHandles = { render: null, measurement: null, layout: null, typeset: null };
+  /**
+   * 等升级后排版的块：视口带之外、只挂了占位的块 id，按文档顺序。
+   *
+   * 队列只在非虚拟稿上产生（见 DEFER_TYPESET_TOTAL）；虚拟稿的窗口机制
+   * 已经回答了「哪些块此刻值得排版」。
+   */
+  readonly #deferredTypeset: string[] = [];
 
   #annotations: readonly EditorAnnotationProjection[] = [];
   /**
@@ -263,6 +314,17 @@ export class VirtualManuscriptView {
    * changes theme; `forgetHighlights` clears the token cache at the same time.
    */
   #codeTheme: CodeTheme = "vitesse-light";
+  /**
+   * What this document's bytes are. Decided at mount and constant for the
+   * document's lifetime — a format change is a different document, and a
+   * different document is a remount.
+   *
+   * Everything the format decides keys off this one field: Markdown
+   * affordances (inline marks, tables, diagrams, punctuation), the CJK
+   * typesetting prose gets, and the one grammar a plain-text document
+   * highlights with.
+   */
+  readonly #format: DocumentFormat;
   #bottomPinned = false;
   #destroyed = false;
   #pendingLayoutForce = false;
@@ -276,11 +338,13 @@ export class VirtualManuscriptView {
     element: HTMLElement,
     blocks: readonly Block[],
     submitChanges: (changes: readonly EditorChange[]) => void,
+    format: DocumentFormat = "markdown",
   ) {
     const view = element.ownerDocument.defaultView;
     if (view === null) throw new Error("editor document has no window");
     this.#element = element;
     this.#scrollHost = element.parentElement ?? element;
+    this.#format = format;
     // One editing host for the whole manuscript (see #paragraphFor).
     element.contentEditable = "true";
     element.style.outline = "none";
@@ -437,6 +501,19 @@ export class VirtualManuscriptView {
       }
     }
     if (target === null) return;
+    // 落光标之前必须先撤掉占位：占位块是 content-visibility: hidden，光标
+    // 落进去没有几何，作者会看到一个不闪烁、不响应的插入点。
+    if (target.dataset.deferredTypeset !== undefined) {
+      const block = this.#known(target.dataset.blockId ?? "");
+      if (block !== undefined && target.textContent === block.text) {
+        this.#paintText(target, block.text, block.isFence === true);
+        this.#clearDeferred(target);
+        const queued = this.#deferredTypeset.indexOf(block.id);
+        if (queued >= 0) this.#deferredTypeset.splice(queued, 1);
+        this.#measuredHeights.delete(block.id);
+        this.#scheduleMeasurement();
+      }
+    }
     // The host takes focus; the caret says which paragraph. Focusing must not
     // scroll: the host spans the whole manuscript, so letting the browser bring
     // it into view would undo the scroll position just computed above.
@@ -452,6 +529,8 @@ export class VirtualManuscriptView {
    * be asking them to do the machine's work.
    */
   applyBlockPrefix(prefix: BlockPrefix): boolean {
+    // 块前缀（`#`、`>`）是 Markdown 语法，写在代码行首就是注入字符。
+    if (this.#format !== "markdown") return false;
     if (this.#interaction.kind === "composing") return false;
     const paragraph = this.#paragraphAtCaret() ?? this.#contextParagraph();
     const id = paragraph?.dataset.blockId;
@@ -494,6 +573,14 @@ export class VirtualManuscriptView {
    */
   #paintText(paragraph: HTMLElement, text: string, fence = false): void {
     const measureEm = this.#measureEm();
+    // 纯文本：没有行内标记、没有表格、没有 CJK 排版（间距、挤压、悬挂、
+    // 自研断行都没有）。文本逐字节进 DOM，浏览器按 pre-wrap 自己折行——
+    // 那是代码编辑器本来的折行，而光标偏移是文本节点长度之和，与折行无关。
+    if (this.#format !== "markdown") {
+      paragraph.textContent = text;
+      paragraph.dataset.measureEm = String(measureEm);
+      return;
+    }
     // 围栏代码块不做行内解析：整块交给 `#highlightFence`，而在代码里 `*` 就是
     // 乘号，把它当强调会让一段 C 指针声明半截变粗。围栏最终会被高亮覆盖，但
     // 在那之前 `#paintText` 已经画过一遍——不挡住这里，作者会看到代码先变粗
@@ -563,7 +650,9 @@ export class VirtualManuscriptView {
     this.#contextBlock = { blockId, sourceText: block.text };
     this.#contextSelection = null;
     const canDeleteEmpty = this.#blocks.length > 1 && block.text.trim() === "";
-    const punctuation = findPunctuation(blockId, block.text);
+    // 标点转换是散文的功能：代码里的全角标点（注释、字符串）不是待修的
+    // 标点，纯文本文档一个 finding 也不给。
+    const punctuation = this.#format === "markdown" ? findPunctuation(blockId, block.text) : [];
     if (this.#interaction.kind === "composing") {
       return {
         blockId,
@@ -593,19 +682,25 @@ export class VirtualManuscriptView {
     };
     return {
       blockId,
-      canFormat: true,
+      // 加粗、强调是往选区两侧写 Markdown 标记符——在代码里那是两个星号
+      // 插进源码，不是格式。纯文本没有可提供的行内格式。
+      canFormat: this.#format === "markdown",
       canDeleteEmpty,
       selection: {
         start: selected.start,
         end: selected.end,
         quote: block.text.slice(selected.start, selected.end),
       },
-      punctuation,
+      // 有选区时菜单只提选区内的转换：判定仍看着整块（邻居规则要读选区外的
+      // 字符），但把选区外的 finding 摆进菜单，等于替作者决定了他没框选的字。
+      punctuation: findingsWithin(punctuation, selected.start, selected.end),
       anchor: selected.anchor,
     };
   }
 
   formatSelection(kind: EditorFormat): boolean {
+    // 行内标记是 Markdown 语法，纯文本文档没有可应用的格式。
+    if (this.#format !== "markdown") return false;
     const selection = this.#contextSelection;
     if (selection === null || this.#interaction.kind === "composing") return false;
     const block = this.#known(selection.blockId);
@@ -640,6 +735,8 @@ export class VirtualManuscriptView {
   }
 
   applyPunctuation(finding: PunctuationFinding): boolean {
+    // 标点转换只属于散文；纯文本的 context() 本来也不产出 finding。
+    if (this.#format !== "markdown") return false;
     const captured = this.#contextBlock;
     if (
       captured === null ||
@@ -679,6 +776,8 @@ export class VirtualManuscriptView {
    * 笔什么也没发生的事，而作者回头看历史时无从分辨它和真改动。
    */
   convertPunctuationEverywhere(): number {
+    // 全半角切换重写字面量：在代码里换 `、` 为 `,` 是改源码，不是排版。
+    if (this.#format !== "markdown") return 0;
     if (this.#interaction.kind === "composing") return 0;
     const changes: EditorChange[] = [];
     for (const block of this.#blocks) {
@@ -828,11 +927,12 @@ export class VirtualManuscriptView {
     this.#element.textContent = "";
     this.#byId.clear();
     this.#measuredHeights.clear();
+    this.#deferredTypeset.length = 0;
     this.#contextBlock = null;
     this.#contextSelection = null;
   }
 
-  #paragraphFor(block: Block): HTMLElement {
+  #paragraphFor(block: Block, typesetNow = true, placeholderHeight = 0): HTMLElement {
     const existing = this.#byId.get(block.id);
     if (existing !== undefined) return existing;
     const paragraph = this.#element.ownerDocument.createElement(BLOCK_TAG);
@@ -841,15 +941,152 @@ export class VirtualManuscriptView {
     // selection can cross paragraph boundaries. Per-paragraph contentEditable
     // makes each one its own host and the browser collapses any drag that
     // leaves it — the author watches the selection stop at the block edge.
-    this.#paintText(paragraph, block.text, block.isFence === true);
-    paragraph.style.minHeight = "1em";
+    if (typesetNow) {
+      this.#paintText(paragraph, block.text, block.isFence === true);
+      paragraph.style.minHeight = "1em";
+    } else {
+      this.#paintDeferred(paragraph, block, placeholderHeight);
+    }
     // `pre` 而不是 `pre-wrap`：折行由 `optimizedLineStarts` 决定，画成断行
     // 元素（见 inter-script-spacing.ts）。留着 `pre-wrap` 浏览器会在我们的
     // 断点之外**再**折一次，两套断点叠加，屏幕上只表现为「行短了一点」，
     // 而没有任何东西会报错。`verify:linebreak-takeover` 守住这个配对。
-    paragraph.style.whiteSpace = "pre";
+    //
+    // 纯文本反过来：没有自研断行（`#paintText` 直接写 textContent），折行
+    // 整个交给浏览器，所以是 `pre-wrap`。
+    paragraph.style.whiteSpace = this.#format === "markdown" ? "pre" : "pre-wrap";
     paragraph.style.outline = "none";
     return paragraph;
+  }
+
+  /**
+   * 视口带之外的块的占位画法。
+   *
+   * 文本原样进 DOM——`textContent` 逐字节等于块文本，光标定位、选区、复制、
+   * 保存从头到尾可用；占位的只是「画」：`content-visibility: hidden` 让浏览器
+   * 跳过这一块内容的布局（这是省下的那笔钱），高度索引给的占位高度撑住滚动条。
+   * 真正的排版由 `#upgradeDeferredTypeset` 在后续帧里补。
+   */
+  #paintDeferred(paragraph: HTMLElement, block: Block, placeholderHeight: number): void {
+    paragraph.textContent = block.text;
+    paragraph.style.minHeight = `${Math.max(1, Math.round(placeholderHeight))}px`;
+    paragraph.style.contentVisibility = "hidden";
+    // 重画判据读 measureEm：占位也是按当前版心占的，版心变了要重新决策
+    // （那时可能落进带内而立即排版）。
+    paragraph.dataset.measureEm = String(this.#measureEm());
+    if (paragraph.dataset.deferredTypeset === undefined) {
+      paragraph.dataset.deferredTypeset = "";
+      this.#deferredTypeset.push(block.id);
+    }
+    this.#scheduleTypesetUpgrade();
+  }
+
+  /** 撤掉占位，恢复成普通段落。幂等：没挂占位的段落什么都不做。 */
+  #clearDeferred(paragraph: HTMLElement): void {
+    if (paragraph.dataset.deferredTypeset === undefined) return;
+    delete paragraph.dataset.deferredTypeset;
+    paragraph.style.contentVisibility = "";
+    paragraph.style.minHeight = "1em";
+  }
+
+  /**
+   * 视口带：当前视口向上下各扩一屏，与 WINDOW_SCREENS 的余量同一个想法。
+   *
+   * 容器还没量出高度时返回 null——那一帧里一切按「在带内」处理，不做延后，
+   * 否则整稿会先空白一帧。
+   */
+  #viewportBand(): { readonly start: number; readonly end: number } | null {
+    const height = this.#scrollHost.clientHeight;
+    if (height <= 0) return null;
+    const top = this.#scrollHost.scrollTop;
+    return { start: top - height, end: top + height * 2 };
+  }
+
+  /** 这块的估计位置与视口带有没有交集。高度索引本来就在维护这些估计值。 */
+  #inViewportBand(index: number, band: { readonly start: number; readonly end: number }): boolean {
+    const offset = this.#heightIndex.prefix(index);
+    const extent = this.#heightIndex.span(index, index + 1);
+    return offset + extent >= band.start && offset <= band.end;
+  }
+
+  /** 整稿字符数——延后排版的开关。只在非虚拟稿上被问，至多四百块。 */
+  #documentTextLength(): number {
+    let total = 0;
+    for (const block of this.#blocks) total += block.text.length;
+    return total;
+  }
+
+  #scheduleTypesetUpgrade(): void {
+    if (this.#destroyed || this.#frames.typeset !== null) return;
+    this.#frames.typeset = this.#view.requestAnimationFrame(() => {
+      this.#frames.typeset = null;
+      this.#upgradeDeferredTypeset();
+    });
+  }
+
+  /**
+   * 把占位块逐块补成真正的排版，每帧一个时间预算，带内的块优先。
+   *
+   * 三条不动的守卫，与围栏着色同一组理由：组合输入期间整批停手（动 DOM 会
+   * 丢掉 IME 的预编辑串，`compositionend` 会重新武装队列）；光标所在的段落
+   * 不碰（活动光标下的 span 重排会让编辑器跟作者打架，它回到队尾等下一轮）；
+   * 文本漂了的条目直接丢弃（重画判据会走正常路径处理）。
+   */
+  #upgradeDeferredTypeset(): void {
+    if (this.#destroyed || this.#interaction.kind === "composing") return;
+    const band = this.#viewportBand();
+    const started = this.#view.performance.now();
+    let painted = false;
+    // 整整一圈只有「光标占用」这一种跳过时停手，等 selectionchange 重新武装。
+    let stalls = this.#deferredTypeset.length;
+    while (
+      this.#deferredTypeset.length > 0 &&
+      stalls > 0 &&
+      this.#view.performance.now() - started < TYPESET_UPGRADE_BUDGET_MS
+    ) {
+      let queueIndex = 0;
+      if (band !== null) {
+        const inBand = this.#deferredTypeset.findIndex((id) => {
+          const index = this.#indexOf(id);
+          return index >= 0 && this.#inViewportBand(index, band);
+        });
+        if (inBand >= 0) queueIndex = inBand;
+      }
+      const id = this.#deferredTypeset.splice(queueIndex, 1)[0];
+      if (id === undefined) break;
+      const paragraph = this.#byId.get(id);
+      const block = this.#known(id);
+      if (
+        paragraph === undefined ||
+        block === undefined ||
+        paragraph.dataset.deferredTypeset === undefined ||
+        paragraph.textContent !== block.text
+      ) {
+        continue;
+      }
+      if (paragraph === this.#paragraphAtCaret()) {
+        this.#deferredTypeset.push(id);
+        stalls -= 1;
+        continue;
+      }
+      stalls = this.#deferredTypeset.length;
+      this.#paintText(paragraph, block.text, block.isFence === true);
+      this.#clearDeferred(paragraph);
+      // 着色在渲染循环里是单独一步（异步分词），升级路径照做一遍。
+      if (this.#isHighlightable(block) && paragraph.dataset.highlighted !== block.text) {
+        void this.#highlightBlock(paragraph, block);
+      }
+      this.#measuredHeights.delete(id);
+      painted = true;
+    }
+    if (painted) {
+      // 排版替换了段落子树：投影（批注、印点、改动着色）按渲染循环的尾巴补一遍。
+      this.#projectAnnotations();
+      this.#syncProposalMarks();
+      this.#projectChangeHighlights();
+      this.#scheduleMeasurement();
+    }
+    if (this.#deferredTypeset.length > 0 && stalls > 0) this.#scheduleTypesetUpgrade();
   }
 
   /**
@@ -859,6 +1096,30 @@ export class VirtualManuscriptView {
    */
   #fenceLanguage(block: Block): string | null {
     return block.isFence === true ? fenceLanguage(block.text) : null;
+  }
+
+  /**
+   * Whether this block takes grammar highlighting at all. Markdown colours
+   * its fences only; a plain-text document colours every block with the
+   * document's one grammar.
+   */
+  #isHighlightable(block: Block): boolean {
+    if (this.#format === "markdown") return block.isFence === true;
+    return documentLanguage(this.#format) !== null;
+  }
+
+  /**
+   * Colour a block by the document's format: Markdown routes its fence
+   * (diagrams included), plain text routes the whole document's grammar.
+   */
+  async #highlightBlock(paragraph: HTMLElement, block: Block): Promise<void> {
+    if (this.#format === "markdown") {
+      await this.#highlightFence(paragraph, block);
+      return;
+    }
+    const language = documentLanguage(this.#format);
+    if (language === null) return;
+    await this.#highlightTokens(paragraph, block, block.text, language);
   }
 
   /**
@@ -889,9 +1150,24 @@ export class VirtualManuscriptView {
 
     const language = this.#fenceLanguage(block);
     if (language === null) return;
+    await this.#highlightTokens(paragraph, block, block.text, language);
+  }
 
+  /**
+   * The shared tail of fence and plain-document highlighting: tokenise
+   * `code` with `language`, then swap the paragraph's text for one span per
+   * token — only while the author is not inside the paragraph, no
+   * composition is in flight, and the text the tokens came from still
+   * stands.
+   */
+  async #highlightTokens(
+    paragraph: HTMLElement,
+    block: Block,
+    code: string,
+    language: string,
+  ): Promise<void> {
     const before = block.text;
-    const lines = await tokenizeCode(before, language, this.#codeTheme);
+    const lines = await tokenizeCode(code, language, this.#codeTheme);
     if (lines.length === 0) return;
 
     if (this.#interaction.kind === "composing") return;
@@ -1064,7 +1340,10 @@ export class VirtualManuscriptView {
   }
 
   readonly #onSelectionChange = (): void => {
-    if (this.#destroyed || this.#selectionListeners.length === 0) return;
+    if (this.#destroyed) return;
+    // 升级队列可能正停在光标占用的那块上——光标动了就再试一次。
+    if (this.#deferredTypeset.length > 0) this.#scheduleTypesetUpgrade();
+    if (this.#selectionListeners.length === 0) return;
     const measure = this.#measureSelection();
     for (const listener of this.#selectionListeners) listener(measure);
   };
@@ -1409,6 +1688,13 @@ export class VirtualManuscriptView {
     const previous = new Map(this.#byId);
     this.#byId.clear();
 
+    // 视口带之外的延后排版。只在非虚拟稿上启用：虚拟稿的窗口本来就只挂一屏
+    // 的块。整稿字符数越过 DEFER_TYPESET_TOTAL 时，挂载不再同步排完整稿——
+    // 带内的块照常排版，带外的块挂占位，由升级队列在后续帧里补。
+    const band = virtual ? null : this.#viewportBand();
+    const deferOffBand =
+      band !== null && !virtual && this.#documentTextLength() > DEFER_TYPESET_TOTAL;
+
     if (this.#blocks.length === 0) {
       const seed = previous.get("") ?? this.#paragraphFor({ id: "", text: "" });
       this.#byId.set("", seed);
@@ -1445,7 +1731,11 @@ export class VirtualManuscriptView {
         }
         const block = this.#blocks[index];
         if (block === undefined) continue;
-        const paragraph = previous.get(block.id) ?? this.#paragraphFor(block);
+        const near = !deferOffBand || (band !== null && this.#inViewportBand(index, band));
+        let paragraph = previous.get(block.id);
+        if (paragraph === undefined) {
+          paragraph = this.#paragraphFor(block, near, this.#heightIndex.span(index, index + 1));
+        }
         // Never overwrite the paragraph holding the caret: its DOM text is the
         // author's in-flight edit, ahead of the projection.
         //
@@ -1458,10 +1748,15 @@ export class VirtualManuscriptView {
           (paragraph.textContent !== block.text ||
             paragraph.dataset.measureEm !== String(this.#measureEm()))
         ) {
-          this.#paintText(paragraph, block.text, block.isFence === true);
+          if (near) {
+            this.#paintText(paragraph, block.text, block.isFence === true);
+            this.#clearDeferred(paragraph);
+          } else {
+            this.#paintDeferred(paragraph, block, this.#heightIndex.span(index, index + 1));
+          }
           delete paragraph.dataset.highlighted;
         }
-        // A fence the author is not inside gets coloured. The caret's own
+        // A block the author is not inside gets coloured. The caret's own
         // paragraph stays plain text: spans under an active caret are what
         // makes an editor fight its author.
         if (paragraph === activeParagraph) {
@@ -1469,8 +1764,14 @@ export class VirtualManuscriptView {
             paragraph.textContent = block.text;
             delete paragraph.dataset.highlighted;
           }
-        } else if (block.isFence === true && paragraph.dataset.highlighted !== block.text) {
-          void this.#highlightFence(paragraph, block);
+        } else if (
+          this.#isHighlightable(block) &&
+          paragraph.dataset.deferredTypeset === undefined &&
+          paragraph.dataset.highlighted !== block.text
+        ) {
+          // 占位中的块不排队分词：升级时自会走这一步（见升级队列）。否则
+          // 挂载会为看不见的块付全部分词的钱，延后排版就白做了。
+          void this.#highlightBlock(paragraph, block);
         }
         this.#byId.set(block.id, paragraph);
         ordered.push(paragraph);
@@ -1582,6 +1883,9 @@ export class VirtualManuscriptView {
     let changed = false;
     for (const [id, paragraph] of this.#byId) {
       const index = this.#indexOf(id);
+      // 占位块的高度是估计值撑出来的 min-height，不是量出来的——把它记进
+      // measuredHeights 会让估计穿上「实测」的外衣，升级之后反而没人纠正。
+      if (paragraph.dataset.deferredTypeset !== undefined) continue;
       const height = this.#readOuterHeight(paragraph);
       const previous = this.#measuredHeights.get(id);
       if (
@@ -1679,9 +1983,15 @@ export class VirtualManuscriptView {
     const tail = text.slice(offset);
     const index = this.#indexOf(id);
     const after = this.#blocks[index + 1]?.id ?? null;
+    // Markdown 不能落一个空块（扫描器给不出块的文本会被拒），所以行首
+    // 按 Enter 是删掉本块、行尾按 Enter 时插一个带空格的占位块。纯文本里
+    // 空行本来就是合法的块：行首的 Enter 留一个空行在上，行尾的 Enter
+    // 留一个空行在下。
+    const splitHead = this.#format === "markdown" && head === "" ? null : head;
+    const splitTail = this.#format === "markdown" && tail === "" ? " " : tail;
     this.#submit([
-      { kind: "replace", blocks: [id], text: head === "" ? null : head },
-      { kind: "insert", before: after, texts: [tail === "" ? " " : tail] },
+      { kind: "replace", blocks: [id], text: splitHead },
+      { kind: "insert", before: after, texts: [splitTail] },
     ]);
     // The caret follows the tail into the new block's start. That block still
     // carries a placeholder id; #adoptPending translates it on confirmation.
@@ -1769,7 +2079,9 @@ export class VirtualManuscriptView {
     if (type === "insertFromDrop") {
       const text = event.dataTransfer?.getData("text/plain") ?? "";
       const span = this.#selectionSpan();
-      if (span !== null || /\n\s*\n/.test(text)) {
+      // 与 `#onPaste` 同一条多块判据：Markdown 看空行，纯文本看换行。
+      const multiBlock = this.#format === "markdown" ? /\n\s*\n/.test(text) : text.includes("\n");
+      if (span !== null || multiBlock) {
         event.preventDefault();
         this.#dropText(text, span);
       }
@@ -1823,6 +2135,14 @@ export class VirtualManuscriptView {
     this.#submit([{ kind: "replace", blocks: ids, text: text === "" ? null : text }]);
   }
 
+  /**
+   * 多行文本切成块。规则收在模块级的 `splitPastedText`：Markdown 按空行
+   * 分段，纯文本按行切、缩进与空行不动。
+   */
+  #pastedParts(text: string): string[] {
+    return splitPastedText(text, this.#format);
+  }
+
   /** Dropped text: a cross-block selection is consumed first, then paragraphs insert. */
   #dropText(
     text: string,
@@ -1846,10 +2166,7 @@ export class VirtualManuscriptView {
     const head = (this.#blocks[startIndex]?.text ?? "").slice(0, span.startOffset);
     const tail = (this.#blocks[endIndex]?.text ?? "").slice(span.endOffset);
     const ids = this.#blocks.slice(startIndex, endIndex + 1).map((block) => block.id);
-    const parts = text
-      .split(/\n\s*\n/)
-      .map((part) => part.trim())
-      .filter((part) => part !== "");
+    const parts = this.#pastedParts(text);
     if (parts.length <= 1) {
       const merged = head + text + tail;
       this.#pendingCaret = { blockId: ids[0] ?? "", offset: (head + text).length };
@@ -1872,7 +2189,9 @@ export class VirtualManuscriptView {
     const paragraph = this.#paragraphAtCaret();
     if (paragraph === null || this.#interaction.kind === "composing") return;
     const text = event.clipboardData?.getData("text/plain") ?? "";
-    if (!/\n\s*\n/.test(text)) return;
+    // Markdown 的多块意味着空行；纯文本的多块就是多行。
+    const multiBlock = this.#format === "markdown" ? /\n\s*\n/.test(text) : text.includes("\n");
+    if (!multiBlock) return;
     event.preventDefault();
     this.#insertParagraphs(paragraph, paragraph.dataset.blockId ?? "", text);
   };
@@ -1887,10 +2206,7 @@ export class VirtualManuscriptView {
     const current = paragraph.textContent ?? "";
     const headText = current.slice(0, offset);
     const tailText = current.slice(offset);
-    const pasted = text
-      .split(/\n\s*\n/)
-      .map((part) => part.trim())
-      .filter((part) => part !== "");
+    const pasted = this.#pastedParts(text);
     if (pasted.length === 0) return;
     const [first, ...rest] = pasted as [string, ...string[]];
     const index = this.#indexOf(id);
@@ -1951,6 +2267,7 @@ export class VirtualManuscriptView {
         deferredCenter === this.#blocks.length - 1);
     this.#renderedSignature = "";
     this.#render(this.#bottomPinned ? this.#blocks.length - 1 : (deferredCenter ?? undefined));
+    if (this.#deferredTypeset.length > 0) this.#scheduleTypesetUpgrade();
     if (completed.kind === "composing" && completed.refreshLayout) {
       this.#scheduleLayoutRefresh(true);
     }
@@ -1973,7 +2290,13 @@ export class VirtualManuscriptView {
   };
 
   readonly #onScroll = (): void => {
-    if (this.#destroyed || this.#blocks.length <= VIRTUALIZE_AFTER) return;
+    if (this.#destroyed) return;
+    if (this.#blocks.length <= VIRTUALIZE_AFTER) {
+      // 非虚拟稿的窗口不随滚动重建，但延后排版的队列要按新的视口带优先补
+      // 眼前的块。
+      if (this.#deferredTypeset.length > 0) this.#scheduleTypesetUpgrade();
+      return;
+    }
     this.#bottomPinned = this.#isBottomAnchored();
     if (this.#interaction.kind === "composing") {
       this.#interaction = {

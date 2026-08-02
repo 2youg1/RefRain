@@ -113,16 +113,3 @@ export function unbreakableRanges(text: string): readonly UnbreakableRange[] {
   }
   return merged;
 }
-
-/**
- * 这个下标处能不能断行。
- *
- * 区间的**两端**是可以断的（URL 前后当然能换行），只有内部不行。
- */
-export function isInsideUnbreakable(ranges: readonly UnbreakableRange[], index: number): boolean {
-  for (const range of ranges) {
-    if (index > range.start && index < range.end) return true;
-    if (range.start > index) break;
-  }
-  return false;
-}

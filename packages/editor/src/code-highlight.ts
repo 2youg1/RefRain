@@ -57,6 +57,8 @@ import vitesseLight from "@shikijs/themes/vitesse-light";
 import { createHighlighterCore, type HighlighterCore } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 
+import type { DocumentFormat } from "./model";
+
 /**
  * 手稿里出现得起的语言。
  *
@@ -257,6 +259,45 @@ function ensureRegistered(shiki: HighlighterCore, name: string): Promise<void> {
 
 export function isHighlightable(lang: string): boolean {
   return KNOWN.has(lang.trim().toLowerCase());
+}
+
+/**
+ * The grammar a whole plain-text document highlights with, keyed by its
+ * format. `markdown` has none: its fences declare their own languages and
+ * the prose between them takes no grammar.
+ *
+ * `html` maps to `xml` on purpose. Shiki's real `html` grammar statically
+ * imports JavaScript and CSS — measured 62 KB for `html.mjs` plus 185 KB for
+ * `javascript.mjs`, against 6 KB for the XML grammar already embedded. HTML
+ * is edited as source here and never rendered, so tags, attributes and
+ * comments are all the highlighting must tell apart, and those the XML
+ * grammar already colours.
+ *
+ * The Record is exhaustive on purpose: a format added to the bridge's
+ * `DocumentFormat` without a decision here fails the type check.
+ */
+const DOCUMENT_LANGUAGE: Readonly<Record<DocumentFormat, string | null>> = {
+  markdown: null,
+  latex: "latex",
+  typescript: "typescript",
+  rust: "rust",
+  python: "python",
+  go: "go",
+  lean: "lean",
+  css: "css",
+  html: "xml",
+  xml: "xml",
+  toml: "toml",
+  yaml: "yaml",
+};
+
+/**
+ * The grammar for a whole document of this format, or null when the format
+ * takes no grammar. Every name the table holds is embedded in this build —
+ * that is what the table was measured against.
+ */
+export function documentLanguage(format: DocumentFormat): string | null {
+  return DOCUMENT_LANGUAGE[format];
 }
 
 /**

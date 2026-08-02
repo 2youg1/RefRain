@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { applyPunctuationFinding, convertPunctuation, findPunctuation } from "../src/punctuation";
+import {
+  applyPunctuationFinding,
+  convertPunctuation,
+  findingsWithin,
+  findPunctuation,
+} from "../src/punctuation";
 
 describe("punctuation suggestions", () => {
   test("suggests one Chinese punctuation replacement without changing the source", () => {
@@ -46,6 +51,24 @@ describe("punctuation suggestions", () => {
     const [single] = findPunctuation("single", "这样.很好");
     expect(single?.original).toBe(".");
     expect(single?.suggested).toBe("。");
+  });
+
+  test("leaves a decimal stop between digits alone in the CJK direction too", () => {
+    // 对称守卫：`3.14` 不转 `3。14` 一直有守，`3。14` 转 `3.14` 此前没有——
+    // 作者用全角句点写版本号是写得别扭，但替他改成半角就是替他改数据。
+    // 验红：把 isDecimal 里的 "。" 去掉，前两条当场变红。
+    expect(findPunctuation("version", "版本 1。0 发布")).toEqual([]);
+    expect(convertPunctuation("version", "版本 1。0 发布")).toBeNull();
+
+    // 逐字符判：同一句里该转的逗号照转，数字间的 。 不动——比「整句不转」
+    // 更强，证明守卫不是一个数字就放弃整块。
+    expect(convertPunctuation("pi", "圆周率是3。14,记住了")).toBe("圆周率是3。14，记住了");
+
+    // 守卫恰好是两侧都是数字。只有一侧是数字时规则照旧给建议——
+    // 不能借「修小数」把原来的判定范围也吞掉。
+    const [oneSided] = findPunctuation("one-sided", "他第 1。名");
+    expect(oneSided?.original).toBe("。");
+    expect(oneSided?.suggested).toBe(".");
   });
 
   test("refuses a stale finding instead of replacing another occurrence", () => {
@@ -103,5 +126,33 @@ describe("一键切换", () => {
 
   test("围栏块整块不碰", () => {
     expect(convertPunctuation("b1", "```\nlet a = [1,2];\n```")).toBeNull();
+  });
+});
+
+describe("选区内的 finding", () => {
+  test("只留下完全落在选区里的 finding", () => {
+    const findings = findPunctuation("b1", "甲,乙,丙");
+    expect(findings.map((finding) => finding.start)).toEqual([1, 3]);
+
+    // 恰好覆盖第一个逗号。
+    expect(findingsWithin(findings, 0, 2).map((finding) => finding.start)).toEqual([1]);
+    // 第二个逗号完整落在 [2, 4) 里。
+    expect(findingsWithin(findings, 2, 4).map((finding) => finding.start)).toEqual([3]);
+    // 选区只盖住第二个逗号的一半：被切开的 finding 不提供——点了却转一个
+    // 没在选区里的字符，是菜单在替作者改他没框选的字。
+    expect(findingsWithin(findings, 2, 3)).toEqual([]);
+    // 空选区什么也不提供。
+    expect(findingsWithin(findings, 2, 2)).toEqual([]);
+  });
+
+  test("判定看整块，裁剪只看选区——选区边缘的邻居不能丢", () => {
+    // 逗号在选区里，它判成该转所依赖的「乙」在选区外。若改成「只对选中的
+    // 子串跑 findPunctuation」，逗号两侧都读不到中文，这条 finding 会静默
+    // 消失——同一个逗号，框不框选给出两个答案。
+    const findings = findPunctuation("b1", "甲乙,丙");
+    const within = findingsWithin(findings, 2, 3);
+    expect(within.length).toBe(1);
+    expect(within[0]?.original).toBe(",");
+    expect(within[0]?.suggested).toBe("，");
   });
 });

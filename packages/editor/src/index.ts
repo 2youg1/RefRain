@@ -23,10 +23,11 @@ import type {
 import { VirtualManuscriptView } from "./virtual-manuscript-view";
 
 export type { CodeTheme } from "./code-highlight";
-export { codeThemeFor, normalizeCodeTheme } from "./code-highlight";
+export { codeThemeFor, documentLanguage, normalizeCodeTheme } from "./code-highlight";
 export type {
   Block,
   BlockPrefix,
+  DocumentFormat,
   EditorAction,
   EditorAnnotationProjection,
   EditorChange,
@@ -49,9 +50,14 @@ export function mountEditor(
   port: EditorPort,
 ): EditorHandle {
   let revision = document.revision;
-  const view = new VirtualManuscriptView(element, document.blocks, (changes) => {
-    port.submit({ baseRevision: revision, changes });
-  });
+  const view = new VirtualManuscriptView(
+    element,
+    document.blocks,
+    (changes) => {
+      port.submit({ baseRevision: revision, changes });
+    },
+    document.format ?? "markdown",
+  );
 
   return {
     setRevision(next) {

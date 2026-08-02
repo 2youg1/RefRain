@@ -4,6 +4,28 @@ import type { DiffPresentation } from "@refrain/typeset";
 import type { CodeTheme } from "./code-highlight";
 
 /**
+ * What one document's bytes are. Mirrors the bridge's `DocumentFormat` wire
+ * values one for one; keep the two in the same change.
+ *
+ * The editor reads exactly two facts from it: whether the document gets
+ * Markdown affordances (only `"markdown"` does), and which embedded grammar
+ * highlights the whole text (`documentLanguage` in code-highlight.ts).
+ */
+export type DocumentFormat =
+  | "markdown"
+  | "latex"
+  | "typescript"
+  | "rust"
+  | "python"
+  | "go"
+  | "lean"
+  | "css"
+  | "html"
+  | "xml"
+  | "toml"
+  | "yaml";
+
+/**
  * A block as the domain hands it over: an opaque id, its text, and — when the
  * bridge sends it — the byte shape the viewport uses to predict its height.
  *
@@ -29,6 +51,12 @@ export interface Block {
 export interface EditorDocument {
   readonly revision: string;
   readonly blocks: readonly Block[];
+  /**
+   * What the bytes are. Decided at mount and constant for the document's
+   * lifetime; absent reads as `"markdown"`, the behaviour every document had
+   * before formats existed.
+   */
+  readonly format?: DocumentFormat | undefined;
 }
 
 /** One independently locatable text change. */

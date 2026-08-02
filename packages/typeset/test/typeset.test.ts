@@ -266,3 +266,20 @@ describe("预设查表", () => {
     expect(presetOf("ko").id).toBe("zh-hans");
   });
 });
+
+describe("量长文的成本", () => {
+  test("带几千个不可分区间的 40 万字符：measure 不许退回逐字重扫区间表", () => {
+    // 曾经每个字符都从头扫一遍区间表，字符数 × 区间数比较下来，一块 400KB
+    // 的导入材料（三千多个数值/URL 区间）实测 5,286ms；游标修复后同机
+    // ~300ms。2,500ms 的界留给慢机器十倍余量，又足以抓住任何逐字重扫的
+    // 回退。语料必须真的带几千个区间，否则量不到那条复杂度。
+    const unit = "数值 3.14 与 273.15°C 交替出现，混着 English words 与中文。";
+    let text = "";
+    while (text.length < 400_000) text += unit;
+    const started = performance.now();
+    const measured = measure(text, ZH_HANS);
+    const elapsed = performance.now() - started;
+    expect(measured.length).toBe([...text].length);
+    expect(elapsed).toBeLessThan(2_500);
+  });
+});
