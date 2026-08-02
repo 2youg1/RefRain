@@ -169,6 +169,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           notes=$(cat <<EOF
+          > **⚠️ 项目未完成，仅用于作者测试，请勿下载。**
+          > **⚠️ This project is unfinished and provided for the author's testing only. Do not download.**
+
+          ---
+
           ## Documentation
 
           - [README](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/README.md)
