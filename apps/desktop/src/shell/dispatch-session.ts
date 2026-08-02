@@ -600,7 +600,16 @@ export class DispatchSession extends Session<DispatchOperation> {
       );
       // 授权与启动是两步：授权把单子记下来，启动才真的把它交出去。分开做，
       // 中途失败时账上留下的是「已授权未启动」，而不是一个说不清的状态。
-      for (const run of runs) await this.gateway.launchRun(ticket.rootId, run.id);
+      //
+      // 接力/校验的下游此刻启动会被「等上游」拒——这不是失败，是编排的本意：
+      // 它留在 awaitingLaunch 里，等上游收起那一棒（见 #launchWaiting）。
+      for (const run of runs) {
+        try {
+          await this.gateway.launchRun(ticket.rootId, run.id);
+        } catch (error) {
+          if (!waitingOnUpstream(error)) throw error;
+        }
+      }
       this.#patch({ phase: { kind: "dispatched" } });
       await this.#reload();
       return dispatchedNotice(runs);
@@ -617,8 +626,31 @@ export class DispatchSession extends Session<DispatchOperation> {
       }
       if (report.proposals !== null) this.outcomes.collected(report.proposals);
       await this.#reload();
+      await this.#launchWaiting();
       return report.text;
     });
+  }
+
+  /**
+   * 收起一单之后，在等它的那一棒（接力/校验）此刻轮到启动。
+   *
+   * 作者授权的是整轮——等只是执行次序，不是又一道许可（host 在启动口守着同
+   * 一条规矩）。所以这里直接启动，不再要一次点击。链上更下游的一棒仍在等，
+   * 它的「等上游」拒绝照常留下，其余失败如实抛出。启动后重读一遍：下游的
+   * 请求此刻才带上上游的产出，行的状态与收取按钮都要换。
+   */
+  async #launchWaiting(): Promise<void> {
+    const journal = this.#model.journal;
+    if (journal.kind !== "read") return;
+    if (journal.host.awaitingLaunch.length === 0) return;
+    for (const runId of journal.host.awaitingLaunch) {
+      try {
+        await this.gateway.launchRun(this.context.rootId, runId);
+      } catch (error) {
+        if (!waitingOnUpstream(error)) throw error;
+      }
+    }
+    await this.#reload();
   }
 
   retry(run: RunDto): Promise<void> {
@@ -698,6 +730,19 @@ export class DispatchSession extends Session<DispatchOperation> {
     this.#model = { ...this.#model, ...changes };
     this.emit();
   }
+}
+
+/**
+ * 启动被「等上游」拒绝：接力/校验的下游在上游终态前不许启动。
+ *
+ * 桥把 HostRefusal 的 Display 原样装进 detail（与 history-session 读撤回拒绝
+ * 同一个 precedent——桥上长出真正的错误码时，这里改读 code）。等上游不是
+ * 失败：授权已经把这一棒记在账上（awaitingLaunch），它等上游收起那一刻再启动。
+ */
+export function waitingOnUpstream(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const detail = (error as { detail?: unknown }).detail;
+  return typeof detail === "string" && detail.includes("which is not terminal");
 }
 
 /**

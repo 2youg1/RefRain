@@ -34,8 +34,11 @@ const run = (id: string, progress: string, taskId = "task-1"): RunDto =>
 const preview = (digest: string): DispatchPreviewDto =>
   ({ digest, manifest: [], requestMd: "# 请求" }) as unknown as DispatchPreviewDto;
 
-const host = (runs: RunDto[], tasks: { id: string; document: string }[]): HostStateDto =>
-  ({ runs, tasks }) as unknown as HostStateDto;
+const host = (
+  runs: RunDto[],
+  tasks: { id: string; document: string }[],
+  awaitingLaunch: string[] = [],
+): HostStateDto => ({ runs, tasks, awaitingLaunch }) as unknown as HostStateDto;
 
 interface Recorder {
   readonly calls: string[];
@@ -47,6 +50,10 @@ interface Recorder {
   ledger: AgentReadingDto[];
   outcome: CollectOutcomeDto;
   fail: string | null;
+  /** 授权造出的那几路：接力/校验要两路。 */
+  mintedRuns: RunDto[];
+  /** 这些 run 的启动被「等上游」拒：接力/校验的下游在上游终态前的正常答案。 */
+  launchWaitingFor: string[];
 }
 
 const context: DispatchContext = {
@@ -69,6 +76,8 @@ const rig = (
     ledger: [],
     outcome: { kind: "waiting" } as unknown as CollectOutcomeDto,
     fail: null,
+    mintedRuns: [run("r1", "authorized")],
+    launchWaitingFor: [],
     ...overrides,
   };
   const guardFail = (name: string): void => {
@@ -107,10 +116,14 @@ const rig = (
     authorizeDispatch: async (request) => {
       guardFail("authorizeDispatch");
       recorder.authorized.push(request);
-      return [run("r1", "authorized")];
+      return recorder.mintedRuns;
     },
-    launchRun: async () => {
+    launchRun: async (_rootId, runId) => {
       guardFail("launchRun");
+      // 桥的 RefrainError 形状：detail 装着 HostRefusal 的 Display。
+      if (recorder.launchWaitingFor.includes(runId)) {
+        throw { detail: `run ${runId} waits on run r0, which is not terminal` };
+      }
       return null;
     },
     collectAttempt: async () => {
@@ -206,8 +219,8 @@ describe("DispatchSession 的票据", () => {
 });
 
 describe("DispatchSession 的发出与授权", () => {
-  const ready = async () => {
-    const found = rig();
+  const ready = async (overrides: Partial<Recorder> = {}) => {
+    const found = rig(overrides);
     await found.session.start();
     found.session.touchRow(0, false);
     found.session.proposePrompt("请检查这段");
@@ -267,6 +280,48 @@ describe("DispatchSession 的发出与授权", () => {
     await session.send();
     await session.authorize();
     expect(recorder.calls).toContain("launchRun");
+  });
+
+  test("接力的第二棒授权时留下等待：「等上游」不是失败", async () => {
+    const { session, recorder } = await ready({
+      mintedRuns: [run("r1", "authorized"), run("r2", "authorized")],
+      launchWaitingFor: ["r2"],
+    });
+    session.chooseArrangement("relay");
+    await session.send();
+    await session.authorize();
+    // 两路都试过启动；第二棒的「等上游」留在账上，授权照常完成。
+    expect(recorder.calls.filter((call) => call === "launchRun")).toHaveLength(2);
+    expect(session.view().model.phase.kind).toBe("dispatched");
+    expect(session.view().activity.kind).toBe("reported");
+  });
+
+  test("启动的其余拒绝照常是失败，不被「等上游」吃掉", async () => {
+    const { session, recorder } = await ready();
+    await session.send();
+    recorder.fail = "launchRun";
+    await session.authorize();
+    expect(session.view().activity.kind).toBe("failed");
+    expect(session.view().model.phase.kind).toBe("previewing");
+  });
+
+  test("收起上游那一棒，等待的下游随之启动", async () => {
+    const { session, recorder } = rig({
+      outcome: {
+        kind: "completed",
+        value: { proposals: 1, drafts: 0 },
+      } as unknown as CollectOutcomeDto,
+    });
+    recorder.hostState = host(
+      [run("r1", "dispatched"), run("r2", "authorized")],
+      [{ id: "task-1", document: "ch01.md" }],
+      ["r2"],
+    );
+    await session.start();
+    await session.collect(run("r1", "dispatched"));
+    // 收取之后那次重读看见 r2 在等，随即把它启动——接力不再需要第二道点击。
+    expect(recorder.calls).toContain("launchRun");
+    expect(session.view().activity.kind).toBe("reported");
   });
 
   test("桥拒绝授权时留在原地，作者读得到原因", async () => {

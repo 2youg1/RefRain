@@ -21,6 +21,7 @@ import { describe } from "../bridge";
 import type {
   AnnotationDto,
   BlockHit,
+  Disclosure,
   DocumentRow,
   OpenDocumentDto_Serialize,
   ProposalDto,
@@ -31,8 +32,10 @@ import { ConnectionsSurface } from "../ui/ConnectionsSurface";
 import { DispatchSurface, type DispatchSurfaceProps } from "../ui/DispatchSurface";
 import { EditorContextMenu, type EditorContextMenuProps } from "../ui/EditorContextMenu";
 import { EditorHost, type EditorHostHandle } from "../ui/EditorHost";
+import { HistorySurface } from "../ui/HistorySurface";
 import { KaraSurface, KaraVeil } from "../ui/KaraSurface";
 import { MailboxSection } from "../ui/MailboxSection";
+import { MailboxSurface } from "../ui/MailboxSurface";
 import { RailPrompt } from "../ui/RailPrompt";
 import { type RailCatalog, RailShelf } from "../ui/RailShelf";
 import { ReviewSurface } from "../ui/ReviewSurface";
@@ -48,6 +51,7 @@ import { AnnotationSelection } from "./annotation-selection";
 import { CommandFocus } from "./command-focus";
 import { browserGateway, DocumentSession } from "./document-session";
 import { EditIntents } from "./edit-intents";
+import { browserHistoryGateway, HistorySession } from "./history-session";
 import { useKara } from "./kara-state";
 import { canOpen, panelKey, settingsSection } from "./panel-reference";
 import { type PanelLayout, panelLayout } from "./panel-spine";
@@ -119,10 +123,12 @@ function revealBlock(
 function RailFoot(props: {
   hasDocument: boolean;
   annotationsOpen: boolean;
+  historyOpen: boolean;
   karaEngaged: boolean;
   connectionsOpen: boolean;
   settingsOpen: boolean;
   onOpenAnnotations: () => void;
+  onOpenHistory: () => void;
   onToggleKara: () => void;
   onOpenConnections: () => void;
   onOpenSettings: () => void;
@@ -146,6 +152,13 @@ function RailFoot(props: {
           onClick={props.onOpenAnnotations}
         >
           批注
+        </button>
+        <button
+          type="button"
+          classList={{ current: props.historyOpen }}
+          onClick={props.onOpenHistory}
+        >
+          历史
         </button>
         <button
           type="button"
@@ -196,8 +209,13 @@ function RailNav(props: {
   runWatch: RunWatch;
   onOpenTicket: (box: "draft" | "unread" | "done") => void;
   onTicketNotice: (text: string) => void;
+  /** 「全部 →」那一击的去处：管理页是一层 reference，开合归外壳。 */
+  onOpenMailbox: () => void;
   chapters: readonly DocumentRow[];
   materials: readonly DocumentRow[];
+  /** 资料行的右键：移入回收站与范围。范围只与资料有关——原稿不进派发清单。 */
+  onRemoveMaterial: (path: string) => void;
+  onMaterialDisclosure: (path: string, disclosure: Disclosure) => void;
   searchHits: readonly BlockHit[];
   currentPath: string | null;
   onSelect: (path: string, ordinal?: number) => void;
@@ -290,6 +308,10 @@ function RailNav(props: {
           currentPath={props.currentPath}
           onSelect={props.onSelect}
           catalog={props.catalog}
+          rowMenu={{
+            onRemove: (row) => props.onRemoveMaterial(row.path),
+            onDisclosure: (row, disclosure) => props.onMaterialDisclosure(row.path, disclosure),
+          }}
         />
       </Show>
       <MailboxSection
@@ -298,6 +320,7 @@ function RailNav(props: {
         runWatch={props.runWatch}
         onOpenTicket={props.onOpenTicket}
         onNotice={props.onTicketNotice}
+        onOpenMailbox={props.onOpenMailbox}
         onReady={props.onMailboxReady}
       />
       <RailFoot {...props.foot} />
@@ -318,6 +341,31 @@ function CloseConfirmBar(props: { onSaveAndClose: () => void; onCancel: () => vo
       </button>
     </div>
   );
+}
+
+/**
+ * 搜索行的响应式切片：命中、查询词、精度。ProjectSession 是 framework-free
+ * 的（它不该认识渲染框架），变化靠 tick 信号转达。此前这里把
+ * `projectSession.precision` 裸传给按钮——getter 不读信号，模式真的切了而
+ * 按钮上的字永远不变。工厂放模块级，组件体里只剩一行装配。
+ */
+function trackSearch(session: ProjectSession, tick: () => number) {
+  return createMemo(() => {
+    tick();
+    return {
+      hits: session.searchHits,
+      query: session.query,
+      precision: session.precision,
+    };
+  });
+}
+
+/** Ctrl+Z 的装配：编辑器在壳里，撤销在会话里，这一处是它们唯一的接头。 */
+function undoWith(session: DocumentSession, host: () => EditorHostHandle | null): () => void {
+  return () => {
+    const current = host();
+    if (current !== null) void session.undo((transition) => current.acceptTransition(transition));
+  };
 }
 
 /** 发送台在舞台行里的那一格。接线只有一处，散到调用点就会漂开。 */
@@ -360,6 +408,7 @@ function EditorMenu(props: {
   onComment: () => void;
   onRelocate: () => void;
   onDispatch: (accumulate: boolean) => void;
+  onNotice: (text: string) => void;
   focusEditor: () => void;
 }): JSX.Element {
   const release = (): void => props.intents.release();
@@ -380,6 +429,12 @@ function EditorMenu(props: {
       }}
       onPunctuation={(finding: PunctuationFinding) => {
         props.editor()?.applyPunctuation(finding);
+        release();
+      }}
+      onConvertEverywhere={() => {
+        const converted = props.editor()?.convertPunctuationEverywhere() ?? 0;
+        // 一处都没转时菜单不能装死：作者分不清「没有可转的」与「坏了」。
+        if (converted === 0) props.onNotice("没有需要转换的标点。");
         release();
       }}
       onHighlight={props.onHighlight}
@@ -448,6 +503,229 @@ function SourceReference(props: {
 }
 
 /**
+ * 历史面板的全部状态：会话、tick 投影、以及与文档/项目会话的同步。
+ *
+ * 刷新挂在两个会话的广播上，而不是另设一条路：行动执行、保存落盘（「已撤回」
+ * 标记此刻才翻写）、换稿、换项目都会经过这里——要求的三个刷新触发点与
+ * 这两个 tick 是同一个集合。与 createBentoState 同构：模块级工厂持有信号，
+ * 组件体里只剩一行装配。
+ */
+function createHistoryState(deps: {
+  documentSession: DocumentSession;
+  projectSession: ProjectSession;
+  setNotice: (text: string) => void;
+  /** 栈顶那一层：关窗期间 sync 只记状态，不发桥往返。 */
+  reference: () => { kind: string } | null;
+}) {
+  const session = new HistorySession(
+    browserHistoryGateway,
+    { notice: deps.setNotice, failed: deps.setNotice },
+    describe,
+  );
+  const [tick, setTick] = createSignal(0);
+  const stop = session.onChanged(() => setTick((value) => value + 1));
+  const [sourceTick, setSourceTick] = createSignal(0);
+  const stopDocument = deps.documentSession.onChanged(() => setSourceTick((value) => value + 1));
+  const stopProject = deps.projectSession.onChanged(() => setSourceTick((value) => value + 1));
+  createEffect(() => {
+    sourceTick();
+    const active = deps.reference()?.kind === "history";
+    const view = deps.documentSession.view();
+    const doc = view.document;
+    const rootId = deps.projectSession.project?.rootId;
+    session.sync(
+      doc !== null && rootId !== undefined ? { rootId, path: doc.document.path } : null,
+      view.save.kind !== "clean",
+      active,
+    );
+  });
+  const view = createMemo(() => {
+    tick();
+    return session.view();
+  });
+  return {
+    session,
+    view,
+    dispose: (): void => {
+      stop();
+      stopDocument();
+      stopProject();
+    },
+  };
+}
+
+/**
+ * 历史面板的接线，一处。
+ *
+ * 与 `SettingsReference` 同构，理由也相同：一层面板的「什么时候出现、要哪些
+ * 数据」是它自己的性质，不是舞台的编排。回档的落点与 Ctrl+Z 是同一个——
+ * 宿主回读确认头、换稿、标脏，面板不发明第二条落地路径。
+ */
+function HistoryReference(props: {
+  open: boolean;
+  state: ReturnType<typeof createHistoryState>;
+  editor: () => EditorHostHandle | null;
+  onClose: () => void;
+}): JSX.Element {
+  return (
+    <Show when={props.open}>
+      <HistorySurface
+        view={props.state.view()}
+        onAskRevert={(id) => props.state.session.askRevert(id)}
+        onCancelRevert={() => props.state.session.cancelRevert()}
+        onConfirmRevert={() => {
+          const current = props.editor();
+          if (current !== null) {
+            void props.state.session.confirmRevert((transition) =>
+              current.acceptTransition(transition),
+            );
+          }
+        }}
+        onClose={props.onClose}
+      />
+    </Show>
+  );
+}
+
+/**
+ * 信箱管理页的接线，一处。
+ *
+ * 与 `HistoryReference` 同构。实例向饭盒借：信箱只有一个——侧栏那格、段落旁的
+ * 饭盒、这一页读的都是它，各持一份就会有三份各自漂开的「下一封」。撤回合并
+ * 的文本落点与回档、Ctrl+Z 是同一个：宿主回读确认头、换稿、标脏，历史面板
+ * 因此自己也看得见这次冲销。
+ */
+function MailboxReference(props: {
+  open: boolean;
+  mailbox: () => TicketMailbox | null;
+  editor: () => EditorHostHandle | null;
+  onOpenTicket: (box: "draft" | "unread" | "done") => void;
+  onNotice: (text: string) => void;
+  onClose: () => void;
+}): JSX.Element {
+  const instance = (): TicketMailbox | null => (props.open ? props.mailbox() : null);
+  const countermand = (ids: readonly string[]): void => {
+    const mailbox = props.mailbox();
+    const host = props.editor();
+    if (mailbox === null || host === null) return;
+    void mailbox
+      .countermand(ids, (transition) => host.acceptTransition(transition))
+      .then((text) => {
+        if (text !== null) props.onNotice(text);
+      });
+  };
+  return (
+    <Show when={instance()}>
+      {(mailbox) => (
+        <MailboxSurface
+          mailbox={mailbox()}
+          initialBox={null}
+          onOpenTicket={props.onOpenTicket}
+          onCountermand={countermand}
+          onNotice={props.onNotice}
+          onClose={props.onClose}
+        />
+      )}
+    </Show>
+  );
+}
+
+/** 信箱管理页那一层的元素：与 history/settings 同一形，外壳里只剩一行装配。 */
+function mailboxElement(
+  open: boolean,
+  mailbox: () => TicketMailbox | null,
+  editor: () => EditorHostHandle | null,
+  onOpenTicket: (box: "draft" | "unread" | "done") => void,
+  onNotice: (text: string) => void,
+  onClose: () => void,
+): JSX.Element {
+  return (
+    <MailboxReference
+      open={open}
+      mailbox={mailbox}
+      editor={editor}
+      onOpenTicket={onOpenTicket}
+      onNotice={onNotice}
+      onClose={onClose}
+    />
+  );
+}
+
+/** 设置面板那一层的元素：两处挂载点（有稿/无稿）共享同一份接线。 */
+function settingsElement(
+  reference: WorkbenchReference | null,
+  onClosed: () => void,
+  onThemeChanged: ((slug: string) => void) | undefined,
+): JSX.Element {
+  return (
+    <SettingsReference reference={reference} onClosed={onClosed} onThemeChanged={onThemeChanged} />
+  );
+}
+
+/** 历史面板那一层的元素：两处挂载点（有稿/无稿）共享同一份接线。 */
+function historyElement(
+  state: ReturnType<typeof createHistoryState>,
+  open: boolean,
+  editor: () => EditorHostHandle | null,
+  onClose: () => void,
+): JSX.Element {
+  return <HistoryReference state={state} open={open} editor={editor} onClose={onClose} />;
+}
+
+/**
+ * 命令面板每个 id 选了之后做什么。
+ *
+ * 命令目录（workbench-commands.ts）说「有什么」，这里说「做什么」。收在模块级
+ * 工厂里：组件体不为每个 id 付一行，而 id 与去向的对应关系仍只有这一处。
+ */
+function createCommandExecutor(deps: {
+  closeMenu: () => void;
+  openStage: (stage: "writing" | "review" | "dispatch") => void;
+  openReference: (next: WorkbenchReference) => void;
+  editor: () => EditorHostHandle | null;
+  openProject: () => Promise<void>;
+  createProject: () => Promise<void>;
+  openDocument: () => Promise<void>;
+  createDocument: (role: "chapter" | "material") => Promise<void>;
+  importMaterial: () => Promise<void>;
+  save: () => void;
+}): (id: WorkbenchCommandId) => void {
+  return (id) => {
+    deps.closeMenu();
+    if (id === "return-writing") {
+      deps.openStage("writing");
+      queueMicrotask(() => deps.editor()?.focus());
+      return;
+    }
+    const simple: Partial<Record<WorkbenchCommandId, () => void>> = {
+      "open-review": () => deps.openStage("review"),
+      "open-project": () => void deps.openProject(),
+      "create-project": () => void deps.createProject(),
+      "open-document": () => void deps.openDocument(),
+      "new-chapter": () => void deps.createDocument("chapter"),
+      "new-material": () => void deps.createDocument("material"),
+      "import-material": () => void deps.importMaterial(),
+      "save-document": deps.save,
+      "open-dispatch": () => deps.openStage("dispatch"),
+      "open-connections": () => deps.openReference({ kind: "connections" }),
+      "open-source": () => deps.openReference({ kind: "source" }),
+      "open-appearance": () => deps.openReference({ kind: "settings", section: "appearance" }),
+      "open-typography": () => deps.openReference({ kind: "settings", section: "typography" }),
+      "open-shortcuts": () => deps.openReference({ kind: "settings", section: "shortcuts" }),
+    };
+    const action = simple[id];
+    if (action !== undefined) {
+      action();
+      return;
+    }
+    // 块级格式化命令是一次查表。表里没有的 id 落到这里什么也不做——这是刻意的：
+    // 命令目录与执行分属两处，漏接一个不应当让整条命令路径崩掉。
+    const prefix = BLOCK_PREFIX_OF[id];
+    if (prefix !== undefined) deps.editor()?.applyBlockPrefix(prefix);
+  };
+}
+
+/**
  * 饭盒的全部状态：印点投影、正在打开的那一只、以及裁决动作。
  * 信箱由 MailboxSection 交出（onMailboxReady），这里只认它，不认桥。
  */
@@ -511,6 +789,8 @@ function createBentoState(deps: {
     bentoBusy,
     judge,
     adoptCommitted: deps.adoptCommitted,
+    /** 信箱实例本身：管理页（MailboxSurface）与饭盒读的是同一份事实。 */
+    mailbox: (): TicketMailbox | null => mailbox,
     onMailboxReady: (instance: TicketMailbox): void => {
       mailbox = instance;
       stopMailbox?.();
@@ -594,6 +874,9 @@ function WritingStageRow(props: {
   sourceOpen: boolean;
   readSourceBytes: (digest: string, format: string) => Promise<Uint8Array | null>;
   settings: JSX.Element;
+  history: JSX.Element;
+  /** 信箱管理页那一层：元素在外壳里装好，这里只挂。 */
+  mailbox: JSX.Element;
 }): JSX.Element {
   return (
     <div
@@ -650,7 +933,9 @@ function WritingStageRow(props: {
         readBytes={props.readSourceBytes}
         onClose={props.onCloseReference}
       />
+      {props.history}
       {props.settings}
+      {props.mailbox}
     </div>
   );
 }
@@ -854,10 +1139,8 @@ export function Workbench(props: WorkbenchProps) {
     projectTick();
     return projectSession.visibleDocuments;
   });
-  const searchHits = createMemo(() => {
-    projectTick();
-    return projectSession.searchHits;
-  });
+  // 搜索行的响应式切片：裸 getter 曾让精度按钮在模式切换后永不更新。
+  const search = trackSearch(projectSession, projectTick);
   const chapters = createMemo(() => documents().filter((row) => row.role === "chapter"));
   const materials = createMemo(() => documents().filter((row) => row.role === "material"));
 
@@ -879,6 +1162,7 @@ export function Workbench(props: WorkbenchProps) {
     panelTick();
     return panels.top?.content ?? null;
   });
+  const history = createHistoryState({ documentSession, projectSession, setNotice, reference });
   const scene = createMemo(() => ({
     reference: reference()?.kind ?? null,
     stage: state().stage,
@@ -978,6 +1262,8 @@ export function Workbench(props: WorkbenchProps) {
 
   const save = (): void => void documentSession.save();
 
+  const undo = undoWith(documentSession, () => editor);
+
   const markDirty = (): void => {
     documentSession.markDirty();
     const caret = editor?.caret();
@@ -1021,39 +1307,18 @@ export function Workbench(props: WorkbenchProps) {
     setNotice(`已攒进发送（${dispatchSeed().blockIds.length} 段）。去「发送」一次送出。`);
   };
 
-  const executeCommand = (id: WorkbenchCommandId): void => {
-    closeCommandMenu();
-    if (id === "return-writing") {
-      openStage("writing");
-      queueMicrotask(() => editor?.focus());
-      return;
-    }
-    const simple: Partial<Record<WorkbenchCommandId, () => void>> = {
-      "open-review": () => openStage("review"),
-      "open-project": () => void openProjectFolder(),
-      "create-project": () => void createProject(),
-      "open-document": () => void openSingleDocument(),
-      "new-chapter": () => void createDocument("chapter"),
-      "new-material": () => void createDocument("material"),
-      "import-material": () => void importMaterial(),
-      "save-document": save,
-      "open-dispatch": () => openStage("dispatch"),
-      "open-connections": () => openReference({ kind: "connections" }),
-      "open-source": () => openReference({ kind: "source" }),
-      "open-appearance": () => openReference({ kind: "settings", section: "appearance" }),
-      "open-typography": () => openReference({ kind: "settings", section: "typography" }),
-      "open-shortcuts": () => openReference({ kind: "settings", section: "shortcuts" }),
-    };
-    const action = simple[id];
-    if (action !== undefined) {
-      action();
-      return;
-    }
-    // 块级格式化命令是一次查表。表里没有的 id 落到这里什么也不做——这是刻意的：
-    // 命令目录与执行分属两处，漏接一个不应当让整条命令路径崩掉。
-    const prefix = BLOCK_PREFIX_OF[id];
-    if (prefix !== undefined) editor?.applyBlockPrefix(prefix);
-  };
+  const executeCommand = createCommandExecutor({
+    closeMenu: closeCommandMenu,
+    openStage,
+    openReference,
+    editor: () => editor,
+    openProject: openProjectFolder,
+    createProject,
+    openDocument: openSingleDocument,
+    createDocument,
+    importMaterial,
+    save,
+  });
 
   /** Cmd+1..4。返回 false 表示这一层此刻去不了，那一下不该被接管。 */
   const goToQuarter = (key: string): boolean =>
@@ -1073,6 +1338,7 @@ export function Workbench(props: WorkbenchProps) {
     handleShortcut(event, {
       composing: () => editor?.isComposing() === true,
       save,
+      undo,
       toggleCommandMenu: () => commandFocus.toggle(),
       toggleKara: () => void kara.toggle(),
       focusSearch: () => {
@@ -1104,19 +1370,12 @@ export function Workbench(props: WorkbenchProps) {
     projectSession.dispose();
     stopProject();
     stopDocument();
+    history.dispose();
     stopKara();
     stopRuns();
     bentoState.dispose();
     runWatch.dispose();
   });
-
-  const settingsPanel = () => (
-    <SettingsReference
-      reference={reference()}
-      onClosed={closeReference}
-      onThemeChanged={props.onThemeChanged}
-    />
-  );
 
   return (
     <div class="workbench">
@@ -1153,14 +1412,10 @@ export function Workbench(props: WorkbenchProps) {
               onCreateMaterial={() => void createDocument("material")}
               onImport={() => void importMaterial()}
               importDisabled={projectBusy()}
-              query={projectSession.query}
+              query={search().query}
               onQuery={(value) => projectSession.setQuery(value)}
-              precision={projectSession.precision}
-              onTogglePrecision={() =>
-                projectSession.setPrecision(
-                  projectSession.precision === "exact" ? "loose" : "exact",
-                )
-              }
+              precision={search().precision}
+              onTogglePrecision={() => projectSession.togglePrecision()}
               searchRef={(element) => {
                 searchInput = element;
               }}
@@ -1173,19 +1428,24 @@ export function Workbench(props: WorkbenchProps) {
               runWatch={runWatch}
               onOpenTicket={(box) => openStage(box === "draft" ? "dispatch" : "review")}
               onTicketNotice={setNotice}
+              onOpenMailbox={() => openReference({ kind: "mailbox" })}
               chapters={chapters()}
               materials={materials()}
-              searchHits={searchHits()}
+              onRemoveMaterial={projectSession.removeDocument.bind(projectSession)}
+              onMaterialDisclosure={projectSession.setDisclosure.bind(projectSession)}
+              searchHits={search().hits}
               currentPath={active()?.document.path ?? null}
               onSelect={(path, ordinal) => void selectDocument(path, ordinal ?? null)}
               catalog={projectSession}
               foot={{
                 hasDocument: active() !== null,
                 annotationsOpen: annotationsOpen(),
+                historyOpen: reference()?.kind === "history",
                 karaEngaged: karaEngaged(),
                 connectionsOpen: reference()?.kind === "connections",
                 settingsOpen: reference()?.kind === "settings",
                 onOpenAnnotations: () => openReference({ kind: "annotations" }),
+                onOpenHistory: () => openReference({ kind: "history" }),
                 onToggleKara: () => void kara.toggle(),
                 onOpenConnections: () => openReference({ kind: "connections" }),
                 onOpenSettings: () =>
@@ -1251,7 +1511,22 @@ export function Workbench(props: WorkbenchProps) {
                     connectionsOpen={reference()?.kind === "connections"}
                     sourceOpen={reference()?.kind === "source"}
                     readSourceBytes={readSourceBytes}
-                    settings={settingsPanel()}
+                    settings={settingsElement(reference(), closeReference, props.onThemeChanged)}
+                    history={historyElement(
+                      history,
+                      reference()?.kind === "history",
+                      () => editor,
+                      closeReference,
+                    )}
+                    // 信箱管理页与饭盒借同一个实例（见 MailboxReference）。
+                    mailbox={mailboxElement(
+                      reference()?.kind === "mailbox",
+                      bentoState.mailbox,
+                      () => editor,
+                      (box) => openStage(box === "draft" ? "dispatch" : "review"),
+                      setNotice,
+                      closeReference,
+                    )}
                   />
                 )}
               </Show>
@@ -1265,7 +1540,7 @@ export function Workbench(props: WorkbenchProps) {
                   <Show when={reference()?.kind === "connections"}>
                     <ConnectionsSurface rootId={root().rootId} onClosed={closeReference} />
                   </Show>
-                  {settingsPanel()}
+                  {settingsElement(reference(), closeReference, props.onThemeChanged)}
                 </div>
               </Show>
               <Show when={active() === null && reference() === null}>
@@ -1288,6 +1563,7 @@ export function Workbench(props: WorkbenchProps) {
                     if (relocating !== null) void persistAnnotation(relocating.kind, relocating);
                   }}
                   onDispatch={(accumulate) => dispatchBlock(accumulate)}
+                  onNotice={setNotice}
                   focusEditor={() => queueMicrotask(() => editor?.focus())}
                 />
               )}

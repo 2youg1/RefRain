@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { handleShortcut, type ShortcutTargets } from "../src/shell/shortcuts";
 
 function press(
-  init: { key: string; ctrl?: boolean; composing?: boolean },
+  init: { key: string; ctrl?: boolean; shift?: boolean; composing?: boolean; input?: boolean },
   overrides: Partial<ShortcutTargets> = {},
 ) {
   const calls: string[] = [];
@@ -16,15 +16,18 @@ function press(
     key: init.key,
     ctrlKey: init.ctrl ?? false,
     metaKey: false,
+    shiftKey: init.shift ?? false,
     isComposing: init.composing ?? false,
+    target: init.input === true ? { tagName: "INPUT" } : null,
     preventDefault: () => {
       prevented = true;
     },
-  } as KeyboardEvent;
+  } as unknown as KeyboardEvent;
 
   const targets: ShortcutTargets = {
     composing: () => false,
     save: () => calls.push("save"),
+    undo: () => calls.push("undo"),
     toggleCommandMenu: () => calls.push("command-menu"),
     toggleKara: () => calls.push("kara"),
     focusSearch: () => calls.push("search"),
@@ -90,6 +93,31 @@ describe("handleShortcut", () => {
 
   test("没有修饰键的 s 是作者在写字，不是保存", () => {
     expect(press({ key: "s" }).calls).toEqual([]);
+  });
+});
+
+describe("Ctrl+Z 撤销", () => {
+  test("Ctrl+Z 撤销一步，且必定 preventDefault——内核已拒绝原生 historyUndo，壳层这一下之后两条路不会赛跑", () => {
+    const result = press({ key: "z", ctrl: true });
+    expect(result.calls).toEqual(["undo"]);
+    expect(result.prevented).toBe(true);
+  });
+
+  test("没有修饰键的 z 是作者在写字", () => {
+    expect(press({ key: "z" }).calls).toEqual([]);
+    expect(press({ key: "z" }).handled).toBe(false);
+  });
+
+  test("Ctrl+Shift+Z 不绑——领域没有 redo，绑一个空键是许诺不存在的能力", () => {
+    const refused = press({ key: "z", ctrl: true, shift: true });
+    expect(refused.handled).toBe(false);
+    expect(refused.prevented).toBe(false);
+  });
+
+  test("焦点在原生输入框里时让位——那是浏览器自己的文本撤销", () => {
+    const refused = press({ key: "z", ctrl: true, input: true });
+    expect(refused.handled).toBe(false);
+    expect(refused.prevented).toBe(false);
   });
 });
 

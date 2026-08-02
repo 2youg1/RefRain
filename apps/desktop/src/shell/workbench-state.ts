@@ -4,6 +4,10 @@ export type WorkbenchReference =
   | { readonly kind: "connections" }
   | { readonly kind: "settings"; readonly section: SettingsSection }
   | { readonly kind: "annotations" }
+  /** 当前文档的正文行动历史，可选择性回档。 */
+  | { readonly kind: "history" }
+  /** 发送信箱的管理页：三格全量、批量动作与回收站。 */
+  | { readonly kind: "mailbox" }
   /** 导入来源的原始页面，与投影出的文本并排。 */
   | { readonly kind: "source" };
 

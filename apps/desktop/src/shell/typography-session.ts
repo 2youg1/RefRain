@@ -48,6 +48,11 @@ export const SLOT_NAME: Record<FontSlot, string> = {
   japanese: "日文",
 };
 
+/** 数值键：TypographyConfig 里值为 number 的键，滑杆与数值输入只认它们。 */
+export type NumericTypographyKey = {
+  [Key in keyof TypographyConfig]: TypographyConfig[Key] extends number ? Key : never;
+}[keyof TypographyConfig];
+
 /**
  * What the panel renders.
  *
@@ -96,6 +101,7 @@ export class TypographySession extends Session<TypographyOperation> {
   #catalog: readonly FontFamilyDto[] = [];
   #builtins: readonly BuiltinTypographyPreset[] = [];
   #presets: readonly TypographyPreset[] = [];
+  #pendingScrub: { key: NumericTypographyKey; value: number } | null = null;
 
   constructor(
     private readonly gateway: TypographyGateway,
@@ -141,6 +147,27 @@ export class TypographySession extends Session<TypographyOperation> {
     if (next === null) return Promise.resolve();
     next[key] = value;
     return this.#commit(next, "排版已保存");
+  }
+
+  /**
+   * 拖动中的连续写入：一次拖动是「一次修改」，不是六十次。
+   *
+   * 桥上一次只在飞一笔写（exclusive 的重入拒绝）。拖动给出的中间值只记下
+   * 最新的一个；在飞的那笔落地后，把最新值补写出去。没有这个，拖动收尾的
+   * 那一下正好撞在飞行中的写上会被拒绝——作者拖到的值没生效，而滑杆已经
+   * 停在那里。
+   */
+  scrubField(key: NumericTypographyKey, value: number): void {
+    if (this.activity.kind === "working") {
+      this.#pendingScrub = { key, value };
+      return;
+    }
+    void this.setField(key, value).then(() => {
+      const pending = this.#pendingScrub;
+      if (pending === null) return;
+      this.#pendingScrub = null;
+      this.scrubField(pending.key, pending.value);
+    });
   }
 
   setFamily(slot: FontSlot, family: string): Promise<void> {
@@ -225,18 +252,23 @@ export class TypographySession extends Session<TypographyOperation> {
 
   /**
    * The families worth offering for one slot: whatever matches the author's
-   * search, or the bundled recommendation when they have not searched. The
-   * selected family always survives the filter, because a list that can hide
-   * the current choice makes the panel unable to show what is in force.
+   * search, or the whole catalogue when they have not searched. The selected
+   * family always survives the filter, because a list that can hide the
+   * current choice makes the panel unable to show what is in force.
+   *
+   * 空查询不再只给内置推荐：list_fonts 已经把整台机器的字族摸过一遍，
+   * 藏着不给等于替作者决定他机器上没有那些字。分组（内置/本机）是面板
+   * 对 `bundledSlot` 的投影，不是这里的第二份清单。上限只用来兜住 DOM
+   * 的大小——原生 <select> 画一千个 option 不费劲，所以放宽到一千。
    */
-  visibleFamilies(slot: FontSlot, search: string, limit = 120): readonly FontFamilyDto[] {
+  visibleFamilies(slot: FontSlot, search: string, limit = 1000): readonly FontFamilyDto[] {
     const query = search.trim().toLocaleLowerCase();
     const selected = this.#typography?.fonts[slot];
     return this.#catalog
       .filter((entry) => {
         if (entry.family === selected) return true;
         if (query !== "") return entry.family.toLocaleLowerCase().includes(query);
-        return entry.bundledSlot === slot;
+        return true;
       })
       .slice(0, limit);
   }

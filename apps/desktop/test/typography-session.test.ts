@@ -147,14 +147,52 @@ describe("TypographySession", () => {
     expect(visible.map((row) => row.family)).toEqual(["Jost", "Iowan Old Style"]);
   });
 
-  test("with no search the slot offers its bundled recommendation", async () => {
+  test("with no search the whole catalogue is offered, bundled and local alike", async () => {
     const rig = harness([
       family("Jost", "latin", [400]),
       family("Murecho", "japanese", [400]),
       family("Unrelated", null, [400]),
     ]);
     await rig.session.load();
-    expect(rig.session.visibleFamilies("latin", "").map((row) => row.family)).toEqual(["Jost"]);
+    // 空查询只给内置推荐的那个版本，等于替作者决定他机器上没有别的字。
+    expect(rig.session.visibleFamilies("latin", "").map((row) => row.family)).toEqual([
+      "Jost",
+      "Murecho",
+      "Unrelated",
+    ]);
+  });
+
+  test("拖动途中的连续写入：在飞只有一笔，最新值最后总会落地", async () => {
+    const writes: TypographyConfig[] = [];
+    let gateOpen = false;
+    const waiters: (() => void)[] = [];
+    const gateway: TypographyGateway = {
+      readConfig: async () => snapshot(typography()),
+      listFonts: async () => [],
+      listBuiltinPresets: async () => [],
+      updatePreferences: async (intent) => {
+        if (intent.kind === "setTypography") {
+          writes.push(intent.value);
+          if (!gateOpen) await new Promise<void>((resolve) => waiters.push(resolve));
+        }
+        return snapshot(intent.kind === "setTypography" ? intent.value : typography());
+      },
+    };
+    const session = new TypographySession(gateway, (error) => `失败:${String(error)}`);
+    await session.load();
+
+    session.scrubField("text_size_tenths_px", 200); // 第一笔起飞
+    session.scrubField("text_size_tenths_px", 240); // 被在飞的那笔挡住，记下
+    session.scrubField("text_size_tenths_px", 260); // 覆盖——拖动只认最新位置
+    expect(writes).toHaveLength(1);
+
+    gateOpen = true;
+    for (const release of waiters.splice(0)) release();
+    for (let tick = 0; tick < 20 && writes.length < 2; tick += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    // 240 永远不写：它不是作者停下的位置。260 必须补上：那是。
+    expect(writes.map((config) => config.text_size_tenths_px)).toEqual([200, 260]);
   });
 
   test("the weight in force is offered even when no catalogue row reports it", async () => {

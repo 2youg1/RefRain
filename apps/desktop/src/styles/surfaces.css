@@ -749,6 +749,20 @@
   color: var(--pending);
 }
 
+/* 协议徽章与连接状态同一行读法：已装是安定的绿，未装/过期是要处理的黄。 */
+.tool-skill {
+  font-size: 12px;
+}
+
+.tool-skill[data-skill="current"] {
+  color: var(--accepted);
+}
+
+.tool-skill[data-skill="none"],
+.tool-skill[data-skill="stale"] {
+  color: var(--pending);
+}
+
 .tool-actions {
   display: flex;
   gap: 7px;
@@ -831,8 +845,14 @@
   justify-self: end;
 }
 
+/* 标题占满剩余空间，动作按钮（重新扫描、返回手稿）成组靠右。 */
+.connections-head > div:first-child {
+  flex: 1;
+}
+
+/* 「返回手稿」在页头这一组里，不在页脚——出口应当一进门就看得见。 */
 .conn-close {
-  margin-top: 16px;
+  flex: none;
 }
 
 @media (max-width: 880px) {
@@ -880,7 +900,8 @@
   bottom: 0;
   z-index: var(--z-quarter);
   width: var(--panel-width, 400px);
-  max-width: 48vw;
+  /* 上限与拖动的钳制是同一个数，归 shell/panel-width.ts 所有；改动要两边同步。 */
+  max-width: min(720px, 60vw);
   display: grid;
   align-content: start;
   gap: 14px;
@@ -1284,6 +1305,76 @@
   inset: 0;
 }
 
+/* ── src/ui/HistorySurface.tsx ─────────────────────────── */
+.history {
+  width: min(380px, 38vw);
+  min-width: 300px;
+  overflow-y: auto;
+  border-left: 1px solid var(--rule);
+  background: var(--paper-raised);
+  padding: 20px;
+}
+
+.history header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.history h2 {
+  margin: 2px 0 0;
+  font-family: var(--serif);
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.history ol {
+  list-style: none;
+  margin: 18px 0;
+  padding: 0;
+}
+
+.history li {
+  border-top: 1px solid var(--rule);
+  padding: 10px 0;
+}
+
+/* 已撤回的行还在（历史不抹掉），但淡出、不可再点。 */
+.history li.undone {
+  opacity: 0.48;
+}
+
+/* 一行就是一颗整宽的幽灵按钮：左边原因，右边时刻。 */
+.history .history-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+}
+
+.history small {
+  color: var(--ink-faint);
+}
+
+/* 「已撤回标记保存时才落盘」是一句提示，不是警告——滞后是设计。 */
+.history .history-hint {
+  margin: 12px 0 0;
+  color: var(--ink-faint);
+  font-size: 12px;
+}
+
+.history .revert-confirm {
+  margin: 4px 0 8px;
+}
+
+.history .revert-actions {
+  display: flex;
+  gap: 8px;
+}
+
 /* ── src/ui/IconPicker.tsx ─────────────────────────── */
 .icon-picker {
   padding: 0;
@@ -1524,12 +1615,20 @@
   background:
     linear-gradient(120deg, color-mix(in oklab, var(--seal-wash) 28%, transparent), transparent 42%),
     var(--paper);
-  padding: clamp(28px, 5vw, 64px);
+  /*
+   * 设置页活在约四百像素的面板里，而它的栅格是按宽表面写的。让它自己成为
+   * 容器，栏数、留白、字号才能量着面板走，而不是量着整个窗口走——窗口再大，
+   * 面板里的两栏控件也只有一百来像素一栏。
+   */
+  container-type: inline-size;
 }
 
 .settings-frame {
   width: min(1040px, 100%);
   margin: 0 auto;
+  /* 留白量着面板走（cqw 解析到 .settings），所以设在容器内的这一层上：
+     容器元素自己的 cqw 解析不到自己。 */
+  padding: clamp(20px, 7cqw, 64px);
 }
 
 .settings-hero {
@@ -1575,7 +1674,7 @@
 .settings-heading h2 {
   margin: 0;
   font-family: var(--display);
-  font-size: clamp(34px, 5vw, 58px);
+  font-size: clamp(28px, 10cqw, 58px);
   font-weight: 400;
   letter-spacing: 0.08em;
   line-height: 1;
@@ -2252,13 +2351,76 @@ kbd {
   height: 34px;
 }
 
-.control input[type="range"] {
-  width: 100%;
-  accent-color: var(--seal);
-}
-
 .control output {
   color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * 数值滑杆（ui/TypographyPanel.tsx 的 NumberSlider）：一条轨道、一段填充、
+ * 一枚圆点，旁边跟一个可以直接打字的数值框。轨道本身是可聚焦的 slider
+ * （role="slider"），指针捕获与键盘微调归组件，这里只负责画。
+ */
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.slider-track {
+  position: relative;
+  flex: 1;
+  height: 22px;
+  cursor: ew-resize;
+  /* 指针捕获要独占这条手势，触摸滚动不许抢走它。 */
+  touch-action: none;
+}
+
+.slider-track::before {
+  content: "";
+  position: absolute;
+  inset-block: 10px;
+  inset-inline: 0;
+  /* 轨道只有两像素高，pill 档在这里就是一对全圆的端头。 */
+  border-radius: var(--corner-pill);
+  background: var(--paper-recessed);
+}
+
+.slider-track:focus-visible {
+  outline: 1px solid var(--seal);
+  outline-offset: 2px;
+}
+
+.slider-track[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.slider-fill {
+  position: absolute;
+  inset-block: 10px;
+  inset-inline-start: 0;
+  border-radius: var(--corner-pill);
+  background: color-mix(in oklab, var(--seal) 55%, transparent);
+  pointer-events: none;
+}
+
+.slider-thumb {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  /* 一枚圆点，归 pill 档。 */
+  border-radius: var(--corner-pill);
+  background: var(--seal);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.slider-number {
+  width: 64px;
+  height: 28px;
+  text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
@@ -2321,6 +2483,36 @@ kbd {
 }
 
 @media (max-width: 760px) {
+  .preset-grid,
+  .font-grid,
+  .control-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .save-preset {
+    grid-template-columns: 1fr;
+  }
+}
+
+/*
+ * 同一个塌陷，量的是面板而不是窗口：设置页住在面板里时，窗口再宽，
+ * 两栏控件也只有一百来像素一栏。@media 那一份留给设置页真占满窗口的时候。
+ */
+@container (max-width: 640px) {
+  .settings-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-actions {
+    justify-content: flex-start;
+    max-width: none;
+  }
+
   .preset-grid,
   .font-grid,
   .control-grid {
@@ -2872,17 +3064,30 @@ kbd {
   border-radius: 2px;
 }
 
-/* 精确/模糊切换：一个词，不是一个图标——模式必须读得出来。 */
+/*
+ * 精确/模糊切换：一个词，不是一个图标——模式必须读得出来。
+ * 它是一只开关，就要长得像开关：有边界，按下去的那一档用印色填出来。
+ * 之前是 11px 的浅字加一条下划线，整行搜索框里最先消失的就是它。
+ */
 .rail-search .search-mode {
   flex: none;
-  font-size: 11px;
-  color: var(--rail-faint);
-  padding: 4px 6px;
+  padding: 2px 10px;
+  border: 1px solid color-mix(in oklab, var(--rail-ink) 30%, transparent);
+  border-radius: var(--corner-pill);
+  background: transparent;
+  color: var(--rail-ink);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.rail-search .search-mode:hover:not(:disabled) {
+  border-color: color-mix(in oklab, var(--rail-ink) 55%, transparent);
 }
 
 .rail-search .search-mode[aria-pressed="true"] {
+  border-color: var(--seal);
+  background: color-mix(in oklab, var(--seal) 14%, transparent);
   color: var(--seal);
-  box-shadow: inset 0 -1px var(--seal);
 }
 
 .rail-search input {
@@ -3020,7 +3225,8 @@ kbd {
   /* 面板就是四区，立在光里。 */
   z-index: var(--z-quarter);
   width: var(--panel-width, 400px);
-  max-width: 48vw;
+  /* 上限与拖动的钳制是同一个数，归 shell/panel-width.ts 所有；改动要两边同步。 */
+  max-width: min(720px, 60vw);
   /* 三层影：外侧发丝边、贴边的近影、拉开距离的远影。
      厚度是靠边缘读出来的，不是靠更多模糊——模糊人人会做。 */
   box-shadow:
@@ -3046,6 +3252,55 @@ kbd {
 :root[data-panel-material="solid"] .stage-row > [data-quarter] {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+}
+
+/*
+ * 面板内缘的拖柄：八像素的热区，看得见的把手是悬停时那条两像素的线。
+ * 宽度状态、拖动生命周期、钳制全部归 shell/panel-width.ts；这里只负责画。
+ * 拖柄是面板的紧后兄弟而不是它的孩子：面板自己是滚动容器，当孩子的手柄
+ * 会跟着内容滚出视口。位置从 --panel-width 算，与面板读同一个变量，
+ * 拖动途中不需要任何人搬它。铺满那一档没有边可拖，模块会把手柄 hidden 掉。
+ */
+.panel-resize-handle {
+  position: absolute;
+  /* 与面板同一层、DOM 序靠后：画在面板上头，不需要新的一层。 */
+  z-index: var(--z-quarter);
+  inset-block: 0;
+  inset-inline-start: calc(var(--panel-width, 400px) - 8px);
+  width: 8px;
+  cursor: col-resize;
+  /* 指针捕获要独占这条手势，触摸滚动不许抢走它。 */
+  touch-action: none;
+}
+
+/* 面板钉在右侧时，内缘在另一头。 */
+:root[data-panel-side="right"] .panel-resize-handle {
+  inset-inline-start: auto;
+  inset-inline-end: calc(var(--panel-width, 400px) - 8px);
+}
+
+.panel-resize-handle::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 3px;
+  width: 2px;
+  background: transparent;
+}
+
+.panel-resize-handle:hover::after,
+.panel-resize-handle:focus-visible::after {
+  background: color-mix(in oklab, var(--seal) 45%, transparent);
+}
+
+/* 拖动中关掉入场动画与让位过渡：面板要贴着指针走，不是追在指针后面。 */
+:root.panel-resizing .stage-row > [data-quarter],
+:root.panel-resizing .stage-row > .dispatch {
+  animation: none;
+}
+
+:root.panel-resizing .stage-row[data-panels="open"] .editor-host {
+  transition: none;
 }
 
 /*
@@ -3312,29 +3567,36 @@ kbd {
   color: var(--rail-ink);
 }
 
-/* ── 发送信箱管理页（MailboxManager） ── */
-.mailbox-manager {
+/* ── 发送信箱管理页（MailboxSurface 框 + MailboxManager 主体） ── */
+.mailbox-surface {
   display: flex;
-  position: absolute;
-  z-index: var(--z-quarter);
-  inset: 0;
   flex-direction: column;
-  border-radius: var(--corner-panel);
-  background: var(--paper);
-  padding: 18px 22px;
+  overflow: hidden;
+  padding: 20px;
+}
+
+.mailbox-surface > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
 }
 
-.mailbox-manager-head {
-  display: flex;
-  align-items: baseline;
-  gap: 16px;
+.mailbox-surface h2 {
+  margin: 2px 0 0;
+  font-family: var(--serif);
+  font-size: 18px;
+  font-weight: 500;
 }
 
-.mailbox-manager-head h2 {
-  margin: 0;
-  color: var(--ink);
-  font-size: 15px;
+/* 主体占满页框剩下的高度：列表自己滚，页框不滚。 */
+.mailbox-manager {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding-top: 14px;
 }
 
 .mailbox-manager-tabs {
@@ -3353,13 +3615,6 @@ kbd {
 .mailbox-manager-tabs button.is-current {
   border-color: var(--rail-rule);
   color: var(--ink);
-}
-
-.mailbox-manager-close {
-  margin-left: auto;
-  border: none;
-  color: var(--rail-faint);
-  font-size: 12px;
 }
 
 .mailbox-manager-actions {
@@ -3415,6 +3670,17 @@ kbd {
 
 .mailbox-manager-row-actions button:hover {
   color: var(--ink);
+}
+
+/* 未曾合并进正文的已裁决行：还在列表里（历史不抹掉），但淡出并说明原因。 */
+.mailbox-manager-rows li.is-unmerged .mailbox-row {
+  opacity: 0.55;
+}
+
+/* 撤回合并上了膛的那颗：要作者再看一眼的颜色，与平常的动作分开。 */
+.mailbox-manager-actions button.is-arming {
+  border-color: var(--pending);
+  color: var(--pending);
 }
 
 .mailbox-manager-pager {
@@ -3571,8 +3837,9 @@ kbd {
   gap: 6px;
 }
 
-/* 右键工作区的分区标签：选区工具在上，段落工具在下。 */
-.context-menu .menu-section {
+/* 右键工作区的分区标签：选区工具在上，段落工具在下。资料行菜单的「范围」同式。 */
+.context-menu .menu-section,
+.mailbox-menu .menu-section {
   padding: 6px 10px 2px;
   color: var(--ink-ghost);
   font-size: 10px;
@@ -3632,6 +3899,29 @@ kbd {
   display: inline-block;
   /* 单元格内不再折行：折行会把一行的单元格拆到两行上，列当场散架。 */
   white-space: pre;
+}
+
+/*
+ * 表格竖线读作连续的线。字形仍在文本里——textContent 逐字节不变、光标照常
+ * 落在竖线上——只是透明；线由 border-left 画。
+ *
+ * 为什么不是 inline-block + 宽度折叠：行尾那根竖线的 span 吞了换行符（内容
+ * 是 "|\n"，理由见 packages/editor 的 table-render.ts），inline-block 会把
+ * 换行收进自己的盒子，父行不再断开，整份表格当场塌成一行。
+ *
+ * 为什么是 border-left 而不是 border-right 或背景：行内元素跨行时装饰按
+ * box-decoration-break: slice 切——border-left 只画在**首个**片段的左缘
+ * （竖线所在的行），border-right 会画在**末个**片段的右缘，而末个片段是
+ * 下一行行首的空盒，那里会多出一截 1px 残桩。
+ *
+ * 竖向 padding 把边条撑满行盒：行内元素的边只包字体盒（约 1em），不包行盒，
+ * 行高 1.9 时不垫就断成一截一截。上下垫是视觉外延，不进布局——行盒高度
+ * 仍由 line-height 单独决定，表格的几何因此与没有这条规则时逐像素相同。
+ */
+.editor-host .md-table-pipe {
+  color: transparent;
+  border-left: 1px solid color-mix(in oklab, var(--ink) 45%, transparent);
+  padding: calc((1lh - 1em) / 2) 0;
 }
 
 .editor-host .md-strikethrough {

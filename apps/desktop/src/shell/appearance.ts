@@ -13,7 +13,8 @@ import { applyTypography } from "../typography";
 import { lampFacing, lampPlacement } from "./lamp";
 import { materialSpec, supportedMaterial } from "./panel-material";
 import { panelMotion, prefersReducedMotion } from "./panel-motion";
-import { panelWidthPx, railWidthPx } from "./surface-width";
+import { panelWidth } from "./panel-width";
+import { railWidthPx } from "./surface-width";
 
 export function applyAppearance(root: HTMLElement, appearance: AppearanceConfig): void {
   root.dataset.paper = appearance.paper;
@@ -64,7 +65,13 @@ export function applyAppearance(root: HTMLElement, appearance: AppearanceConfig)
   }
 
   // 宽度：面板与侧栏各自三档，铺满是其中一档而不是另一个模式。
-  root.style.setProperty("--panel-width", `${panelWidthPx(appearance.panel_width ?? "regular")}px`);
+  // 面板宽度经过 panelWidth：拖出来的值优先于档位，换档才作废它；持久化的
+  // 自由宽度（panel_width_px）由 applyPreset 一并进场，重启后拖动值还在。
+  panelWidth.applyPreset(
+    root,
+    appearance.panel_width ?? "regular",
+    appearance.panel_width_px ?? null,
+  );
   root.style.setProperty("--rail-width", `${railWidthPx(appearance.rail_width ?? "narrow")}px`);
   // 铺满是一档宽度，不是另一个模式——但它要让 CSS 认得出来，因为铺满时
   // 正文一点也不让，与另外两档的让位规则相反。

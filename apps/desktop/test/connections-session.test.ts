@@ -4,12 +4,13 @@ import {
   type ConnectionsGateway,
   ConnectionsSession,
   harnessStatusLabel,
+  parseAgentArgv,
 } from "../src/shell/connections-session";
 
 const harness = (id: string, status: HarnessDto["status"]): HarnessDto =>
-  ({ id, name: id, status, connectionId: `c:${id}` }) as unknown as HarnessDto;
+  ({ id, name: id, status, connectionId: `c:${id}`, skillStatus: "none" }) as unknown as HarnessDto;
 
-const agent = (id: string): AgentDto => ({ id, name: id }) as unknown as AgentDto;
+const agent = (id: string): AgentDto => ({ id, name: id, argv: [] }) as unknown as AgentDto;
 
 const reading = (agentId: string): AgentReadingDto =>
   ({ agentId, documents: 1 }) as unknown as AgentReadingDto;
@@ -77,6 +78,18 @@ function harnessFor(): Harness {
     async upsertAgent(name) {
       calls.push(`upsertAgent:${name}`);
       agents = [...agents, agent(name)];
+      return null;
+    },
+    async updateAgent(id, name, connectionId, persona, argv) {
+      calls.push(
+        `updateAgent:${id}:${name}:${connectionId ?? ""}:${persona ?? ""}:${argv.join(" ")}`,
+      );
+      agents = agents.map((row) => (row.id === id ? { ...row, name } : row));
+      return null;
+    },
+    async installSkill(id) {
+      calls.push(`installSkill:${id}`);
+      await gate();
       return null;
     },
     async removeAgent(id) {
@@ -188,9 +201,92 @@ describe("ConnectionsSession", () => {
     expect(h.session.view().agents.map((row) => row.id)).toEqual(["Kimi"]);
   });
 
+  test("editing goes to the same id — an edit is not a delete plus a create", async () => {
+    const h = harnessFor();
+    h.setAgents([agent("a1")]);
+    await h.session.updateAgent("a1", "史料校对", "c:kimi", "只校对史实", "");
+    expect(h.calls).toContain("updateAgent:a1:史料校对:c:kimi:只校对史实:");
+    expect(h.calls.filter((call) => call.startsWith("removeAgent"))).toHaveLength(0);
+    expect(h.calls.filter((call) => call.startsWith("upsertAgent"))).toHaveLength(0);
+    expect(h.session.view().agents[0]?.name).toBe("史料校对");
+    expect(h.session.view().activity).toEqual({
+      kind: "reported",
+      text: "已保存写作伙伴的修改。",
+    });
+  });
+
+  test("editing an empty name is refused before the bridge", async () => {
+    const h = harnessFor();
+    h.setAgents([agent("a1")]);
+    await h.session.updateAgent("a1", "   ", "", "", "");
+    expect(h.calls.filter((call) => call.startsWith("updateAgent"))).toHaveLength(0);
+  });
+
   test("every harness status has an author-facing name", () => {
     for (const status of ["connected", "available", "missing", "needs-attention"] as const) {
       expect(harnessStatusLabel(status).length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("启动参数与协议徽章的接缝", () => {
+  test("自由文本解析成 argv：空白分词、双引号成团", () => {
+    expect(parseAgentArgv("")).toEqual({ kind: "ok", argv: [] });
+    expect(parseAgentArgv("  -m kimi-k2 ")).toEqual({ kind: "ok", argv: ["-m", "kimi-k2"] });
+    expect(parseAgentArgv('-m "k2 pro" --fast')).toEqual({
+      kind: "ok",
+      argv: ["-m", "k2 pro", "--fast"],
+    });
+  });
+
+  test("明显不该在 argv 里的东西在过桥前拦下", () => {
+    for (const text of ["-m k2; rm -rf /", "--dangerously-skip-permissions", '-m "k2']) {
+      const parsed = parseAgentArgv(text);
+      expect(parsed.kind).toBe("invalid");
+    }
+  });
+
+  test("解析失败不过桥，拒绝是一句作者读得懂的话", async () => {
+    const h = harnessFor();
+    h.setAgents([agent("a1")]);
+    await h.session.updateAgent("a1", "史料校对", "", "", "-m k2; whoami");
+    expect(h.calls.filter((call) => call.startsWith("updateAgent"))).toHaveLength(0);
+    const activity = h.session.view().activity;
+    expect(activity.kind).toBe("failed");
+    if (activity.kind === "failed") expect(activity.text).toContain("shell");
+  });
+
+  test("启动参数随保存过桥：解析后的 argv 原样抵达", async () => {
+    const h = harnessFor();
+    h.setAgents([agent("a1")]);
+    await h.session.updateAgent("a1", "史料校对", "", "", '-m "k2 pro" --fast');
+    expect(h.calls).toContain("updateAgent:a1:史料校对:::-m k2 pro --fast");
+    expect(h.session.view().activity).toEqual({
+      kind: "reported",
+      text: "已保存写作伙伴的修改。",
+    });
+  });
+
+  test("协议安装过桥：装完重读名录，徽章由桥的 digest 比对说话", async () => {
+    const h = harnessFor();
+    await h.session.load();
+    await h.session.installSkill("c:kimi");
+    expect(h.calls).toContain("installSkill:c:kimi");
+    // 装完重读：徽章的状态以桥此刻的比对为准，不是本地记下的「装过」。
+    expect(h.calls.filter((call) => call === "listHarnesses").length).toBeGreaterThanOrEqual(2);
+    expect(h.session.view().activity).toEqual({ kind: "reported", text: "协议已安装。" });
+  });
+
+  test("徽章与预填读桥的字段：没有本地推断，没有编出来的默认", async () => {
+    const h = harnessFor();
+    await h.session.load();
+    for (const row of h.session.view().harnesses) {
+      expect(h.session.skillStatusOf(row)).toBe("none");
+    }
+    const withSkill = { skillStatus: "stale" } as unknown as HarnessDto;
+    expect(h.session.skillStatusOf(withSkill)).toBe("stale");
+    expect(h.session.agentArgvOf(agent("a1"))).toEqual([]);
+    const withArgv = { argv: ["-m", "k2"] } as unknown as AgentDto;
+    expect(h.session.agentArgvOf(withArgv)).toEqual(["-m", "k2"]);
   });
 });

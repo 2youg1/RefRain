@@ -8,6 +8,7 @@ import { unwrap } from "./bridge";
 import { scheduleFrame } from "./frame-scheduler";
 import { commands } from "./generated/bindings.gen";
 import { applyAppearance } from "./shell/appearance";
+import { panelWidth } from "./shell/panel-width";
 import { Workbench } from "./shell/Workbench";
 
 export function App() {
@@ -39,6 +40,8 @@ export function App() {
   };
 
   onMount(async () => {
+    // 面板拖柄归 panelWidth：它跟着 DOM 走，每个面板挂上时自动装上把手。
+    panelWidth.attach(document.documentElement);
     const unlisten = await listen("config-changed", () => void applyConfig());
     onCleanup(unlisten);
     await applyConfig();

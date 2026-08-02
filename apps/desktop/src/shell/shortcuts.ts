@@ -14,6 +14,13 @@ export interface ShortcutTargets {
   /** 正在组合输入。此时所有快捷键让位。 */
   readonly composing: () => boolean;
   readonly save: () => void;
+  /**
+   * 撤销一步正文行动。Ctrl+Z。
+   *
+   * 没有 Ctrl+Y / Ctrl+Shift+Z：领域只有 undo_last，没有 redo——绑一个
+   * 什么也不做的键是在向作者许诺一个不存在的能力。
+   */
+  readonly undo: () => void;
   readonly toggleCommandMenu: () => void;
   /** KARA 的开合。Ctrl+Enter。 */
   readonly toggleKara: () => void;
@@ -47,6 +54,19 @@ export function handleShortcut(event: KeyboardEvent, targets: ShortcutTargets): 
   };
 
   if (modifier && key === "s") return act(targets.save);
+  /*
+   * Ctrl+Z 撤销。编辑器内核在 beforeinput 里拒绝原生 historyUndo，所以这一下
+   * 由壳层接管并 preventDefault——两条撤销路不会赛跑。
+   *
+   * 例外是原生输入框（搜索框、栏内表单）：那里的是浏览器自己的文本撤销，
+   * 接管它会让搜索框里打错的字撤不掉。Shift+Z 不绑：没有 redo。
+   */
+  if (modifier && key === "z" && !event.shiftKey) {
+    // tagName 而不是 instanceof：这个模块在 bun 的单测里跑，那里没有 DOM 全局。
+    const tag = (event.target as { tagName?: unknown } | null)?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA") return false;
+    return act(targets.undo);
+  }
   if (modifier && key === "k") return act(targets.toggleCommandMenu);
   if (modifier && key === "enter") return act(targets.toggleKara);
   if (modifier && key === "f") return act(targets.focusSearch);

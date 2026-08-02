@@ -5,17 +5,22 @@
  * 多宽」这个问题有两个互相矛盾的答案。现在整条路径就是一层展开的面板。
  */
 
-/** 展开的那一层有多宽。与 CSS 的 `.panel-layer { width }` 是同一个数。 */
+/** 面板宽度的回退值：CSS 变量缺席时的那个数，也是「常规」档的像素。 */
 export const PANEL_WIDTH = 400;
 
 /**
- * 整条路径占掉的宽度：几层就是几份面板宽。
+ * 正文让开的宽度：几层就是几份面板宽。
  *
  * 正文据此让开。它必须让——面板压在版心上会把每行的行首切掉三五个字，
  * 而中日文与西文都从行首读起，作者拿到的是残句。
+ *
+ * 让位跟着生效宽度走，而不是钉死一份默认值：作者把面板拖到六百像素而让位
+ * 仍按四百算，行首照样被吃掉两百像素。所以让位是一个 calc——深度是此刻的，
+ * 宽度是那个变量的、随时生效的；拖动途中不需要任何人重算这一行。
  */
-export function panelReserve(depth: number): number {
-  return Math.max(0, Math.floor(depth)) * PANEL_WIDTH;
+export function panelReserve(depth: number): string {
+  const layers = Math.max(0, Math.floor(depth));
+  return layers === 0 ? "0px" : `calc(var(--panel-width, ${PANEL_WIDTH}px) * ${layers})`;
 }
 
 /**
@@ -34,11 +39,11 @@ export interface PanelLayout {
  * @param hidden 舞台此刻整个让位给别人（设置独占 Stage、或作者在逐句裁决里）。
  */
 export function panelLayout(depth: number, hidden: boolean): PanelLayout {
-  const reserve = panelReserve(depth);
+  const layers = Math.max(0, Math.floor(depth));
   return {
-    "data-panels": reserve > 0 ? "open" : "closed",
+    "data-panels": layers > 0 ? "open" : "closed",
     style: {
-      "--panel-reserve": `${reserve}px`,
+      "--panel-reserve": panelReserve(layers),
       // 不显示时不写 display，让样式表自己说了算——写死 undefined 与写死
       // "block" 是两件事，后者会盖掉表里的布局。
       display: hidden ? "none" : undefined,

@@ -14,6 +14,8 @@ export type EditorContextMenuProps = {
   onFormat: (kind: EditorFormat) => void;
   onDeleteEmpty: () => void;
   onPunctuation: (finding: PunctuationFinding) => void;
+  /** 全文标点一键切换：内核自会提交一个 EditorAction，菜单只发意图。 */
+  onConvertEverywhere: () => void;
   onHighlight: () => void;
   onComment: () => void;
   onRelocate: () => void;
@@ -65,8 +67,8 @@ export function EditorContextMenu(props: EditorContextMenuProps): JSX.Element {
               (props.context.canDeleteEmpty ? 32 : 0) +
               (props.context.selection === null ? 0 : props.relocating ? 32 : 64) +
               props.context.punctuation.length * 32 +
-              // 「攒进发送」与「取消」。
-              64,
+              // 「转换全文标点」「攒进发送」与「取消」。
+              96,
           ),
         },
       ),
@@ -194,6 +196,13 @@ export function EditorContextMenu(props: EditorContextMenuProps): JSX.Element {
         <div class="menu-section" role="presentation">
           段落
         </div>
+        {/*
+          全文切换与逐条 finding 是同一套例外规则（findPunctuation），
+          不同的只是范围：一个动作覆盖所有块，一次撤销整稿还原。
+        */}
+        <button type="button" role="menuitem" onClick={() => props.onConvertEverywhere()}>
+          转换全文标点
+        </button>
         <button type="button" role="menuitem" onClick={() => props.onAccumulate()}>
           攒进发送
         </button>

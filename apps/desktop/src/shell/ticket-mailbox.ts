@@ -18,12 +18,13 @@
  * 能不能留在屏内取决于它。
  */
 
-import { unwrap } from "../bridge";
+import { describe, unwrap } from "../bridge";
 import type {
   HostStateDto,
   MailboxStanding_Serialize,
   ProposalDto,
   ReviewStateDto_Serialize,
+  TextTransitionDto,
 } from "../generated/bindings.gen";
 import { commands } from "../generated/bindings.gen";
 import { writesOf } from "./review-verdicts";
@@ -44,6 +45,8 @@ export const browserMailboxGateway: TicketMailboxGateway = {
     await unwrap(commands.discardMailboxEntries(rootId, box, entryIds));
   },
   restore: (rootId, entryId) => unwrap(commands.restoreMailboxEntry(rootId, entryId)),
+  countermand: (rootId, path, proposalIds) =>
+    unwrap(commands.countermandProposals(rootId, path, proposalIds)),
   revertVerdicts: (rootId, path, verdictIds) =>
     unwrap(commands.revertVerdicts(rootId, path, verdictIds)),
   recordVerdict: (rootId, proposalId, sliceId, kind, reason, finalText) =>
@@ -62,6 +65,7 @@ export interface TicketMailboxGateway {
   setPinned(rootId: string, box: Box, entryId: string, pinned: boolean): Promise<void>;
   discard(rootId: string, box: Box, entryIds: string[]): Promise<void>;
   restore(rootId: string, entryId: string): Promise<boolean>;
+  countermand(rootId: string, path: string, proposalIds: string[]): Promise<TextTransitionDto>;
   revertVerdicts(rootId: string, path: string, verdictIds: string[]): Promise<number>;
   recordVerdict(
     rootId: string,
@@ -83,6 +87,12 @@ export type MailboxRow = {
   readonly detail: string;
   /** 作者钉住的单：不参与后续排序，新单进来也压不下去。 */
   readonly pinned: boolean;
+  /**
+   * 已合并进正文、且尚未被逆向裁决冲销——只有这样的单能「撤回合并」。
+   * 接受但仍在批次里（未合并）、已退回、已冲销的都是 false。判据是账本
+   * 事实的投影；桥仍是最终权威，它拒了的措辞原样落在公告里。
+   */
+  readonly merged: boolean;
 };
 
 /** 一格的样子：缩略给侧栏，全量给管理页，`hidden` 是「还有 N 封」那个数。 */
@@ -96,6 +106,11 @@ export type MailboxView = {
   readonly draft: MailboxGroup;
   readonly unread: MailboxGroup;
   readonly done: MailboxGroup;
+  /**
+   * 弃置过的单：仍在库里、仍可取回，只是不占三格的视线。管理页的回收站读这里；
+   * 没有它，「取回」这个动作没有一个能指出对象的列表。
+   */
+  readonly discarded: readonly MailboxRow[];
   readonly unreadCount: number;
 };
 
@@ -118,8 +133,11 @@ export class TicketMailbox extends Broadcast {
   #rootId: string | null = null;
   #path: string | null = null;
   #boxes: Record<Box, MailboxRow[]> = { draft: [], unread: [], done: [] };
+  #discarded: MailboxRow[] = [];
   /** 每格里裁决 id 归属：done 行回溯时要交出哪些裁决。 */
   #verdictsOf = new Map<string, string[]>();
+  /** 每个提案的合并事实：接受过、已冲销——「撤回合并」的资格判据。 */
+  #merged = new Map<string, boolean>();
   /** 未判提案的原始行：饭盒要读原文与 slice。 */
   #unjudged: ProposalDto[] = [];
   /** 仍在批次里的裁决：只有它们可以回溯。 */
@@ -144,6 +162,7 @@ export class TicketMailbox extends Broadcast {
       draft: group(this.#boxes.draft),
       unread: group(this.#boxes.unread),
       done: group(this.#boxes.done),
+      discarded: this.#discarded,
       unreadCount: this.#boxes.unread.length,
     };
   }
@@ -175,12 +194,28 @@ export class TicketMailbox extends Broadcast {
 
     const judged = new Set<string>();
     this.#verdictsOf = new Map();
+    const accepted = new Set<string>();
+    const countermanded = new Set<string>();
     for (const verdict of review.verdicts) {
       judged.add(verdict.proposalId);
       const list = this.#verdictsOf.get(verdict.proposalId) ?? [];
       this.#verdictsOf.set(verdict.proposalId, [...list, verdict.id]);
+      if (verdict.kind === "accept" || verdict.kind === "accept-modified") {
+        accepted.add(verdict.proposalId);
+      }
+      if (verdict.kind === "countermanded") countermanded.add(verdict.proposalId);
     }
     this.#staged = new Set(review.batch);
+    // 合并过才有得冲：接受过、没有一裁决还停在批次里（未合并）、且尚未被
+    // 逆向裁决冲销。桥按同一套事实再判一次，这里是让按钮先说人话的投影。
+    this.#merged = new Map(
+      [...accepted]
+        .filter((id) => !countermanded.has(id))
+        .map((id) => [
+          id,
+          !(this.#verdictsOf.get(id) ?? []).some((verdictId) => this.#staged.has(verdictId)),
+        ]),
+    );
     this.#unjudged = review.proposals.filter((proposal) => !judged.has(proposal.id));
 
     this.#boxes = {
@@ -191,6 +226,7 @@ export class TicketMailbox extends Broadcast {
           title: task.prompt,
           detail: task.document,
           pinned: this.#standing.get(task.id)?.pinned ?? false,
+          merged: false,
         })),
       unread: review.proposals
         .filter((proposal) => !judged.has(proposal.id))
@@ -199,6 +235,11 @@ export class TicketMailbox extends Broadcast {
         .filter((proposal) => judged.has(proposal.id))
         .map((row) => this.#proposalRow(row)),
     };
+    // 弃置的单在归位之前收出来：回收站那份列表与三格用的是同一份投影，
+    // 不是另一处拼出来的相似行。
+    this.#discarded = BOXES.flatMap((box) =>
+      this.#boxes[box].filter((row) => this.#standing.get(row.id)?.discarded ?? false),
+    );
     for (const box of BOXES) {
       this.#boxes[box] = this.#arranged(this.#boxes[box]);
     }
@@ -281,6 +322,47 @@ export class TicketMailbox extends Broadcast {
     const restored = await this.gateway.restore(this.#rootId, id);
     if (restored && this.#path !== null) await this.refresh(this.#rootId, this.#path);
     return restored;
+  }
+
+  /**
+   * 撤回合并（逆向裁决）：对已合并的提案下冲销，文本回退到合并前，账本
+   * append 冲销记录——不删旧记录。与历史面板的撤回是两回事：那是对编辑
+   * 反悔，这是对判决反悔。
+   *
+   * 批量是一次 TextAction（一次撤销可还原整批），桥一次调用完成。未合并
+   * 的单不进调用——假装它们也在其中，作者会以为退回了从未落进正文的字节。
+   * 文本落地走与回档同一个接缝（调用方拿转移去喂编辑器），会话不认识
+   * 编辑器。返回给作者读的一句话；null 表示静默完成。
+   */
+  async countermand(
+    ids: readonly string[],
+    apply: (transition: TextTransitionDto) => Promise<void>,
+  ): Promise<string | null> {
+    if (this.#rootId === null || this.#path === null) return null;
+    const eligible = ids.filter((id) => this.#merged.get(id) === true);
+    if (eligible.length === 0) {
+      return "选中的单里没有已合并的提案——只有落进过正文的才能冲销合并。";
+    }
+    const rootId = this.#rootId;
+    const path = this.#path;
+    try {
+      const transition = await this.gateway.countermand(rootId, path, eligible);
+      await apply(transition);
+    } catch (error) {
+      return countermandRefusalText(error) ?? describe(error);
+    }
+    await this.refresh(rootId, path);
+    const skipped = ids.length - eligible.length;
+    return skipped > 0 ? `已冲销 ${eligible.length} 单的合并；${skipped} 单未曾合并不在内。` : null;
+  }
+
+  /** 批量取回：回收站多选之后的一次动作，世界只重读一遍。 */
+  async restoreMany(ids: readonly string[]): Promise<void> {
+    if (this.#rootId === null || ids.length === 0) return;
+    for (const id of ids) {
+      await this.gateway.restore(this.#rootId, id);
+    }
+    if (this.#path !== null) await this.refresh(this.#rootId, this.#path);
   }
 
   /** 批量置顶：多选之后的一次动作，整格只写一遍。 */
@@ -400,8 +482,31 @@ export class TicketMailbox extends Broadcast {
       title: firstLine.slice(0, TITLE_CHARS) || "（空白段）",
       detail: proposal.baseline,
       pinned: this.#standing.get(proposal.id)?.pinned ?? false,
+      merged: this.#merged.get(proposal.id) ?? false,
     };
   }
+}
+
+/**
+ * 逆向裁决的三类具名拒绝，译成作者读得出的一句。
+ *
+ * 桥把拒绝写在 RefrainError 的 action 里（与 history-session 读 detail 同一个
+ * precedent——桥上长出真正的错误码时，这个映射改读 code，措辞只有这里知道）。
+ */
+export function countermandRefusalText(error: unknown): string | null {
+  if (typeof error !== "object" || error === null) return null;
+  const action = (error as { action?: unknown }).action;
+  if (typeof action !== "string") return null;
+  if (action.includes("never merged")) {
+    return "该提案未曾合并——没有落进过正文的字节可回退。";
+  }
+  if (action.includes("merged text has moved")) {
+    return "原文已被后续编辑改动——当初合并进去的那段对不上了，回退整体拒绝。";
+  }
+  if (action.includes("deleted its scope")) {
+    return "那次合并是整段删除，没有可锚定回退的字节。";
+  }
+  return null;
 }
 
 /** 一格的三种读法：侧栏读缩略，管理页读全量，格尾读被折起的条数。 */

@@ -94,6 +94,12 @@ describe("project session", () => {
       async searchBlocks(_rootId, query) {
         return [hit(query)];
       },
+      async remove(): Promise<DocumentRow> {
+        throw new Error("not used");
+      },
+      async setDisclosure(): Promise<DocumentRow> {
+        throw new Error("not used");
+      },
     };
     const session = new ProjectSession(catalog, delay);
     session.install(opened("root"));
@@ -128,6 +134,12 @@ describe("project session", () => {
         const result = deferred<readonly BlockHit[]>();
         pendingHits.set(query, result);
         return result.promise;
+      },
+      async remove(): Promise<DocumentRow> {
+        throw new Error("not used");
+      },
+      async setDisclosure(): Promise<DocumentRow> {
+        throw new Error("not used");
       },
     };
     const session = new ProjectSession(catalog, delay);
@@ -167,6 +179,12 @@ describe("project session", () => {
       },
       async search() {
         return [];
+      },
+      async remove(): Promise<DocumentRow> {
+        throw new Error("not used");
+      },
+      async setDisclosure(): Promise<DocumentRow> {
+        throw new Error("not used");
       },
     };
     const session = new ProjectSession(catalog, delay);
@@ -275,5 +293,58 @@ describe("ProjectSession 取得一个项目", () => {
     await session.openFolder();
     await session.importMaterial();
     expect(session.view().kind).toBe("idle");
+  });
+});
+
+describe("资料行：回收站、范围与精度", () => {
+  const catalog = (overrides: Partial<ProjectCatalogPort> = {}): ProjectCatalogPort => ({
+    page: async () => {
+      throw new Error("not used");
+    },
+    search: async () => [],
+    searchBlocks: async () => [],
+    remove: async (_rootId, path) => row("root-1", path),
+    setDisclosure: async (_rootId, path, disclosure) => ({ ...row("root-1", path), disclosure }),
+    ...overrides,
+  });
+
+  test("移入回收站后这一行从名录消失，并说了一声", async () => {
+    const session = new ProjectSession(catalog(), new ManualDelay());
+    session.install(opened("root"));
+    expect(session.documents).toHaveLength(1);
+    await session.removeDocument("root-一.md");
+    expect(session.documents).toEqual([]);
+    expect(session.view()).toEqual({ kind: "reported", text: "已移入回收站：root-一.md" });
+  });
+
+  test("范围写回到那一行上——下一次派发读到的就是新值", async () => {
+    const session = new ProjectSession(catalog(), new ManualDelay());
+    session.install(opened("root"));
+    await session.setDisclosure("root-一.md", "full");
+    expect(session.documents[0]?.disclosure).toBe("full");
+  });
+
+  test("精度是个二态：toggle 换到另一态，手里有查询时立刻按新态重搜", async () => {
+    const delay = new ManualDelay();
+    const precisions: string[] = [];
+    const session = new ProjectSession(
+      catalog({
+        search: async (_rootId, _query, precision) => {
+          precisions.push(precision);
+          return [];
+        },
+      }),
+      delay,
+    );
+    session.install(opened("root"));
+    session.setQuery("概念");
+    delay.flush();
+    await settle();
+    expect(session.precision).toBe("exact");
+    session.togglePrecision();
+    expect(session.precision).toBe("loose");
+    delay.flush();
+    await settle();
+    expect(precisions).toEqual(["exact", "loose"]);
   });
 });

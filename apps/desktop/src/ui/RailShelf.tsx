@@ -1,5 +1,5 @@
-import { createMemo, For } from "solid-js";
-import type { DocumentRow } from "../generated/bindings.gen";
+import { createMemo, createSignal, For, Show } from "solid-js";
+import type { Disclosure, DocumentRow } from "../generated/bindings.gen";
 import { railWindow } from "../shell/rail-window";
 
 /** 名录行高，与 `.rail li button` 的盒高一致。 */
@@ -16,6 +16,26 @@ export interface RailCatalog {
   loadNext(): Promise<void>;
 }
 
+/**
+ * 一行的右键菜单能干的事。归调用方：书架只发意图，过桥刷新名录是
+ * ProjectSession 的事（INV-6 的文件去向也写在那一侧）。
+ */
+export interface RailRowMenu {
+  /** 移入回收站——删除只有一个去处，菜单措辞照实说。 */
+  readonly onRemove: (row: DocumentRow) => void;
+  /** 范围：下次派发时这份资料可见多少。 */
+  readonly onDisclosure: (row: DocumentRow, disclosure: Disclosure) => void;
+}
+
+/** 范围的三态与界面措辞。null（从未问过）读作枚举默认值，与桥另一侧一致。 */
+const DISCLOSURES: readonly { value: Disclosure; label: string }[] = [
+  { value: "outline-only", label: "仅大纲" },
+  { value: "retrievable", label: "可检索" },
+  { value: "full", label: "全文" },
+];
+
+const disclosureOf = (row: DocumentRow): Disclosure => row.disclosure ?? "retrievable";
+
 export interface RailShelfProps {
   readonly label: string;
   readonly shelf: string;
@@ -26,6 +46,8 @@ export interface RailShelfProps {
   readonly onSelect: (path: string) => void;
   /** 视野逼近末尾时，书架自己去要下一页——作者不该看见「继续加载」按钮。 */
   readonly catalog: RailCatalog;
+  /** 给了才有右键菜单：原稿架与资料架今天只有后者需要。 */
+  readonly rowMenu?: RailRowMenu | undefined;
 }
 
 /**
@@ -48,8 +70,24 @@ export function RailShelf(props: RailShelfProps) {
     return window;
   });
 
+  /** 右键菜单：落在哪一行、什么位置。null 收拢。 */
+  const [menu, setMenu] = createSignal<{ row: DocumentRow; x: number; y: number } | null>(null);
+  /**
+   * 「移入回收站」的两步：第一下把菜单项换成确认句，第二下才执行。
+   * 回收站虽可找回，但「找」要去系统里翻——一步误点的代价不该由作者付。
+   */
+  const [confirming, setConfirming] = createSignal(false);
+
+  const openMenu = (event: MouseEvent, row: DocumentRow): void => {
+    if (props.rowMenu === undefined) return;
+    event.preventDefault();
+    setConfirming(false);
+    setMenu({ row, x: event.clientX, y: event.clientY });
+  };
+
   return (
-    <div class="shelf" data-shelf={props.shelf} ref={element}>
+    // 菜单浮在行上，指针整个离开这架才收——与信箱菜单同一个手势。
+    <div class="shelf" data-shelf={props.shelf} ref={element} onPointerLeave={() => setMenu(null)}>
       <div class="rail-group">{props.label}</div>
       <ul>
         <li class="rail-spacer" style={{ height: `${view().padTop}px` }} />
@@ -60,6 +98,7 @@ export function RailShelf(props: RailShelfProps) {
                 type="button"
                 classList={{ current: props.currentPath === row.path }}
                 onClick={() => props.onSelect(row.path)}
+                onContextMenu={(event) => openMenu(event, row)}
               >
                 {row.path}
               </button>
@@ -68,6 +107,68 @@ export function RailShelf(props: RailShelfProps) {
         </For>
         <li class="rail-spacer" style={{ height: `${view().padBottom}px` }} />
       </ul>
+
+      <Show when={menu()}>
+        {(current) => {
+          /**
+           * 正在编辑的文档不许移入回收站：文档会话还握着它的修订号，下一次
+           * 保存会把刚收走的文件原样写回来——回收站成了假装删掉的舞台。
+           * 守卫钉在这里而不是调用方：两个事实（这一行、当前打开的那篇）
+           * 只有这个菜单同时握着。
+           */
+          const isCurrent = (): boolean => props.currentPath === current().row.path;
+          return (
+            <div
+              class="mailbox-menu"
+              role="menu"
+              style={{ left: `${current().x}px`, top: `${current().y}px` }}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                disabled={isCurrent()}
+                onClick={() => {
+                  if (!confirming()) {
+                    setConfirming(true);
+                    return;
+                  }
+                  props.rowMenu?.onRemove(current().row);
+                  setMenu(null);
+                }}
+              >
+                {confirming() ? "确认移入回收站？" : "移入回收站"}
+              </button>
+              <Show when={isCurrent()}>
+                <div class="menu-section" role="presentation">
+                  先关闭正在编辑的文档
+                </div>
+              </Show>
+              <div class="menu-section" role="presentation">
+                范围
+              </div>
+              <For each={DISCLOSURES}>
+                {(option) => (
+                  <button
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={disclosureOf(current().row) === option.value}
+                    onClick={() => {
+                      props.rowMenu?.onDisclosure(current().row, option.value);
+                      setMenu(null);
+                    }}
+                  >
+                    {disclosureOf(current().row) === option.value ? "✓ " : ""}
+                    {option.label}
+                    {current().row.disclosure === null && option.value === "retrievable"
+                      ? "（默认）"
+                      : ""}
+                  </button>
+                )}
+              </For>
+            </div>
+          );
+        }}
+      </Show>
     </div>
   );
 }

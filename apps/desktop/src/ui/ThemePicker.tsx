@@ -16,6 +16,7 @@ import {
   type RailWidth,
   type ThemeInfoDto,
 } from "../generated/bindings.gen";
+import { panelWidth as panelWidthControl } from "../shell/panel-width";
 import { ChoiceRow } from "./ChoiceRow";
 
 type ThemePickerProps = {
@@ -138,6 +139,15 @@ export function ThemePicker(props: ThemePickerProps) {
     if (error() === null) props.onPicked?.(slug);
   };
 
+  /**
+   * 选档位的这一刻，拖出来的宽度作废——预设就是作者要的宽度。
+   * 写 Config 走同一条 apply；作废的只是本机这一次拖动的状态。
+   */
+  const pickPanelWidth = async (value: PanelWidth): Promise<void> => {
+    await apply({ kind: "setPanelWidth", value }, setPanelWidth, value);
+    if (error() === null) panelWidthControl.clearCustom();
+  };
+
   return (
     <fieldset class="theme-picker" aria-label="外观">
       <div class="picker-block">
@@ -195,7 +205,7 @@ export function ThemePicker(props: ThemePickerProps) {
         data="panel-width"
         options={PANEL_WIDTHS}
         current={panelWidth()}
-        onPick={(value) => void apply({ kind: "setPanelWidth", value }, setPanelWidth, value)}
+        onPick={(value) => void pickPanelWidth(value)}
       />
       <ChoiceRow
         label="侧栏宽度"

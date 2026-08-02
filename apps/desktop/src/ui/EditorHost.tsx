@@ -25,6 +25,8 @@ import {
   commands,
   type EditorChangeDto,
   type OpenDocumentDto_Serialize,
+  type SessionDocumentDto,
+  type TextTransitionDto,
 } from "../generated/bindings.gen";
 import { useKara } from "../shell/kara-state";
 
@@ -60,6 +62,16 @@ export interface EditorHostHandle {
   onSelectionMeasured(listener: (measure: SelectionMeasure | null) => void): () => void;
   /** A block's screen rect, for pinning the bento next to its anchor. */
   blockRect(blockId: string): DOMRect | null;
+  /**
+   * 全文标点一键切换：内核把所有块收进一个 EditorAction 提交，
+   * 所以壳层的一次撤销（Ctrl+Z）就能把整份稿子还原。
+   */
+  convertPunctuationEverywhere(): number;
+  /**
+   * 采纳一次壳层得来的转移（撤销）。不走 `apply`——那一条会先向桥上
+   * 提交行动，而撤销是桥上已经完成的动作，这里只差回读与换稿。
+   */
+  acceptTransition(transition: TextTransitionDto): Promise<void>;
 }
 
 export interface EditorHostProps {
@@ -85,6 +97,14 @@ const toDto = (action: EditorAction): EditorChangeDto[] =>
       ? { kind: "replace", value: { blocks: [...change.blocks], text: change.text } }
       : { kind: "insert", value: { before: change.before, texts: [...change.texts] } },
   );
+
+/**
+ * 回读确认头。`apply` 的结构改动分支与壳层发起的撤销走的是同一条回读；
+ * 提成模块级函数，组件体里的桥接计数才不用为撤销上调（棘轮见
+ * verify:component-depth 的 BRIDGE_DEBT）。
+ */
+const readConfirmed = (rootId: string, path: string): Promise<SessionDocumentDto> =>
+  unwrap(commands.currentDocument(rootId, path));
 
 export function EditorHost(props: EditorHostProps) {
   const kara = useKara();
@@ -177,6 +197,7 @@ export function EditorHost(props: EditorHostProps) {
     const document: EditorDocument = {
       revision: props.document.revision,
       blocks: props.document.blocks,
+      format: props.document.format, // 缺省即 markdown，行为与旧版逐字节一致
     };
     editor = mountEditor(host, document, { submit: (action) => actions.submit(action) });
     editor.setAnnotations(props.annotations);
@@ -203,6 +224,24 @@ export function EditorHost(props: EditorHostProps) {
       },
       onSelectionMeasured: (listener) => editor?.onSelectionMeasured(listener) ?? (() => {}),
       blockRect: (blockId) => editor?.blockRect(blockId) ?? null,
+      convertPunctuationEverywhere: () => editor?.convertPunctuationEverywhere() ?? 0,
+      acceptTransition: async (transition) => {
+        const epoch = mountEpoch;
+        // 撤销回来的文本可能增删块，所以总是整稿回读——与 apply() 的
+        // 结构改动分支同一条路，视图 replace 时自己恢复光标。
+        const confirmed = await readConfirmed(props.rootId, props.path);
+        if (epoch !== mountEpoch) return;
+        confirmedRevision = transition.revision;
+        editor?.setRevision(transition.revision);
+        // 渲染永不覆盖光标所在段（那是给正在输入的作者的保护）。撤销改写的
+        // 恰恰是正文而不是输入——先撤掉选区，这次换稿才没有「正在输入」的段。
+        host?.ownerDocument.getSelection()?.removeAllRanges();
+        editor?.replace({ revision: confirmed.revision, blocks: confirmed.blocks });
+        // 光标落到被撤掉的那一步所在的第一段：作者要知道刚才收回的是哪里。
+        const touched = transition.touchedBlocks[0];
+        if (touched !== undefined) editor?.focus(touched, 0);
+        props.onConfirmed(transition.revision);
+      },
     });
   };
 

@@ -8,16 +8,17 @@ import { materialSpec, supportedMaterial } from "../src/shell/panel-material";
 import { PANEL_WIDTH, panelLayout, panelReserve } from "../src/shell/panel-spine";
 
 describe("面板几何", () => {
-  test("正文让开的宽度＝几层就是几份面板宽", () => {
+  test("正文让开的宽度＝几层就是几份生效面板宽", () => {
     // 没有面板时不让：版心不该被平白推走。
-    expect(panelReserve(0)).toBe(0);
-    expect(panelReserve(1)).toBe(PANEL_WIDTH);
+    expect(panelReserve(0)).toBe("0px");
+    // 让位是一个 calc：深度写死，宽度跟变量走——拖动改变量时让位不用重算。
+    expect(panelReserve(1)).toBe(`calc(var(--panel-width, ${PANEL_WIDTH}px) * 1)`);
     // 让不够的话，行首会被切掉。
-    expect(panelReserve(3)).toBe(PANEL_WIDTH * 3);
+    expect(panelReserve(3)).toBe(`calc(var(--panel-width, ${PANEL_WIDTH}px) * 3)`);
   });
 
   test("负数与乱数不产生负让位", () => {
-    expect(panelReserve(-2)).toBe(0);
+    expect(panelReserve(-2)).toBe("0px");
   });
 
   test("让位与「开着」必须同时给出，否则作者看到的是错位", () => {

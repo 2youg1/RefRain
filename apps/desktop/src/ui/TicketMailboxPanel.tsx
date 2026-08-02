@@ -1,8 +1,8 @@
 // 发送信箱的树：待发送 / 已回复（徽标计数）/ 已裁决 三格，可折叠。
 //
-// 侧栏那一格是**缩略**：只挂前 MAILBOX_PEEK 条，其余折进管理页，格尾一行
-// 「还有 N 封 →」是进入口。上界让侧栏有了高度上限，底部那组全局导航因此
-// 永远留在屏内——满格滚动时它被挤出可视区，而那是作者去任何地方的路。
+// 侧栏那一格是**缩略**：只挂前 MAILBOX_PEEK 条，格尾一颗「全部 →」进管理页，
+// 折起的都在那里。上界让侧栏有了高度上限，底部那组全局导航因此永远留在屏内
+// ——满格滚动时它被挤出可视区，而那是作者去任何地方的路。
 //
 // 右键一单：置顶、置底、Pin、弃置、回溯（已裁决格）。Shift 连选、Ctrl 点选
 // 之后，这些动作作用于整批。
@@ -19,8 +19,8 @@ export type TicketMailboxPanelProps = {
   onRevert: (id: string) => void;
   onPin: (ids: readonly string[], pinned: boolean) => void;
   onDiscard: (ids: readonly string[]) => void;
-  /** 进管理页：格尾「还有 N 封 →」与超出上界时的唯一去处。 */
-  onManage: (box: MailboxBox) => void;
+  /** 进管理页：缩略之外的全部都在那里。 */
+  onManage: () => void;
   /** 快捷键提示挂在格标题右侧：能用快捷键更方便的就把它显示出来。 */
   shortcutOf?: (box: MailboxBox) => string | null;
 };
@@ -54,7 +54,6 @@ export function TicketMailboxPanel(props: TicketMailboxPanelProps): JSX.Element 
 
   const peekOf = (box: MailboxBox): readonly MailboxRow[] => props.view[box].peek;
   const countOf = (box: MailboxBox): number => props.view[box].all.length;
-  const hiddenOf = (box: MailboxBox): number => props.view[box].hidden;
 
   /** 一次动作作用于谁：选中的那批，或者右键点到的这一单。 */
   const targets = (row: MailboxRow): readonly string[] => {
@@ -142,20 +141,14 @@ export function TicketMailboxPanel(props: TicketMailboxPanelProps): JSX.Element 
                   )}
                 </For>
               </ul>
-              {/* 折起来的那些不在侧栏里排队，它们在管理页。 */}
-              <Show when={hiddenOf(group.box) > 0}>
-                <button
-                  type="button"
-                  class="mailbox-more"
-                  onClick={() => props.onManage(group.box)}
-                >
-                  还有 {hiddenOf(group.box)} 封 →
-                </button>
-              </Show>
             </Show>
           </section>
         )}
       </For>
+      {/* 折起来的那些不在侧栏里排队，它们在管理页——一颗入口，不按格各来一颗。 */}
+      <button type="button" class="mailbox-more" onClick={() => props.onManage()}>
+        全部 →
+      </button>
 
       <Show when={menu()}>
         {(current) => (

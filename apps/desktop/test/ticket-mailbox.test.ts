@@ -12,9 +12,11 @@ import type {
   HostStateDto,
   ProposalDto,
   ReviewStateDto_Serialize,
+  TextTransitionDto,
   VerdictRecord_Serialize,
 } from "../src/generated/bindings.gen";
 import {
+  countermandRefusalText,
   MAILBOX_PEEK,
   TicketMailbox,
   type TicketMailboxGateway,
@@ -145,6 +147,10 @@ function fixture(world: Partial<World>) {
         entry.entryId === entryId ? { ...entry, discardedAt: null } : entry,
       );
       return true;
+    },
+    async countermand(_rootId, _path, proposalIds) {
+      calls.push(`countermand:${proposalIds.join("+")}`);
+      return { revision: "r2", actionId: "a1", touchedBlocks: [] } as unknown as TextTransitionDto;
     },
   };
   return { gateway, calls, state };
@@ -364,5 +370,98 @@ describe("发送信箱", () => {
 
     expect(await mailbox.restore("p1")).toBe(false);
     expect(mailbox.view().unread.all.map((row) => row.id)).toEqual(["p1"]);
+  });
+
+  test("弃置的单进回收站列表：同一行投影，不是另一份拼出来的", async () => {
+    const { gateway } = fixture({
+      proposals: [proposal("p1", "弃置的那句"), proposal("p2", "留下的那句")],
+    });
+    const mailbox = new TicketMailbox(gateway);
+    await mailbox.refresh("root", "章一.md");
+    expect(mailbox.view().discarded).toHaveLength(0);
+
+    await mailbox.discard(["p1"]);
+    const discarded = mailbox.view().discarded;
+    expect(discarded.map((row) => row.id)).toEqual(["p1"]);
+    expect(discarded[0]?.title).toBe("弃置的那句");
+    // 弃置只是退出三格的视线：回收站看得见它，三格不再占行。
+    expect(mailbox.view().unread.all.map((row) => row.id)).toEqual(["p2"]);
+  });
+
+  test("批量取回：整批回到各自的格，世界只重读一遍", async () => {
+    const { gateway } = fixture({
+      proposals: [proposal("p1", "一"), proposal("p2", "二"), proposal("p3", "三")],
+    });
+    const mailbox = new TicketMailbox(gateway);
+    await mailbox.refresh("root", "章一.md");
+    await mailbox.discard(["p1", "p3"]);
+    expect(mailbox.view().discarded).toHaveLength(2);
+
+    await mailbox.restoreMany(["p1", "p3"]);
+    expect(mailbox.view().discarded).toHaveLength(0);
+    expect(mailbox.view().unread.all.map((row) => row.id)).toEqual(["p1", "p2", "p3"]);
+  });
+
+  test("撤回合并的资格：接受过、不在批次、未冲销，三条缺一不可", async () => {
+    const { gateway } = fixture({
+      proposals: [proposal("p1", "一"), proposal("p2", "二"), proposal("p3", "三")],
+      verdicts: [
+        verdict("v1", "p1"),
+        verdict("v2", "p2"),
+        verdict("v3", "p3"),
+        { ...verdict("v4", "p3"), kind: "countermanded" },
+      ],
+      batch: ["v2"],
+    });
+    const mailbox = new TicketMailbox(gateway);
+    await mailbox.refresh("root", "章一.md");
+
+    const done = mailbox.view().done.all;
+    expect(done.find((row) => row.id === "p1")?.merged).toBe(true);
+    // 接受但仍在批次：还没落进正文，不算已合并。
+    expect(done.find((row) => row.id === "p2")?.merged).toBe(false);
+    // 已冲销：文本早已回退，不能再冲第二次。
+    expect(done.find((row) => row.id === "p3")?.merged).toBe(false);
+  });
+
+  test("撤回合并：只带已合并的过桥，转移交给调用方，未合并的照实报数", async () => {
+    const { gateway, calls } = fixture({
+      proposals: [proposal("p1", "一"), proposal("p2", "二")],
+      verdicts: [verdict("v1", "p1"), verdict("v2", "p2")],
+      batch: ["v2"],
+    });
+    const mailbox = new TicketMailbox(gateway);
+    await mailbox.refresh("root", "章一.md");
+
+    const applied: string[] = [];
+    const notice = await mailbox.countermand(["p1", "p2"], async (transition) => {
+      applied.push(transition.revision);
+    });
+    expect(calls.filter((call) => call.startsWith("countermand:"))).toEqual(["countermand:p1"]);
+    expect(applied).toEqual(["r2"]);
+    expect(notice).toContain("1 单未曾合并");
+  });
+
+  test("选中的单都没有合并过：不过桥，原因说清", async () => {
+    const { gateway, calls } = fixture({ proposals: [proposal("p1", "一")] });
+    const mailbox = new TicketMailbox(gateway);
+    await mailbox.refresh("root", "章一.md");
+
+    const notice = await mailbox.countermand(["p1"], async () => {});
+    expect(calls.filter((call) => call.startsWith("countermand:"))).toHaveLength(0);
+    expect(notice).toContain("没有已合并");
+  });
+
+  test("逆向裁决的具名拒绝译成人话", () => {
+    expect(
+      countermandRefusalText({ action: "countermand a proposal that was never merged" }),
+    ).toContain("未曾合并");
+    expect(
+      countermandRefusalText({ action: "countermand a proposal whose merged text has moved" }),
+    ).toContain("后续编辑改动");
+    expect(
+      countermandRefusalText({ action: "countermand a merge that deleted its scope" }),
+    ).toContain("整段删除");
+    expect(countermandRefusalText(new Error("x"))).toBeNull();
   });
 });

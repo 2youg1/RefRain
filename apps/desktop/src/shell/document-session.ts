@@ -22,6 +22,7 @@ import type {
   OpenDocumentDto_Serialize,
   RecoveryStep,
   SessionDocumentDto,
+  TextTransitionDto,
 } from "../generated/bindings.gen";
 import { commands } from "../generated/bindings.gen";
 import { RECOVERY_TEXT } from "../ui/recovery-text";
@@ -69,6 +70,8 @@ export interface DocumentGateway {
   // `{ id, text }` here made this a second authority for what a block is, and
   // it drifted the moment blocks began carrying their byte shape.
   currentDocument(rootId: string, path: string): Promise<SessionDocumentDto>;
+  /** 撤销会话里最后一次正文行动（INV-2 逆着走，过同一个领域）。 */
+  undoEditorAction(rootId: string, path: string): Promise<TextTransitionDto>;
   persistRevision(
     rootId: string,
     path: string,
@@ -117,6 +120,9 @@ export const browserGateway: DocumentGateway = {
   async currentDocument(rootId, path) {
     return unwrap(commands.currentDocument(rootId, path));
   },
+  async undoEditorAction(rootId, path) {
+    return unwrap(commands.undoEditorAction(rootId, path));
+  },
   async persistRevision(rootId, path, stamp) {
     return (await unwrap(commands.persistRevision(rootId, path, stamp))) as PersistOutcome;
   },
@@ -163,6 +169,20 @@ function recoveryOf(error: unknown): readonly RecoveryStep[] {
  * second copy of it.
  */
 const RECOVERY_STEPS = Object.keys(RECOVERY_TEXT) as readonly RecoveryStep[];
+
+/**
+ * 撤销的两类拒绝在桥上今天共用一个 `io` 码：src-tauri 的 `text_refusal`
+ * 把 `TextRefusal` 的 Display 原样装进 `detail`，区分它们只有这一条路。
+ * 桥上长出真正的错误码时，这个映射改读 `code`——措辞只有这里知道。
+ */
+function undoRefusalText(error: unknown): string | null {
+  if (typeof error !== "object" || error === null) return null;
+  const detail = (error as { detail?: unknown }).detail;
+  if (typeof detail !== "string") return null;
+  if (detail.startsWith("there is no Text Action to undo")) return "没有可撤销的一步。";
+  if (detail.includes("is not invertible")) return "那一步带着裁决记录，不能撤销。";
+  return null;
+}
 
 export class DocumentSession extends Session {
   #document: OpenDocumentDto_Serialize | null = null;
@@ -316,6 +336,27 @@ export class DocumentSession extends Session {
     if (this.#save.kind === "clean") this.#save = { kind: "dirty" };
     this.emit();
     void this.#refreshAnnotations();
+  }
+
+  /**
+   * 撤销会话里最后一次正文行动。
+   *
+   * 文本落地（回读确认头、换稿、标脏）由调用方拿转移去做——会话不认识
+   * 编辑器。两类拒绝（没有可撤销的、带着裁决的）是预期内的答案，走公告；
+   * 其余错误才走失败。
+   */
+  async undo(apply: (transition: TextTransitionDto) => Promise<void>): Promise<void> {
+    const rootId = this.#rootId;
+    const open = this.#document;
+    if (rootId === null || open === null) return;
+    try {
+      const transition = await this.gateway.undoEditorAction(rootId, open.document.path);
+      await apply(transition);
+    } catch (error) {
+      const refusal = undoRefusalText(error);
+      if (refusal !== null) this.notices.notice(refusal);
+      else this.#fail(error);
+    }
   }
 
   async upsertAnnotation(

@@ -3,6 +3,7 @@ import { debugCommands } from "../e2e/debug-bridge";
 import {
   type BlockHit,
   commands,
+  type Disclosure,
   type DocumentPageDto,
   type DocumentRow,
   type ProjectOpenedDto,
@@ -11,13 +12,15 @@ import {
 import { e2ePickedPath } from "./pick";
 import { type Activity, type DescribeError, Session } from "./session";
 
-/** 这个 session 会忙的五件事。 */
+/** 这个 session 会忙的几件事。 */
 export type ProjectOperation =
   | "open-folder"
   | "open-file"
   | "create-project"
   | "create-document"
-  | "import-material";
+  | "import-material"
+  | "delete-document"
+  | "set-disclosure";
 
 export interface ProjectCatalogPort {
   page(rootId: string, after: string): Promise<DocumentPageDto>;
@@ -31,6 +34,13 @@ export interface ProjectCatalogPort {
     query: string,
     precision: SearchPrecision,
   ): Promise<readonly BlockHit[]>;
+  /**
+   * 移入回收站（INV-6：文件只有一个去处）。返回被删的那一行，
+   * 好让名录按行摘而不是按路径猜。
+   */
+  remove(rootId: string, path: string): Promise<DocumentRow>;
+  /** 写下一份资料下次派发时的可见范围；返回改写后的行。 */
+  setDisclosure(rootId: string, path: string, disclosure: Disclosure): Promise<DocumentRow>;
 }
 
 /**
@@ -150,6 +160,12 @@ const productionCatalog: ProjectCatalogPort = {
   async searchBlocks(rootId, query, precision) {
     return unwrap(commands.blockSearch(rootId, query, precision));
   },
+  async remove(rootId, path) {
+    return unwrap(commands.deleteDocument(rootId, path));
+  },
+  async setDisclosure(rootId, path, disclosure) {
+    return unwrap(commands.setDisclosure(rootId, path, disclosure));
+  },
 };
 
 function mergeRows(
@@ -222,6 +238,11 @@ export class ProjectSession extends Session<ProjectOperation> {
     const current = this.query;
     if (current !== "") this.setQuery(current);
     this.emit();
+  }
+
+  /** 精度是个二态：取另一态。翻转规则归这里，按钮不该自己知道有两态。 */
+  togglePrecision(): void {
+    this.setPrecision(this.#precision === "exact" ? "loose" : "exact");
   }
 
   get query(): string {
@@ -398,6 +419,70 @@ export class ProjectSession extends Session<ProjectOperation> {
       case "paging":
         break;
     }
+  }
+
+  /**
+   * 移入回收站：桥那侧把文件送进系统回收站（INV-6），这里把行从名录摘掉。
+   * 正在搜索时重跑当前查询——与 add() 同一条刷新路，不各写一份。
+   */
+  removeDocument(path: string): Promise<void> {
+    const open = this.#state;
+    if (open.kind !== "open") return Promise.resolve();
+    return this.exclusive("delete-document", async () => {
+      const row = await this.#catalog.remove(open.project.rootId, path);
+      this.#removeRow(row.id);
+      return `已移入回收站：${path}`;
+    });
+  }
+
+  /** 一份资料下次派发时的可见范围（范围）。行就地换，下一次派发自然读到。 */
+  setDisclosure(path: string, disclosure: Disclosure): Promise<void> {
+    const open = this.#state;
+    if (open.kind !== "open") return Promise.resolve();
+    return this.exclusive("set-disclosure", async () => {
+      const row = await this.#catalog.setDisclosure(open.project.rootId, path, disclosure);
+      this.#replaceRow(row);
+      return null;
+    });
+  }
+
+  #removeRow(id: string): void {
+    const state = this.#state;
+    if (state.kind !== "open") return;
+    this.#set({
+      ...state,
+      project: {
+        ...state.project,
+        documents: state.project.documents.filter((row) => row.id !== id),
+        documentTotal: Math.max(0, state.project.documentTotal - 1),
+      },
+    });
+    switch (state.catalog.kind) {
+      case "waiting":
+      case "searching":
+      case "ready":
+      case "failed":
+        this.setQuery(state.catalog.query);
+        break;
+      case "idle":
+      case "paging":
+        break;
+    }
+  }
+
+  #replaceRow(row: DocumentRow): void {
+    const state = this.#state;
+    if (state.kind !== "open") return;
+    const swap = (rows: readonly DocumentRow[]): DocumentRow[] =>
+      rows.map((candidate) => (candidate.id === row.id ? row : candidate));
+    this.#set({
+      ...state,
+      project: { ...state.project, documents: swap(state.project.documents) },
+      catalog:
+        state.catalog.kind === "ready"
+          ? { ...state.catalog, documents: swap(state.catalog.documents) }
+          : state.catalog,
+    });
   }
 
   setQuery(rawQuery: string): void {

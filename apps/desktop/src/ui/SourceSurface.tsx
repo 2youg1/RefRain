@@ -9,7 +9,6 @@
 // worker 源码由调用方按自己的构建器取——这个应用用 Vite，所以是 `?raw`。
 import workerSource from "pdfjs-dist/build/pdf.worker.min.mjs?raw";
 import { createEffect, createSignal, For, type JSX, onCleanup, Show } from "solid-js";
-import { commands } from "../generated/bindings.gen";
 // PDF 渲染住在应用层，不在 `packages/editor` 里：`verify:typeset-purity` 要求
 // 那个包零外部依赖——它不知道自己跑在哪，「服务端跑一切」才成立。pdf.js 既是
 // 外部依赖，又要 `DOMMatrix` 与 `canvas`，两条都违背。

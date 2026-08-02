@@ -32,7 +32,11 @@ export function panelKey(reference: WorkbenchReference): string {
 export function canOpen(reference: WorkbenchReference, hasDocument: boolean): boolean {
   switch (reference.kind) {
     case "annotations":
+    case "history":
     case "source":
+      return hasDocument;
+    // 信箱按文档取世界（refresh(rootId, path)）：没有打开的文档，三格无单可管。
+    case "mailbox":
       return hasDocument;
     case "connections":
     case "settings":

@@ -44,6 +44,7 @@ interface Harness {
   calls: string[];
   setOutcome(outcome: PersistOutcome): void;
   setAnnotations(rows: AnnotationDto[]): void;
+  failUndo(error: unknown): void;
   settle(): void;
 }
 
@@ -53,6 +54,7 @@ function harness(): Harness {
   const calls: string[] = [];
   let outcome: PersistOutcome = { kind: "saved", value: { stamp: stamp("disk-2") } };
   let rows: AnnotationDto[] = [];
+  let undoFailure: unknown = null;
   let releaseComposition: (() => void) | null = null;
 
   const gateway: DocumentGateway = {
@@ -63,6 +65,13 @@ function harness(): Harness {
     async currentDocument() {
       calls.push("current");
       return { revision: "r2", blocks: [{ id: "b1", text: "Alpha edited" }] };
+    },
+    async undoEditorAction() {
+      calls.push("undo");
+      const failure = undoFailure;
+      undoFailure = null;
+      if (failure !== null) throw failure;
+      return { revision: "r0", actionId: "a0", touchedBlocks: ["b1"] };
     },
     async persistRevision() {
       calls.push("persist");
@@ -116,6 +125,9 @@ function harness(): Harness {
     },
     setAnnotations: (next) => {
       rows = next;
+    },
+    failUndo: (error) => {
+      undoFailure = error;
     },
     settle: () => {
       const release = releaseComposition;
@@ -258,5 +270,63 @@ describe("DocumentSession", () => {
     expect(h.session.hasUnsavedText()).toBe(false);
     h.session.markDirty();
     expect(h.session.hasUnsavedText()).toBe(true);
+  });
+
+  test("undo hands the transition to the caller's apply", async () => {
+    const h = harness();
+    h.session.useProject("root");
+    await h.session.open("a.md");
+    const applied: string[] = [];
+    await h.session.undo(async (transition) => {
+      applied.push(transition.revision);
+    });
+    expect(h.calls).toContain("undo");
+    expect(applied).toEqual(["r0"]);
+    expect(h.failures).toEqual([]);
+  });
+
+  test("undo on an empty history is a notice, not a failure", async () => {
+    const h = harness();
+    h.session.useProject("root");
+    await h.session.open("a.md");
+    h.failUndo({
+      code: "io",
+      action: "undo the last action",
+      subject: "a.md",
+      detail: "there is no Text Action to undo",
+      recovery: [],
+    });
+    let applied = false;
+    await h.session.undo(async () => {
+      applied = true;
+    });
+    expect(applied).toBe(false);
+    expect(h.notices.at(-1)).toBe("没有可撤销的一步。");
+    expect(h.failures).toEqual([]);
+  });
+
+  test("undo a step that carried verdicts is refused honestly", async () => {
+    const h = harness();
+    h.session.useProject("root");
+    await h.session.open("a.md");
+    h.failUndo({
+      code: "io",
+      action: "undo the last action",
+      subject: "a.md",
+      detail: "Text Action abc is not invertible: its verdicts are already ledger facts",
+      recovery: [],
+    });
+    await h.session.undo(async () => undefined);
+    expect(h.notices.at(-1)).toBe("那一步带着裁决记录，不能撤销。");
+    expect(h.failures).toEqual([]);
+  });
+
+  test("an unexpected undo error goes to the failure channel", async () => {
+    const h = harness();
+    h.session.useProject("root");
+    await h.session.open("a.md");
+    h.failUndo(new Error("disk gone"));
+    await h.session.undo(async () => undefined);
+    expect(h.failures.at(-1)).toContain("disk gone");
   });
 });
