@@ -91,6 +91,20 @@ pub fn read_material_clone(
     // The digest and extension both reach this function from a stored row, but
     // they still travel through a path join. Reject anything that could leave
     // the clone directory rather than trusting the caller.
+    //
+    // Which guard carries the load, measured by deleting each one:
+    //
+    // | deleted            | tests |
+    // |--------------------|-------|
+    // | this char check    | all 6 pass — the digest check catches it |
+    // | the digest check   | 1 fails |
+    // | both               | 2 fail, including the traversal case |
+    //
+    // So the digest comparison below is the load-bearing guard: a traversal
+    // path reaches some other file, and that file does not hash to the name
+    // that was asked for. This check is defence in depth — it refuses the
+    // attempt before any read happens. Delete neither; if a future reader
+    // trims one for cost, this table says which one costs correctness.
     let safe = |value: &str| {
         !value.is_empty()
             && value
