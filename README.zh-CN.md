@@ -22,16 +22,6 @@
 
 RefRain 取第三种立场：**智能体提议，你裁决，而谁裁决了什么本身就是文稿的一部分。**
 
-<p align="center">
-  <img src="docs/images/composer.png" alt="发送台：一层半透明表面浮在正文之上" width="720">
-</p>
-<p align="center">
-  <img src="docs/images/rail-and-menu.png" alt="侧栏与发送信箱，以及两分区的右键工作区" width="720">
-</p>
-<p align="center">
-  <img src="docs/images/kara.png" alt="KARA：屏幕顶部 20% 的渐透明滤镜" width="720">
-</p>
-
 ## 怎么运作
 
 你圈定智能体能看到的段落。RefRain 把这些字节原样冻结成一份请求——所选段落逐字、

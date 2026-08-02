@@ -12,15 +12,20 @@ const BODY_CEILING = 200;
  */
 const BODY_DEBT: Readonly<Record<string, number>> = {
   // Shell composition; lifecycle, command mapping, and domain rules live in dedicated modules.
-  // 596：原件面板（PDF 只读渲染）接线。**这是这条棘轮第一次上调**，所有者
-  // 明确批准。上调的部分已经压到最小：面板本身的接线在模块级的
-  // `SourceReference` 里（模块级函数不计入组件体），留在组件体内的只有无法
-  // 外移的三处——命令目录多一个 `hasImportedSource` 判据、一个
-  // `readSourceBytes` 绑定、以及把面板挂进舞台行。
+  //
+  // 这条棘轮上调过两次，两次都由所有者明确批准，两次都先做减法再上调：
+  //
+  // - 596（原件面板，PDF 只读渲染）：面板接线放进模块级的 `SourceReference`，
+  //   留在组件体内的只有无法外移的三处——命令目录多一个 `hasImportedSource`
+  //   判据、一个 `readSourceBytes` 绑定、以及把面板挂进舞台行。
+  // - 602（搜索命中面板）：`revealBlock`（跳到命中的那一块：序号越界、重挂
+  //   时序、宿主按需取）提成模块级函数，组件体先从 613 降到 602；剩下的 6 行
+  //   是 `RailNav` 两个 prop 声明、`<SearchHits>` 五行挂载、`searchHits` memo
+  //   四行、两个调用点各一行。
   //
   // 记下这个数字的意义不变：它仍然只许下调。Workbench 拆分是既定重构，
   // 那次落地时这一行应当大幅回落而不是继续抬。
-  "Workbench.tsx": 596,
+  "Workbench.tsx": 602,
   // Typography preview reads the same CSS variables as the manuscript.
   "TypographyPanel.tsx": 478,
   "DispatchSurface.tsx": 304,
