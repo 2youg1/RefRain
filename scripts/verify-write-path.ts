@@ -26,6 +26,13 @@ import { collect } from "./gate-lib.ts";
  */
 const AUTHORISED = ["apply_editor_action", "commit_decision_batch", "persist_revision"] as const;
 
+/*
+ * Root 之外的唯一写路径：install_skill 把生成的协议写进 harness 的 skill 目录
+ * （~/.kimi-code/skills/、~/.claude/skills/）。它只在作者点击时发生，永远不碰
+ * 手稿字节，因此不属于本门的命题范围——记在这里是因为「Root 之外零写入」
+ * 曾经是默认事实，从它开始不再是了。
+ */
+
 const files = collect(["apps/desktop/src-tauri/src/**/*.rs"]);
 if (files.length === 0) {
   console.error(

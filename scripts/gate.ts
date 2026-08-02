@@ -101,6 +101,9 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["verify:release-version", ["bun", "scripts/verify-release-version.ts"]],
   ["verify:release-workflow", ["bun", "scripts/verify-release-workflow.ts"]],
   ["verify:gates-run", ["bun", "scripts/verify-gates-run.ts"]],
+  // 壳层接线的行为探针：真 Workbench、真点击、真浏览器——unit 与 wiring 测试
+  // 都证不了 Solid 真的重渲染。需要浏览器，所以归 headless evidence。
+  ["probe:shell-wiring", ["bun", "apps/desktop/e2e/probe-shell-wiring.ts"]],
 ];
 
 const headlessEvidence = new Set([
@@ -119,6 +122,8 @@ const headlessEvidence = new Set([
   // 侧栏缩进量的是渲染结果，所以它要一台浏览器和一个跑着的 dev server。
   "verify:rail-indent",
   "verify:chrome-reveal",
+  // 壳层接线断的是真浏览器里的真点击，数据层与源码钉都测不到它。
+  "probe:shell-wiring",
 ]);
 const performanceEvidence = new Set([
   "verify:project-performance",

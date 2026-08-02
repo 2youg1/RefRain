@@ -62,7 +62,6 @@ import {
   lineStarts,
   measure,
   optimizedLineStarts,
-  presetOf,
   widthEm,
   ZH_HANS,
   ZH_HANT,

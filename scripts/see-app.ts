@@ -200,7 +200,7 @@ for (const scene of SCENES) {
   findings.push({ scene: scene.name, shot, ...measure, problems });
   console.log(`\n=== ${scene.name} → ${shot}`);
   console.log(JSON.stringify(measure, null, 1));
-  if (problems.length) console.log("PROBLEMS:\n" + problems.join("\n"));
+  if (problems.length) console.log(`PROBLEMS:\n${problems.join("\n")}`);
   await context.close();
 }
 

@@ -61,7 +61,7 @@ const fonts = await page.evaluate(() => {
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, 64, 64);
     ctx.fillStyle = "#000";
-    ctx.font = "48px var(--font-cjk, serif)";
+    ctx.font = `48px ${family}`;
     ctx.textBaseline = "top";
     ctx.fillText("稿", 4, 4);
     return c.toDataURL().slice(-64);

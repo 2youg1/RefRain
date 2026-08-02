@@ -66,8 +66,18 @@ shared Han characters by priority rather than by accident.
 Typography is under your control — weight, letter and word spacing, measure,
 indent, paragraph spacing, alignment, baseline grid, display scale — with
 presets for Chinese, Japanese and English, and room for your own. Fenced code is
-syntax-highlighted across eight languages and six palettes, all embedded at
-build time so that highlighting never reaches the network.
+syntax-highlighted across thirty-four languages and six palettes, all embedded
+at build time so that highlighting never reaches the network.
+
+Editing is reversible. Ctrl+Z undoes the last step, and a history panel beside
+the manuscript can roll back to any earlier step — the record survives restarts.
+An agent's merged proposal is reversed differently: from the mailbox, as a
+countermanding verdict that is itself recorded, never by erasing the ledger.
+
+Markdown is not the only editable format. LaTeX, TypeScript, Rust, Python, Go,
+Lean 4, CSS, HTML, XML, TOML and YAML open, edit and save back byte-for-byte as
+plain text — with the embedded highlighter picking the grammar by extension,
+and no Markdown machinery touching the source.
 
 Markdown renders in place rather than in a preview pane beside your text.
 Lines are broken by RefRain rather than by the browser, so a full-width
@@ -95,8 +105,12 @@ next.
 
 ### Working with agents
 
-Local harnesses are discovered and connected without you knowing a path. You can
-dispatch a work order straight from an annotation.
+Local harnesses are discovered and connected without you knowing a path. One
+click installs RefRain's generated protocol into the harness's skill directory
+— later rounds then carry a one-line pointer instead of the whole contract.
+Each agent works in a persistent workspace of its own, with its identity loaded
+from AGENTS.md and a Memo it maintains between rounds. You can dispatch a work
+order straight from an annotation.
 
 Several agents can work one round together: independent **alternates** answering
 the same question, **follows** that read an upstream result, or one agent that

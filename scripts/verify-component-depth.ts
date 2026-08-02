@@ -25,11 +25,16 @@ const BODY_DEBT: Readonly<Record<string, number>> = {
   //
   // 记下这个数字的意义不变：它仍然只许下调。Workbench 拆分是既定重构，
   // 那次落地时这一行应当大幅回落而不是继续抬。
-  "Workbench.tsx": 602,
+  // 602 → 593（历史面板）：新面板的全部状态收进模块级 createHistoryState，
+  // 命令面板的 executeCommand 同时提成模块级工厂——加了一个功能，组件体
+  // 反而小了九行。
+  "Workbench.tsx": 593,
   // Typography preview reads the same CSS variables as the manuscript.
-  "TypographyPanel.tsx": 478,
+  // 478 → 437：九根原生 range 换成一根模块级 NumberSlider（拖柄、数值输入、
+  // 键盘微调都在它身上），组件体里每根滑杆只剩一段属性。
+  "TypographyPanel.tsx": 437,
   "DispatchSurface.tsx": 304,
-  "ConnectionsSurface.tsx": 239,
+  "ConnectionsSurface.tsx": 232,
   // Stale-proposal decisions and presentation live outside this composition surface.
   "ReviewSurface.tsx": 253,
   // 216：设置搜索接进界面的同时，分类标签栏也提成了模块级组件。加了一个功能

@@ -88,6 +88,7 @@
     "verify:release-version": "bun scripts/verify-release-version.ts",
     "verify:release-workflow": "bun scripts/verify-release-workflow.ts",
     "verify:gates-run": "bun scripts/verify-gates-run.ts",
+    "probe:shell-wiring": "bun apps/desktop/e2e/probe-shell-wiring.ts",
     "make:icon": "bun scripts/make-app-icon.ts",
     "e2e:app": "bun apps/desktop/e2e/writing-slice.ts target/debug/refrain-desktop.exe",
     "e2e:review": "bun apps/desktop/e2e/review-loop.ts target/debug/refrain-desktop.exe",

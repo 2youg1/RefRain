@@ -98,7 +98,11 @@ for (const file of files) {
 // 15：新增 `searchHits`（搜索命中的块，带文本）。已确认确实需要 tick——读的是
 // ProjectSession 这个 framework-free 会话，与 `activityLine`/`projectBusy`
 // 同形并共享 projectTick，不是把一个已经响应式的值多包一层。
-const EXPECTED_SUBSCRIBING_MEMOS = 15;
+// 16：新增历史面板的 `view`（createHistoryState 内）。已确认确实需要 tick——
+// HistorySession 是 framework-free 的会话，与另外六个同形；它自己的
+// sourceTick 负责「文档/项目变了就同步」，不借用既有的 documentTick，
+// 两个订阅各自成对。
+const EXPECTED_SUBSCRIBING_MEMOS = 16;
 if (subscribingMemos !== EXPECTED_SUBSCRIBING_MEMOS) {
   failures.push(
     subscribingMemos < EXPECTED_SUBSCRIBING_MEMOS

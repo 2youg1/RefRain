@@ -62,12 +62,12 @@ be true everywhere.
 
 | Crate | Modules | Lines | Owns |
 |---|---:|---:|---|
-| `refrain-core` | 27 | 7,862 | The domain: manuscripts, blocks, the agent protocol, ranking |
-| `refrain-store` | 25 | 10,009 | SQLite, the file catalogue, ingestion, search indexes |
-| `refrain-host` | 6 | 3,579 | Agents, Runs, orchestration edges, staging |
-| `refrain-app` | 7 | 1,273 | Use cases that need more than one of the above |
-| `apps/desktop/src-tauri` | — | 4,169 | The command bridge |
-| `apps/desktop/src`, `packages/editor` | — | 12,679 | The surface |
+| `refrain-core` | 29 | 9,664 | The domain: manuscripts, blocks, document formats, the agent protocol, ranking |
+| `refrain-store` | 22 | 8,294 | SQLite, the file catalogue, ingestion, search indexes, action history |
+| `refrain-host` | 6 | 4,242 | Agents, Runs, orchestration edges, staging, harness adapters |
+| `refrain-app` | 8 | 1,464 | Use cases that need more than one of the above |
+| `apps/desktop/src-tauri` | — | 5,290 | The command bridge |
+| `apps/desktop/src`, `packages/editor`, `packages/typeset` | — | 20,988 | The surface |
 
 ---
 
@@ -143,7 +143,8 @@ Use these words. SPEC §2 requires one word per concept, and
 |---|---|
 | **Root** | A folder or single file the author adopted. The unit of "a project". |
 | **Source Backup** | `.refrain-source/`. The files as they were at adoption. Never written. |
-| **Document** | One Markdown file the author is writing. The `.md` on disk is the only original. |
+| **Document** | One text file the author is writing — Markdown prose or a plain-text format (code, markup, configuration). The file on disk is the only original. |
+| **DocumentFormat** | What a document's bytes are: Markdown or one of the plain-text formats. Decided once from the extension; it picks the block scan, the index preprocessing and the highlighting grammar. |
 | **Block** | One structural unit of a document — a paragraph, heading, list, table, fence. Boundaries come from a byte-level scanner; that scanner is the sole authority. |
 | **Ordinal** | A block's position within its document. What an agent quotes to fetch it. |
 | **Revision** | A document's version counter. A proposal names the revision it was written against. |

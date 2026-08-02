@@ -21,12 +21,14 @@ const ERROR_CEILING = 0;
  * ceilings, which the gate enforces by failing on a stale entry.
  */
 const DEBT: Readonly<Record<string, { readonly lines: number; readonly errors: number }>> = {
-  commit_decision_batch: { lines: 30, errors: 1 },
+  commit_decision_batch: { lines: 22, errors: 1 },
   cancel_run: { lines: 60, errors: 3 },
   upsert_annotation: { lines: 76, errors: 5 },
   inject_fixture_proposal: { lines: 71, errors: 4 },
-  list_harnesses: { lines: 66, errors: 2 },
-  upsert_agent: { lines: 62, errors: 5 },
+  // 67：skillStatus 实况计算一行（协议装载的徽章是读文件不是读配置）。
+  list_harnesses: { lines: 67, errors: 2 },
+  // 65：argv 参+denylist 校验+AgentDto.argv 字段（协议装载的启动参数覆盖）。
+  upsert_agent: { lines: 65, errors: 5 },
   // 63：编排的边。两行——解构里一行，命令构造里一行 DTO→领域的翻译。
   // 试过把翻译收进 `AuthorizeDispatchRequest` 自己（`update_preferences`
   // 走的就是这条路），结果是 61→64：解构必须先取值再消耗 request，多出的
@@ -36,9 +38,11 @@ const DEBT: Readonly<Record<string, { readonly lines: number; readonly errors: n
   // 24：DTO→领域的翻译搬进 `PreferencesChangeDto::into_change`。它本来就是
   // DTO 自己的事，留在命令体里只是让「加一个偏好」看起来像在动装配层。
   update_preferences: { lines: 24, errors: 2 },
-  list_agents: { lines: 55, errors: 0 },
-  apply_editor_action: { lines: 53, errors: 3 },
-  upsert_harness_connection: { lines: 45, errors: 4 },
+  // 57：AgentDto.argv 两行（同 skillStatus，徽章类字段是读的代价）。
+  list_agents: { lines: 57, errors: 0 },
+  apply_editor_action: { lines: 45, errors: 3 },
+  // 48：重连时保留 skill_digest 安装记录三行（已尽力压，再压就要藏进辅助函数）。
+  upsert_harness_connection: { lines: 48, errors: 4 },
   probe_connection: { lines: 42, errors: 4 },
   record_verdict: { lines: 41, errors: 1 },
   commit_material_action: { lines: 28, errors: 0 },

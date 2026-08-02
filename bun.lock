@@ -20,7 +20,7 @@
     },
     "apps/desktop": {
       "name": "@refrain/desktop",
-      "version": "0.2.3",
+      "version": "0.2.4",
       "dependencies": {
         "@refrain/editor": "workspace:*",
         "@tauri-apps/api": "2.11.1",
@@ -35,15 +35,14 @@
     },
     "packages/editor": {
       "name": "@refrain/editor",
-      "version": "0.2.3",
+      "version": "0.2.4",
       "dependencies": {
         "@refrain/typeset": "workspace:*",
-        "pdfjs-dist": "6.2.108",
       },
     },
     "packages/typeset": {
       "name": "@refrain/typeset",
-      "version": "0.2.3",
+      "version": "0.2.4",
     },
   },
   "packages": {
