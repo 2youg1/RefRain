@@ -27,7 +27,7 @@
 //! human can check. An `Id` would be none of those.
 
 use crate::block_shape::{BlockKind, BlockShape};
-use crate::source_layout::SourceLayout;
+use crate::source_layout::BlockScan;
 
 /// The largest ordinal this module will number.
 ///
@@ -69,11 +69,15 @@ pub struct SearchableBlock<'source> {
 /// Blocks that hold no text after trimming are dropped rather than numbered:
 /// they match nothing, rank nowhere, and would spend an index row each. The
 /// ordinal still counts them, because it is a position in the document's
-/// block sequence — the same sequence the editor and `SourceLayout` use — and
+/// block sequence — the same sequence the editor and the layout use — and
 /// a numbering that skipped them would disagree with both.
+///
+/// `scan` divides the bytes. Under the plain scan a block's kind is always
+/// `Paragraph`: a `#` or a fence marker in code is text, never structure, so
+/// the Markdown classifier is not asked.
 #[must_use]
-pub fn blocks_of(source: &str) -> Vec<SearchableBlock<'_>> {
-    let layout = SourceLayout::read(source.as_bytes());
+pub fn blocks_of(source: &str, scan: BlockScan) -> Vec<SearchableBlock<'_>> {
+    let layout = scan.layout(source.as_bytes());
     layout
         .blocks()
         .iter()
@@ -88,9 +92,13 @@ pub fn blocks_of(source: &str) -> Vec<SearchableBlock<'_>> {
             if text.trim().is_empty() {
                 return None;
             }
+            let kind = match scan {
+                BlockScan::Markdown => BlockShape::of(text).kind,
+                BlockScan::Plain => BlockKind::Paragraph,
+            };
             Some(SearchableBlock {
                 ordinal: u32::try_from(ordinal).ok()?,
-                kind: BlockShape::of(text).kind,
+                kind,
                 text,
                 start: span.start,
             })
@@ -104,8 +112,8 @@ pub fn blocks_of(source: &str) -> Vec<SearchableBlock<'_>> {
 /// agent citing a block from a document the author has since shortened will
 /// produce, and the caller must be able to tell that from an empty block.
 #[must_use]
-pub fn block_at(source: &str, ordinal: u32) -> Option<SearchableBlock<'_>> {
-    blocks_of(source)
+pub fn block_at(source: &str, ordinal: u32, scan: BlockScan) -> Option<SearchableBlock<'_>> {
+    blocks_of(source, scan)
         .into_iter()
         .find(|block| block.ordinal == ordinal)
 }
@@ -119,7 +127,7 @@ mod tests {
 
     #[test]
     fn a_document_yields_its_blocks_in_source_order_with_their_kinds() {
-        let blocks = blocks_of(SAMPLE);
+        let blocks = blocks_of(SAMPLE, BlockScan::Markdown);
         let kinds: Vec<BlockKind> = blocks.iter().map(|block| block.kind).collect();
         assert_eq!(
             kinds,
@@ -140,8 +148,9 @@ mod tests {
     /// the text the index saw — this is judgement 1-3's core claim.
     #[test]
     fn an_ordinal_seeks_to_the_bytes_the_index_read() {
-        for block in blocks_of(SAMPLE) {
-            let fetched = block_at(SAMPLE, block.ordinal).expect("block still there");
+        for block in blocks_of(SAMPLE, BlockScan::Markdown) {
+            let fetched =
+                block_at(SAMPLE, block.ordinal, BlockScan::Markdown).expect("block still there");
             assert_eq!(fetched.text, block.text);
             assert_eq!(
                 &SAMPLE[fetched.start..fetched.start + fetched.text.len()],
@@ -152,7 +161,7 @@ mod tests {
 
     #[test]
     fn an_ordinal_past_the_end_is_absent_not_empty() {
-        assert!(block_at(SAMPLE, 99).is_none());
+        assert!(block_at(SAMPLE, 99, BlockScan::Markdown).is_none());
     }
 
     /// A fence holding a blank line stays one block: the boundary authority
@@ -160,7 +169,7 @@ mod tests {
     #[test]
     fn a_blank_line_inside_a_fence_does_not_split_the_block() {
         let source = "```\nfirst\n\nsecond\n```";
-        let blocks = blocks_of(source);
+        let blocks = blocks_of(source, BlockScan::Markdown);
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].kind, BlockKind::Fence);
         assert!(blocks[0].text.contains("first"));
@@ -169,8 +178,8 @@ mod tests {
 
     #[test]
     fn an_empty_document_has_no_blocks() {
-        assert!(blocks_of("").is_empty());
-        assert!(blocks_of("\n\n   \n").is_empty());
+        assert!(blocks_of("", BlockScan::Markdown).is_empty());
+        assert!(blocks_of("\n\n   \n", BlockScan::Markdown).is_empty());
     }
 
     /// Astral characters and CJK must not shift a block's byte offsets: the
@@ -178,9 +187,51 @@ mod tests {
     #[test]
     fn offsets_survive_multibyte_text() {
         let source = "第一段🎈的正文。\n\n第二段。";
-        let blocks = blocks_of(source);
+        let blocks = blocks_of(source, BlockScan::Markdown);
         assert_eq!(blocks.len(), 2);
         for block in &blocks {
+            assert_eq!(
+                &source[block.start..block.start + block.text.len()],
+                block.text
+            );
+        }
+    }
+
+    /// Plain text never splits on Markdown structure: a fence marker, a
+    /// heading hash and a table row are text. Every line is a block, empty
+    /// lines included in the ordinals though not in the index.
+    #[test]
+    fn the_plain_scan_keeps_markdown_punctuation_literal() {
+        let source = "# not a heading\n\n```\n| a | b |\n|---|---|\n\n**bold** tail";
+        let blocks = blocks_of(source, BlockScan::Plain);
+        let texts: Vec<&str> = blocks.iter().map(|block| block.text).collect();
+        assert_eq!(
+            texts,
+            vec![
+                "# not a heading",
+                "```",
+                "| a | b |",
+                "|---|---|",
+                "**bold** tail"
+            ]
+        );
+        assert!(
+            blocks
+                .iter()
+                .all(|block| block.kind == BlockKind::Paragraph)
+        );
+        // The empty lines are ordinals too: block 1 and 5 exist but carry no
+        // text, so they never reach the index.
+        let ordinals: Vec<u32> = blocks.iter().map(|block| block.ordinal).collect();
+        assert_eq!(ordinals, vec![0, 2, 3, 4, 6]);
+    }
+
+    /// The plain scan's offsets are byte offsets into the same source, so a
+    /// search hit lands the caret exactly where the line starts.
+    #[test]
+    fn plain_offsets_seek_to_the_same_bytes() {
+        let source = "fn main() {\n    let x = 1;\n}\n";
+        for block in blocks_of(source, BlockScan::Plain) {
             assert_eq!(
                 &source[block.start..block.start + block.text.len()],
                 block.text

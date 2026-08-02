@@ -138,6 +138,26 @@ const MAX_DEPTH: usize = 8;
 const ROOT_OPEN: &str = "<agent-result";
 const ROOT_CLOSE: &str = "</agent-result>";
 
+/// 打印通道的 CLI 爱在产出前叙述一句（「我先读协议。」）。契约对元素外的
+/// 文字仍然零容忍——但叙述不携带任何权威：裁掉它不等于采信它，取出的元素
+/// 仍要过 `parse` 的每一项校验（scope、版本、嵌套、冻结字节）。
+///
+/// 只在恰好一个根元素时裁剪：找不到是 `missing-root`，出现第二个开标签说明
+/// 产出形状已坏——两种情况都不裁，让 `parse` 的原拒绝原样成立。
+pub fn extract_single_root(bytes: &[u8]) -> Option<&[u8]> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let open = text.find(ROOT_OPEN)?;
+    // ROOT_OPEN/ROOT_CLOSE 都是 ASCII：str::find 给的字节下标可以直接切 bytes。
+    if text[open + ROOT_OPEN.len()..].contains(ROOT_OPEN) {
+        return None;
+    }
+    let close = text.rfind(ROOT_CLOSE)?;
+    if close < open {
+        return None;
+    }
+    Some(&bytes[open..close + ROOT_CLOSE.len()])
+}
+
 /// Parse and verify an artifact. The reply section is taken from `# Agent
 /// reply` when the full request file is presented; the whole input is
 /// otherwise treated as the reply.
@@ -657,6 +677,28 @@ mod tests {
         );
     }
 
+    /// 打印通道的开场白：恰好一个根元素时裁剪成立，裁出的元素照常过 parse；
+    /// 零个、两个、未闭合的根都不裁。
+    #[test]
+    fn extract_single_root_trims_only_a_single_well_formed_root() {
+        let narrated = "我先读协议。<agent-result version=\"2\"><replacement scope=\"s1\"><![CDATA[甲]]></replacement></agent-result>收工。";
+        let span = extract_single_root(narrated.as_bytes()).expect("single root is extracted");
+        let artifact = parse(span, &contract()).expect("the extracted element parses");
+        assert_eq!(artifact.replacements.len(), 1);
+
+        let two_roots = "<agent-result version=\"2\"></agent-result><agent-result version=\"2\"></agent-result>";
+        assert!(extract_single_root(two_roots.as_bytes()).is_none());
+        assert!(extract_single_root(b"no element here").is_none());
+        assert!(extract_single_root(b"<agent-result version=\"2\">").is_none());
+        // 裁剪后再过 parse：零修改空间——span 里的元素仍被逐项校验。
+        let bad_scope = "叙述<agent-result version=\"2\"><replacement scope=\"nope\">x</replacement></agent-result>";
+        let span = extract_single_root(bad_scope.as_bytes()).expect("extracted");
+        assert_eq!(
+            parse(span, &contract()).unwrap_err().code,
+            ArtifactErrorCode::UnknownScope
+        );
+    }
+
     /// The one untrusted input this parser exists to survive: every truncation
     /// and mutation returns inside the budget, none loops.
     #[test]
@@ -711,14 +753,28 @@ pub fn skill_doc() -> String {
 ```
 作者的 .md 文件            ← 唯一正本。你改的是它的 scope
   ├─ .refrain/            ← 应用状态。你的请求与产出在这里
-  │    └─ <workspace>/
-  │         ├─ request.md    ← 发给你的请求
-  │         └─ result.md     ← 你写产出到这里
+  │    └─ agents/<agent-id>/       ← 你的工作区，跨轮持久
+  │         ├─ AGENTS.md           ← 应用生成的身份（含协议指针）
+  │         ├─ Memo.md             ← 你的记忆，自己维护
+  │         └─ runs/<run-id>/      ← 一轮一个目录
+  │              ├─ request.md     ← 发给你的请求
+  │              └─ result.md      ← 你写产出到这里
   └─ .refrain-source/     ← 备份原件。永不写入，也不要读它作依据
 ```
 
 **改写依据只用 `# Before` 里的原文。** 那是应用从正本取的当前字节。
 不要去读 `.refrain-source/`：它是旧副本，与正本可能已不同。
+
+## Memo.md
+
+Memo.md 在你的工作区根（`agents/<agent-id>/`，与 AGENTS.md 并排），
+跨轮存活。应用不读它、不改它——它是你写给自己的。
+
+- **动工前**：Memo.md 存在就先全文读它。那是你上一轮留下的记忆，
+  请求里不会重复。
+- **收工前**：更新它。写下一轮需要知道的事：作者的偏好、已定的决定、
+  做到了哪里。写打开手稿看不到的事。
+
 
 ## 请求结构
 

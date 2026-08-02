@@ -7,6 +7,7 @@
 
 use refrain_core::block_shape::BlockKind;
 use refrain_core::chinese_index::Precision;
+use refrain_core::material_listing::Disclosure;
 use refrain_core::search_rank::{Candidate, PathMatch, rank_top};
 use refrain_core::{DocumentRole, ErrorCode, Id, RefrainError, digest};
 use rusqlite::{OptionalExtension, params};
@@ -112,6 +113,10 @@ pub struct DocumentRow {
     pub source_digest: Option<String>,
     /// The imported file's format, which completes the clone's filename.
     pub source_format: Option<String>,
+    /// What the author permits for this document when it rides as a material.
+    /// `None` is "never asked": the readers treat it as the enum's default,
+    /// which is exactly what a pre-v11 row means.
+    pub disclosure: Option<Disclosure>,
 }
 
 /// One `documents` row as SQLite hands it over, before the id and role are
@@ -130,6 +135,7 @@ pub(super) struct StoredDocument {
     head_block_ids: Option<String>,
     source_digest: Option<String>,
     source_format: Option<String>,
+    disclosure: Option<String>,
 }
 
 pub(super) fn stored_document(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredDocument> {
@@ -142,6 +148,7 @@ pub(super) fn stored_document(row: &rusqlite::Row<'_>) -> rusqlite::Result<Store
         head_block_ids: row.get(5)?,
         source_digest: row.get(6)?,
         source_format: row.get(7)?,
+        disclosure: row.get(8)?,
     })
 }
 
@@ -155,6 +162,7 @@ pub(super) fn decode_document(stored: StoredDocument) -> Result<DocumentRow, Ref
         head_block_ids,
         source_digest,
         source_format,
+        disclosure,
     } = stored;
     let id = id
         .parse::<uuid::Uuid>()
@@ -166,6 +174,14 @@ pub(super) fn decode_document(stored: StoredDocument) -> Result<DocumentRow, Ref
     let role = DocumentRole::from_wire(&role).ok_or_else(|| {
         RefrainError::new(ErrorCode::StateUnavailable, "read a document role", &path)
     })?;
+    let disclosure = disclosure
+        .as_deref()
+        .map(|value| {
+            Disclosure::from_wire(value).ok_or_else(|| {
+                RefrainError::new(ErrorCode::StateUnavailable, "read a disclosure", &path)
+            })
+        })
+        .transpose()?;
     Ok(DocumentRow {
         id,
         path,
@@ -175,6 +191,7 @@ pub(super) fn decode_document(stored: StoredDocument) -> Result<DocumentRow, Ref
         head_block_ids,
         source_digest,
         source_format,
+        disclosure,
     })
 }
 
@@ -467,7 +484,7 @@ impl ProjectStore {
         let mut statement = self
             .db
             .prepare(
-                "SELECT id, path, role, digest, current_head, head_block_ids, source_digest, source_format
+                "SELECT id, path, role, digest, current_head, head_block_ids, source_digest, source_format, disclosure
                  FROM documents ORDER BY path",
             )
             .map_err(|error| {
@@ -519,7 +536,7 @@ impl ProjectStore {
         let mut statement = self
             .db
             .prepare(
-                "SELECT id, path, role, digest, current_head, head_block_ids, source_digest, source_format
+                "SELECT id, path, role, digest, current_head, head_block_ids, source_digest, source_format, disclosure
                  FROM documents
                  WHERE (?1 IS NULL OR path > ?1)
                  ORDER BY path
@@ -578,6 +595,11 @@ impl ProjectStore {
     /// takes documents holding any part. The two answer different questions —
     /// remembering the words versus remembering only the sense.
     ///
+    /// An exact pass that finds nothing is retried loose: the same widening
+    /// `search_documents` performs, because an empty result reads as "you
+    /// never wrote that" when the author only misremembered. A caller that
+    /// passes `Loose` has already widened; nothing follows it.
+    ///
     /// Documents the index has not yet seen are simply absent, which is why
     /// `reindex` hangs off `register`: an author searches for what they wrote,
     /// and they wrote it through the paths that register.
@@ -606,12 +628,13 @@ impl ProjectStore {
         // Retrieve wider than the author will see. Ranking reorders, so cutting
         // at `wanted` here would let bm25 decide which documents ranking never
         // gets to consider — the exact ordering this layering exists to undo.
-        let hits = super::search::search_with(
-            &self.db,
-            query,
-            precision,
-            wanted.saturating_mul(4).max(wanted),
-        )?;
+        let widened = wanted.saturating_mul(4).max(wanted);
+        let hits = super::search::search_with(&self.db, query, precision, widened)?;
+        let hits = if hits.is_empty() && precision == Precision::Exact {
+            super::search::search_with(&self.db, query, Precision::Loose, widened)?
+        } else {
+            hits
+        };
         if hits.is_empty() {
             return Ok(Vec::new());
         }
@@ -667,6 +690,10 @@ impl ProjectStore {
     /// holds offsets precisely so it does not become a second copy of the
     /// manuscript: a copy would be stale the moment the author typed, and a
     /// stale excerpt shown as a search result is worse than no excerpt.
+    ///
+    /// An exact pass that finds nothing is retried loose, the same widening
+    /// `search_documents` performs; a caller that passes `Loose` has already
+    /// widened, and nothing follows it.
     pub fn search_blocks_with(
         &mut self,
         query: &str,
@@ -688,6 +715,11 @@ impl ProjectStore {
         self.ensure_indexed()?;
         let wanted = limit.min(MAX_DOCUMENT_SEARCH_RESULTS);
         let hits = super::search::search_with(&self.db, query, precision, wanted)?;
+        let hits = if hits.is_empty() && precision == Precision::Exact {
+            super::search::search_with(&self.db, query, Precision::Loose, wanted)?
+        } else {
+            hits
+        };
         if hits.is_empty() {
             return Ok(Vec::new());
         }
@@ -792,7 +824,7 @@ impl ProjectStore {
         let mut statement = self
             .db
             .prepare(
-                "SELECT id, path, role, digest, current_head, head_block_ids, source_digest, source_format
+                "SELECT id, path, role, digest, current_head, head_block_ids, source_digest, source_format, disclosure
                  FROM documents WHERE path = ?1",
             )
             .map_err(|error| {

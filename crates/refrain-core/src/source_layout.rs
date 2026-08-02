@@ -27,6 +27,47 @@ pub struct SourceLayout {
 #[error("source bytes differ from the layout digest")]
 pub struct SourceDrift;
 
+/// How a document's bytes divide into blocks.
+///
+/// The scanner is chosen at the call site from the document's
+/// [`crate::document_format::DocumentFormat`]; this module never decides.
+/// Keeping the choice outside the scanner is what keeps the Markdown scanner
+/// the sole authority on Markdown blocks: the plain-text scanner is a second
+/// function, not a second grammar inside the first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockScan {
+    /// Markdown structure: blank lines separate blocks, and a fenced code
+    /// block holds the blank lines inside it.
+    Markdown,
+    /// Plain text: every line is a block. Nothing is structural — a `#`, a
+    /// fence marker and a table row are text, never structure.
+    Plain,
+}
+
+impl BlockScan {
+    /// Measure block intervals by this scan's rule.
+    #[must_use]
+    pub fn layout(self, source: &[u8]) -> SourceLayout {
+        match self {
+            Self::Markdown => SourceLayout::read(source),
+            Self::Plain => SourceLayout::read_plain(source),
+        }
+    }
+
+    /// The bytes written between two freshly minted blocks.
+    ///
+    /// Untouched gaps never go through here: they are reproduced from the
+    /// source verbatim. This separator is only what an edit *adds* — a new
+    /// paragraph in prose, a new line in plain text.
+    #[must_use]
+    pub fn separator(self) -> &'static [u8] {
+        match self {
+            Self::Markdown => b"\n\n",
+            Self::Plain => b"\n",
+        }
+    }
+}
+
 impl SourceLayout {
     /// Measures block intervals without decoding or normalising the source.
     #[must_use]
@@ -34,6 +75,15 @@ impl SourceLayout {
         Self {
             digest: content_bytes(source),
             blocks: block_spans(source).into_boxed_slice(),
+        }
+    }
+
+    /// Measures plain-text block intervals: one block per line, no structure.
+    #[must_use]
+    pub fn read_plain(source: &[u8]) -> Self {
+        Self {
+            digest: content_bytes(source),
+            blocks: plain_block_spans(source).into_boxed_slice(),
         }
     }
 
@@ -121,6 +171,36 @@ fn block_spans(source: &[u8]) -> Vec<ByteSpan> {
             start,
             end: block_end,
         });
+    }
+    spans
+}
+
+/// Every line one block, including empty lines.
+///
+/// A block holds no line ending and no `\r`; those bytes stay in the gaps
+/// and reproduce verbatim. A source that ends with a newline has an empty
+/// last line, and that line is a block the author can type into — the shape
+/// every plain-text editor shows. The empty source scans as one empty block
+/// for the same reason.
+fn plain_block_spans(source: &[u8]) -> Vec<ByteSpan> {
+    let mut spans = Vec::new();
+    let mut cursor = 0;
+    loop {
+        let newline = memchr::memchr(b'\n', &source[cursor..]).map(|offset| cursor + offset);
+        let line_end = newline.unwrap_or(source.len());
+        let content_end = if line_end > cursor && source[line_end - 1] == b'\r' {
+            line_end - 1
+        } else {
+            line_end
+        };
+        spans.push(ByteSpan {
+            start: cursor,
+            end: content_end,
+        });
+        let Some(newline) = newline else {
+            break;
+        };
+        cursor = newline + 1;
     }
     spans
 }

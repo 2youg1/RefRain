@@ -39,6 +39,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::block_shape::BlockKind;
+use crate::document_format::DocumentFormat;
 use crate::role::DocumentRole;
 use crate::searchable_block::blocks_of;
 
@@ -73,6 +74,19 @@ impl Disclosure {
             Self::OutlineOnly => "outline-only",
             Self::Retrievable => "retrievable",
             Self::Full => "full",
+        }
+    }
+
+    /// The stored spelling back into the enum. An unknown value answers
+    /// `None` rather than a default: a damaged row must be refused by the
+    /// reader, not quietly widened into a reach the author never gave.
+    #[must_use]
+    pub fn from_wire(value: &str) -> Option<Self> {
+        match value {
+            "outline-only" => Some(Self::OutlineOnly),
+            "retrievable" => Some(Self::Retrievable),
+            "full" => Some(Self::Full),
+            _ => None,
         }
     }
 
@@ -164,6 +178,10 @@ impl MaterialListing {
     ///
     /// Deterministic: the same bytes always produce the same listing, which is
     /// what lets the manifest digest a request and lets a harness cache it.
+    ///
+    /// The path decides the scan: a plain-text material has no headings, so
+    /// its outline is honestly empty rather than full of lines that happen to
+    /// start with a hash.
     #[must_use]
     pub fn describe(
         path: &str,
@@ -173,7 +191,7 @@ impl MaterialListing {
         text: &str,
         disclosure: Disclosure,
     ) -> Self {
-        let blocks = blocks_of(text);
+        let blocks = blocks_of(text, DocumentFormat::of_path(path).block_scan());
         let headings: Vec<OutlineHeading> = blocks
             .iter()
             .filter_map(|block| match block.kind {

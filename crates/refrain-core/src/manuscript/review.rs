@@ -34,7 +34,7 @@ impl EditScope {
 /// The ordinal here counts slices inside one Proposal. A block's ordinal
 /// (`searchable_block`) counts blocks inside one document. Same word, two
 /// scopes — they are never compared.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ReviewSliceId {
     proposal: Id,
     ordinal: u32,

@@ -25,6 +25,10 @@ pub enum VerdictKindName {
     AcceptModified,
     Reject,
     CommentOnly,
+    /// A reversal of a merged verdict: the ledger stays append-only, so the
+    /// countermand is a new record — nothing is deleted, and the pair tells
+    /// the whole story (逆向裁决).
+    Countermanded,
 }
 
 impl VerdictKindName {
@@ -35,6 +39,7 @@ impl VerdictKindName {
             Self::AcceptModified => "accept-modified",
             Self::Reject => "reject",
             Self::CommentOnly => "comment-only",
+            Self::Countermanded => "countermanded",
         }
     }
 
@@ -45,6 +50,7 @@ impl VerdictKindName {
             "accept-modified" => Some(Self::AcceptModified),
             "reject" => Some(Self::Reject),
             "comment-only" => Some(Self::CommentOnly),
+            "countermanded" => Some(Self::Countermanded),
             _ => None,
         }
     }

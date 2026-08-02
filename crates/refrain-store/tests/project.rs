@@ -9,9 +9,11 @@
 //! file. Every test drops its stores before `remove_dir_all`.
 
 use refrain_core::DocumentRole;
+use refrain_core::material_listing::Disclosure;
 use refrain_store::ledger::{VerdictKindName, VerdictRecord};
 use refrain_store::project::{
-    BackupStatus, CreateDocument, DocumentCommit, ProjectFailure, ProjectStore, RootLocator,
+    BackupStatus, CreateDocument, DocumentCommit, ProjectFailure, ProjectStore, ProposalRow,
+    RootLocator,
 };
 use refrain_store::root::{self, RootKind};
 use refrain_store::schema::{AppDb, Database};
@@ -705,6 +707,175 @@ fn adopting_scans_existing_manuscripts_into_rows() {
         ),
         "a contained file is not authorised until indexing registers it"
     );
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_deleted_document_goes_to_the_recycle_bin_and_leaves_the_catalog() {
+    let root = scratch();
+    fs::write(root.join("第一章.md"), "会被删掉的一句。\n").unwrap();
+    let mut app = app_db();
+    let (mut store, _) = adopt(&mut app, &root);
+    store.refresh_documents().unwrap();
+
+    // Stage facts that name the document. The audit (a proposal) must stay;
+    // the staging (a review session, a journaled action) must go.
+    store
+        .proposal_insert(&ProposalRow {
+            id: refrain_core::Id::new().to_string(),
+            run: refrain_core::Id::new().to_string(),
+            baseline: "h1".to_string(),
+            document_path: "第一章.md".to_string(),
+            scope: "[]".to_string(),
+            before_text: "会被删掉的一句。".to_string(),
+            after_text: None,
+            created_at: 1_000,
+        })
+        .unwrap();
+    store.review_session_set("第一章.md", 3, "[]").unwrap();
+    store
+        .journal_append("第一章.md", r#"{"base":"h1","changes":[]}"#)
+        .unwrap();
+
+    let deleted = store.delete_document("第一章.md").unwrap();
+
+    assert_eq!(deleted.path, "第一章.md");
+    assert!(
+        !root.join("第一章.md").try_exists().unwrap(),
+        "the file left the Root — through the recycle bin, never an unlink"
+    );
+    assert!(
+        store.documents().unwrap().is_empty(),
+        "the catalog row left with the file"
+    );
+    assert!(store.review_session_get("第一章.md").unwrap().is_none());
+    assert!(store.journal_take("第一章.md").unwrap().is_empty());
+    assert_eq!(
+        store.proposals_for("第一章.md").unwrap().len(),
+        1,
+        "the audit stays: deleting a document does not rewrite decisions"
+    );
+    assert!(
+        matches!(
+            store.delete_document("第一章.md"),
+            Err(ProjectFailure::Domain(_))
+        ),
+        "deleting twice is a typed refusal, not a silent success"
+    );
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_deleted_document_leaves_the_search_index_too() {
+    let root = scratch();
+    fs::write(root.join("第一章.md"), "只在索引里的词。\n").unwrap();
+    let mut app = app_db();
+    let (mut store, _) = adopt(&mut app, &root);
+    store.refresh_documents().unwrap();
+    assert_eq!(
+        store.indexed_paths("只在索引里", 10).unwrap(),
+        vec!["第一章.md".to_string()]
+    );
+
+    store.delete_document("第一章.md").unwrap();
+
+    assert!(
+        store.indexed_paths("只在索引里", 10).unwrap().is_empty(),
+        "a query must not return a chapter that no longer exists"
+    );
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn deleting_an_imported_material_keeps_the_source_clone_in_the_backup() {
+    let root = scratch();
+    let mut app = app_db();
+    let (mut store, _) = adopt(&mut app, &root);
+    let incoming = scratch();
+    let source = incoming.join("参考.html");
+    fs::write(&source, "<p>原件的字节。</p>").unwrap();
+    let prepared = refrain_store::materials::prepare_material_source(
+        &source,
+        &store.layout().source_backup_dir.join("materials"),
+    )
+    .unwrap();
+
+    let created = store
+        .create(&CreateDocument {
+            title: "参考".to_string(),
+            role: DocumentRole::Material,
+        })
+        .unwrap();
+    let path = created.row.path.clone();
+    store
+        .record_imported_source(&path, &prepared.material.source_digest, "html")
+        .unwrap();
+
+    store.delete_document(&path).unwrap();
+
+    assert!(!root.join(&path).try_exists().unwrap());
+    assert_eq!(
+        fs::read(&prepared.clone).unwrap(),
+        "<p>原件的字节。</p>".as_bytes(),
+        "the original bytes are not RefRain's to remove — the backup is never written"
+    );
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(incoming).unwrap();
+}
+
+#[test]
+fn disclosure_writes_both_ways_and_refuses_an_unknown_document() {
+    let root = scratch();
+    fs::create_dir(root.join("material")).unwrap();
+    fs::write(root.join("material").join("年表.md"), "1931\n").unwrap();
+    fs::write(root.join("第一章.md"), "第一句。\n").unwrap();
+    let mut app = app_db();
+    let (mut store, _) = adopt(&mut app, &root);
+    store.refresh_documents().unwrap();
+    let stored = |store: &ProjectStore, path: &str| {
+        store
+            .documents()
+            .unwrap()
+            .into_iter()
+            .find(|row| row.path == path)
+            .expect("the row is there")
+    };
+
+    // "Never asked" is `None`, and the readers treat it as the default.
+    assert_eq!(stored(&store, "material/年表.md").disclosure, None);
+
+    let row = store
+        .set_disclosure("material/年表.md", Disclosure::OutlineOnly)
+        .unwrap();
+    assert_eq!(row.disclosure, Some(Disclosure::OutlineOnly));
+    assert_eq!(
+        stored(&store, "material/年表.md").disclosure,
+        Some(Disclosure::OutlineOnly),
+        "the database, not the return value, is the authority"
+    );
+
+    let row = store
+        .set_disclosure("material/年表.md", Disclosure::Full)
+        .unwrap();
+    assert_eq!(row.disclosure, Some(Disclosure::Full));
+    assert_eq!(
+        stored(&store, "material/年表.md").disclosure,
+        Some(Disclosure::Full)
+    );
+
+    assert!(
+        matches!(
+            store.set_disclosure("没有.md", Disclosure::Full),
+            Err(ProjectFailure::Domain(_))
+        ),
+        "a permission for a document that does not exist is refused"
+    );
+    // One document's setting never leaks into a sibling's.
+    assert_eq!(stored(&store, "第一章.md").disclosure, None);
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }

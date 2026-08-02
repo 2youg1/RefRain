@@ -155,7 +155,11 @@ fn main() {
         for (path, text) in &corpus {
             let digest = refrain_core::digest::content_hex(text.as_bytes());
             bytes += text.len();
-            blocks += refrain_core::searchable_block::blocks_of(text).len();
+            blocks += refrain_core::searchable_block::blocks_of(
+                text,
+                refrain_core::DocumentFormat::of_path(path).block_scan(),
+            )
+            .len();
             let _ = index_document(&transaction, path, &digest, text);
         }
         transaction.commit().unwrap();
@@ -187,8 +191,11 @@ fn main() {
 
     // 块类型分布：HEADING 信号能不能真的被触发，取决于标题块占多少。
     let mut kinds = [0usize; 3];
-    for (_, text) in &corpus {
-        for block in refrain_core::searchable_block::blocks_of(text) {
+    for (path, text) in &corpus {
+        for block in refrain_core::searchable_block::blocks_of(
+            text,
+            refrain_core::DocumentFormat::of_path(path).block_scan(),
+        ) {
             let slot = match block.kind {
                 BlockKind::Paragraph => 0,
                 BlockKind::Heading(_) => 1,

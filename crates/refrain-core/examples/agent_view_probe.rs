@@ -48,6 +48,8 @@ fn main() {
 
     let input = DispatchInput {
         persona: Some("你是一位克制的编辑，只在必要时改动。".to_string()),
+        installed_skill: None,
+        resumed: false,
         manuscript: None,
         changes: Vec::new(),
         materials,

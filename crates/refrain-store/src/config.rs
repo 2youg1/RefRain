@@ -88,6 +88,12 @@ pub struct AppearanceConfig {
     /// How wide a panel opens.
     #[serde(default)]
     pub panel_width: PanelWidth,
+    /// A panel width the author dragged to an exact pixel value. Set, it
+    /// overrides the `panel_width` preset; choosing a preset clears it. That
+    /// rule lives in `ConfigStore::apply` — the only writer — so no caller
+    /// has to keep the two fields in step.
+    #[serde(default)]
+    pub panel_width_px: Option<u16>,
     /// How wide the document rail sits.
     #[serde(default)]
     pub rail_width: RailWidth,
@@ -129,6 +135,7 @@ impl Default for AppearanceConfig {
             panel_material: PanelMaterial::default(),
             code_theme: None,
             panel_width: PanelWidth::default(),
+            panel_width_px: None,
             rail_width: RailWidth::default(),
             night_lamp: NightLamp::default(),
             panel_side: PanelSide::default(),
@@ -170,7 +177,7 @@ impl Default for TypographyConfig {
             line_height_percent: 190,
             letter_spacing_thousandths_em: 10,
             word_spacing_thousandths_em: 0,
-            measure_tenths_em: 346,
+            measure_tenths_em: 650,
             first_line_indent_tenths_em: 0,
             paragraph_spacing_percent: 100,
             alignment: TextAlignment::Left,
@@ -210,7 +217,7 @@ pub fn builtin_typography_presets() -> Vec<BuiltinTypographyPreset> {
     let chinese = TypographyConfig {
         first_line_indent_tenths_em: 20,
         paragraph_spacing_percent: 50,
-        measure_tenths_em: 320,
+        measure_tenths_em: 600,
         ..TypographyConfig::default()
     };
     let japanese = TypographyConfig {
@@ -220,7 +227,7 @@ pub fn builtin_typography_presets() -> Vec<BuiltinTypographyPreset> {
         },
         first_line_indent_tenths_em: 10,
         paragraph_spacing_percent: 50,
-        measure_tenths_em: 320,
+        measure_tenths_em: 600,
         letter_spacing_thousandths_em: 0,
         ..TypographyConfig::default()
     };
@@ -228,7 +235,7 @@ pub fn builtin_typography_presets() -> Vec<BuiltinTypographyPreset> {
         line_height_percent: 170,
         letter_spacing_thousandths_em: 0,
         word_spacing_thousandths_em: 50,
-        measure_tenths_em: 360,
+        measure_tenths_em: 680,
         paragraph_spacing_percent: 75,
         ..TypographyConfig::default()
     };
@@ -304,6 +311,11 @@ pub enum PanelWidth {
     Regular,
     Full,
 }
+
+/// The admitted drag limits for a free-form panel width. Narrower cannot hold
+/// a panel's content; wider is what the `Full` preset is for.
+pub const PANEL_WIDTH_PX_MIN: u16 = 300;
+pub const PANEL_WIDTH_PX_MAX: u16 = 720;
 
 /// How wide the document rail sits. It carries file names, so it is narrower
 /// than a panel.
@@ -504,6 +516,13 @@ pub struct AgentProfile {
     /// The identity text, injected into the request after the contract.
     #[serde(default)]
     pub persona: Option<String>,
+    /// Extra argv handed to the harness at launch, after the connection's
+    /// own. Model and effort settings are argv by nature — naming them one by
+    /// one would enum-chase every CLI flag. Validated against a denylist at
+    /// upsert, never at launch: a refusal must reach the author while he is
+    /// editing, not as a failed run.
+    #[serde(default)]
+    pub argv: Vec<String>,
 }
 
 /// A machine-level execution channel (SPEC 2.3). Capability probes and trust
@@ -521,6 +540,18 @@ pub struct HarnessConnection {
     /// in the author's own environment; RefRain stores no API keys.
     #[serde(default)]
     pub env_allow: Vec<String>,
+    /// The version the last successful probe reported. Kept so a connection
+    /// whose binary stops answering can report what last worked rather than
+    /// forgetting it ever did. `None` for connections written before this
+    /// field existed — "never measured", not a claim.
+    #[serde(default)]
+    pub version: Option<String>,
+    /// BLAKE3 of the protocol bytes the last protocol install wrote for this
+    /// connection's harness (协议装载). `None` is "never installed from this
+    /// app", not "nothing is there": the status badge reads the file itself,
+    /// and this digest is the provenance record of what we wrote.
+    #[serde(default)]
+    pub skill_digest: Option<String>,
 }
 
 /// The harness kinds with a defined adapter (SPEC 8.3a). `L0` is the file
@@ -549,6 +580,8 @@ pub enum ConfigChange {
     /// None restores "follow the interface theme".
     SetCodeTheme(Option<String>),
     SetPanelWidth(PanelWidth),
+    /// None clears the free-form width and returns the panel to its preset.
+    SetPanelWidthPx(Option<u16>),
     SetRailWidth(RailWidth),
     SetPanelAnimation(bool),
     SetTypography(TypographyConfig),
@@ -639,6 +672,8 @@ impl ConfigV1 {
                 night_lamp: NightLamp::default(),
                 code_theme: None,
                 panel_width: PanelWidth::default(),
+                // v1 的面板宽度只有三档预设，自由像素值是后来才有的选择。
+                panel_width_px: None,
                 rail_width: RailWidth::default(),
                 icon_digest: self.appearance.icon_digest,
                 // v1 的小窗口不能调透明度，所以迁移过来的配置是不透明的
@@ -686,6 +721,14 @@ impl Config {
             ));
         }
         self.appearance.typography.validate()?;
+
+        if let Some(width_px) = self.appearance.panel_width_px
+            && !(PANEL_WIDTH_PX_MIN..=PANEL_WIDTH_PX_MAX).contains(&width_px)
+        {
+            return Err(format!(
+                "panel_width_px must be between {PANEL_WIDTH_PX_MIN} and {PANEL_WIDTH_PX_MAX}; got {width_px}"
+            ));
+        }
 
         let mut ids = HashSet::new();
         let mut names = HashSet::new();
@@ -808,6 +851,12 @@ impl ConfigStore {
             }
             ConfigChange::SetPanelWidth(width) => {
                 snapshot.config.appearance.panel_width = width;
+                // Choosing a preset is the newer statement about panel width,
+                // so it clears any free-form value the author dragged to.
+                snapshot.config.appearance.panel_width_px = None;
+            }
+            ConfigChange::SetPanelWidthPx(width_px) => {
+                snapshot.config.appearance.panel_width_px = width_px;
             }
             ConfigChange::SetRailWidth(width) => {
                 snapshot.config.appearance.rail_width = width;

@@ -23,7 +23,7 @@ pub mod upstream;
 
 pub use cancel::{cancel_and_read_back, progress_of, refuse_cancel_without_handle};
 pub use collect::{Collected, collect_attempt};
-pub use decide::commit_decision_batch;
+pub use decide::{commit_decision_batch, countermand_proposals};
 pub use journal::{
     StoreJournal, entity_of, into_domain, into_domain_host, json_of, run_kind, run_row, task_kind,
     task_row,

@@ -51,11 +51,46 @@ pub enum ChangeKind {
     CommentOnly,
 }
 
+/// Whether the protocol file installed on the harness's own machine still
+/// matches what this build would install (SPEC 8.4, 协议装载). `None` says no
+/// installed copy answered — never that the copy is "fine".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum SkillStatus {
+    /// No installed copy found at the harness's skill path.
+    None,
+    /// The installed copy hashes to the current generated protocol.
+    Current,
+    /// A copy exists but differs: an older protocol, or bytes someone else
+    /// changed. Either way the request falls back to carrying the full text.
+    Stale,
+}
+
+/// The installed protocol copy a harness holds, as one round needs to know
+/// it: where it is, and whether it still says what this build would say.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct InstalledSkill {
+    /// The file the harness should read, as installed on this machine.
+    pub path: String,
+    pub status: SkillStatus,
+}
+
 /// Everything the compiler needs for one request file.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DispatchInput {
     /// The author's persona for the agent, if one travels this round.
     pub persona: Option<String>,
+    /// The protocol copy installed for this round's connection, if any. Only
+    /// the `Full` tier reads it: a current copy replaces the embedded
+    /// protocol with one pointer line; a stale copy says so and carries the
+    /// full text anyway.
+    pub installed_skill: Option<InstalledSkill>,
+    /// The agent's workspace already holds its Memo.md, so this round resumes
+    /// work rather than starting it. The request says so out loud: a resumed
+    /// round has no session context, and pretending otherwise reads as if
+    /// nothing were missing.
+    pub resumed: bool,
     /// The manuscript (full text) when the round carries it.
     pub manuscript: Option<String>,
     /// Previous rounds' verdicts, in decision order.
@@ -241,6 +276,35 @@ pub fn short_contract(input: &DispatchInput) -> String {
     )
 }
 
+/// The `Full` tier's body: the whole generated protocol, unless the harness
+/// already holds a current installed copy — then one line naming the file to
+/// read first replaces the embedded text (协议装载: 安装即注册，首轮省下的
+/// 是每一轮都要付的字节). A stale copy is said out loud and the full text
+/// rides anyway: silently trusting bytes that drifted would teach the agent
+/// a protocol this build no longer speaks.
+fn full_contract(input: &DispatchInput) -> String {
+    match &input.installed_skill {
+        Some(InstalledSkill {
+            path,
+            status: SkillStatus::Current,
+        }) => format!(
+            "协议已安装到 {path}：动工前先全文读它，它就是本契约。回复从 <agent-result> 的第一个字符开始——不要开场白，不要叙述。"
+        ),
+        Some(InstalledSkill {
+            path,
+            status: SkillStatus::Stale,
+        }) => format!(
+            "{path} 里的协议副本已过期，以本契约为准（安装/更新协议后可省掉这一段）。\n\n{}",
+            crate::agent_protocol::skill_doc()
+        ),
+        Some(InstalledSkill {
+            status: SkillStatus::None,
+            ..
+        })
+        | None => crate::agent_protocol::skill_doc(),
+    }
+}
+
 /// Compile one request package (§8.3b): four sections, stable order.
 pub fn compile(input: &DispatchInput) -> DispatchPackage {
     let mut sections: Vec<(&'static str, String, String)> = Vec::new();
@@ -255,6 +319,14 @@ pub fn compile(input: &DispatchInput) -> DispatchPackage {
     sections.push(("before", "edit-scopes".to_string(), before));
 
     let mut context_parts: Vec<(String, String)> = Vec::new();
+    // 接续轮要写在纸面上：这个 Agent 的工作区里已有它自己维护的 Memo.md，
+    // 而本轮请求不带任何会话上下文。不说，它会把「没有上文」读成「本来就没有」。
+    if input.resumed {
+        context_parts.push((
+            "resumption".to_string(),
+            "此为接续轮：无完整上下文，先全文读 Memo.md。".to_string(),
+        ));
+    }
     if let Some(persona) = &input.persona {
         context_parts.push(("persona".to_string(), persona.clone()));
     }
@@ -291,7 +363,7 @@ pub fn compile(input: &DispatchInput) -> DispatchPackage {
     let request = format!("# Request\n\n{}", input.request);
     let contract_body = match input.contract_mode {
         ContractMode::Short => short_contract(input),
-        ContractMode::Full => crate::agent_protocol::skill_doc(),
+        ContractMode::Full => full_contract(input),
         ContractMode::Pointer => "按 RefRain 兼容格式输出。".to_string(),
     };
     let contract = format!("# Reply format\n\n{contract_body}");
@@ -441,6 +513,8 @@ mod tests {
     fn input() -> DispatchInput {
         DispatchInput {
             persona: Some("你是一位克制的编辑。".to_string()),
+            installed_skill: None,
+            resumed: false,
             manuscript: None,
             changes: vec![ChangeEntry {
                 reference: "p7.s2".to_string(),
@@ -755,6 +829,82 @@ mod tests {
         // Same input, different tier: the digest must move (INV-14).
         assert_ne!(short.digest, full.digest);
         assert_ne!(short.digest, pointer.digest);
+    }
+
+    /// 首轮省 token：协议副本是新的，请求就只带一行指针，不再背整份契约。
+    ///
+    /// 断言两方向都要在：指针行在（带安装路径），而 Full 档独有的内容
+    /// （材料目录形状）不在——少断言任何一边，一个「什么都没换」或「换过头」
+    /// 的实现都会全绿。
+    #[test]
+    fn a_current_installed_skill_turns_the_full_tier_into_one_pointer_line() {
+        let mut installed = input();
+        installed.contract_mode = ContractMode::Full;
+        installed.installed_skill = Some(InstalledSkill {
+            path: "/home/a/.kimi-code/skills/refrain/SKILL.md".to_string(),
+            status: SkillStatus::Current,
+        });
+        let package = compile(&installed);
+
+        assert!(
+            package.request_md.contains(
+                "协议已安装到 /home/a/.kimi-code/skills/refrain/SKILL.md：动工前先全文读它"
+            )
+        );
+        assert!(
+            !package.request_md.contains("<material path="),
+            "副本是新的时，Full 档的正文不该再随请求走"
+        );
+    }
+
+    /// 副本过期要诚实地说出来，同时全文契约照样随请求走——信过期的字节，
+    /// 等于教 Agent 说一套这个版本已经不讲的话。
+    #[test]
+    fn a_stale_installed_skill_is_named_and_the_full_text_rides_anyway() {
+        let mut stale = input();
+        stale.contract_mode = ContractMode::Full;
+        stale.installed_skill = Some(InstalledSkill {
+            path: "/home/a/.claude/skills/refrain/SKILL.md".to_string(),
+            status: SkillStatus::Stale,
+        });
+        let package = compile(&stale);
+
+        assert!(
+            package
+                .request_md
+                .contains("/home/a/.claude/skills/refrain/SKILL.md 里的协议副本已过期")
+        );
+        assert!(
+            package.request_md.contains("<material path="),
+            "副本过期时回退到 Full：完整契约必须随请求走"
+        );
+    }
+
+    /// 接续轮写在 `# Context` 开头：这个 Agent 的工作区已有 Memo.md，本轮
+    /// 没有完整上下文——断了就诚实断在纸面上。
+    #[test]
+    fn a_resumed_round_says_so_at_the_head_of_context() {
+        let mut resumed = input();
+        resumed.resumed = true;
+        let package = compile(&resumed);
+
+        let context = package
+            .request_md
+            .split("# Context\n\n")
+            .nth(1)
+            .expect("a resumed round still carries a Context section");
+        assert!(
+            context.starts_with("此为接续轮：无完整上下文，先全文读 Memo.md。"),
+            "接续轮标记必须是 # Context 的第一行: {context}"
+        );
+        // Persona 排在其后——标记是这一轮的事实，先于一切背景。
+        assert!(context.contains("你是一位克制的编辑。"));
+
+        let fresh = compile(&input());
+        assert!(
+            !fresh.request_md.contains("此为接续轮"),
+            "首轮没有这个标记：写了就是把新工作区说成旧的"
+        );
     }
 
     #[test]

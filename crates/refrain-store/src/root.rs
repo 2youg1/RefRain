@@ -16,13 +16,10 @@
 //! - No write path leads into the Source Backup, even when it is opened
 //!   directly as a project or reached through a symlink (INV-4).
 
-use refrain_core::{DocumentRole, ErrorCode, RefrainError};
+use refrain_core::{DocumentFormat, DocumentRole, ErrorCode, RefrainError};
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
-
-/// Markdown is what this application edits, so Markdown is what it preserves.
-const MARKDOWN_EXTENSIONS: [&str; 4] = ["md", "markdown", "mdown", "txt"];
 
 /// The one directory name every layer recognises as the immutable original.
 pub const SOURCE_BACKUP_DIR: &str = ".refrain-source";
@@ -153,16 +150,19 @@ pub enum BackupOutcome {
 const BACKUP_MANIFEST: &str = "taken.json";
 const EMPTY_ADOPTION_FILE: &str = "source-backup.json";
 
+/// Whether the workbench edits this file's format — and so whether the
+/// Source Backup must hold it as adopted. The format table in
+/// `refrain_core::document_format` is the one authority on what is editable;
+/// the backup preserves exactly that set, nothing narrower.
 #[must_use]
-pub fn is_markdown_name(name: &str) -> bool {
-    Path::new(name).extension().is_some_and(|extension| {
-        MARKDOWN_EXTENSIONS
-            .iter()
-            .any(|known| extension.eq_ignore_ascii_case(known))
-    })
+pub fn is_document_name(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .and_then(|extension| DocumentFormat::of_extension(&extension.to_string_lossy()))
+        .is_some()
 }
 
-/// Markdown files under a directory, skipping every dot-entry — most
+/// Editable files under a directory, skipping every dot-entry — most
 /// importantly the application's own state and the backup itself, which the
 /// backup must never copy into itself.
 fn manuscripts_under(dir: &Path, into: &mut Vec<PathBuf>) -> io::Result<()> {
@@ -175,7 +175,7 @@ fn manuscripts_under(dir: &Path, into: &mut Vec<PathBuf>) -> io::Result<()> {
         let path = entry.path();
         if entry.file_type()?.is_dir() {
             manuscripts_under(&path, into)?;
-        } else if entry.file_type()?.is_file() && is_markdown_name(&name.to_string_lossy()) {
+        } else if entry.file_type()?.is_file() && is_document_name(&name.to_string_lossy()) {
             into.push(path);
         }
     }

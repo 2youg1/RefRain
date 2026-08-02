@@ -37,13 +37,16 @@ pub fn before_sections(request: &str) -> Vec<(String, String)> {
 /// 会诚实地失败，而不是把提案套在它从未读过的文本上。
 ///
 /// 实现上不逐个起点重新拼接——那样每个起点都要把后续块再拷一遍，一章上千块时
-/// 是平方级的分配。改为一次线性扫描：块之间用两个换行相连，于是每个块在拼接后
-/// 的全文里都有一个确定的起始偏移；把冻结原文当作一个待匹配串，只在「原文长度
-/// 恰好落在某个块的末尾」处比较一次。
+/// 是平方级的分配。改为一次线性扫描：块之间用这份稿子自己的分隔符相连（散文
+/// 两个换行、纯文本一个），于是每个块在拼接后的全文里都有一个确定的起始偏移；
+/// 把冻结原文当作一个待匹配串，只在「原文长度恰好落在某个块的末尾」处比较一次。
 #[must_use]
 pub fn find_scope_blocks(manuscript: &Manuscript, before: &str) -> Option<Vec<Id>> {
-    const JOIN: &str = "\n\n";
     let blocks = manuscript.head().blocks();
+    // Blocks join with the manuscript's own separator: two newlines in prose,
+    // one in plain text. A scope read that joins with the wrong separator
+    // compares against bytes the document never had, and every scope misses.
+    let join = std::str::from_utf8(manuscript.scan().separator()).expect("separators are ASCII");
 
     // 每个块在拼接全文里的起始偏移。ends[i] 是第 i 块结束处的偏移。
     let mut starts = Vec::with_capacity(blocks.len());
@@ -53,7 +56,7 @@ pub fn find_scope_blocks(manuscript: &Manuscript, before: &str) -> Option<Vec<Id
         starts.push(cursor);
         cursor += block.text().len();
         ends.push(cursor);
-        cursor += JOIN.len();
+        cursor += join.len();
     }
 
     for (start_index, &start) in starts.iter().enumerate() {
@@ -65,7 +68,7 @@ pub fn find_scope_blocks(manuscript: &Manuscript, before: &str) -> Option<Vec<Id
         let Ok(end_index) = ends.binary_search(&finish) else {
             continue;
         };
-        if joined_equals(blocks, start_index, end_index, before) {
+        if joined_equals(blocks, start_index, end_index, before, join) {
             return Some(
                 blocks
                     .iter()
@@ -85,11 +88,12 @@ fn joined_equals(
     from: usize,
     to: usize,
     expected: &str,
+    join: &str,
 ) -> bool {
     let mut rest = expected.as_bytes();
     for index in from..=to {
         if index > from {
-            let Some(tail) = rest.strip_prefix(b"\n\n".as_slice()) else {
+            let Some(tail) = rest.strip_prefix(join.as_bytes()) else {
                 return false;
             };
             rest = tail;

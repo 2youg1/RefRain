@@ -130,7 +130,19 @@ pub fn collect_attempt(
         let artifact = match agent_protocol::parse(&bytes, &contract) {
             Ok(artifact) => artifact,
             Err(error) => {
-                return fail(&mut host, run_id, error.code.as_str(), &error.detail, now);
+                // 打印通道的 CLI 常在产出前叙述一句。叙述不携带权威，所以恰好
+                // 一个根元素时裁剪重试一次——元素本身仍按冻结请求逐项校验；
+                // 其他错误（含零个/多个根）保持原样的具名拒绝。
+                let salvaged = (error.code.as_str() == "text-outside-root")
+                    .then(|| agent_protocol::extract_single_root(&bytes))
+                    .flatten()
+                    .and_then(|span| agent_protocol::parse(span, &contract).ok());
+                match salvaged {
+                    Some(artifact) => artifact,
+                    None => {
+                        return fail(&mut host, run_id, error.code.as_str(), &error.detail, now);
+                    }
+                }
             }
         };
 

@@ -466,6 +466,98 @@ impl Database for ProjectDb {
                     )
                 },
             },
+            Migration {
+                version: SchemaVersion(11),
+                name: "material-disclosure",
+                apply: |tx| {
+                    // What the author permits for one document when it rides
+                    // as a material (the Disclosure enum's wire spelling).
+                    //
+                    // NULL is a value: "never asked", which the readers treat
+                    // as the enum's default. Writing the default out instead
+                    // would make every pre-v11 row claim a choice the author
+                    // never made — the same discipline the source columns
+                    // follow.
+                    tx.execute_batch("ALTER TABLE documents ADD COLUMN disclosure TEXT;")
+                },
+            },
+            Migration {
+                version: SchemaVersion(12),
+                name: "text-action-history",
+                apply: |tx| {
+                    // The persisted undo chain: one row per executed Text
+                    // Action, so undo survives a restart and the history
+                    // panel can offer a rollback point.
+                    //
+                    // `regions` carries the full before/after text of every
+                    // applied region as JSON, because undo inverts from it and
+                    // the snapshot those blocks once borrowed from is gone by
+                    // the next open. `edits` and `verdicts` ride as JSON for
+                    // the audit; hydration re-derives what regions already
+                    // say, so the row has one authority.
+                    //
+                    // `ordinal` is a per-document sequence assigned at insert
+                    // (MAX + 1, one statement, so a crash cannot leave a gap
+                    // or a duplicate). `UNIQUE(document, ordinal)` is the
+                    // database's own proof of that.
+                    //
+                    // `undone_at` starts NULL. It is written at save time,
+                    // never at undo time: undo moves session memory, and a
+                    // crash must resume the pre-undo chain — a row marked
+                    // undone while the disk still holds its text would be a
+                    // lie the hydration walk cannot afford.
+                    tx.execute_batch(
+                        "CREATE TABLE text_actions (
+                             id         TEXT PRIMARY KEY,
+                             document   TEXT NOT NULL,
+                             ordinal    INTEGER NOT NULL,
+                             base       TEXT NOT NULL,
+                             head       TEXT NOT NULL,
+                             cause      TEXT NOT NULL,
+                             regions    TEXT NOT NULL,
+                             edits      TEXT NOT NULL,
+                             verdicts   TEXT NOT NULL,
+                             undone_at  INTEGER,
+                             created_at INTEGER NOT NULL,
+                             UNIQUE(document, ordinal)
+                         ) STRICT;
+                         CREATE INDEX text_actions_document
+                             ON text_actions(document, ordinal);",
+                    )
+                },
+            },
+            Migration {
+                version: SchemaVersion(13),
+                name: "verdict-countermand",
+                apply: |tx| {
+                    // The countermanding verdict （逆向裁决）: a merged proposal
+                    // is reversed by appending a `countermanded` record — the
+                    // ledger stays append-only, so the pair tells the story.
+                    //
+                    // SQLite cannot widen a CHECK in place, so the table is
+                    // rebuilt under the same name. The copy is part of the
+                    // step's transaction: a crash between the drop and the
+                    // rename replays the whole step on the next open, which
+                    // the runner's last-write-wins version mark guarantees.
+                    tx.execute_batch(
+                        "CREATE TABLE verdicts_next (
+                             id              TEXT PRIMARY KEY,
+                             proposal_id     TEXT NOT NULL,
+                             slice_id        TEXT NOT NULL,
+                             kind            TEXT NOT NULL CHECK (kind IN (
+                                                 'accept', 'accept-modified', 'reject',
+                                                 'comment-only', 'countermanded')),
+                             final_text      TEXT,
+                             reason          TEXT,
+                             decided_at      INTEGER NOT NULL,
+                             legacy_baseline TEXT
+                         ) STRICT;
+                         INSERT INTO verdicts_next SELECT * FROM verdicts;
+                         DROP TABLE verdicts;
+                         ALTER TABLE verdicts_next RENAME TO verdicts;",
+                    )
+                },
+            },
         ]
     }
 }
@@ -554,5 +646,61 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// v13 widens the verdict-kind CHECK by rebuilding the table. Two facts
+    /// must survive that rebuild: rows written before it, and the new kind it
+    /// exists to admit.
+    #[test]
+    fn the_countermand_migration_keeps_old_rows_and_admits_the_new_kind() {
+        let mut db = open_in_memory().unwrap();
+        db.pragma_update(None, "foreign_keys", true).unwrap();
+        // Walk the ladder only to v12, the way a project written before this
+        // build actually looks.
+        for migration in ProjectDb::migrations()
+            .iter()
+            .filter(|migration| migration.version.0 <= 12)
+        {
+            let tx = db.transaction().unwrap();
+            (migration.apply)(&tx).unwrap();
+            tx.pragma_update(None, "user_version", migration.version.0)
+                .unwrap();
+            tx.commit().unwrap();
+        }
+        db.execute(
+            "INSERT INTO verdicts
+                 (id, proposal_id, slice_id, kind, final_text, reason, decided_at, legacy_baseline)
+             VALUES ('v1', 'p1', 'p1:1', 'accept', NULL, NULL, 2, NULL)",
+            [],
+        )
+        .unwrap();
+        // The old CHECK is really in force, or the rebuild would be guarding
+        // nothing: the new kind must fail before v13.
+        assert!(
+            db.execute(
+                "INSERT INTO verdicts
+                     (id, proposal_id, slice_id, kind, final_text, reason, decided_at, legacy_baseline)
+                 VALUES ('v2', 'p1', 'p1:c', 'countermanded', NULL, NULL, 3, NULL)",
+                [],
+            )
+            .is_err(),
+            "the pre-v13 CHECK admitted countermanded: the injection-proof failed"
+        );
+
+        ProjectDb::migrate(&mut db).unwrap();
+
+        let kept: String = db
+            .query_row("SELECT kind FROM verdicts WHERE id = 'v1'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(kept, "accept", "the rebuild must carry old rows across");
+        db.execute(
+            "INSERT INTO verdicts
+                 (id, proposal_id, slice_id, kind, final_text, reason, decided_at, legacy_baseline)
+             VALUES ('v3', 'p1', 'p1:c', 'countermanded', NULL, NULL, 4, NULL)",
+            [],
+        )
+        .unwrap();
     }
 }

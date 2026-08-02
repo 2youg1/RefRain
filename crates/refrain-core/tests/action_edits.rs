@@ -33,7 +33,12 @@ fn each_text_action_carries_addressable_replace_insert_and_remove_edits() {
         .execute(TextCommand::Editor(EditorAction::new(
             manuscript.head().id(),
             vec![EditorChange::Insert(
-                Insertion::new(Some(ids[2]), vec!["between".to_owned()]).unwrap(),
+                Insertion::new(
+                    Some(ids[2]),
+                    vec!["between".to_owned()],
+                    refrain_core::BlockScan::Markdown,
+                )
+                .unwrap(),
             )],
             "insert",
         )))
@@ -71,7 +76,12 @@ fn action_edits_follow_document_order_across_change_kinds() {
                     Replacement::new(vec![ids[2]], Some("THREE".to_owned())).unwrap(),
                 ),
                 EditorChange::Insert(
-                    Insertion::new(Some(ids[0]), vec!["before".to_owned()]).unwrap(),
+                    Insertion::new(
+                        Some(ids[0]),
+                        vec!["before".to_owned()],
+                        refrain_core::BlockScan::Markdown,
+                    )
+                    .unwrap(),
                 ),
             ],
             "ordered edits",

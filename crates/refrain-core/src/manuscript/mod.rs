@@ -6,16 +6,18 @@ mod block_text;
 mod byte_sequence;
 mod decision;
 mod materialize;
+mod persist;
 mod review;
 
 pub use block_sequence::BlockSequence;
 pub use block_text::BlockText;
-pub use decision::{DecisionBatch, Verdict, VerdictKind};
+pub use decision::{DecisionBatch, Verdict, VerdictKind, merged_text};
+pub use persist::{PersistedBlock, PersistedRegion};
 pub use review::{
     ChangeClass, EditScope, Proposal, ReviewSlice, ReviewSliceId, SliceKind, classify_change,
 };
 
-use crate::{Id, SourceDrift, SourceLayout};
+use crate::{BlockScan, Id, SourceDrift, SourceLayout};
 use block_offsets::BlockOffsets;
 use byte_sequence::ByteSequence;
 use std::collections::{HashMap, HashSet};
@@ -33,10 +35,12 @@ use thiserror::Error;
 pub struct SourceSnapshot {
     text: Arc<String>,
     layout: SourceLayout,
+    scan: BlockScan,
 }
 
 impl SourceSnapshot {
-    /// Read a snapshot whose bytes are already known to be valid UTF-8.
+    /// Read a snapshot whose bytes are already known to be valid UTF-8,
+    /// scanned as Markdown.
     ///
     /// # Panics
     ///
@@ -45,6 +49,19 @@ impl SourceSnapshot {
     #[must_use]
     pub fn read(bytes: Vec<u8>) -> Self {
         Self::read_checked(bytes).expect("SourceSnapshot::read requires valid UTF-8")
+    }
+
+    /// Read a snapshot whose bytes are already known to be valid UTF-8,
+    /// scanned by the given rule.
+    ///
+    /// # Panics
+    ///
+    /// Panics on invalid bytes. Callers holding bytes of unknown provenance —
+    /// anything read from disk — want [`SourceSnapshot::read_checked_with`].
+    #[must_use]
+    pub fn read_with(bytes: Vec<u8>, scan: BlockScan) -> Self {
+        Self::read_checked_with(bytes, scan)
+            .expect("SourceSnapshot::read_with requires valid UTF-8")
     }
 
     /// Read a snapshot, refusing bytes that are not valid UTF-8.
@@ -60,13 +77,27 @@ impl SourceSnapshot {
     /// Returns [`std::str::Utf8Error`] naming where the bytes stop being
     /// valid UTF-8.
     pub fn read_checked(bytes: Vec<u8>) -> Result<Self, std::str::Utf8Error> {
-        let layout = SourceLayout::read(&bytes);
+        Self::read_checked_with(bytes, BlockScan::Markdown)
+    }
+
+    /// Read a snapshot scanned by the given rule, refusing bytes that are not
+    /// valid UTF-8. The scan is kept: every re-scan an edit triggers must
+    /// divide the bytes the same way the first read did, or the block model
+    /// and the byte offsets would drift apart.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`std::str::Utf8Error`] naming where the bytes stop being
+    /// valid UTF-8.
+    pub fn read_checked_with(bytes: Vec<u8>, scan: BlockScan) -> Result<Self, std::str::Utf8Error> {
+        let layout = scan.layout(&bytes);
         // `from_utf8` consumes the vector rather than copying it, so settling
         // the question here costs a scan and no allocation.
         let text = String::from_utf8(bytes).map_err(|error| error.utf8_error())?;
         Ok(Self {
             text: Arc::new(text),
             layout,
+            scan,
         })
     }
 
@@ -193,12 +224,16 @@ pub struct Insertion {
 }
 
 impl Insertion {
-    pub fn new(before: Option<Id>, texts: Vec<String>) -> Result<Self, TextRefusal> {
+    pub fn new(
+        before: Option<Id>,
+        texts: Vec<String>,
+        scan: BlockScan,
+    ) -> Result<Self, TextRefusal> {
         if texts.is_empty() {
             return Err(TextRefusal::EmptyInsertion);
         }
         for (index, text) in texts.iter().enumerate() {
-            let layout = SourceLayout::read(text.as_bytes());
+            let layout = scan.layout(text.as_bytes());
             let blocks = layout.blocks();
             if blocks.len() != 1 {
                 return Err(TextRefusal::InvalidInsertionBlock {
@@ -323,7 +358,8 @@ pub(crate) struct AppliedRegion {
 }
 
 /// The reader-facing classification of one addressable change.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum EditKind {
     Replace,
     Insert,
@@ -331,7 +367,7 @@ pub enum EditKind {
 }
 
 /// One addressable difference produced by a Text Action.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Edit {
     id: Id,
     kind: EditKind,
@@ -406,10 +442,26 @@ fn edits_from_regions(regions: &[AppliedRegion]) -> Box<[Edit]> {
     edits.into_boxed_slice()
 }
 
+/// The blocks an action's regions name, deduplicated and sorted. Derived at
+/// apply time and again at hydration, so the derivation lives in one place.
+fn touched_of(regions: &[AppliedRegion]) -> Box<[Id]> {
+    let mut touched = HashSet::new();
+    for region in regions {
+        touched.extend(region.before.iter().map(|block| block.id));
+        touched.extend(region.after.iter().map(|block| block.id));
+    }
+    let mut touched = touched.into_iter().collect::<Vec<_>>();
+    touched.sort();
+    touched.into_boxed_slice()
+}
+
 /// The immutable audit record of one completed Text Action.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextAction {
     id: Id,
+    /// The Text Head the action was applied against. Undo restores exactly
+    /// this head, so a revision id never names two different states.
+    base: Id,
     cause: String,
     touched: Box<[Id]>,
     regions: Box<[AppliedRegion]>,
@@ -421,6 +473,13 @@ impl TextAction {
     #[must_use]
     pub fn id(&self) -> Id {
         self.id
+    }
+
+    /// The head this action moved from — the revision [`Manuscript::undo_last`]
+    /// restores when it reverts this action.
+    #[must_use]
+    pub fn base(&self) -> Id {
+        self.base
     }
 
     #[must_use]
@@ -494,6 +553,12 @@ pub enum TextRefusal {
     DuplicateLineage { block: Id },
     #[error("editor action is based on {actual}, current head is {expected}")]
     StaleBase { expected: Id, actual: Id },
+    #[error("there is no Text Action to undo")]
+    NothingToUndo,
+    #[error("Text Action {action} is not in the undo history: unknown or already undone")]
+    UnknownAction { action: Id },
+    #[error("Text Action {action} is not invertible: its verdicts are already ledger facts")]
+    NotInvertible { action: Id },
     #[error("block {block} does not exist in the current head")]
     MissingBlock { block: Id },
     #[error("replacement range is not contiguous in the current head")]
@@ -526,7 +591,9 @@ pub enum TextRefusal {
     SourceDrift(#[from] SourceDrift),
 }
 
-/// The current manuscript plus its source layout and append-only action history.
+/// The current manuscript plus its source layout and the action history. The
+/// history is hydrated from the persisted chain at open, grows at `execute`,
+/// and shrinks at `undo_last` — it is the undo stack, newest last.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manuscript {
     source: SourceSnapshot,
@@ -538,9 +605,16 @@ pub struct Manuscript {
     actions: Vec<TextAction>,
     action_at: HashMap<Id, usize>,
     last_touched: HashMap<Id, usize>,
+    /// How bytes divide into blocks. Re-scans after an edit must use the same
+    /// rule the open used, or offsets and block identity drift apart.
+    scan: BlockScan,
 }
 
-fn local_replacement(editor: &EditorAction, at: &HashMap<Id, usize>) -> Option<usize> {
+fn local_replacement(
+    editor: &EditorAction,
+    at: &HashMap<Id, usize>,
+    scan: BlockScan,
+) -> Option<usize> {
     let [EditorChange::Replace(replacement)] = editor.changes.as_ref() else {
         return None;
     };
@@ -548,7 +622,7 @@ fn local_replacement(editor: &EditorAction, at: &HashMap<Id, usize>) -> Option<u
         return None;
     };
     let text = replacement.text.as_deref()?;
-    if SourceLayout::read(text.as_bytes()).blocks().len() != 1 {
+    if scan.layout(text.as_bytes()).blocks().len() != 1 {
         return None;
     }
     at.get(block).copied()
@@ -556,17 +630,26 @@ fn local_replacement(editor: &EditorAction, at: &HashMap<Id, usize>) -> Option<u
 
 impl Manuscript {
     pub fn open(source: SourceSnapshot, lineage: Lineage) -> Result<Self, TextRefusal> {
-        Self::open_at(source, lineage, Id::new())
+        Self::open_at(source, lineage, Id::new(), Vec::new())
     }
 
-    /// Open with an explicit head id. Continuity across restarts lives here:
-    /// the store persists the head id and block lineage with the on-disk
-    /// digest, so a reopened document resumes the revision chain it left —
-    /// and a journaled EditorAction's base still names a real head.
+    /// Open with an explicit head id and the persisted action history that
+    /// led to it. Continuity across restarts lives here: the store persists
+    /// the head id and block lineage with the on-disk digest, so a reopened
+    /// document resumes the revision chain it left — and a journaled
+    /// EditorAction's base still names a real head.
+    ///
+    /// `history` is the persisted undo chain, oldest first. Linkage — every
+    /// action's `base` naming the head the row before it produced — is proven
+    /// by the store's walk over its own columns, which is where those columns
+    /// live. Undo still re-verifies every region against the head it inverts,
+    /// so a row that does not describe this text refuses at undo rather than
+    /// inventing bytes.
     pub fn open_at(
         source: SourceSnapshot,
         lineage: Lineage,
         head: Id,
+        history: Vec<TextAction>,
     ) -> Result<Self, TextRefusal> {
         let expected = source.layout.blocks().len();
         if lineage.0.len() != expected {
@@ -617,6 +700,17 @@ impl Manuscript {
         }
         let materialized = ByteSequence::from_source(source.text());
         let offsets = BlockOffsets::from_spans(source.layout.blocks().to_vec());
+        let action_at: HashMap<Id, usize> = history
+            .iter()
+            .enumerate()
+            .map(|(index, action)| (action.id, index))
+            .collect();
+        let last_touched: HashMap<Id, usize> = history
+            .iter()
+            .enumerate()
+            .flat_map(|(index, action)| action.touched.iter().map(move |block| (*block, index)))
+            .collect();
+        let scan = source.scan;
         Ok(Self {
             source,
             original_ids: lineage.0,
@@ -628,15 +722,146 @@ impl Manuscript {
             materialized,
             offsets,
             block_at,
-            actions: Vec::new(),
-            action_at: HashMap::new(),
-            last_touched: HashMap::new(),
+            actions: history,
+            action_at,
+            last_touched,
+            scan,
         })
     }
 
     #[must_use]
     pub fn head(&self) -> &TextHead {
         &self.head
+    }
+
+    /// How this manuscript's bytes divide into blocks. Anything that joins
+    /// block texts back into a document — a scope read, a materialisation —
+    /// must use the same rule, or the join invents bytes the author never
+    /// wrote.
+    #[must_use]
+    pub fn scan(&self) -> BlockScan {
+        self.scan
+    }
+
+    /// The completed Text Actions, oldest first: hydrated from the persisted
+    /// chain at open, grown at `execute`, shrunk at `undo_last`.
+    #[must_use]
+    pub fn actions(&self) -> &[TextAction] {
+        &self.actions
+    }
+
+    /// Revert the most recent Text Action, restoring the head it was based on.
+    ///
+    /// The inverse comes out of the action's own regions: every region records
+    /// the blocks it replaced and what stands there now, so swapping them back
+    /// rebuilds the earlier state byte for byte. The restored head carries the
+    /// id the undone action was based on — a revision id names one state, so
+    /// an EditorAction still based on the undone head meets [`TextRefusal::StaleBase`]
+    /// rather than landing on text it never saw.
+    ///
+    /// # Errors
+    ///
+    /// - [`TextRefusal::NothingToUndo`]: the session holds no action yet.
+    /// - [`TextRefusal::NotInvertible`]: the action carries verdicts. Its text
+    ///   inverse exists, but reverting merged text would falsify the Verdict
+    ///   Ledger, which already recorded those decisions.
+    pub fn undo_last(&mut self) -> Result<TextTransition, TextRefusal> {
+        let action = self.actions.last().ok_or(TextRefusal::NothingToUndo)?;
+        if !action.verdicts.is_empty() {
+            return Err(TextRefusal::NotInvertible { action: action.id });
+        }
+        let restored = TextHead {
+            id: action.base,
+            blocks: BlockSequence::from_vec(action::invert(&self.head, action)?),
+            cause: format!("undo: {}", action.cause),
+        };
+        let after = materialize::blocks(&self.source, &self.original_ids, restored.blocks())?;
+        let byte_patch = BytePatch::between(&self.materialized, &after);
+        // The undo is itself reported as a transition, so the caller learns
+        // what moved exactly as it does for a forward action. The record is
+        // not pushed: undo consumes the action it reverts, it does not add one.
+        let inverted: Vec<AppliedRegion> = action
+            .regions
+            .iter()
+            .map(|region| AppliedRegion {
+                before: region.after.clone(),
+                after: region.before.clone(),
+                left: region.left,
+                right: region.right,
+            })
+            .collect();
+        let undo = TextAction {
+            id: Id::new(),
+            base: self.head.id,
+            cause: restored.cause.clone(),
+            touched: action.touched.clone(),
+            edits: edits_from_regions(&inverted),
+            regions: inverted.into_boxed_slice(),
+            verdicts: Box::default(),
+        };
+        self.offsets = BlockOffsets::from_spans(self.scan.layout(&after).blocks().to_vec());
+        self.materialized = ByteSequence::from_vec(after);
+        self.block_at = restored
+            .blocks
+            .iter()
+            .enumerate()
+            .map(|(index, block)| (block.id, index))
+            .collect();
+        self.head = restored.clone();
+        let done = self.actions.pop().expect("last() saw an action");
+        self.action_at.remove(&done.id);
+        // A block has no back-pointer to its earlier actions, so a pop cannot
+        // repair `last_touched` selectively: rebuild walks the remaining
+        // history once, which an interactive undo affords.
+        self.last_touched = self
+            .actions
+            .iter()
+            .enumerate()
+            .flat_map(|(index, action)| action.touched.iter().map(move |block| (*block, index)))
+            .collect();
+        Ok(TextTransition {
+            action: undo,
+            head: restored,
+            byte_patch,
+        })
+    }
+
+    /// Revert to just after `target`: undo every action newer than it.
+    ///
+    /// Reverting a middle point undoes everything above it, so the walk is
+    /// checked before anything moves: when an action above `target` carries
+    /// verdicts the whole revert refuses. The author sees unchanged text with
+    /// an honest refusal, not a revert that stopped halfway.
+    ///
+    /// Returns one transition per undone action, newest first. When `target`
+    /// is the tip there is nothing above it and the vec is empty.
+    ///
+    /// # Errors
+    ///
+    /// - [`TextRefusal::UnknownAction`]: `target` is not in the undo history —
+    ///   never seen, already undone, or older than the hydrated depth.
+    /// - [`TextRefusal::NotInvertible`]: an action above `target` carries
+    ///   verdicts. Undo cannot cross it — the same refusal [`Manuscript::undo_last`]
+    ///   gives, named before any state moved.
+    pub fn revert_to(&mut self, target: Id) -> Result<Vec<TextTransition>, TextRefusal> {
+        let position = self
+            .action_at
+            .get(&target)
+            .copied()
+            .ok_or(TextRefusal::UnknownAction { action: target })?;
+        if let Some(blocking) = self.actions[position + 1..]
+            .iter()
+            .find(|action| !action.verdicts.is_empty())
+        {
+            return Err(TextRefusal::NotInvertible {
+                action: blocking.id,
+            });
+        }
+        let mut transitions = Vec::new();
+        while self.actions.len() > position + 1 {
+            transitions.push(self.undo_last()?);
+        }
+        Ok(transitions)
     }
 
     /// The lineage the current head pairs with the materialised bytes: the
@@ -652,21 +877,23 @@ impl Manuscript {
 
     pub fn execute(&mut self, command: TextCommand) -> Result<TextTransition, TextRefusal> {
         let local = match &command {
-            TextCommand::Editor(editor) => local_replacement(editor, &self.block_at),
+            TextCommand::Editor(editor) => local_replacement(editor, &self.block_at, self.scan),
             TextCommand::CommitDecisionBatch(_) => None,
         };
         let (head, action) = match command {
             TextCommand::Editor(editor) => {
-                action::apply_editor_indexed(&self.head, &editor, &self.block_at)?
+                action::apply_editor_indexed(&self.head, &editor, &self.block_at, self.scan)?
             }
-            TextCommand::CommitDecisionBatch(batch) => decision::apply(&self.head, &batch)?,
+            TextCommand::CommitDecisionBatch(batch) => {
+                decision::apply(&self.head, &batch, self.scan)?
+            }
         };
         let byte_patch = if let Some(index) = local {
             self.replace_materialized_block(index, &head)?
         } else {
             let after = materialize::blocks(&self.source, &self.original_ids, head.blocks())?;
             let patch = BytePatch::between(&self.materialized, &after);
-            self.offsets = BlockOffsets::from_spans(SourceLayout::read(&after).blocks().to_vec());
+            self.offsets = BlockOffsets::from_spans(self.scan.layout(&after).blocks().to_vec());
             self.materialized = ByteSequence::from_vec(after);
             self.block_at = head
                 .blocks

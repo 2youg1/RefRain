@@ -8,10 +8,23 @@
 //! ├─ dispatch/staging/
 //! │  ├─ manifests/<digest>.json   # the immutable snapshot the author read
 //! │  └─ requests/<run-id>.md      # one frozen request per Run
-//! └─ runs/<run-id>/
-//!    ├─ request.md                # promoted at launch, producer-visible
-//!    └─ context-manifest.json     # the snapshot, promoted with it
+//! └─ agents/<agent-id>/
+//!    ├─ AGENTS.md                 # generated identity: persona + protocol pointer
+//!    ├─ Memo.md                   # the agent's own memory, kept by the agent
+//!    └─ runs/<run-id>/
+//!       ├─ request.md             # promoted at launch, producer-visible
+//!       └─ context-manifest.json  # the snapshot, promoted with it
 //! ```
+//!
+//! The agent level exists because a harness CLI discovers AGENTS.md by
+//! walking up from its working directory: the harness's cwd is the Run
+//! workspace, so identity at `agents/<agent-id>/AGENTS.md` loads itself with
+//! zero request bytes. Per-run directories below it keep alternates isolated
+//! — one Run never names another Run's path.
+//!
+//! Runs dispatched before this layout keep their recorded `runs/<run-id>`
+//! workspace string in the journal, and every read path resolves the stored
+//! string — old workspaces stay readable with no adapter and no migration.
 //!
 //! Staging writes are plain write+fsync: a crash mid-stage leaves a partial
 //! file whose hash fails `staged_request_matches`, which blocks the launch
@@ -46,6 +59,44 @@ pub struct DirectoryContext {
     state_dir: PathBuf,
 }
 
+/// The Run workspace as the journal records it, relative to `.refrain/`.
+///
+/// The agent level is the layout's point: a harness CLI discovers AGENTS.md
+/// by walking up from its working directory, so nesting the run under
+/// `agents/<agent-id>/` loads the agent's identity with zero request bytes,
+/// while the per-run directory below it keeps alternates isolated. This is
+/// the layout's only authority — the bridge and the tests name workspaces
+/// through here, never with a `format!` of their own.
+#[must_use]
+pub fn run_workspace(agent_id: Id, run_id: Id) -> String {
+    format!("agents/{agent_id}/runs/{run_id}")
+}
+
+/// The version stamped into a generated AGENTS.md. A format change bumps it,
+/// and an old stamp reads as "regenerate" — the rewrite is content-compared,
+/// so a persona edit and a format bump take the same path.
+pub const AGENT_FILE_VERSION: &str = "v1";
+
+/// The AGENTS.md for one agent: its persona as identity, plus a pointer to
+/// where the protocol actually lives — the request file, whose `# Reply
+/// format` section rides every round. Generated, never hand-edited; the
+/// header comment says so.
+#[must_use]
+pub fn agent_file(persona: Option<&str>) -> String {
+    let identity = match persona {
+        Some(text) if !text.trim().is_empty() => text.trim().to_string(),
+        _ => "（作者未配置身份。）".to_string(),
+    };
+    format!(
+        "<!-- refrain-agent-file:{AGENT_FILE_VERSION} — 生成物：persona 变更时重写，勿手改 -->\n\
+         # 身份\n\n\
+         {identity}\n\n\
+         # 协议\n\n\
+         每轮的协议在 request.md 的 `# Reply format` 一节；Memo.md 由你维护：\n\
+         动工前先全文读它，收工前更新它。\n"
+    )
+}
+
 impl DirectoryContext {
     pub fn new(state_dir: PathBuf) -> Self {
         Self { state_dir }
@@ -67,6 +118,41 @@ impl DirectoryContext {
 
     fn staged_request(&self, run_id: Id) -> PathBuf {
         self.requests_dir().join(format!("{run_id}.md"))
+    }
+
+    /// One agent's persistent directory under `.refrain/agents/`.
+    fn agent_dir(&self, agent_id: Id) -> PathBuf {
+        self.state_dir.join("agents").join(agent_id.to_string())
+    }
+
+    /// Write the agent's AGENTS.md when it is missing or out of date.
+    ///
+    /// Content-compared rather than timestamped: a persona edit changes the
+    /// content and rewrites the file; a launch that changes nothing writes
+    /// nothing, so dispatching stays free of disk chatter.
+    pub fn ensure_agent_files(&self, agent_id: Id, persona: Option<&str>) -> io::Result<PathBuf> {
+        let dir = self.agent_dir(agent_id);
+        fs::create_dir_all(&dir)?;
+        let file = dir.join("AGENTS.md");
+        let wanted = agent_file(persona);
+        let current = match fs::read_to_string(&file) {
+            Ok(text) => Some(text),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        if current.as_deref() != Some(wanted.as_str()) {
+            fs::write(&file, wanted)?;
+            sync_file(&file)?;
+        }
+        Ok(file)
+    }
+
+    /// Whether the agent's workspace already holds a Memo.md — the fact a
+    /// resumed round is built from. The app never reads or writes the memo
+    /// itself; it is the agent's own memory.
+    #[must_use]
+    pub fn has_agent_memo(&self, agent_id: Id) -> bool {
+        self.agent_dir(agent_id).join("Memo.md").is_file()
     }
 
     /// The promoted request as the producer sees it (L0 collect reads the
@@ -304,5 +390,103 @@ mod tests {
                 .join(format!("{run_id}.md"))
                 .exists()
         );
+    }
+
+    /// 布局的形状：run 工作区嵌在 agent 目录下，两个 run（哪怕同一 agent）
+    /// 各有自己的目录——并列隔离的结构半句话都在这条路径里。
+    #[test]
+    fn run_workspaces_nest_under_their_agent_and_stay_apart() {
+        let agent = Id::new();
+        let first = run_workspace(agent, Id::new());
+        let second = run_workspace(agent, Id::new());
+        assert!(first.starts_with(&format!("agents/{agent}/runs/")));
+        assert!(second.starts_with(&format!("agents/{agent}/runs/")));
+        assert_ne!(first, second, "同一 agent 的两个 run 不许共用目录");
+        // 两个 agent 之间亦然。
+        let other = run_workspace(Id::new(), Id::new());
+        assert!(!other.starts_with(&format!("agents/{agent}/")));
+    }
+
+    /// AGENTS.md 从 persona 生成，带版本行；persona 变更时内容比对重写，
+    /// 没变更就不写。
+    #[test]
+    fn the_agent_file_carries_the_persona_and_regenerates_on_change() {
+        let dir = scratch();
+        let context = DirectoryContext::new(dir.clone());
+        let agent = Id::new();
+
+        let file = context
+            .ensure_agent_files(agent, Some("你是一位克制的编辑。"))
+            .unwrap();
+        let text = fs::read_to_string(&file).unwrap();
+        assert!(text.starts_with("<!-- refrain-agent-file:v1"));
+        assert!(text.contains("你是一位克制的编辑。"));
+        // 协议指针：指向每轮都有的 request.md，不指向某台机器的某个 harness。
+        assert!(text.contains("# Reply format"));
+        assert!(text.contains("Memo.md"));
+
+        // 同内容重写是无操作——派发不该带来磁盘噪音。
+        let written = fs::metadata(&file).unwrap().modified().unwrap();
+        context
+            .ensure_agent_files(agent, Some("你是一位克制的编辑。"))
+            .unwrap();
+        assert_eq!(fs::metadata(&file).unwrap().modified().unwrap(), written);
+
+        // persona 变了，文件跟着变。
+        context
+            .ensure_agent_files(agent, Some("你是一位严格的校对。"))
+            .unwrap();
+        let updated = fs::read_to_string(&file).unwrap();
+        assert!(updated.contains("你是一位严格的校对。"));
+        assert!(!updated.contains("克制的编辑"));
+
+        // 没有 persona 也生成：身份如实缺席，指针仍在。
+        let blank = context.ensure_agent_files(Id::new(), None).unwrap();
+        let text = fs::read_to_string(blank).unwrap();
+        assert!(text.contains("（作者未配置身份。）"));
+    }
+
+    /// Memo.md 是接续轮的事实来源：它一出现，has_agent_memo 就为真。
+    /// 应用自己不写 Memo.md——那是 agent 的地盘。
+    #[test]
+    fn a_memo_marks_the_workspace_as_resumable() {
+        let dir = scratch();
+        let context = DirectoryContext::new(dir.clone());
+        let agent = Id::new();
+        assert!(!context.has_agent_memo(agent));
+
+        context.ensure_agent_files(agent, None).unwrap();
+        assert!(
+            !context.has_agent_memo(agent),
+            "AGENTS.md 不是 Memo.md：生成身份不等于有记忆"
+        );
+
+        let memo = dir.join("agents").join(agent.to_string()).join("Memo.md");
+        fs::write(memo, "上一轮：作者不接受设问句结尾。").unwrap();
+        assert!(context.has_agent_memo(agent));
+    }
+
+    /// 旧布局（runs/<run-id>）的 run 在 journal 里存着旧工作区串；读取路径
+    /// 只认存下来的那串，所以旧现场不需要适配器也能读。
+    #[test]
+    fn an_old_layout_workspace_still_reads_back() {
+        let dir = scratch();
+        let context = DirectoryContext::new(dir.clone());
+        let run_id = Id::new();
+        let legacy = format!("runs/{run_id}");
+        let attempt = dir.join(&legacy).join("attempts").join(run_id.to_string());
+        fs::create_dir_all(&attempt).unwrap();
+        fs::write(attempt.join("result.md"), "旧布局的产出").unwrap();
+
+        let bytes = context.read_result(&legacy, run_id).unwrap().unwrap();
+        assert_eq!(bytes, "旧布局的产出".as_bytes());
+
+        // 新布局走同一条读路径。
+        let current = run_workspace(Id::new(), run_id);
+        let attempt = dir.join(&current).join("attempts").join(run_id.to_string());
+        fs::create_dir_all(&attempt).unwrap();
+        fs::write(attempt.join("result.md"), "新布局的产出").unwrap();
+        let bytes = context.read_result(&current, run_id).unwrap().unwrap();
+        assert_eq!(bytes, "新布局的产出".as_bytes());
     }
 }

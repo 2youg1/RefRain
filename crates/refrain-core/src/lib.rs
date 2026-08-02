@@ -12,6 +12,7 @@ pub mod block_shape;
 pub mod chinese_index;
 pub mod context_compiler;
 pub mod digest;
+pub mod document_format;
 pub mod error;
 pub mod health;
 pub mod id;
@@ -34,6 +35,7 @@ pub use context_compiler::{
     Tokens, compile, narrate_artifact, narrate_changes, narrate_manifest, serialize_changes,
     short_contract,
 };
+pub use document_format::DocumentFormat;
 pub use error::{ErrorCode, RecoveryStep, RefrainError};
 pub use health::{HealthReport, health};
 pub use id::Id;
@@ -43,9 +45,9 @@ pub use kara::{
 };
 pub use manuscript::{
     Block, BlockSequence, BytePatch, ChangeClass, DecisionBatch, Edit, EditKind, EditScope,
-    EditorAction, EditorChange, Insertion, Lineage, Manuscript, Proposal, Replacement, ReviewSlice,
-    ReviewSliceId, SliceKind, SourceSnapshot, TextAction, TextCommand, TextHead, TextRefusal,
-    TextTransition, Verdict, VerdictKind, classify_change,
+    EditorAction, EditorChange, Insertion, Lineage, Manuscript, PersistedBlock, PersistedRegion,
+    Proposal, Replacement, ReviewSlice, ReviewSliceId, SliceKind, SourceSnapshot, TextAction,
+    TextCommand, TextHead, TextRefusal, TextTransition, Verdict, VerdictKind, classify_change,
 };
 pub use role::DocumentRole;
-pub use source_layout::{ByteSpan, SourceDrift, SourceLayout};
+pub use source_layout::{BlockScan, ByteSpan, SourceDrift, SourceLayout};

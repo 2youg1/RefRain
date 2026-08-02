@@ -167,6 +167,56 @@ fn a_result_that_has_not_landed_moves_nothing() {
 }
 
 #[test]
+fn narration_around_a_single_root_is_trimmed_not_trusted() {
+    // 打印通道的 CLI 爱在产出前叙述一句。叙述可以被裁掉，但元素本身仍要过
+    // 全部校验——这条用例证明：裁剪成立时提案照常冻结。
+    let root = scratch();
+    let (_app, mut store) = store_at(&root);
+    let state_dir = store.layout().state_dir.clone();
+    let run_id = dispatched_run(&mut store, "runs/one");
+    stage(
+        &state_dir,
+        "runs/one",
+        run_id,
+        FIRST,
+        &format!("我先读协议。{}\n以上。", replacement("剑一直握着。")),
+    );
+    let manuscripts = [(CHAPTER.to_string(), manuscript_of(&root))]
+        .into_iter()
+        .collect();
+
+    let collected = collect_attempt(&mut store, &manuscripts, run_id, 10).unwrap();
+
+    assert_eq!(
+        collected,
+        Collected::Completed {
+            proposals: 1,
+            memos: 0,
+            drafts: 0,
+        }
+    );
+    assert_eq!(store.proposals_for(CHAPTER).unwrap().len(), 1);
+}
+
+#[test]
+fn two_root_elements_are_not_salvaged() {
+    // 两个根元素说明产出的形状已经坏了——不猜哪一个是真的，保持具名拒绝。
+    let root = scratch();
+    let (_app, mut store) = store_at(&root);
+    let state_dir = store.layout().state_dir.clone();
+    let run_id = dispatched_run(&mut store, "runs/one");
+    let doubled = format!("{}{}", replacement("甲"), replacement("乙"));
+    stage(&state_dir, "runs/one", run_id, FIRST, &doubled);
+    let manuscripts = [(CHAPTER.to_string(), manuscript_of(&root))]
+        .into_iter()
+        .collect();
+
+    let collected = collect_attempt(&mut store, &manuscripts, run_id, 10).unwrap();
+
+    assert!(matches!(collected, Collected::Failed { .. }));
+}
+
+#[test]
 fn a_replacement_whose_scope_text_still_matches_becomes_a_proposal() {
     let root = scratch();
     let (_app, mut store) = store_at(&root);

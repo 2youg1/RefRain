@@ -10,6 +10,7 @@ pub mod annotations;
 pub mod atomic;
 pub mod config;
 pub(crate) mod files;
+pub mod history;
 pub mod icons;
 pub mod ingest;
 pub mod ledger;

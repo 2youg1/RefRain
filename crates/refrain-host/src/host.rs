@@ -75,6 +75,12 @@ impl Authorized {
 /// before the request is frozen.
 pub const RUN_ID_PLACEHOLDER: &str = "<run-id>";
 
+/// The token the compiler leaves where the Run's agent belongs, in the same
+/// result path. It substitutes at staging for the same reason as
+/// [`RUN_ID_PLACEHOLDER`]: the workspace layout is `agents/<agent-id>/runs/<run-id>/`,
+/// and the frozen request must name the real path, not the layout's shape.
+pub const AGENT_ID_PLACEHOLDER: &str = "<agent-id>";
+
 /// What a Task is: the author's one dispatched collaboration, baseline-pinned
 /// at enqueue (Q27). No agentId — a Task is shared by every Run of its round.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -554,19 +560,39 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
 
                 // §8.2-1: stage first — manifest snapshot and one frozen
                 // request per Run, producer-invisible. Each request carries
-                // its own Run id where the compiler left the placeholder.
+                // its own Run id and its agent's id where the compiler left
+                // the placeholders: the result path names the real workspace,
+                // and the workspace layout nests runs under their agent.
+                let agent_of = |run_id: Id| -> Result<Id, HostRefusal> {
+                    let found = match &authorized {
+                        Authorized::Minted(run_ids) => run_ids
+                            .iter()
+                            .zip(new_agents.iter())
+                            .find(|(id, _)| **id == run_id)
+                            .map(|(_, agent)| *agent),
+                        Authorized::Retried(_) => self
+                            .runs
+                            .iter()
+                            .find(|run| run.id == run_id)
+                            .map(|run| run.agent_id),
+                    };
+                    found.ok_or_else(|| {
+                        HostRefusal::Context(format!("no agent on record for run {run_id}"))
+                    })
+                };
                 let requests: Vec<(Id, String)> = authorized
                     .ids()
                     .iter()
                     .map(|run_id| {
-                        (
+                        Ok((
                             *run_id,
                             package
                                 .request_md
-                                .replace(RUN_ID_PLACEHOLDER, &run_id.to_string()),
-                        )
+                                .replace(RUN_ID_PLACEHOLDER, &run_id.to_string())
+                                .replace(AGENT_ID_PLACEHOLDER, &agent_of(*run_id)?.to_string()),
+                        ))
                     })
-                    .collect();
+                    .collect::<Result<_, HostRefusal>>()?;
                 let staged = self
                     .context
                     .stage(&package, &requests)
@@ -1092,6 +1118,89 @@ mod tests {
                 upstream: runs[0].id
             })
         );
+    }
+
+    /// 冻结请求里的产出路径带的是这个 Run 自己的 agent 与 run id——
+    /// 工作区布局（agents/<agent>/runs/<run>）能不能被写对，全看这两个
+    /// 占位符在 staging 时被换成真值。
+    #[test]
+    fn a_staged_request_names_its_own_agent_and_run_and_not_its_peers() {
+        let (mut host, _package, task_id) = host_with_draft();
+        let agents = vec![Id::new(), Id::new()];
+        let request_md = format!(
+            "# Before\n原文。\n\n# Request\n改克制。\n\n# Reply format\n写进 agents/{AGENT_ID_PLACEHOLDER}/runs/{RUN_ID_PLACEHOLDER}/attempts/{RUN_ID_PLACEHOLDER}/result.md。\n"
+        );
+        let package = DispatchPackage {
+            digest: content_hex(request_md.as_bytes()),
+            request_md,
+            manifest: vec![],
+        };
+        host.execute(HostCommand::AuthorizeDispatch {
+            task_id,
+            new_agents: agents.clone(),
+            retry_runs: vec![],
+            edges: Vec::new(),
+            clicked_digest: package.digest.clone(),
+            package,
+            authorized_at: 1_000,
+        })
+        .unwrap();
+
+        let runs = host.runs();
+        for (run, agent) in runs.iter().zip(agents.iter()) {
+            let staged = &host.context.staged[&run.id];
+            assert!(
+                staged.contains(&format!("agents/{agent}/runs/{}/", run.id)),
+                "请求要指回自己的工作区: {staged}"
+            );
+            assert!(!staged.contains(RUN_ID_PLACEHOLDER));
+            assert!(!staged.contains(AGENT_ID_PLACEHOLDER));
+        }
+        // 并列隔离：一个 Run 的请求里不出现同侪的 run id。
+        let first = &host.context.staged[&runs[0].id];
+        assert!(
+            !first.contains(&runs[1].id.to_string()),
+            "并列 Run 的请求不该提到同侪的工作区"
+        );
+    }
+
+    /// 重试授权的是一条已存在的 Run，它的 agent 从原 Run 上取——不走
+    /// new_agents 那条路，也一样要换对占位符。
+    #[test]
+    fn a_retry_authorization_substitutes_its_own_agent() {
+        let (mut host, _package, task_id) = host_with_draft();
+        let agent = Id::new();
+        authorize(&mut host, task_id, std::slice::from_ref(&agent));
+        let run_id = host.runs()[0].id;
+        host.execute(HostCommand::FailRun {
+            run_id,
+            failure: "malformed".to_string(),
+            at: 1_100,
+        })
+        .unwrap();
+        host.execute(HostCommand::RetryRun { run_id }).unwrap();
+        let retry = host.runs()[1].id;
+
+        let request_md =
+            format!("产出写进 agents/{AGENT_ID_PLACEHOLDER}/runs/{RUN_ID_PLACEHOLDER}/。");
+        let package = DispatchPackage {
+            digest: content_hex(request_md.as_bytes()),
+            request_md,
+            manifest: vec![],
+        };
+        host.execute(HostCommand::AuthorizeDispatch {
+            task_id,
+            new_agents: vec![],
+            retry_runs: vec![retry],
+            edges: Vec::new(),
+            clicked_digest: package.digest.clone(),
+            package,
+            authorized_at: 1_200,
+        })
+        .unwrap();
+
+        let staged = &host.context.staged[&retry];
+        assert!(staged.contains(&format!("agents/{agent}/runs/{retry}/")));
     }
 
     /// 判据 2-5 的执行力：上游未终态时下游启动不了。

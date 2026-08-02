@@ -1,6 +1,6 @@
 use refrain_core::{
     EditorAction, EditorChange, Insertion, Lineage, Manuscript, Replacement, SourceSnapshot,
-    TextCommand, TextRefusal,
+    TextCommand, TextRefusal, TextTransition,
 };
 
 fn open(source: &[u8]) -> Manuscript {
@@ -51,7 +51,7 @@ fn a_duplicate_id_is_reported_when_every_block_reads() {
 fn insertion_members_must_each_be_one_rust_source_block() {
     for (text, blocks) in [("", 0), (" \n\t", 0), ("one\n\ntwo", 2)] {
         assert!(matches!(
-            Insertion::new(None, vec![text.to_owned()]),
+            Insertion::new(None, vec![text.to_owned()], refrain_core::BlockScan::Markdown),
             Err(TextRefusal::InvalidInsertionBlock {
                 index: 0,
                 blocks: actual,
@@ -59,7 +59,11 @@ fn insertion_members_must_each_be_one_rust_source_block() {
         ));
     }
     assert!(matches!(
-        Insertion::new(None, vec!["\nN\n".to_owned()]),
+        Insertion::new(
+            None,
+            vec!["\nN\n".to_owned()],
+            refrain_core::BlockScan::Markdown
+        ),
         Err(TextRefusal::InsertionBlockHasGaps { index: 0 })
     ));
 }
@@ -184,8 +188,12 @@ fn an_insertion_group_is_ordered_and_minted_only_by_rust() {
     let original = manuscript.head().block_ids();
     let first = original[0];
     let last = original[1];
-    let insertion =
-        Insertion::new(Some(last), vec!["second".to_owned(), "third".to_owned()]).unwrap();
+    let insertion = Insertion::new(
+        Some(last),
+        vec!["second".to_owned(), "third".to_owned()],
+        refrain_core::BlockScan::Markdown,
+    )
+    .unwrap();
 
     let transition = manuscript
         .execute(TextCommand::Editor(EditorAction::new(
@@ -213,7 +221,12 @@ fn inserting_before_the_old_first_block_preserves_the_prefix_and_old_gap() {
         .execute(TextCommand::Editor(EditorAction::new(
             manuscript.head().id(),
             vec![EditorChange::Insert(
-                Insertion::new(Some(first), vec!["N".to_owned()]).unwrap(),
+                Insertion::new(
+                    Some(first),
+                    vec!["N".to_owned()],
+                    refrain_core::BlockScan::Markdown,
+                )
+                .unwrap(),
             )],
             "insert before first",
         )))
@@ -226,7 +239,12 @@ fn inserting_before_the_old_first_block_preserves_the_prefix_and_old_gap() {
 fn a_missing_insertion_boundary_fails_closed() {
     let mut manuscript = open(b"one\n");
     let before = manuscript.head().clone();
-    let insertion = Insertion::new(Some(refrain_core::Id::new()), vec!["lost".to_owned()]).unwrap();
+    let insertion = Insertion::new(
+        Some(refrain_core::Id::new()),
+        vec!["lost".to_owned()],
+        refrain_core::BlockScan::Markdown,
+    )
+    .unwrap();
 
     assert!(matches!(
         manuscript.execute(TextCommand::Editor(EditorAction::new(
@@ -253,7 +271,12 @@ fn many_interleaved_insertions_are_linear_in_blocks_plus_changes() {
         .enumerate()
         .map(|(index, boundary)| {
             EditorChange::Insert(
-                Insertion::new(Some(boundary), vec![format!("insert {index}")]).unwrap(),
+                Insertion::new(
+                    Some(boundary),
+                    vec![format!("insert {index}")],
+                    refrain_core::BlockScan::Markdown,
+                )
+                .unwrap(),
             )
         })
         .collect();
@@ -271,4 +294,195 @@ fn many_interleaved_insertions_are_linear_in_blocks_plus_changes() {
     assert_eq!(transition.head().blocks().len(), 40_000);
     assert_eq!(transition.head().blocks()[0].text(), "insert 0");
     assert_eq!(transition.head().blocks()[1].text(), "block 0");
+}
+
+// ── undo_last: the session's history walked backwards ──────────────────────
+
+fn replace_last(manuscript: &mut Manuscript, block_index: usize, text: &str) -> TextTransition {
+    let ids = manuscript.head().block_ids();
+    manuscript
+        .execute(TextCommand::Editor(EditorAction::new(
+            manuscript.head().id(),
+            vec![EditorChange::Replace(
+                Replacement::new(vec![ids[block_index]], Some(text.to_owned())).unwrap(),
+            )],
+            "edit",
+        )))
+        .unwrap()
+}
+
+#[test]
+fn undo_restores_the_exact_bytes_and_the_head_the_action_was_based_on() {
+    let source = b"one\n\ntwo\n\nthree";
+    let mut manuscript = open(source);
+    let opened = manuscript.head().id();
+    let lineage = manuscript.head().block_ids();
+
+    replace_last(&mut manuscript, 1, "TWO");
+    assert_ne!(manuscript.materialize().unwrap(), source);
+
+    let transition = manuscript.undo_last().unwrap();
+
+    assert_eq!(manuscript.materialize().unwrap(), source);
+    // A revision id names one state: the restored head carries the id the
+    // undone action was based on, not a fresh one.
+    assert_eq!(transition.head().id(), opened);
+    assert_eq!(manuscript.head().id(), opened);
+    assert_eq!(manuscript.head().block_ids(), lineage);
+    assert!(manuscript.actions().is_empty());
+}
+
+#[test]
+fn undo_after_undo_walks_the_history_backwards() {
+    let source = b"a\n\nb\n\nc";
+    let mut manuscript = open(source);
+    let opened = manuscript.head().id();
+
+    replace_last(&mut manuscript, 1, "B");
+    let midway = manuscript.head().id();
+    let midway_lineage = manuscript.head().block_ids();
+    replace_last(&mut manuscript, 2, "C");
+    assert_eq!(manuscript.materialize().unwrap(), b"a\n\nB\n\nC");
+
+    manuscript.undo_last().unwrap();
+    assert_eq!(manuscript.materialize().unwrap(), b"a\n\nB\n\nc");
+    assert_eq!(manuscript.head().id(), midway);
+    assert_eq!(manuscript.head().block_ids(), midway_lineage);
+
+    manuscript.undo_last().unwrap();
+    assert_eq!(manuscript.materialize().unwrap(), source);
+    assert_eq!(manuscript.head().id(), opened);
+}
+
+#[test]
+fn undo_restores_inserted_and_deleted_blocks_in_both_directions() {
+    let source = b"first\n\nlast";
+    let mut manuscript = open(source);
+    let opened = manuscript.head().id();
+    let last = manuscript.head().block_ids()[1];
+
+    // Insertion: the region's `after` is the new blocks, its `before` empty.
+    manuscript
+        .execute(TextCommand::Editor(EditorAction::new(
+            manuscript.head().id(),
+            vec![EditorChange::Insert(
+                Insertion::new(
+                    Some(last),
+                    vec!["middle".to_owned()],
+                    refrain_core::BlockScan::Markdown,
+                )
+                .unwrap(),
+            )],
+            "insert",
+        )))
+        .unwrap();
+    assert_eq!(
+        manuscript.materialize().unwrap(),
+        b"first\n\nmiddle\n\nlast"
+    );
+
+    manuscript.undo_last().unwrap();
+    assert_eq!(manuscript.materialize().unwrap(), source);
+    assert_eq!(manuscript.head().id(), opened);
+
+    // Deletion: the region's `before` is the removed block, its `after` empty.
+    // The forward pass keeps the trailing separator; that is the domain's own
+    // canonical form, and undo must restore from it, not from an idealised one.
+    let last = manuscript.head().block_ids()[1];
+    manuscript
+        .execute(TextCommand::Editor(EditorAction::new(
+            manuscript.head().id(),
+            vec![EditorChange::Replace(
+                Replacement::new(vec![last], None).unwrap(),
+            )],
+            "delete",
+        )))
+        .unwrap();
+    assert_eq!(manuscript.materialize().unwrap(), b"first\n\n");
+
+    manuscript.undo_last().unwrap();
+    assert_eq!(manuscript.materialize().unwrap(), source);
+    assert_eq!(manuscript.head().id(), opened);
+}
+
+#[test]
+fn undo_at_an_empty_history_is_a_typed_refusal() {
+    let mut manuscript = open(b"one\n\ntwo");
+    assert!(matches!(
+        manuscript.undo_last(),
+        Err(TextRefusal::NothingToUndo)
+    ));
+    assert_eq!(manuscript.materialize().unwrap(), b"one\n\ntwo");
+}
+
+#[test]
+fn an_action_based_on_the_undone_head_is_stale_and_one_on_the_restored_head_lands() {
+    let mut manuscript = open(b"one\n\ntwo");
+    let opened = manuscript.head().id();
+    let ids = manuscript.head().block_ids();
+
+    let undone = replace_last(&mut manuscript, 1, "TWO").head().id();
+    manuscript.undo_last().unwrap();
+
+    // The undone revision is not a base anyone can build on any more.
+    assert!(matches!(
+        manuscript.execute(TextCommand::Editor(EditorAction::new(
+            undone,
+            vec![EditorChange::Replace(
+                Replacement::new(vec![ids[0]], Some("ONE".to_owned())).unwrap(),
+            )],
+            "stale",
+        ))),
+        Err(TextRefusal::StaleBase { expected, actual }) if expected == opened && actual == undone
+    ));
+
+    // The restored head is a live base: the CAS discipline composes with undo.
+    manuscript
+        .execute(TextCommand::Editor(EditorAction::new(
+            opened,
+            vec![EditorChange::Replace(
+                Replacement::new(vec![ids[0]], Some("ONE".to_owned())).unwrap(),
+            )],
+            "fresh",
+        )))
+        .unwrap();
+    assert_eq!(manuscript.materialize().unwrap(), b"ONE\n\ntwo");
+}
+
+#[test]
+fn an_action_carrying_verdicts_is_not_reverted_behind_the_ledger() {
+    use refrain_core::{DecisionBatch, EditScope, Proposal, Verdict, VerdictKind};
+
+    let mut manuscript = open(b"before\n\nkept");
+    let run = refrain_core::Id::new();
+    let block = manuscript.head().block_ids()[0];
+    let proposal = Proposal::new(
+        run,
+        manuscript.head().id(),
+        EditScope::new(vec![block]).unwrap(),
+        "before".to_owned(),
+        Some("after".to_owned()),
+    );
+    let verdicts: Vec<Verdict> = proposal
+        .slices()
+        .iter()
+        .filter(|slice| slice.kind().is_changed())
+        .map(|slice| Verdict::new(&proposal, slice.id(), VerdictKind::Accept, None).unwrap())
+        .collect();
+    let committed = manuscript
+        .execute(TextCommand::CommitDecisionBatch(DecisionBatch::new(
+            manuscript.head().id(),
+            vec![proposal],
+            verdicts,
+        )))
+        .unwrap();
+    assert_eq!(manuscript.materialize().unwrap(), b"after\n\nkept");
+
+    // The text inverse exists, but the ledger already recorded the verdicts;
+    // reverting the text would falsify it, so the refusal is typed.
+    assert!(matches!(
+        manuscript.undo_last(),
+        Err(TextRefusal::NotInvertible { action }) if action == committed.action().id()
+    ));
+    assert_eq!(manuscript.materialize().unwrap(), b"after\n\nkept");
 }

@@ -19,6 +19,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use ignore::{WalkBuilder, WalkState};
+use refrain_core::DocumentFormat;
 
 use crate::root::SOURCE_BACKUP_DIR;
 
@@ -43,9 +44,6 @@ pub struct Entry {
     pub manuscript: bool,
 }
 
-/// Extensions the workbench treats as manuscript text.
-const MANUSCRIPT: &[&str] = &["md", "markdown", "mdown", "txt"];
-
 impl Entry {
     fn from(path: PathBuf) -> Result<Self, String> {
         let metadata = path
@@ -64,10 +62,7 @@ impl Entry {
         let manuscript = matches!(kind, Kind::File)
             && path
                 .extension()
-                .map(|ext| {
-                    let ext = ext.to_string_lossy().to_lowercase();
-                    MANUSCRIPT.contains(&ext.as_str())
-                })
+                .map(|ext| DocumentFormat::of_extension(&ext.to_string_lossy()).is_some())
                 .unwrap_or(false);
 
         Ok(Self {

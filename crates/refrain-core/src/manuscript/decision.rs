@@ -1,10 +1,11 @@
 use super::action::apply_editor;
 use super::review::{EditScope, Proposal, ReviewSliceId, SliceKind};
 use super::{EditorAction, EditorChange, Id, Replacement, TextAction, TextHead, TextRefusal};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 /// A human judgment whose shape cannot omit required modified text.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VerdictKind {
     Accept,
     AcceptModified(String),
@@ -19,7 +20,7 @@ impl VerdictKind {
 }
 
 /// One human judgment on one changed Review Slice.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Verdict {
     id: Id,
     proposal: Id,
@@ -90,6 +91,7 @@ impl DecisionBatch {
 pub(super) fn apply(
     head: &TextHead,
     batch: &DecisionBatch,
+    scan: crate::BlockScan,
 ) -> Result<(TextHead, TextAction), TextRefusal> {
     if batch.base != head.id {
         return Err(TextRefusal::StaleBase {
@@ -145,7 +147,8 @@ pub(super) fn apply(
         if replacement == proposal.before() {
             continue;
         }
-        if proposal.baseline() != head.id || scope_text(head, proposal.scope()) != proposal.before()
+        if proposal.baseline() != head.id
+            || scope_text(head, proposal.scope(), scan) != proposal.before()
         {
             return Err(TextRefusal::StaleProposal {
                 proposal: proposal.id(),
@@ -167,6 +170,7 @@ pub(super) fn apply(
             head.clone(),
             TextAction {
                 id: Id::new(),
+                base: head.id,
                 cause: "decision-batch".to_owned(),
                 touched: Box::default(),
                 regions: Box::default(),
@@ -177,12 +181,24 @@ pub(super) fn apply(
     }
 
     let editor = EditorAction::new(head.id, changes, "decision-batch");
-    let (head, mut action) = apply_editor(head, &editor)?;
+    let (head, mut action) = apply_editor(head, &editor, scan)?;
     action.verdicts = batch.verdicts.clone();
     Ok((head, action))
 }
 
-fn scope_text(head: &TextHead, scope: &EditScope) -> String {
+/// The text a set of verdicts would merge into the proposal's scope.
+///
+/// The merge path computes this inline; the countermand path needs the same
+/// bytes to anchor on — what landed in the manuscript is what must be found
+/// again before it can be reversed. One rule, two callers: keep it here so
+/// the two paths can never disagree about what "merged" meant.
+#[must_use]
+pub fn merged_text(proposal: &Proposal, verdicts: &[Verdict]) -> String {
+    rebuild(proposal, verdicts.iter())
+}
+
+fn scope_text(head: &TextHead, scope: &EditScope, scan: crate::BlockScan) -> String {
+    let separator = std::str::from_utf8(scan.separator()).expect("block separators are ASCII");
     scope
         .blocks()
         .iter()
@@ -193,7 +209,7 @@ fn scope_text(head: &TextHead, scope: &EditScope) -> String {
                 .map(|block| block.text.as_str())
         })
         .collect::<Vec<_>>()
-        .join("\n\n")
+        .join(separator)
 }
 
 fn rebuild<'a>(proposal: &Proposal, verdicts: impl Iterator<Item = &'a Verdict>) -> String {

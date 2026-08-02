@@ -2,7 +2,7 @@ use super::{
     AppliedRegion, Block, BlockSequence, EditorAction, EditorChange, Id, TextAction, TextHead,
     TextRefusal,
 };
-use crate::SourceLayout;
+use crate::BlockScan;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 struct PreparedRange {
@@ -15,6 +15,7 @@ struct PreparedRange {
 pub(super) fn apply_editor(
     head: &TextHead,
     editor: &EditorAction,
+    scan: BlockScan,
 ) -> Result<(TextHead, TextAction), TextRefusal> {
     let at = head
         .blocks
@@ -22,13 +23,14 @@ pub(super) fn apply_editor(
         .enumerate()
         .map(|(index, block)| (block.id, index))
         .collect();
-    apply_editor_indexed(head, editor, &at)
+    apply_editor_indexed(head, editor, &at, scan)
 }
 
 pub(super) fn apply_editor_indexed(
     head: &TextHead,
     editor: &EditorAction,
     at: &HashMap<Id, usize>,
+    scan: BlockScan,
 ) -> Result<(TextHead, TextAction), TextRefusal> {
     if editor.base != head.id {
         return Err(TextRefusal::StaleBase {
@@ -39,7 +41,7 @@ pub(super) fn apply_editor_indexed(
     if editor.changes.is_empty() {
         return Err(TextRefusal::NothingChanged);
     }
-    if let Some(result) = apply_single_block(head, editor, at) {
+    if let Some(result) = apply_single_block(head, editor, at, scan) {
         return result;
     }
 
@@ -82,7 +84,7 @@ pub(super) fn apply_editor_indexed(
         let texts = replacement
             .text
             .as_deref()
-            .map(split_blocks)
+            .map(|text| split_blocks(text, scan))
             .unwrap_or_default();
         let after = texts
             .into_iter()
@@ -216,18 +218,13 @@ pub(super) fn apply_editor_indexed(
             .unwrap_or(0)
     });
 
-    let mut touched = HashSet::new();
-    for region in &regions {
-        touched.extend(region.before.iter().map(|block| block.id));
-        touched.extend(region.after.iter().map(|block| block.id));
-    }
-    let mut touched = touched.into_iter().collect::<Vec<_>>();
-    touched.sort();
+    let touched = super::touched_of(&regions);
     let edits = super::edits_from_regions(&regions);
     let action = TextAction {
         id: Id::new(),
+        base: head.id,
         cause: editor.cause.clone(),
-        touched: touched.into_boxed_slice(),
+        touched,
         regions: regions.into_boxed_slice(),
         edits,
         verdicts: Box::default(),
@@ -244,6 +241,7 @@ fn apply_single_block(
     head: &TextHead,
     editor: &EditorAction,
     at: &HashMap<Id, usize>,
+    scan: BlockScan,
 ) -> Option<Result<(TextHead, TextAction), TextRefusal>> {
     let [EditorChange::Replace(replacement)] = editor.changes.as_ref() else {
         return None;
@@ -252,7 +250,7 @@ fn apply_single_block(
         return None;
     };
     let text = replacement.text.as_deref()?;
-    let texts = split_blocks(text);
+    let texts = split_blocks(text, scan);
     let [text] = texts.as_slice() else {
         return None;
     };
@@ -275,6 +273,7 @@ fn apply_single_block(
     };
     let action = TextAction {
         id: Id::new(),
+        base: head.id,
         cause: editor.cause.clone(),
         touched: vec![*block_id].into_boxed_slice(),
         edits: super::edits_from_regions(std::slice::from_ref(&region)),
@@ -291,11 +290,75 @@ fn apply_single_block(
     )))
 }
 
-fn split_blocks(text: &str) -> Vec<String> {
-    let layout = SourceLayout::read(text.as_bytes());
+fn split_blocks(text: &str, scan: BlockScan) -> Vec<String> {
+    let layout = scan.layout(text.as_bytes());
     layout
         .blocks()
         .iter()
         .map(|span| text[span.start..span.end].to_owned())
         .collect()
+}
+
+/// The block list of the head an action was based on, rebuilt from its regions.
+///
+/// A region records the blocks it replaced (`before`) and what it put there
+/// (`after`), and the action being undone is the one that produced this head
+/// — so each region's `after` run sits in the head exactly where the region
+/// says, and swapping it back for `before` restores the earlier state. A
+/// region with an empty `after` (a deletion) carries no position of its own,
+/// so it re-enters at the surviving boundary it recorded.
+pub(super) fn invert(head: &TextHead, action: &TextAction) -> Result<Vec<Block>, TextRefusal> {
+    let mut first_after: HashMap<Id, &AppliedRegion> = HashMap::new();
+    let mut after_ids: HashSet<Id> = HashSet::new();
+    let mut anchored: HashMap<Id, Vec<&AppliedRegion>> = HashMap::new();
+    let mut at_end: Vec<&AppliedRegion> = Vec::new();
+    for region in &action.regions {
+        if let Some(first) = region.after.first() {
+            first_after.insert(first.id, region);
+            after_ids.extend(region.after.iter().map(|block| block.id));
+        } else if !region.before.is_empty() {
+            match region.right {
+                Some(anchor) => anchored.entry(anchor).or_default().push(region),
+                None => at_end.push(region),
+            }
+        }
+    }
+
+    let blocks = &head.blocks;
+    let mut out: Vec<Block> = Vec::with_capacity(blocks.len());
+    let mut index = 0;
+    while index < blocks.len() {
+        let block = &blocks[index];
+        if let Some(region) = first_after.get(&block.id) {
+            // The run must sit here exactly: this head is the action's own
+            // product, so anything else means the record does not describe
+            // this text, and inverting it would invent bytes.
+            let exact = region.after.iter().enumerate().all(|(offset, recorded)| {
+                blocks
+                    .get(index + offset)
+                    .is_some_and(|present| present.id == recorded.id)
+            });
+            if !exact {
+                return Err(TextRefusal::NotInvertible { action: action.id });
+            }
+            out.extend(region.before.iter().cloned());
+            index += region.after.len();
+            continue;
+        }
+        if let Some(regions) = anchored.get(&block.id) {
+            for region in regions {
+                out.extend(region.before.iter().cloned());
+            }
+        }
+        if after_ids.contains(&block.id) {
+            // A mid-run block: the record and the head disagree, as above.
+            return Err(TextRefusal::NotInvertible { action: action.id });
+        }
+        out.push(block.clone());
+        index += 1;
+    }
+    for region in at_end {
+        out.extend(region.before.iter().cloned());
+    }
+    Ok(out)
 }

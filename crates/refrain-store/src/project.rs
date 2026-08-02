@@ -19,6 +19,7 @@
 //!   two; the same path on a different volume is an identity change, which is
 //!   a Safety surface, not a new project.
 
+use refrain_core::material_listing::Disclosure;
 use refrain_core::{DocumentRole, ErrorCode, Id, RefrainError, digest::content_hex};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::fs;
@@ -510,6 +511,13 @@ impl ProjectStore {
         crate::mailbox::MailboxStandings::new(&self.db)
     }
 
+    /// The persisted Text Action history over this project's database: the
+    /// undo chain that survives a restart.
+    #[must_use]
+    pub fn action_history(&self) -> crate::history::ActionHistory<'_> {
+        crate::history::ActionHistory::new(&self.db)
+    }
+
     /// The absolute path of a document inside this Root, containment-checked.
     /// Reads go through here: the Source Backup is readable — it is the
     /// author's original. Writes go through [`resolve_mutable`], which adds
@@ -607,6 +615,8 @@ impl ProjectStore {
             // Authored in RefRain, not imported from anywhere.
             source_digest: None,
             source_format: None,
+            // Never asked: the readers treat `None` as the default.
+            disclosure: None,
         };
         self.upsert_document(&row)?;
         Ok(OpenDocument {
@@ -739,6 +749,7 @@ impl ProjectStore {
             // Reconciliation found a file on disk; no import recorded it.
             source_digest: None,
             source_format: None,
+            disclosure: None,
         };
         self.upsert_document(&row)?;
         Ok(row)
@@ -748,7 +759,7 @@ impl ProjectStore {
         self.db
             .query_row(
                 "SELECT id, path, role, digest, current_head, head_block_ids,
-                        source_digest, source_format
+                        source_digest, source_format, disclosure
                  FROM documents WHERE path = ?1",
                 params![relative],
                 // The same columns and the same decode as every other document
@@ -858,6 +869,105 @@ impl ProjectStore {
             )
             .map_err(crate::schema::StoreError::from)?;
         Ok(())
+    }
+
+    /// Write what the author permits for one document as a material
+    /// (SPEC 2's Disclosure). Naming a path with no row is a typed refusal:
+    /// a setting written for a document that does not exist would sit
+    /// unread, and the author would believe it applied.
+    pub fn set_disclosure(
+        &mut self,
+        relative: &str,
+        disclosure: Disclosure,
+    ) -> Result<DocumentRow, ProjectFailure> {
+        let changed = self
+            .db
+            .execute(
+                "UPDATE documents SET disclosure = ?1 WHERE path = ?2",
+                params![disclosure.as_str(), relative],
+            )
+            .map_err(crate::schema::StoreError::from)?;
+        if changed == 0 {
+            return Err(ProjectFailure::Domain(RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "set the disclosure of a document that is not registered",
+                relative,
+            )));
+        }
+        self.find_document(relative)?.ok_or_else(|| {
+            ProjectFailure::Domain(RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "reload a document's disclosure",
+                relative,
+            ))
+        })
+    }
+
+    /// Delete a document: the file goes to the system recycle bin, and
+    /// nowhere else (INV-6 — there is no permanent delete at any layer).
+    ///
+    /// What happens to each thing that names the document:
+    ///
+    /// - The `.md` itself: `trash::delete`, the only recoverable delete. A
+    ///   trash failure is a typed refusal and the file stays where it is;
+    ///   falling back to unlinking would break the one promise this
+    ///   application makes.
+    /// - An imported Material's source clone under the Source Backup stays.
+    ///   The backup is never written, and a delete is not an exception: the
+    ///   original bytes are not RefRain's to remove. The projected `.md` goes
+    ///   to the bin; the original never moves.
+    /// - The `documents` row and the search index leave, exactly as
+    ///   reconciliation treats a file that vanished — the row would depart on
+    ///   the next refresh anyway.
+    /// - Review staging (`review_sessions`, `pending_actions`) for the path
+    ///   is dropped: against a restored file it could never validly replay —
+    ///   the continuity it names was deleted with the row.
+    /// - Proposals, verdicts, mailbox standings, and annotations stay. They
+    ///   are the audit and the author's notes; deleting a document does not
+    ///   rewrite what was decided about it.
+    pub fn delete_document(&mut self, relative: &str) -> Result<DocumentRow, ProjectFailure> {
+        let row = self.find_document(relative)?.ok_or_else(|| {
+            ProjectFailure::Domain(RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "delete a document that is not registered",
+                relative,
+            ))
+        })?;
+        let path = self.resolve_mutable(relative)?;
+        if path.try_exists().map_err(ProjectFailure::io(&path))? {
+            trash::delete(&path).map_err(|error| {
+                ProjectFailure::Domain(
+                    RefrainError::new(
+                        ErrorCode::Io,
+                        "move a document to the recycle bin",
+                        path.display().to_string(),
+                    )
+                    .with_detail(error.to_string()),
+                )
+            })?;
+        }
+        // The file is gone (or already was): mirror reconciliation's departed
+        // path — row first, then the index, then staging that names the path.
+        self.db
+            .execute("DELETE FROM documents WHERE path = ?1", params![relative])
+            .map_err(crate::schema::StoreError::from)?;
+        search::forget_document(&self.db, relative).map_err(ProjectFailure::Domain)?;
+        self.db
+            .execute(
+                "DELETE FROM review_sessions WHERE document_path = ?1",
+                params![relative],
+            )
+            .map_err(crate::schema::StoreError::from)?;
+        self.db
+            .execute(
+                "DELETE FROM pending_actions WHERE path = ?1",
+                params![relative],
+            )
+            .map_err(crate::schema::StoreError::from)?;
+        // The reconciliation fingerprint was taken over a scan that included
+        // this file; membership changed under it, so the next refresh scans.
+        self.reconciled = None;
+        Ok(row)
     }
 
     fn upsert_document(&mut self, row: &DocumentRow) -> Result<(), ProjectFailure> {

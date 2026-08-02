@@ -1,8 +1,6 @@
 use super::{BlockSequence, Id, SourceDrift, SourceSnapshot};
 use std::collections::HashMap;
 
-const DEFAULT_SEPARATOR: &[u8] = b"\n\n";
-
 pub(super) fn blocks(
     source: &SourceSnapshot,
     original_ids: &[Id],
@@ -10,6 +8,9 @@ pub(super) fn blocks(
 ) -> Result<Vec<u8>, SourceDrift> {
     source.layout.reproduce(source.bytes())?;
     let spans = source.layout.blocks();
+    // Freshly minted blocks join with the scan's separator; untouched gaps
+    // reproduce from the source verbatim below.
+    let separator = source.scan.separator();
     let original_at: HashMap<Id, usize> = original_ids
         .iter()
         .enumerate()
@@ -41,13 +42,13 @@ pub(super) fn blocks(
             output.extend_from_slice(&source.bytes()[source_cursor..next.start]);
             source_cursor = next.start;
             output.extend_from_slice(block.text.as_bytes());
-            output.extend_from_slice(DEFAULT_SEPARATOR);
+            output.extend_from_slice(separator);
         } else {
             if original_ids.is_empty() && output.is_empty() {
                 output.extend_from_slice(source.bytes());
                 source_cursor = source.bytes().len();
             } else if !output.is_empty() {
-                output.extend_from_slice(DEFAULT_SEPARATOR);
+                output.extend_from_slice(separator);
             }
             output.extend_from_slice(block.text.as_bytes());
         }

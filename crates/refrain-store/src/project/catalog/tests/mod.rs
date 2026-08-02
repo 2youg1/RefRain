@@ -237,3 +237,99 @@ fn stale_offsets_are_skipped_not_panicked_on() {
     drop(app);
     fs::remove_dir_all(root).unwrap();
 }
+
+/// 精确查无结果时回退宽松——两条 UI 检索路径与 Agent 路径同一条规矩。
+///
+/// 语料里没有人写过「营销渠道」连在一起的形状，只有拆开的一半在两篇里
+/// 各出现一次：精确（AND）恒空，宽松（OR）能答。回退若不存在，这两条
+/// 断言都会拿到空结果。
+#[test]
+fn an_exact_miss_falls_back_to_loose_on_both_ui_search_paths() {
+    let root = std::env::temp_dir().join(format!("refrain-fallback-{}", Id::new()));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("人物志.md"),
+        "陆沉舟，前营销总监。习惯在纸上写字。\n",
+    )
+    .unwrap();
+    fs::write(root.join("长夜.md"), "长夜将尽。营销这个词他一向不喜欢。\n").unwrap();
+    let mut app = crate::schema::open_in_memory().unwrap();
+    AppDb::migrate(&mut app).unwrap();
+    let (mut store, _) = ProjectStore::adopt(
+        &mut app,
+        &RootLocator {
+            path: root.clone(),
+            kind: RootKind::Folder,
+        },
+    )
+    .unwrap();
+    store
+        .refresh_document_page(DocumentPageQuery {
+            after: None,
+            limit: 16,
+        })
+        .unwrap();
+
+    let documents = store
+        .search_documents_with("营销渠道", Precision::Exact, 10)
+        .unwrap();
+    assert!(!documents.is_empty(), "精确恒空的查询应当由宽松回退答出");
+    let blocks = store
+        .search_blocks_with("营销渠道", Precision::Exact, 10)
+        .unwrap();
+    assert!(!blocks.is_empty(), "块级路径同一条回退规矩");
+
+    drop(store);
+    drop(app);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// 精确有结果时不回退：「营销总监」在人物志里完整出现，长夜里只有
+/// 「营销」半个词。回退若点火，结果里会多出长夜——这条测试的语料
+/// 让两条路给出可数的两份不同答案。
+#[test]
+fn an_exact_hit_never_widens() {
+    let root = std::env::temp_dir().join(format!("refrain-nofallback-{}", Id::new()));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("人物志.md"),
+        "陆沉舟，前营销总监。习惯在纸上写字。\n",
+    )
+    .unwrap();
+    fs::write(root.join("长夜.md"), "长夜将尽。营销这个词他一向不喜欢。\n").unwrap();
+    let mut app = crate::schema::open_in_memory().unwrap();
+    AppDb::migrate(&mut app).unwrap();
+    let (mut store, _) = ProjectStore::adopt(
+        &mut app,
+        &RootLocator {
+            path: root.clone(),
+            kind: RootKind::Folder,
+        },
+    )
+    .unwrap();
+    store
+        .refresh_document_page(DocumentPageQuery {
+            after: None,
+            limit: 16,
+        })
+        .unwrap();
+
+    let documents = store
+        .search_documents_with("营销总监", Precision::Exact, 10)
+        .unwrap();
+    let paths: Vec<&str> = documents.iter().map(|row| row.path.as_str()).collect();
+    assert_eq!(paths, vec!["人物志.md"], "宽松回退会多长夜.md: {paths:?}");
+
+    let blocks = store
+        .search_blocks_with("营销总监", Precision::Exact, 10)
+        .unwrap();
+    assert!(!blocks.is_empty());
+    assert!(
+        blocks.iter().all(|hit| hit.path == "人物志.md"),
+        "块级路径同样不许宽出精确的答案: {blocks:?}"
+    );
+
+    drop(store);
+    drop(app);
+    fs::remove_dir_all(root).unwrap();
+}

@@ -9,9 +9,10 @@
 //! never touches the model — `kimi --version` answers; no probe burns a turn.
 
 use std::io::{self, BufRead, BufReader, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use refrain_core::Id;
+use refrain_core::context_compiler::SkillStatus;
+use refrain_core::{Id, digest::content_hex};
 use serde::{Deserialize, Serialize};
 
 use crate::Tier;
@@ -30,6 +31,11 @@ pub struct DispatchSpec {
     /// The frozen request, byte for byte (SPEC 8.3b: the same content in the
     /// same order on every channel).
     pub request_md: String,
+    /// The connection's extra argv, declared on the Harness Connection.
+    pub connection_argv: Vec<String>,
+    /// The agent's own extra argv, validated at upsert. It lands after the
+    /// connection's: the more specific statement wins a duplicated flag.
+    pub agent_argv: Vec<String>,
 }
 
 /// A launch that happened. The receipt string is what the Run records.
@@ -174,6 +180,98 @@ fn allowed_env(names: &[String]) -> Vec<(String, String)> {
         .collect()
 }
 
+// ── The protocol installation surface (协议装载) ────────────────────────────
+//
+// Installing the protocol means registering it with the harness: each CLI
+// auto-loads its skills directory, so the file's presence is the
+// registration. Every adapter knows its own directory convention and
+// frontmatter shape; the protocol text itself comes only from
+// `refrain_core::agent_protocol::skill_doc()` — never a hand copy.
+//
+// This is the application's first write outside the Root. It therefore
+// happens only inside an explicit command, never implicitly on dispatch.
+
+/// Write the protocol file for one adapter, creating its skill directory.
+/// Returns the path and the BLAKE3 of the bytes written — the digest the
+/// Config records as provenance.
+fn install_skill_at(path: &Path, bytes: &[u8]) -> io::Result<(PathBuf, String)> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, bytes)?;
+    Ok((path.to_path_buf(), content_hex(bytes)))
+}
+
+/// The state of the installed copy, read from the file itself: the file is
+/// the fact, the Config digest is only the record of what we wrote. A file
+/// that hashes to the current generated protocol is `Current` whoever put it
+/// there; a file that differs is `Stale`, and no file is `None`.
+fn skill_status_at(path: &Path, expected: &[u8]) -> SkillStatus {
+    match std::fs::read(path) {
+        Ok(bytes) if content_hex(&bytes) == content_hex(expected) => SkillStatus::Current,
+        Ok(_) => SkillStatus::Stale,
+        Err(_) => SkillStatus::None,
+    }
+}
+
+/// The protocol file as an adapter's skills directory expects it: its own
+/// frontmatter, then the generated protocol, byte for byte.
+fn skill_bytes(frontmatter: &str) -> Vec<u8> {
+    format!(
+        "{frontmatter}\n{}",
+        refrain_core::agent_protocol::skill_doc()
+    )
+    .into_bytes()
+}
+
+// ── Extra argv (模型/思考强度就是 argv，不枚举) ─────────────────────────────
+//
+// The connection and the agent may each declare extra argv. Validation
+// happens at upsert, so a refusal reaches the author while he is editing —
+// never at launch, where it would surface as a run that died for no visible
+// reason. The merge order is fixed here: connection first, agent after, so
+// the more specific statement wins a duplicated flag.
+
+/// Why one argv item was refused.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ArgvRefusal {
+    /// `--dangerously-*` turns the harness loose on the author's machine;
+    /// RefRain's whole shape is that an agent proposes and a human decides.
+    #[error("argv item {item:?} starts with --dangerously-: flags that bypass review are refused")]
+    DangerousFlag { item: String },
+    /// A control character (newline, NUL) is how one argv item becomes two,
+    /// or breaks the exec call outright.
+    #[error("argv item {item:?} carries a control character")]
+    ControlCharacter { item: String },
+    #[error("an empty argv item carries no meaning")]
+    Empty,
+}
+
+/// Check one agent's extra argv against the denylist. Called at upsert time.
+pub fn check_agent_argv(argv: &[String]) -> Result<(), ArgvRefusal> {
+    for item in argv {
+        if item.is_empty() {
+            return Err(ArgvRefusal::Empty);
+        }
+        if item.starts_with("--dangerously-") {
+            return Err(ArgvRefusal::DangerousFlag { item: item.clone() });
+        }
+        if item.chars().any(char::is_control) {
+            return Err(ArgvRefusal::ControlCharacter { item: item.clone() });
+        }
+    }
+    Ok(())
+}
+
+/// One launch's full argv: the adapter's own flags, then the connection's,
+/// then the agent's. Both print adapters share this shape.
+fn merged_argv(base: &[String], spec: &DispatchSpec) -> Vec<String> {
+    let mut args = base.to_vec();
+    args.extend(spec.connection_argv.iter().cloned());
+    args.extend(spec.agent_argv.iter().cloned());
+    args
+}
+
 /// Kimi Code print mode (L1): `kimi -p <prompt> --output-format stream-json`.
 /// The stream carries assistant content and a session resume hint; usage is
 /// unknown on this channel and says so (r1-kc: print has no usage frames).
@@ -214,6 +312,33 @@ impl KimiPrint {
     #[must_use]
     pub fn version(&self) -> &str {
         &self.version
+    }
+
+    /// Where Kimi Code auto-loads skills: `~/.kimi-code/skills/refrain/SKILL.md`.
+    pub fn skill_path(home: &Path) -> PathBuf {
+        home.join(".kimi-code")
+            .join("skills")
+            .join("refrain")
+            .join("SKILL.md")
+    }
+
+    /// The protocol file bytes for this harness: Kimi's frontmatter, then the
+    /// generated protocol. The text is `skill_doc()`, never a hand copy.
+    pub fn skill_bytes() -> Vec<u8> {
+        skill_bytes(
+            "---\nname: refrain\ndescription: RefRain 写作台的代理协议：提案、评审与合并的规矩。为 RefRain 工作时先读本文件。\n---",
+        )
+    }
+
+    /// Install the protocol into this harness's skill directory. Explicit
+    /// user action only — the application's one write outside the Root.
+    pub fn install_skill(home: &Path) -> io::Result<(PathBuf, String)> {
+        install_skill_at(&Self::skill_path(home), &Self::skill_bytes())
+    }
+
+    /// Whether the installed copy still says what this build would say.
+    pub fn skill_status(home: &Path) -> SkillStatus {
+        skill_status_at(&Self::skill_path(home), &Self::skill_bytes())
     }
 }
 
@@ -287,12 +412,15 @@ impl HarnessAdapter for KimiPrint {
         }
         let handle = process::launch(&LaunchSpec {
             program: self.program.clone(),
-            args: vec![
-                "-p".to_string(),
-                spec.request_md.clone(),
-                "--output-format".to_string(),
-                "stream-json".to_string(),
-            ],
+            args: merged_argv(
+                &[
+                    "-p".to_string(),
+                    spec.request_md.clone(),
+                    "--output-format".to_string(),
+                    "stream-json".to_string(),
+                ],
+                spec,
+            ),
             env: self.env.clone(),
             cwd: spec.workspace.clone(),
         })?;
@@ -372,6 +500,8 @@ mod tests {
             run_id: Id::new(),
             workspace: std::env::temp_dir(),
             request_md: text.to_string(),
+            connection_argv: Vec::new(),
+            agent_argv: Vec::new(),
         }
     }
 
@@ -616,6 +746,33 @@ impl ClaudePrint {
     pub fn version(&self) -> &str {
         &self.version
     }
+
+    /// Where Claude Code auto-loads skills: `~/.claude/skills/refrain/SKILL.md`.
+    pub fn skill_path(home: &Path) -> PathBuf {
+        home.join(".claude")
+            .join("skills")
+            .join("refrain")
+            .join("SKILL.md")
+    }
+
+    /// The protocol file bytes for this harness: Claude's frontmatter, then
+    /// the generated protocol. The text is `skill_doc()`, never a hand copy.
+    pub fn skill_bytes() -> Vec<u8> {
+        skill_bytes(
+            "---\nname: refrain\ndescription: RefRain 写作台的代理协议：提案、评审与合并的规矩。为 RefRain 工作时先读本文件。\n---",
+        )
+    }
+
+    /// Install the protocol into this harness's skill directory. Explicit
+    /// user action only — the application's one write outside the Root.
+    pub fn install_skill(home: &Path) -> io::Result<(PathBuf, String)> {
+        install_skill_at(&Self::skill_path(home), &Self::skill_bytes())
+    }
+
+    /// Whether the installed copy still says what this build would say.
+    pub fn skill_status(home: &Path) -> SkillStatus {
+        skill_status_at(&Self::skill_path(home), &Self::skill_bytes())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -754,14 +911,17 @@ impl HarnessAdapter for ClaudePrint {
         }
         let handle = process::launch(&LaunchSpec {
             program: self.program.clone(),
-            args: vec![
-                "--bare".to_string(),
-                "-p".to_string(),
-                spec.request_md.clone(),
-                "--output-format".to_string(),
-                "stream-json".to_string(),
-                "--verbose".to_string(),
-            ],
+            args: merged_argv(
+                &[
+                    "--bare".to_string(),
+                    "-p".to_string(),
+                    spec.request_md.clone(),
+                    "--output-format".to_string(),
+                    "stream-json".to_string(),
+                    "--verbose".to_string(),
+                ],
+                spec,
+            ),
             env: self.env.clone(),
             cwd: spec.workspace.clone(),
         })?;
@@ -888,6 +1048,8 @@ mod claude_tests {
                 run_id: Id::new(),
                 workspace: std::env::temp_dir(),
                 request_md: "Reply with exactly: REFRAIN-CONTRACT-1".to_string(),
+                connection_argv: Vec::new(),
+                agent_argv: Vec::new(),
             })
             .unwrap();
         let outcome = claude.observe(receipt).unwrap();
@@ -895,6 +1057,106 @@ mod claude_tests {
             outcome.reply_text.contains("REFRAIN-CONTRACT-1"),
             "{}",
             outcome.reply_text
+        );
+    }
+}
+
+#[cfg(test)]
+mod skill_tests {
+    use super::*;
+
+    fn home() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("refrain-skill-{}", Id::new()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// 安装即注册：写进 harness 的 skill 目录，内容唯一来源是 skill_doc()。
+    /// 两家 adapter 各自走一遍——目录约定与 frontmatter 是各家的知识，
+    /// 只测一家等于把另一家当成猜测。
+    #[test]
+    fn install_writes_the_generated_protocol_under_each_convention() {
+        for (install, relative) in [
+            (
+                KimiPrint::install_skill as fn(&Path) -> io::Result<(PathBuf, String)>,
+                ".kimi-code/skills/refrain/SKILL.md",
+            ),
+            (
+                ClaudePrint::install_skill,
+                ".claude/skills/refrain/SKILL.md",
+            ),
+        ] {
+            let home = home();
+            let (path, digest) = install(&home).unwrap();
+            assert_eq!(path, home.join(relative));
+            let bytes = std::fs::read(&path).unwrap();
+            // digest 记的就是落盘字节的 BLAKE3——Config 里的 provenance。
+            assert_eq!(digest, content_hex(&bytes));
+            let text = String::from_utf8(bytes).unwrap();
+            assert!(text.starts_with("---\nname: refrain\n"), "{text}");
+            assert!(
+                text.contains(&refrain_core::agent_protocol::skill_doc()),
+                "安装内容必须逐字来自 skill_doc()，不许手抄"
+            );
+        }
+    }
+
+    /// 状态三态：没装是 None，装上且未漂是 Current，字节变了是 Stale。
+    /// Stale 必须能被一次真实改动触发——只断言 Current 的门禁，永远不知道
+    /// Stale 还活着没有。
+    #[test]
+    fn status_reads_the_file_none_current_stale() {
+        let home = home();
+        assert_eq!(KimiPrint::skill_status(&home), SkillStatus::None);
+
+        let (_path, _digest) = KimiPrint::install_skill(&home).unwrap();
+        assert_eq!(KimiPrint::skill_status(&home), SkillStatus::Current);
+
+        std::fs::write(
+            KimiPrint::skill_path(&home),
+            "an older protocol, or bytes someone else changed",
+        )
+        .unwrap();
+        assert_eq!(KimiPrint::skill_status(&home), SkillStatus::Stale);
+    }
+
+    /// 合并规则：连接的 argv 在前，agent 的在后——重复旗标时更具体的
+    /// 那句说了算。顺序是这条测试要钉住的全部。
+    #[test]
+    fn argv_merges_connection_first_then_agent() {
+        let spec = DispatchSpec {
+            run_id: Id::new(),
+            workspace: std::env::temp_dir(),
+            request_md: "prompt".to_string(),
+            connection_argv: vec!["--model".to_string(), "a".to_string()],
+            agent_argv: vec!["--model".to_string(), "b".to_string()],
+        };
+        let args = merged_argv(&["-p".to_string(), "prompt".to_string()], &spec);
+        assert_eq!(
+            args,
+            vec!["-p", "prompt", "--model", "a", "--model", "b"],
+            "connection argv 必须先于 agent argv"
+        );
+    }
+
+    /// 危险旗标与控制字符在登记时被拒，不是在启动时炸成一团看不懂的失败。
+    #[test]
+    fn the_denylist_refuses_dangerous_flags_and_control_characters() {
+        assert!(matches!(
+            check_agent_argv(&["--dangerously-skip-permissions".to_string()]),
+            Err(ArgvRefusal::DangerousFlag { .. })
+        ));
+        assert!(matches!(
+            check_agent_argv(&["--model\n--output-format".to_string()]),
+            Err(ArgvRefusal::ControlCharacter { .. })
+        ));
+        assert!(matches!(
+            check_agent_argv(&[String::new()]),
+            Err(ArgvRefusal::Empty)
+        ));
+        assert!(
+            check_agent_argv(&["--model".to_string(), "k2".to_string()]).is_ok(),
+            "普通旗标不该被误伤"
         );
     }
 }

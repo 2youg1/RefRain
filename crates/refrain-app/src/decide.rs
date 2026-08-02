@@ -12,7 +12,8 @@ use std::collections::HashMap;
 
 use refrain_core::manuscript::{DecisionBatch, Proposal, ReviewSliceId, Verdict, VerdictKind};
 use refrain_core::{
-    ErrorCode, Id, Manuscript, RecoveryStep, RefrainError, TextCommand, TextRefusal, TextTransition,
+    EditorAction, EditorChange, ErrorCode, Id, Manuscript, RecoveryStep, RefrainError, Replacement,
+    TextCommand, TextRefusal, TextTransition,
 };
 use refrain_store::ledger::{VerdictKindName, VerdictRecord};
 use refrain_store::project::ProjectStore;
@@ -212,6 +213,16 @@ fn verdict_of(
         }
         VerdictKindName::Reject => VerdictKind::Reject,
         VerdictKindName::CommentOnly => VerdictKind::CommentOnly,
+        // 冲销记录由逆向裁决自己写入，永远不会被暂存进一个待合并的批次。
+        // 真的走到这里，是批次里混进了不属于它的行——说出来，别悄悄映射成
+        // 另一种裁决。
+        VerdictKindName::Countermanded => {
+            return Err(RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "stage a countermand record into a decision batch",
+                row.id.clone(),
+            ));
+        }
     };
 
     Verdict::new(proposal, slice_of(&row.slice_id)?, kind, row.reason.clone()).map_err(|error| {
@@ -245,6 +256,170 @@ fn slice_of(raw: &str) -> Result<ReviewSliceId, RefrainError> {
         crate::journal::parse_id(proposal, "slice proposal")?,
         ordinal,
     ))
+}
+
+// ── 逆向裁决（countermanding verdict）──────────────────────────────────────
+//
+// 对已合并的提案下冲销：账本 append 一条 countermanded 记录（不删旧记录），
+// 文本回退到该提案的冻结前字节。锚定复用冻结字节核对——当前文本里找不到
+// 当初合并进去的那一段，整体拒绝，一段都不动。
+//
+// 与「撤销」的分工：撤销吃掉会话里最后一个动作，而合并动作携带裁决、按
+// 设计不可撤销（账本已是事实）。逆向裁决不碰历史，它写一条新的裁决，
+// 让文本与账本各自保持真实。
+
+/// 一次冲销记录使用的 slice id：冲销针对整个提案，不针对切片。写法与
+/// `<proposal>:<ordinal>` 同格但占位词不是序号，重建切片的路径不会把它
+/// 误读成一条切片裁决。
+fn countermand_slice_id(proposal: &str) -> String {
+    format!("{proposal}:countermand")
+}
+
+/// 对一组已合并的提案下冲销，落成**一次** Text Action（一次撤销全部还原）。
+///
+/// 全部锚定核对在任何文本移动之前完成：任何一个提案找不到当初合并进去
+/// 的字节，整批拒绝，账本也不写——半个冲销既丢审计也丢文本的一致性。
+///
+/// `decided_at` 由调用方给（与 host 同一纪律：这里没有钟）。
+///
+/// # Errors
+///
+/// 提案不存在、从未被合并（拒绝或仅批注）、合并不留字节（删除型）、
+/// 或冻结字节已不再匹配当前文本，都在这里具名拒绝。
+pub fn countermand_proposals(
+    store: &mut ProjectStore,
+    manuscript: &mut Manuscript,
+    path: &str,
+    proposal_ids: &[String],
+    decided_at: u64,
+) -> Result<TextTransition, RefrainError> {
+    if proposal_ids.is_empty() {
+        return Err(RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "countermand an empty set",
+            path.to_owned(),
+        ));
+    }
+
+    let proposals = store
+        .proposals_for(path)
+        .map_err(into_domain)?
+        .iter()
+        .map(crate::review::rebuild_proposal)
+        .collect::<Result<Vec<_>, _>>()?;
+    let ledger_rows = store
+        .ledger()
+        .for_document(path)
+        .map_err(crate::journal::into_domain_store)?;
+
+    let mut changes = Vec::with_capacity(proposal_ids.len());
+    let mut reversals = Vec::with_capacity(proposal_ids.len());
+    for raw in proposal_ids {
+        let wanted = crate::journal::parse_id(raw, "proposal")?;
+        let proposal = proposals
+            .iter()
+            .find(|candidate| candidate.id() == wanted)
+            .ok_or_else(|| {
+                RefrainError::new(
+                    ErrorCode::StateUnavailable,
+                    "countermand a proposal that is not here",
+                    raw.clone(),
+                )
+            })?;
+
+        // 合并过才有得冲：账本里这个提案的接受类裁决。拒绝与仅批注从未
+        // 进过正文，对它们「冲销」是假装有一段可回退的文本。
+        let merged_rows: Vec<&VerdictRecord> = ledger_rows
+            .iter()
+            .filter(|row| {
+                row.proposal_id == *raw
+                    && matches!(
+                        row.kind,
+                        VerdictKindName::Accept | VerdictKindName::AcceptModified
+                    )
+            })
+            .collect();
+        if merged_rows.is_empty() {
+            return Err(RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "countermand a proposal that was never merged",
+                raw.clone(),
+            ));
+        }
+
+        let proposal_at: HashMap<Id, &Proposal> = [(proposal.id(), proposal)].into_iter().collect();
+        let verdicts = merged_rows
+            .iter()
+            .map(|row| verdict_of(row, &proposal_at))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // 锚定物是「当初合并进正文的那一段」，由合并时同一套重建规则算出。
+        // 两份代码各算一份的日子，就是冲销与合并对某一条裁决理解不同的那天。
+        let landed = refrain_core::manuscript::merged_text(proposal, &verdicts);
+        if landed.is_empty() {
+            return Err(RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "countermand a merge that deleted its scope",
+                raw.clone(),
+            )
+            .with_detail(
+                "the merge left no bytes in the text, so there is no anchor to find and reverse",
+            ));
+        }
+        let blocks = crate::scope::find_scope_blocks(manuscript, &landed).ok_or_else(|| {
+            // 与提案过期同一类事实：作者后来动过这一段。交还当初合并进去
+            // 的原文，他是唯一知道该怎么办的人。
+            RefrainError::new(
+                ErrorCode::StaleProposal,
+                "countermand a proposal whose merged text has moved",
+                path.to_owned(),
+            )
+            .with_detail(landed.clone())
+            .with_recovery(vec![
+                RecoveryStep::CompareWithFrozenText,
+                RecoveryStep::SendAgain,
+            ])
+        })?;
+
+        changes.push(EditorChange::Replace(
+            Replacement::new(blocks, Some(proposal.before().to_string())).map_err(|error| {
+                RefrainError::new(ErrorCode::Io, "build a countermand", raw.clone())
+                    .with_detail(error.to_string())
+            })?,
+        ));
+        reversals.push(raw.clone());
+    }
+
+    let base = manuscript.head().id();
+    let transition = manuscript
+        .execute(TextCommand::Editor(EditorAction::new(
+            base,
+            changes,
+            "countermand",
+        )))
+        .map_err(|error| {
+            RefrainError::new(ErrorCode::Io, "countermand proposals", path.to_owned())
+                .with_detail(error.to_string())
+        })?;
+
+    // 文本已回退，账本 append 冲销记录——顺序与 commit 相同：先落地事实，
+    // 再写账本，账本记的是已经发生的事，不是意图。
+    for raw in &reversals {
+        store
+            .ledger()
+            .record(&VerdictRecord {
+                id: Id::new().to_string(),
+                proposal_id: raw.clone(),
+                slice_id: countermand_slice_id(raw),
+                kind: VerdictKindName::Countermanded,
+                final_text: None,
+                reason: None,
+                decided_at,
+                legacy_baseline: None,
+            })
+            .map_err(crate::journal::into_domain_store)?;
+    }
+    Ok(transition)
 }
 
 #[cfg(test)]

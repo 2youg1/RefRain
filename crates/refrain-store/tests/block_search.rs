@@ -56,7 +56,12 @@ fn every_hit_seeks_back_to_the_exact_bytes_it_matched() {
 
     for hit in &hits {
         let source = source_of(&hit.path);
-        let block = block_at(source, hit.ordinal).expect("ordinal 应能定位到块");
+        let block = block_at(
+            source,
+            hit.ordinal,
+            refrain_core::DocumentFormat::of_path(&hit.path).block_scan(),
+        )
+        .expect("ordinal 应能定位到块");
 
         // 索引记的字节范围与真实取回的必须逐字节相同。
         assert_eq!(block.start, hit.start_byte as usize, "{hit:?}");
@@ -203,7 +208,12 @@ fn forgetting_a_document_removes_every_block_and_leaves_the_index_intact() {
 
     // 逐块复核幸存文档：每条命中仍能指回真实字节。
     for hit in &after {
-        let block = block_at(source_of(&hit.path), hit.ordinal).expect("幸存块应仍可定位");
+        let block = block_at(
+            source_of(&hit.path),
+            hit.ordinal,
+            refrain_core::DocumentFormat::of_path(&hit.path).block_scan(),
+        )
+        .expect("幸存块应仍可定位");
         assert_eq!(block.text.len(), hit.bytes as usize);
     }
 }
