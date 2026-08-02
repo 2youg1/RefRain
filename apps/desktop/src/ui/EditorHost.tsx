@@ -37,6 +37,14 @@ import { useKara } from "../shell/kara-state";
  */
 export interface EditorHostHandle {
   focus(): void;
+  /**
+   * Put the caret in a named block — how a search hit becomes a place.
+   *
+   * The shell knows which block matched, not where it sits on screen. Without
+   * this the author lands at the top of the document and searches again by eye,
+   * which is the reading the hit list was meant to spare him.
+   */
+  focusBlock(blockId: string, offset: number): void;
   isComposing(): boolean;
   caret(): { blockId: string; offset: number } | null;
   formatSelection(kind: EditorFormat): boolean;
@@ -179,6 +187,7 @@ export function EditorHost(props: EditorHostProps) {
     editor.focus();
     props.onReady({
       focus: () => editor?.focus(),
+      focusBlock: (blockId, offset) => editor?.focus(blockId, offset),
       isComposing: () => editor?.isComposing() ?? false,
       caret: () => editor?.caret() ?? null,
       formatSelection: (kind) => editor?.formatSelection(kind) ?? false,

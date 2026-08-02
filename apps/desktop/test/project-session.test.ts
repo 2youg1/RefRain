@@ -1,11 +1,26 @@
 import { describe, expect, test } from "bun:test";
-import type { DocumentPageDto, DocumentRow, ProjectOpenedDto } from "../src/generated/bindings.gen";
+import type {
+  BlockHit,
+  DocumentPageDto,
+  DocumentRow,
+  ProjectOpenedDto,
+} from "../src/generated/bindings.gen";
 import {
   type DelayPort,
   type ProjectAcquisitionPort,
   type ProjectCatalogPort,
   ProjectSession,
 } from "../src/shell/project-session";
+
+const hit = (query: string): BlockHit => ({
+  path: `${query}.md`,
+  ordinal: 0,
+  kind: "paragraph",
+  startByte: 0,
+  bytes: 12,
+  text: `前文${query}后文`,
+  relevance: 1,
+});
 
 const row = (id: string, path: string): DocumentRow => ({
   id,
@@ -76,6 +91,9 @@ describe("project session", () => {
         searches.push(query);
         return [row(query, `${query}.md`)];
       },
+      async searchBlocks(_rootId, query) {
+        return [hit(query)];
+      },
     };
     const session = new ProjectSession(catalog, delay);
     session.install(opened("root"));
@@ -94,6 +112,7 @@ describe("project session", () => {
   test("an old response cannot replace a new query or a new project", async () => {
     const delay = new ManualDelay();
     const pending = new Map<string, Deferred<readonly DocumentRow[]>>();
+    const pendingHits = new Map<string, Deferred<readonly BlockHit[]>>();
     const catalog: ProjectCatalogPort = {
       async page(): Promise<DocumentPageDto> {
         throw new Error("not used");
@@ -101,6 +120,13 @@ describe("project session", () => {
       search(_rootId, query) {
         const result = deferred<readonly DocumentRow[]>();
         pending.set(query, result);
+        return result.promise;
+      },
+      // 块查询与文档查询并行发出，因此它也必须能停在半路：只延迟其中一个，
+      // 陈旧响应就永远被另一个的完成时刻掩盖，这条测试会测不到新增的那条路。
+      searchBlocks(_rootId, query) {
+        const result = deferred<readonly BlockHit[]>();
+        pendingHits.set(query, result);
         return result.promise;
       },
     };
@@ -135,6 +161,9 @@ describe("project session", () => {
           total: 2,
           next: null,
         };
+      },
+      async searchBlocks() {
+        return [];
       },
       async search() {
         return [];

@@ -2828,6 +2828,50 @@ kbd {
   min-width: 0;
 }
 
+/* 搜索命中：路径一行，命中的话一行，查询词标出来。
+   侧栏名录是定高虚拟滚动，片段长短不一，因此命中自成一层挂在搜索框之下，
+   不混进那两架文档里。 */
+.search-hits {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 6px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.search-hits button {
+  display: block;
+  width: 100%;
+  text-align: start;
+  padding: 6px 8px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.search-hits button:hover {
+  background: color-mix(in oklab, var(--rail) 88%, var(--rail-ink));
+}
+
+.search-hit-path {
+  display: block;
+  font-size: 11px;
+  color: var(--rail-faint);
+}
+
+.search-hit-text {
+  display: block;
+  font-size: 12px;
+  color: var(--rail-ink);
+  line-height: 1.5;
+}
+
+.search-hit-text mark {
+  background: color-mix(in oklab, var(--seal) 24%, transparent);
+  color: inherit;
+  border-radius: 2px;
+}
+
 /* 精确/模糊切换：一个词，不是一个图标——模式必须读得出来。 */
 .rail-search .search-mode {
   flex: none;

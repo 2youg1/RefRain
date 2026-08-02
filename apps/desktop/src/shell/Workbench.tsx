@@ -20,6 +20,7 @@ import {
 import { describe } from "../bridge";
 import type {
   AnnotationDto,
+  BlockHit,
   DocumentRow,
   OpenDocumentDto_Serialize,
   ProposalDto,
@@ -35,6 +36,7 @@ import { MailboxSection } from "../ui/MailboxSection";
 import { RailPrompt } from "../ui/RailPrompt";
 import { type RailCatalog, RailShelf } from "../ui/RailShelf";
 import { ReviewSurface } from "../ui/ReviewSurface";
+import { SearchHits } from "../ui/SearchHits";
 import { SettingsSurface } from "../ui/SettingsSurface";
 import { SourceSurface } from "../ui/SourceSurface";
 import { StatusLine } from "../ui/StatusLine";
@@ -90,6 +92,28 @@ const BLOCK_PREFIX_OF: Partial<Record<WorkbenchCommandId, BlockPrefix>> = {
   "format-bullet-list": "bullet-list",
   "format-ordered-list": "ordered-list",
 };
+
+/**
+ * 从搜索命中跳过来时，把光标放到命中的那一块。
+ *
+ * 用 `ordinal` 而不是 `startByte`：块在打开后是一个数组，序号直接是下标，而
+ * 字节偏移还要再算一次边界。索引可能比磁盘旧——作者删掉过几段之后，序号会落
+ * 在数组之外，那时什么都不做，文档照常打开在开头。
+ *
+ * 排在微任务里：调用方 `transition` 之后编辑器要按新文档重挂，此刻直接调用会
+ * 落在正被替换掉的那个实例上，光标随即被重挂时的 `focus()` 收回文首。宿主句柄
+ * 因此按需取，而不是当参数传——传进来的那个可能已经不是将要接管的那一个。
+ */
+function revealBlock(
+  blocks: readonly { readonly id: string }[],
+  ordinal: number | null,
+  host: () => EditorHostHandle | null,
+): void {
+  if (ordinal === null) return;
+  const block = blocks[ordinal];
+  if (block === undefined) return;
+  queueMicrotask(() => host()?.focusBlock(block.id, 0));
+}
 
 /** 栏脚的目的地按钮。每个全局快捷键在这里都有一颗看得见的入口（KARA = Ctrl+Enter）。 */
 function RailFoot(props: {
@@ -174,8 +198,9 @@ function RailNav(props: {
   onTicketNotice: (text: string) => void;
   chapters: readonly DocumentRow[];
   materials: readonly DocumentRow[];
+  searchHits: readonly BlockHit[];
   currentPath: string | null;
-  onSelect: (path: string) => void;
+  onSelect: (path: string, ordinal?: number) => void;
   catalog: RailCatalog;
   foot: Parameters<typeof RailFoot>[0];
 }): JSX.Element {
@@ -231,6 +256,11 @@ function RailNav(props: {
           {props.precision === "exact" ? "精确" : "模糊"}
         </button>
       </div>
+      <SearchHits
+        query={props.query}
+        hits={props.searchHits}
+        onSelect={(path, ordinal) => props.onSelect(path, ordinal)}
+      />
       <Show when={props.prompt}>
         {(request) => (
           <RailPrompt
@@ -824,6 +854,10 @@ export function Workbench(props: WorkbenchProps) {
     projectTick();
     return projectSession.visibleDocuments;
   });
+  const searchHits = createMemo(() => {
+    projectTick();
+    return projectSession.searchHits;
+  });
   const chapters = createMemo(() => documents().filter((row) => row.role === "chapter"));
   const materials = createMemo(() => documents().filter((row) => row.role === "material"));
 
@@ -916,13 +950,14 @@ export function Workbench(props: WorkbenchProps) {
     await projectSession.createProject(name);
   };
 
-  const selectDocument = async (path: string): Promise<void> => {
+  const selectDocument = async (path: string, ordinal: number | null = null): Promise<void> => {
     const opened = await documentSession.open(path);
     if (opened === null) return;
     kara.apply(opened.kara);
     // 换一份稿子是换场景：打开着的那条面板路径不再属于这里。
     panels.clear();
     transition({ kind: "documentSelected" });
+    revealBlock(opened.blocks, ordinal, () => editor);
     if (opened.staleJournal.length > 0) {
       setNotice(`有 ${opened.staleJournal.length} 条未确认的行动无法恢复，已留作证据。`);
     } else if (opened.replayed > 0) {
@@ -1140,8 +1175,9 @@ export function Workbench(props: WorkbenchProps) {
               onTicketNotice={setNotice}
               chapters={chapters()}
               materials={materials()}
+              searchHits={searchHits()}
               currentPath={active()?.document.path ?? null}
-              onSelect={(path) => void selectDocument(path)}
+              onSelect={(path, ordinal) => void selectDocument(path, ordinal ?? null)}
               catalog={projectSession}
               foot={{
                 hasDocument: active() !== null,

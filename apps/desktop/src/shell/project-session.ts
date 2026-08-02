@@ -1,6 +1,7 @@
 import { unwrap } from "../bridge";
 import { debugCommands } from "../e2e/debug-bridge";
 import {
+  type BlockHit,
   commands,
   type DocumentPageDto,
   type DocumentRow,
@@ -25,6 +26,11 @@ export interface ProjectCatalogPort {
     query: string,
     precision: SearchPrecision,
   ): Promise<readonly DocumentRow[]>;
+  searchBlocks(
+    rootId: string,
+    query: string,
+    precision: SearchPrecision,
+  ): Promise<readonly BlockHit[]>;
 }
 
 /**
@@ -62,7 +68,18 @@ type CatalogState =
   | { readonly kind: "paging" }
   | { readonly kind: "waiting"; readonly query: string }
   | { readonly kind: "searching"; readonly query: string }
-  | { readonly kind: "ready"; readonly query: string; readonly documents: readonly DocumentRow[] }
+  | {
+      readonly kind: "ready";
+      readonly query: string;
+      readonly documents: readonly DocumentRow[];
+      /**
+       * 命中的块，带着它们的文本。
+       *
+       * `DocumentRow` 只说「哪份文档匹配」，界面因此只能显示一列路径——而查询
+       * 词不在路径里。要在结果上高亮查询词，得先有一段包含它的文字。
+       */
+      readonly hits: readonly BlockHit[];
+    }
   | { readonly kind: "failed"; readonly query: string };
 
 type ProjectState =
@@ -130,6 +147,9 @@ const productionCatalog: ProjectCatalogPort = {
   async search(rootId, query, precision) {
     return unwrap(commands.documentSearch(rootId, query, precision));
   },
+  async searchBlocks(rootId, query, precision) {
+    return unwrap(commands.blockSearch(rootId, query, precision));
+  },
 };
 
 function mergeRows(
@@ -179,6 +199,17 @@ export class ProjectSession extends Session<ProjectOperation> {
       : state.catalog.kind === "idle" || state.catalog.kind === "paging"
         ? state.project.documents
         : [];
+  }
+  /**
+   * 本次搜索命中的块，带着它们的文本。
+   *
+   * 只在 `ready` 时非空：搜索进行中给出上一次的命中会让作者读到与查询框里
+   * 不相符的文字。
+   */
+  get searchHits(): readonly BlockHit[] {
+    const state = this.#state;
+    if (state.kind !== "open" || state.catalog.kind !== "ready") return [];
+    return state.catalog.hits;
   }
   get precision(): SearchPrecision {
     return this.#precision;
@@ -455,7 +486,12 @@ export class ProjectSession extends Session<ProjectOperation> {
     }
     this.#set({ ...state, catalog: { kind: "searching", query } });
     try {
-      const documents = await this.#catalog.search(rootId, query, this.#precision);
+      // 两个查询互不依赖：文档列表管导航与分页合并，块命中管「显示哪一段」。
+      // 串行会让结果面板多等一个往返，而后者恰是作者最先看的东西。
+      const [documents, hits] = await Promise.all([
+        this.#catalog.search(rootId, query, this.#precision),
+        this.#catalog.searchBlocks(rootId, query, this.#precision),
+      ]);
       const live = this.#state;
       if (
         live.kind !== "open" ||
@@ -472,7 +508,7 @@ export class ProjectSession extends Session<ProjectOperation> {
           ...live.project,
           documents: mergeRows(live.project.documents, documents),
         },
-        catalog: { kind: "ready", query, documents: [...documents] },
+        catalog: { kind: "ready", query, documents: [...documents], hits: [...hits] },
       });
     } catch (error) {
       const live = this.#state;

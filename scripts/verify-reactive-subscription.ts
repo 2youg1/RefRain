@@ -95,7 +95,10 @@ for (const file of files) {
 // `activityLine`/`projectBusy`（ProjectSession 视图，与既有 memo 共享 projectTick）。
 // 14：饭盒工厂 createBentoState 的两处——`unjudged` 与 `anchors`，读的是
 // TicketMailbox（framework-free 会话）经 mailTick 转达的变化。
-const EXPECTED_SUBSCRIBING_MEMOS = 14;
+// 15：新增 `searchHits`（搜索命中的块，带文本）。已确认确实需要 tick——读的是
+// ProjectSession 这个 framework-free 会话，与 `activityLine`/`projectBusy`
+// 同形并共享 projectTick，不是把一个已经响应式的值多包一层。
+const EXPECTED_SUBSCRIBING_MEMOS = 15;
 if (subscribingMemos !== EXPECTED_SUBSCRIBING_MEMOS) {
   failures.push(
     subscribingMemos < EXPECTED_SUBSCRIBING_MEMOS
