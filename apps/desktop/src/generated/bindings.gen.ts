@@ -38,6 +38,20 @@ export const commands = {
 	openDocument: (rootId: string, path: string) => typedError<OpenDocumentDto_Serialize, RefrainError>(__TAURI_INVOKE("open_document", { rootId, path })),
 	/**  Create a document in the Root and open it (SPEC 9.5). */
 	createDocument: (rootId: string, title: string, role: DocumentRole) => typedError<OpenDocumentDto_Serialize, RefrainError>(__TAURI_INVOKE("create_document", { rootId, title, role })),
+	/**
+	 *  Delete a document or a material: the file goes to the system recycle bin
+	 *  (INV-6) and nowhere else. The catalog row and the search index follow the
+	 *  file; the audit — proposals, verdicts, annotations — stays. An imported
+	 *  Material's source clone stays too: the Source Backup is never written,
+	 *  and a delete is not an exception. Returns the row that was deleted.
+	 */
+	deleteDocument: (rootId: string, path: string) => typedError<DocumentRow, RefrainError>(__TAURI_INVOKE("delete_document", { rootId, path })),
+	/**
+	 *  Write what the author permits for one material (范围). The next dispatch's
+	 *  material listing carries it — the permission lives on the document's row,
+	 *  not in the ticket's memory.
+	 */
+	setDisclosure: (rootId: string, path: string, disclosure: Disclosure) => typedError<DocumentRow, RefrainError>(__TAURI_INVOKE("set_disclosure", { rootId, path, disclosure })),
 	currentDocument: (rootId: string, path: string) => typedError<SessionDocumentDto, RefrainError>(__TAURI_INVOKE("current_document", { rootId, path })),
 	/**
 	 *  The one manuscript write path (INV-2): journaled first, executed through
@@ -45,6 +59,27 @@ export const commands = {
 	 *  replays on the next open.
 	 */
 	applyEditorAction: (rootId: string, path: string, action: EditorActionDto) => typedError<TextTransitionDto, RefrainError>(__TAURI_INVOKE("apply_editor_action", { rootId, path, action })),
+	/**
+	 *  Undo the session's last Text Action (INV-2 in reverse, through the same
+	 *  domain). Nothing is journaled and no history row is marked: undo moves
+	 *  session memory only, so on a crash the disk's continuity simply resumes
+	 *  the pre-undo chain — exactly as if the undo had not happened yet. The
+	 *  row's `undone_at` is written by the save that makes the undo durable.
+	 */
+	undoEditorAction: (rootId: string, path: string) => typedError<TextTransitionDto, RefrainError>(__TAURI_INVOKE("undo_editor_action", { rootId, path })),
+	/**
+	 *  The recent persisted history of one document, newest first. Read from the
+	 *  store alone: rows are written at execute, so nothing the session did is
+	 *  missing from the list.
+	 */
+	listTextActions: (rootId: string, path: string) => typedError<TextActionSummaryDto[], RefrainError>(__TAURI_INVOKE("list_text_actions", { rootId, path })),
+	/**
+	 *  Revert to just after one action: undo everything above it. The walk is the
+	 *  domain's `revert_to`, which checks before it moves — a verdict-carrying
+	 *  action in the way refuses the whole revert and nothing moves. Undone rows
+	 *  keep their `undone_at` unwritten until the save that makes this durable.
+	 */
+	revertToAction: (rootId: string, path: string, actionId: string) => typedError<RevertOutcomeDto, RefrainError>(__TAURI_INVOKE("revert_to_action", { rootId, path, actionId })),
 	listAnnotations: (rootId: string, document: string) => typedError<AnnotationDto[], RefrainError>(__TAURI_INVOKE("list_annotations", { rootId, document })),
 	upsertAnnotation: (request: UpsertAnnotationRequest) => typedError<AnnotationDto, RefrainError>(__TAURI_INVOKE("upsert_annotation", { request })),
 	deleteAnnotation: (rootId: string, id: string) => typedError<boolean, RefrainError>(__TAURI_INVOKE("delete_annotation", { rootId, id })),
@@ -129,6 +164,14 @@ export const commands = {
 	 *  The batch and cursor clear; candidates stay for the audit.
 	 */
 	commitDecisionBatch: (rootId: string, path: string) => typedError<TextTransitionDto, RefrainError>(__TAURI_INVOKE("commit_decision_batch", { rootId, path })),
+	/**
+	 *  The countermanding verdict (逆向裁决): reverse already-merged proposals —
+	 *  the ledger appends one countermanding record per proposal, and the text
+	 *  returns to the pre-merge bytes, in ONE Text Action so one undo restores
+	 *  all of them. A proposal whose merged bytes no longer match the current
+	 *  text refuses the whole batch; nothing moves, nothing is recorded.
+	 */
+	countermandProposals: (rootId: string, path: string, proposalIds: string[]) => typedError<TextTransitionDto, RefrainError>(__TAURI_INVOKE("countermand_proposals", { rootId, path, proposalIds })),
 	/**  The author's standing arrangement: order, pins, and what was discarded. */
 	mailboxStandings: (rootId: string) => typedError<MailboxStanding_Serialize[], RefrainError>(__TAURI_INVOKE("mailbox_standings", { rootId })),
 	/**
@@ -203,6 +246,12 @@ export const commands = {
 	sourceDigest: string | null,
 	/**  The imported file's format, which completes the clone's filename. */
 	sourceFormat: string | null,
+	/**
+	 *  What the author permits for this document when it rides as a material.
+	 *  `None` is "never asked": the readers treat it as the enum's default,
+	 *  which is exactly what a pre-v11 row means.
+	 */
+	disclosure: Disclosure | null,
 } | null, RefrainError>(__TAURI_INVOKE("commit_material_action", { rootId, draftId, editedBody, dismiss })),
 	agentReadingLedger: (rootId: string) => typedError<AgentReadingDto_Serialize[], RefrainError>(__TAURI_INVOKE("agent_reading_ledger", { rootId })),
 	/**
@@ -215,6 +264,16 @@ export const commands = {
 	 *  author's parameter and is not touched here (Q24).
 	 */
 	removeHarnessConnection: (id: string) => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("remove_harness_connection", { id })),
+	/**
+	 *  Install the RefRain protocol into a connection's harness skill directory
+	 *  （协议装载：安装即注册 — the CLI auto-loads its skills directory, so the
+	 *  file's presence is the registration).
+	 *
+	 *  This is the application's only write outside the Root, which is exactly
+	 *  why it is a command and never a side effect of dispatch: nothing crosses
+	 *  that boundary without the author's click.
+	 */
+	installSkill: (connectionId: string) => typedError<SkillInstallDto, RefrainError>(__TAURI_INVOKE("install_skill", { connectionId })),
 	/**  Re-check an existing Config connection. No path crosses the bridge. */
 	probeConnection: (connectionId: string) => typedError<string, RefrainError>(__TAURI_INVOKE("probe_connection", { connectionId })),
 	/**
@@ -238,13 +297,27 @@ export const commands = {
 	sourceDigest: string | null,
 	/**  The imported file's format, which completes the clone's filename. */
 	sourceFormat: string | null,
+	/**
+	 *  What the author permits for this document when it rides as a material.
+	 *  `None` is "never asked": the readers treat it as the enum's default,
+	 *  which is exactly what a pre-v11 row means.
+	 */
+	disclosure: Disclosure | null,
 } | null, RefrainError>(__TAURI_INVOKE("choose_and_import_material", { rootId })),
 	listAgents: () => __TAURI_INVOKE<AgentDto[]>("list_agents"),
 	/**
-	 *  Create or update one Agent (SPEC 6.5: typed changes only). A connection
-	 *  reference must name an existing connection; `None` is the L0 channel.
+	 *  Create one Agent (SPEC 6.5: typed changes only). A connection reference
+	 *  must name an existing connection; `None` is the L0 channel. Edits go
+	 *  through `update_agent`: a create must never reuse an id it was handed,
+	 *  and a generated bridge signature cannot carry an optional argument.
 	 */
-	upsertAgent: (name: string, connectionId: string | null, persona: string | null) => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("upsert_agent", { name, connectionId, persona })),
+	upsertAgent: (name: string, connectionId: string | null, persona: string | null, argv: string[]) => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("upsert_agent", { name, connectionId, persona, argv })),
+	/**
+	 *  Edit one Agent in place (SPEC 6.5: typed changes only). The id comes from
+	 *  `list_agents`; naming an id that does not exist is a typed refusal — an
+	 *  edit that silently creates is how agents multiplied in the first place.
+	 */
+	updateAgent: (id: string, name: string, connectionId: string | null, persona: string | null, argv: string[]) => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("update_agent", { id, name, connectionId, persona, argv })),
 	removeAgent: (id: string) => typedError<ConfigSnapshot, RefrainError>(__TAURI_INVOKE("remove_agent", { id })),
 };
 
@@ -267,6 +340,16 @@ export type AgentDto = {
 	name: string,
 	connectionId: string | null,
 	hasPersona: boolean,
+	/**
+	 *  The persona text itself, so the edit form can prefill. `None` when the
+	 *  profile carries none — the same state `has_persona` reports.
+	 */
+	persona: string | null,
+	/**
+	 *  The agent's extra argv (model, effort — argv by nature), so the edit
+	 *  form can show what launches with this agent. Empty by default.
+	 */
+	argv: string[],
 	channel: string,
 	version: string,
 };
@@ -283,6 +366,14 @@ export type AgentProfile = {
 	connection_id?: Id | null,
 	/**  The identity text, injected into the request after the contract. */
 	persona?: string | null,
+	/**
+	 *  Extra argv handed to the harness at launch, after the connection's
+	 *  own. Model and effort settings are argv by nature — naming them one by
+	 *  one would enum-chase every CLI flag. Validated against a denylist at
+	 *  upsert, never at launch: a refusal must reach the author while he is
+	 *  editing, not as a failed run.
+	 */
+	argv?: string[],
 };
 
 /**
@@ -376,6 +467,13 @@ export type AppearanceConfig = {
 	night_lamp?: NightLamp,
 	/**  How wide a panel opens. */
 	panel_width?: PanelWidth,
+	/**
+	 *  A panel width the author dragged to an exact pixel value. Set, it
+	 *  overrides the `panel_width` preset; choosing a preset clears it. That
+	 *  rule lives in `ConfigStore::apply` — the only writer — so no caller
+	 *  has to keep the two fields in step.
+	 */
+	panel_width_px?: number | null,
 	/**  How wide the document rail sits. */
 	rail_width?: RailWidth,
 	/**  Which side panels open from. Left by default. */
@@ -546,6 +644,27 @@ export type ConfigSnapshot = {
 	recoveryEvidence: string | null,
 };
 
+/**
+ *  How much of one material the author lets the agent reach.
+ *
+ *  The author's declaration, not the agent's choice. The project's standing
+ *  position is that a human decides what crosses to a model — the same
+ *  reasoning that puts a click between a proposal and the manuscript.
+ *
+ *  The enum is itself the documentation: an agent reading `OutlineOnly` in a
+ *  listing knows not to try fetching that body, with no prose telling it so.
+ *  The guidance for current model generations is explicit that expressive
+ *  parameters beat worked examples, because examples narrow the space an
+ *  agent will explore.
+ */
+export type Disclosure =
+/**  The listing only. The body is never fetchable. */
+"outline-only" |
+/**  Blocks may be retrieved by search or by block range. */
+"retrievable" |
+/**  The whole text may be fetched in one go. */
+"full";
+
 export type DispatchPreviewDto = {
 	manifest: ManifestEntry[],
 	digest: string,
@@ -562,6 +681,39 @@ export type DisplayProfile = {
 	frameBudgetMs: number | null,
 	hairlineCssPx: number | null,
 };
+
+/**
+ *  What one document's bytes are: Markdown prose, or one of the plain-text
+ *  formats the workbench edits natively.
+ *
+ *  The wire form is the lowercase name, which is also what the surface shows
+ *  and what the editor maps onto its embedded grammars.
+ */
+export type DocumentFormat =
+/**  Prose with Markdown structure: headings, fences, tables, inline marks. */
+"markdown" |
+/**  LaTeX source (`.tex`). */
+"latex" |
+/**  TypeScript source (`.ts`). */
+"typescript" |
+/**  Rust source (`.rs`). */
+"rust" |
+/**  Python source (`.py`). */
+"python" |
+/**  Go source (`.go`). */
+"go" |
+/**  Lean 4 source (`.lean`). */
+"lean" |
+/**  A stylesheet (`.css`). */
+"css" |
+/**  HTML source (`.html`, `.htm`), edited as text and never rendered. */
+"html" |
+/**  XML source (`.xml`). */
+"xml" |
+/**  TOML configuration (`.toml`). */
+"toml" |
+/**  YAML configuration (`.yaml`, `.yml`). */
+"yaml";
 
 export type DocumentPageDto = {
 	documents: DocumentRow[],
@@ -599,6 +751,12 @@ export type DocumentRow = {
 	sourceDigest: string | null,
 	/**  The imported file's format, which completes the clone's filename. */
 	sourceFormat: string | null,
+	/**
+	 *  What the author permits for this document when it rides as a material.
+	 *  `None` is "never asked": the readers treat it as the enum's default,
+	 *  which is exactly what a pre-v11 row means.
+	 */
+	disclosure: Disclosure | null,
 };
 
 /**  The editor's settled input, as it crosses the bridge. */
@@ -687,6 +845,20 @@ export type HarnessConnection = {
 	 *  in the author's own environment; RefRain stores no API keys.
 	 */
 	env_allow?: string[],
+	/**
+	 *  The version the last successful probe reported. Kept so a connection
+	 *  whose binary stops answering can report what last worked rather than
+	 *  forgetting it ever did. `None` for connections written before this
+	 *  field existed — "never measured", not a claim.
+	 */
+	version?: string | null,
+	/**
+	 *  BLAKE3 of the protocol bytes the last protocol install wrote for this
+	 *  connection's harness (协议装载). `None` is "never installed from this
+	 *  app", not "nothing is there": the status badge reads the file itself,
+	 *  and this digest is the provenance record of what we wrote.
+	 */
+	skill_digest?: string | null,
 };
 
 /**  One supported local Agent tool. Executable paths never cross the bridge. */
@@ -694,11 +866,33 @@ export type HarnessDto = {
 	candidateId: string,
 	connectionId: string | null,
 	label: string,
+	/**  What the binary answers now; `None` when nothing answered this probe. */
 	version: string | null,
 	tier: string,
 	status: HarnessStatus,
+	/**
+	 *  Set exactly when `status` is `NeedsAttention`: the version the last
+	 *  successful probe recorded. The "previously worked" half of the state —
+	 *  `version` alone could not say it, because a dead binary answers nothing.
+	 */
+	lastKnownVersion: string | null,
+	/**
+	 *  The installed protocol's state on this machine: none / current /
+	 *  stale, read from the file itself each time. The badge never claims
+	 *  "installed" from the Config record alone — the file is the fact.
+	 */
+	skillStatus: SkillStatus,
 };
 
+/**
+ *  The probe answer for one row of the connections surface.
+ *
+ *  `NeedsAttention` is no longer "re-link it": it names a stored connection
+ *  whose binary answered before and does not answer now. The row keeps the
+ *  stored identity, and `last_known_version` carries what last worked — so
+ *  nothing is marked Connected that is not, and nothing asks for a re-link
+ *  while the identity is intact.
+ */
 export type HarnessStatus = "connected" | "available" | "missing" | "needs-attention";
 
 /**  What the application can say about itself without touching anything. */
@@ -940,6 +1134,11 @@ export type OpenDocumentDto = OpenDocumentDto_Serialize | OpenDocumentDto_Deseri
  */
 export type OpenDocumentDto_Deserialize = {
 	document: DocumentRow,
+	/**
+	 *  What the bytes are: Markdown prose, or the plain-text format the
+	 *  extension names. The editor reads it to pick its mode and its grammar.
+	 */
+	format: DocumentFormat,
 	revision: string,
 	blocks: BlockDto[],
 	stamp: FileStamp_Deserialize,
@@ -957,6 +1156,11 @@ export type OpenDocumentDto_Deserialize = {
  */
 export type OpenDocumentDto_Serialize = {
 	document: DocumentRow,
+	/**
+	 *  What the bytes are: Markdown prose, or the plain-text format the
+	 *  extension names. The editor reads it to pick its mode and its grammar.
+	 */
+	format: DocumentFormat,
 	revision: string,
 	blocks: BlockDto[],
 	stamp: FileStamp_Serialize,
@@ -1002,7 +1206,9 @@ export type PaperMode = "none" | "hairline" | "paper";
  *  The preferences the Settings surface may change (SPEC 6.5). Connection
  *  management is its own command pair; this is the author's choices.
  */
-export type PreferencesChangeDto = { kind: "karaAutoEnter"; value: boolean } | { kind: "setTheme"; value: string } | { kind: "setPaper"; value: PaperMode } | { kind: "setPanelSide"; value: PanelSide } | { kind: "setPanelMaterial"; value: PanelMaterial } | { kind: "setNightLamp"; value: NightLamp } | { kind: "setPanelWidth"; value: PanelWidth } | { kind: "setRailWidth"; value: RailWidth } | { kind: "setCodeTheme"; value: string | null } | { kind: "setPanelAnimation"; value: boolean } | { kind: "setTypography"; value: TypographyConfig } | { kind: "saveTypographyPreset"; value: string } | { kind: "removeTypographyPreset"; value: Id } | { kind: "resetVisual" } | { kind: "resetTypography" } | { kind: "restoreAppearance"; value: AppearanceConfig };
+export type PreferencesChangeDto = { kind: "karaAutoEnter"; value: boolean } | { kind: "setTheme"; value: string } | { kind: "setPaper"; value: PaperMode } | { kind: "setPanelSide"; value: PanelSide } | { kind: "setPanelMaterial"; value: PanelMaterial } | { kind: "setNightLamp"; value: NightLamp } | { kind: "setPanelWidth"; value: PanelWidth } |
+/**  The dragged free-form width; None returns the panel to its preset. */
+{ kind: "setPanelWidthPx"; value: number | null } | { kind: "setRailWidth"; value: RailWidth } | { kind: "setCodeTheme"; value: string | null } | { kind: "setPanelAnimation"; value: boolean } | { kind: "setTypography"; value: TypographyConfig } | { kind: "saveTypographyPreset"; value: string } | { kind: "removeTypographyPreset"; value: Id } | { kind: "resetVisual" } | { kind: "resetTypography" } | { kind: "restoreAppearance"; value: AppearanceConfig };
 
 /**  A Root as the interface names it. */
 export type ProjectOpenedDto = {
@@ -1068,6 +1274,17 @@ export type ReturnPoint = {
 	blockId: string,
 	offset: number,
 	sentenceTail: string,
+};
+
+/**
+ *  What a revert became: the transitions it walked (last one carries the head
+ *  it landed on, so the editor can restore the caret where text changed) and
+ *  the actions it undid. An empty `transitions` means the target was the tip.
+ */
+export type RevertOutcomeDto = {
+	revision: string,
+	transitions: TextTransitionDto[],
+	undone: string[],
 };
 
 /**  One sentence for the surface. */
@@ -1181,12 +1398,47 @@ export type SessionDocumentDto = {
 	blocks: BlockDto[],
 };
 
+/**
+ *  What one protocol install reports: where the file landed and the digest
+ *  the Config recorded as provenance.
+ */
+export type SkillInstallDto = {
+	path: string,
+	digest: string,
+};
+
+/**
+ *  Whether the protocol file installed on the harness's own machine still
+ *  matches what this build would install (SPEC 8.4, 协议装载). `None` says no
+ *  installed copy answered — never that the copy is "fine".
+ */
+export type SkillStatus =
+/**  No installed copy found at the harness's skill path. */
+"none" |
+/**  The installed copy hashes to the current generated protocol. */
+"current" |
+/**
+ *  A copy exists but differs: an older protocol, or bytes someone else
+ *  changed. Either way the request falls back to carrying the full text.
+ */
+"stale";
+
 export type TaskDto = {
 	id: string,
 	baseline: string,
 	document: string,
 	prompt: string,
 	progress: string,
+};
+
+/**  One row of the persisted undo history, as the history panel lists it. */
+export type TextActionSummaryDto = {
+	id: string,
+	ordinal: number,
+	cause: string,
+	/**  Milliseconds since the Unix epoch, as a decimal string. */
+	createdAt: string,
+	undone: boolean,
 };
 
 export type TextAlignment = "left" | "justify";
@@ -1256,7 +1508,13 @@ export type UpsertAnnotationRequest = {
  *  The persisted shape of one judgment. `AcceptModified` carries its final
  *  text in `final_text`; the kind column alone never tells that story.
  */
-export type VerdictKindName = "accept" | "accept-modified" | "reject" | "comment-only";
+export type VerdictKindName = "accept" | "accept-modified" | "reject" | "comment-only" |
+/**
+ *  A reversal of a merged verdict: the ledger stays append-only, so the
+ *  countermand is a new record — nothing is deleted, and the pair tells
+ *  the whole story (逆向裁决).
+ */
+"countermanded";
 
 /**
  *  One row of the ledger. Ids stay strings here: legacy rows arrive with

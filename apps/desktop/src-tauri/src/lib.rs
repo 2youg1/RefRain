@@ -14,10 +14,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use refrain_core::{
-    DocumentRole, EditorAction, EditorChange, ErrorCode, Id, Insertion, KaraAutoEntry, KaraEvent,
-    KaraMachine, KaraPolicy, KaraTransition, Lineage, Manuscript, RecoveryStep, RefrainError,
-    Replacement, SourceSnapshot, TextCommand,
+    DocumentFormat, DocumentRole, EditorAction, EditorChange, ErrorCode, Id, Insertion,
+    KaraAutoEntry, KaraEvent, KaraMachine, KaraPolicy, KaraTransition, Lineage, Manuscript,
+    RecoveryStep, RefrainError, Replacement, SourceSnapshot, TextCommand, TextRefusal,
+    TextTransition,
 };
+use refrain_store::history::{ActionSummary, HYDRATION_DEPTH, MAX_TEXT_ACTION_LIST};
 use refrain_store::mailbox::{MailboxBoxName, MailboxStanding};
 use refrain_store::project::{
     BackupStatus, BlockHit, DocumentCommit, DocumentPage, DocumentPageQuery, DocumentRow,
@@ -232,6 +234,9 @@ impl From<DocumentPage> for DocumentPageDto {
 #[serde(rename_all = "camelCase")]
 pub struct OpenDocumentDto {
     pub document: DocumentRow,
+    /// What the bytes are: Markdown prose, or the plain-text format the
+    /// extension names. The editor reads it to pick its mode and its grammar.
+    pub format: DocumentFormat,
     pub revision: String,
     pub blocks: Vec<BlockDto>,
     pub stamp: FileStamp,
@@ -267,16 +272,26 @@ impl BlockDto {
     /// has laid anything out, and the shape is read from the same text that is
     /// already being sent — so sending it costs one branch-free width scan and
     /// saves the viewport from guessing this block's height from other blocks.
-    fn of(block: &refrain_core::manuscript::Block) -> Self {
+    ///
+    /// The width scan is format-agnostic arithmetic. The kind classification
+    /// is Markdown's: under the plain scan a line that starts with a fence
+    /// marker is still just a line, so `is_fence` is always false.
+    fn of(block: &refrain_core::manuscript::Block, scan: refrain_core::BlockScan) -> Self {
         let text = block.text();
         let shape = refrain_core::block_shape::BlockShape::of(text);
+        let is_fence = match scan {
+            refrain_core::BlockScan::Markdown => {
+                shape.kind == refrain_core::block_shape::BlockKind::Fence
+            }
+            refrain_core::BlockScan::Plain => false,
+        };
         Self {
             id: block.id().to_string(),
             text: text.to_owned(),
             width_units: shape.width_units,
             hard_lines: shape.hard_lines,
             max_line_units: shape.max_line_units,
-            is_fence: shape.kind == refrain_core::block_shape::BlockKind::Fence,
+            is_fence,
         }
     }
 }
@@ -419,7 +434,7 @@ async fn choose_and_adopt_root(
     let selected = match kind {
         RootKind::Folder => dialog.blocking_pick_folder(),
         RootKind::File => dialog
-            .add_filter("Manuscript", &["md", "markdown", "mdown", "txt"])
+            .add_filter("Manuscript", &DocumentFormat::extensions())
             .blocking_pick_file(),
     };
     selected
@@ -609,6 +624,44 @@ fn create_document(
     })
 }
 
+/// Delete a document or a material: the file goes to the system recycle bin
+/// (INV-6) and nowhere else. The catalog row and the search index follow the
+/// file; the audit — proposals, verdicts, annotations — stays. An imported
+/// Material's source clone stays too: the Source Backup is never written,
+/// and a delete is not an exception. Returns the row that was deleted.
+#[tauri::command(async)]
+#[specta::specta]
+fn delete_document(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    path: String,
+) -> Result<DocumentRow, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        let row = entry.store.delete_document(&path).map_err(into_domain)?;
+        entry.manuscripts.remove(&path);
+        Ok(row)
+    })
+}
+
+/// Write what the author permits for one material (范围). The next dispatch's
+/// material listing carries it — the permission lives on the document's row,
+/// not in the ticket's memory.
+#[tauri::command(async)]
+#[specta::specta]
+fn set_disclosure(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    path: String,
+    disclosure: Disclosure,
+) -> Result<DocumentRow, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        entry
+            .store
+            .set_disclosure(&path, disclosure)
+            .map_err(into_domain)
+    })
+}
+
 /// The shared tail of open/create: build or resume the manuscript and replay
 /// the journal.
 fn open_in_entry(
@@ -637,10 +690,15 @@ fn open_in_entry(
     // A file the catalogue lists by extension may still not be UTF-8 (GBK
     // manuscripts are common). Refuse it as a fact the author can act on;
     // `SourceSnapshot::read` would panic the whole process instead.
-    let snapshot = SourceSnapshot::read_checked(opened.bytes.clone()).map_err(|error| {
-        RefrainError::new(ErrorCode::UnsupportedFormat, "open a document", path)
-            .with_detail(format!("not UTF-8 text: {error}"))
-    })?;
+    //
+    // The path decides how the bytes divide into blocks: Markdown structure
+    // for prose, one line per block for every plain-text format.
+    let scan = DocumentFormat::of_path(path).block_scan();
+    let snapshot =
+        SourceSnapshot::read_checked_with(opened.bytes.clone(), scan).map_err(|error| {
+            RefrainError::new(ErrorCode::UnsupportedFormat, "open a document", path)
+                .with_detail(format!("not UTF-8 text: {error}"))
+        })?;
     let block_count = snapshot.block_count();
 
     // Resume the persisted chain only when the digest on disk is the one the
@@ -664,9 +722,21 @@ fn open_in_entry(
         _ => None,
     };
 
+    // The persisted undo chain hydrates only when continuity resumes: the
+    // rows chain to the persisted head, and a fresh lineage makes them
+    // unreachable by construction.
+    let history = match &continuity {
+        Some((head, _)) => entry
+            .store
+            .action_history()
+            .chain(path, *head, HYDRATION_DEPTH)
+            .map_err(into_domain_store)?,
+        None => Vec::new(),
+    };
+
     let (mut manuscript, continuity_ok) = match continuity {
         Some((head, lineage)) => (
-            Manuscript::open_at(snapshot, lineage, head).map_err(|error| {
+            Manuscript::open_at(snapshot, lineage, head, history).map_err(|error| {
                 RefrainError::new(ErrorCode::Io, "resume a manuscript", path)
                     .with_detail(error.to_string())
             })?,
@@ -695,9 +765,10 @@ fn open_in_entry(
                 continue;
             }
         };
-        match to_domain_action(dto) {
+        match to_domain_action(dto, scan) {
             Ok(action) => match manuscript.execute(TextCommand::Editor(action)) {
-                Ok(_) => {
+                Ok(transition) => {
+                    record_text_action(&entry.store, path, &transition)?;
                     entry
                         .store
                         .journal_remove(journal_id)
@@ -715,12 +786,13 @@ fn open_in_entry(
         .head()
         .blocks()
         .iter()
-        .map(BlockDto::of)
+        .map(|block| BlockDto::of(block, scan))
         .collect();
     entry.manuscripts.insert(path.to_string(), manuscript);
 
     Ok(OpenDocumentDto {
         document: opened.row,
+        format: DocumentFormat::of_path(path),
         revision,
         blocks,
         stamp: opened.stamp,
@@ -762,7 +834,7 @@ fn current_document(
                 .head()
                 .blocks()
                 .iter()
-                .map(BlockDto::of)
+                .map(|block| BlockDto::of(block, manuscript.scan()))
                 .collect(),
         })
     })
@@ -789,7 +861,7 @@ fn apply_editor_action(
             .journal_append(&path, &action_json)
             .map_err(into_domain)?;
 
-        let domain_action = to_domain_action(action)?;
+        let domain_action = to_domain_action(action, DocumentFormat::of_path(&path).block_scan())?;
         let result = {
             let manuscript = entry.manuscripts.get_mut(&path).ok_or_else(|| {
                 RefrainError::new(
@@ -802,20 +874,12 @@ fn apply_editor_action(
         };
         match result {
             Ok(transition) => {
+                record_text_action(&entry.store, &path, &transition)?;
                 entry
                     .store
                     .journal_remove(journal_id)
                     .map_err(into_domain)?;
-                Ok(TextTransitionDto {
-                    revision: transition.head().id().to_string(),
-                    action_id: transition.action().id().to_string(),
-                    touched_blocks: transition
-                        .action()
-                        .touched_blocks()
-                        .iter()
-                        .map(Id::to_string)
-                        .collect(),
-                })
+                Ok(transition_dto(&transition))
             }
             Err(refusal) => {
                 Err(
@@ -827,6 +891,164 @@ fn apply_editor_action(
     })
 }
 
+/// Undo the session's last Text Action (INV-2 in reverse, through the same
+/// domain). Nothing is journaled and no history row is marked: undo moves
+/// session memory only, so on a crash the disk's continuity simply resumes
+/// the pre-undo chain — exactly as if the undo had not happened yet. The
+/// row's `undone_at` is written by the save that makes the undo durable.
+#[tauri::command(async)]
+#[specta::specta]
+fn undo_editor_action(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    path: String,
+) -> Result<TextTransitionDto, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        let transition = entry
+            .manuscripts
+            .get_mut(&path)
+            .ok_or_else(|| not_open("undo in a document that is not open", &path))?
+            .undo_last()
+            .map_err(|refusal| text_refusal("undo the last action", &path, refusal))?;
+        Ok(transition_dto(&transition))
+    })
+}
+
+fn not_open(action: &'static str, path: &str) -> RefrainError {
+    RefrainError::new(ErrorCode::StateUnavailable, action, path.to_string())
+}
+
+fn text_refusal(action: &'static str, path: &str, refusal: TextRefusal) -> RefrainError {
+    RefrainError::new(ErrorCode::Io, action, path.to_string()).with_detail(refusal.to_string())
+}
+
+/// The confirmed outcome of one applied action, as every write-path command
+/// reports it. One constructor so the three commands cannot drift apart on
+/// what "confirmed" means.
+fn transition_dto(transition: &TextTransition) -> TextTransitionDto {
+    TextTransitionDto {
+        revision: transition.head().id().to_string(),
+        action_id: transition.action().id().to_string(),
+        touched_blocks: transition
+            .action()
+            .touched_blocks()
+            .iter()
+            .map(Id::to_string)
+            .collect(),
+    }
+}
+
+/// Record an executed Text Action in the persisted history. Written after the
+/// execute lands and before the journal clears: a kill between the two leaves
+/// the row and the journal entry behind, and the next open's replay writes the
+/// same content under fresh ids — the orphaned row never chains from a saved
+/// head, so the hydration walk never reaches it.
+fn record_text_action(
+    store: &ProjectStore,
+    path: &str,
+    transition: &TextTransition,
+) -> Result<(), RefrainError> {
+    store
+        .action_history()
+        .record(path, transition.action(), transition.head().id())
+        .map_err(into_domain_store)
+}
+
+/// One row of the persisted undo history, as the history panel lists it.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TextActionSummaryDto {
+    pub id: String,
+    pub ordinal: u32,
+    pub cause: String,
+    /// Milliseconds since the Unix epoch, as a decimal string.
+    pub created_at: String,
+    pub undone: bool,
+}
+
+impl From<ActionSummary> for TextActionSummaryDto {
+    fn from(row: ActionSummary) -> Self {
+        Self {
+            id: row.id.to_string(),
+            ordinal: row.ordinal,
+            cause: row.cause,
+            created_at: row.created_at.to_string(),
+            undone: row.undone,
+        }
+    }
+}
+
+/// The recent persisted history of one document, newest first. Read from the
+/// store alone: rows are written at execute, so nothing the session did is
+/// missing from the list.
+#[tauri::command(async)]
+#[specta::specta]
+fn list_text_actions(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    path: String,
+) -> Result<Vec<TextActionSummaryDto>, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        entry
+            .store
+            .action_history()
+            .list_recent(&path, MAX_TEXT_ACTION_LIST)
+            .map_err(into_domain_store)
+            .map(|rows| rows.into_iter().map(TextActionSummaryDto::from).collect())
+    })
+}
+
+/// What a revert became: the transitions it walked (last one carries the head
+/// it landed on, so the editor can restore the caret where text changed) and
+/// the actions it undid. An empty `transitions` means the target was the tip.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RevertOutcomeDto {
+    pub revision: String,
+    pub transitions: Vec<TextTransitionDto>,
+    pub undone: Vec<String>,
+}
+
+/// Revert to just after one action: undo everything above it. The walk is the
+/// domain's `revert_to`, which checks before it moves — a verdict-carrying
+/// action in the way refuses the whole revert and nothing moves. Undone rows
+/// keep their `undone_at` unwritten until the save that makes this durable.
+#[tauri::command(async)]
+#[specta::specta]
+fn revert_to_action(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    path: String,
+    action_id: String,
+) -> Result<RevertOutcomeDto, RefrainError> {
+    let target = parse_id(&action_id, "text action")?;
+    state.with_project(&root_id, |_state, entry| {
+        let manuscript = entry
+            .manuscripts
+            .get_mut(&path)
+            .ok_or_else(|| not_open("revert in a document that is not open", &path))?;
+        let undone: Vec<String> = match manuscript
+            .actions()
+            .iter()
+            .position(|action| action.id() == target)
+        {
+            Some(position) => manuscript.actions()[position + 1..]
+                .iter()
+                .map(|action| action.id().to_string())
+                .collect(),
+            None => Vec::new(),
+        };
+        let transitions = manuscript
+            .revert_to(target)
+            .map_err(|refusal| text_refusal("revert to an action", &path, refusal))?;
+        Ok(RevertOutcomeDto {
+            revision: manuscript.head().id().to_string(),
+            transitions: transitions.iter().map(transition_dto).collect(),
+            undone,
+        })
+    })
+}
+
 /// Save: materialise the confirmed manuscript and commit it compare-and-swap
 /// on the author's stamp. The DOM snapshot never writes the file (SPEC 7.2).
 /// The command is a thin wrapper; composition-layer use cases share the body.
@@ -835,7 +1057,7 @@ fn persist_in_entry(
     path: &str,
     expected: Option<FileStamp>,
 ) -> Result<SaveOutcomeDto, RefrainError> {
-    let (bytes, lineage, head) = {
+    let (bytes, lineage, head, live) = {
         let manuscript = entry.manuscripts.get(path).ok_or_else(|| {
             RefrainError::new(
                 ErrorCode::StateUnavailable,
@@ -847,7 +1069,17 @@ fn persist_in_entry(
             RefrainError::new(ErrorCode::Io, "materialise a manuscript", path.to_string())
                 .with_detail(error.to_string())
         })?;
-        (bytes, manuscript.lineage_ids(), manuscript.head().id())
+        let live: Vec<Id> = manuscript
+            .actions()
+            .iter()
+            .map(refrain_core::TextAction::id)
+            .collect();
+        (
+            bytes,
+            manuscript.lineage_ids(),
+            manuscript.head().id(),
+            live,
+        )
     };
 
     let committed = match entry.store.commit(&DocumentCommit {
@@ -877,6 +1109,14 @@ fn persist_in_entry(
         )
         .map_err(into_domain)?;
 
+    // The save is what makes the session's chain durable, so this is where
+    // undone and orphaned rows get their mark — never at undo time.
+    entry
+        .store
+        .action_history()
+        .sync_chain(path, &live)
+        .map_err(into_domain_store)?;
+
     Ok(SaveOutcomeDto::Saved {
         stamp: committed.stamp,
         recovery_evidence: committed
@@ -898,7 +1138,10 @@ fn persist_revision(
     })
 }
 
-fn to_domain_action(dto: EditorActionDto) -> Result<EditorAction, RefrainError> {
+fn to_domain_action(
+    dto: EditorActionDto,
+    scan: refrain_core::BlockScan,
+) -> Result<EditorAction, RefrainError> {
     let base = parse_id(&dto.base, "action base")?;
     let changes = dto
         .changes
@@ -921,7 +1164,7 @@ fn to_domain_action(dto: EditorActionDto) -> Result<EditorAction, RefrainError> 
                     .as_deref()
                     .map(|raw| parse_id(raw, "insertion boundary"))
                     .transpose()?;
-                Insertion::new(before, texts)
+                Insertion::new(before, texts, scan)
                     .map(EditorChange::Insert)
                     .map_err(|error| {
                         RefrainError::new(ErrorCode::Io, "build an insertion", "")
@@ -1098,6 +1341,8 @@ pub enum PreferencesChangeDto {
     SetPanelMaterial(refrain_store::config::PanelMaterial),
     SetNightLamp(refrain_store::config::NightLamp),
     SetPanelWidth(refrain_store::config::PanelWidth),
+    /// The dragged free-form width; None returns the panel to its preset.
+    SetPanelWidthPx(Option<u16>),
     SetRailWidth(refrain_store::config::RailWidth),
     SetCodeTheme(Option<String>),
     SetPanelAnimation(bool),
@@ -1135,6 +1380,7 @@ impl PreferencesChangeDto {
             Self::SetPanelMaterial(material) => ConfigChange::SetPanelMaterial(material),
             Self::SetNightLamp(lamp) => ConfigChange::SetNightLamp(lamp),
             Self::SetPanelWidth(width) => ConfigChange::SetPanelWidth(width),
+            Self::SetPanelWidthPx(width_px) => ConfigChange::SetPanelWidthPx(width_px),
             Self::SetRailWidth(width) => ConfigChange::SetRailWidth(width),
             Self::SetCodeTheme(theme) => ConfigChange::SetCodeTheme(theme),
             Self::SetPanelAnimation(animated) => ConfigChange::SetPanelAnimation(animated),
@@ -1517,8 +1763,13 @@ macro_rules! refrain_commands {
         document_search,
         open_document,
         create_document,
+        delete_document,
+        set_disclosure,
         current_document,
         apply_editor_action,
+        undo_editor_action,
+        list_text_actions,
+        revert_to_action,
         list_annotations,
         upsert_annotation,
         delete_annotation,
@@ -1541,6 +1792,7 @@ macro_rules! refrain_commands {
         revert_verdicts,
         review_state,
         commit_decision_batch,
+        countermand_proposals,
         mailbox_standings,
         set_mailbox_order,
         set_mailbox_pinned,
@@ -1561,10 +1813,12 @@ macro_rules! refrain_commands {
         agent_reading_ledger,
         upsert_harness_connection,
         remove_harness_connection,
+        install_skill,
         probe_connection,
         choose_and_import_material,
         list_agents,
         upsert_agent,
+        update_agent,
         remove_agent,
         ]
     };
@@ -1947,16 +2201,42 @@ fn commit_decision_batch(
             )
         })?;
         let transition = refrain_app::commit_decision_batch(store, manuscript, &path)?;
-        Ok(TextTransitionDto {
-            revision: transition.head().id().to_string(),
-            action_id: transition.action().id().to_string(),
-            touched_blocks: transition
-                .action()
-                .touched_blocks()
-                .iter()
-                .map(Id::to_string)
-                .collect(),
-        })
+        record_text_action(store, &path, &transition)?;
+        Ok(transition_dto(&transition))
+    })
+}
+
+/// The countermanding verdict (逆向裁决): reverse already-merged proposals —
+/// the ledger appends one countermanding record per proposal, and the text
+/// returns to the pre-merge bytes, in ONE Text Action so one undo restores
+/// all of them. A proposal whose merged bytes no longer match the current
+/// text refuses the whole batch; nothing moves, nothing is recorded.
+#[tauri::command(async)]
+#[specta::specta]
+fn countermand_proposals(
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+    path: String,
+    proposal_ids: Vec<String>,
+) -> Result<TextTransitionDto, RefrainError> {
+    state.with_project(&root_id, |_state, entry| {
+        let ProjectEntry {
+            store, manuscripts, ..
+        } = entry;
+        let manuscript = manuscripts
+            .get_mut(&path)
+            .ok_or_else(|| not_open("countermand in a document that is not open", &path))?;
+        let transition = refrain_app::countermand_proposals(
+            store,
+            manuscript,
+            &path,
+            &proposal_ids,
+            now_millis(),
+        )?;
+        // It is a text action like any other: same record path, same history
+        // panel, undoable by the same undo.
+        record_text_action(store, &path, &transition)?;
+        Ok(transition_dto(&transition))
     })
 }
 
@@ -1974,7 +2254,7 @@ use refrain_app::journal::{
 use refrain_app::rebuild_proposal;
 use refrain_core::context_compiler::{
     self, BeforeScope, ChangeEntry, ChangeKind, ContractMode, DispatchInput, DispatchPackage,
-    ManifestEntry,
+    InstalledSkill, ManifestEntry, SkillStatus,
 };
 use refrain_core::material_listing::{Disclosure, MaterialListing};
 use refrain_host::host::{AgentHost, HostCommand, HostRefusal, ReviewTask, Run, RunProgress};
@@ -2044,16 +2324,73 @@ pub enum CarryMode {
 /// Asking the project instead makes the tier the same for every Run of every
 /// Task in that project, at every moment. `verify:contract-tier-per-task`
 /// keeps it that way.
-fn contract_mode(store: &mut ProjectStore, agent_id: &str) -> Result<ContractMode, RefrainError> {
+///
+/// What one round carries beyond the author's words. The tier is the
+/// project-wide fact above; the other two are read from disk at compile time
+/// — a preview and its click answer the same way, and a change between the
+/// two (a memo appearing, an install landing) is exactly the drift INV-14
+/// refuses.
+struct ContractPlan {
+    mode: ContractMode,
+    /// The installed protocol copy this round's connection holds, if any.
+    /// Only the Full tier reads it (协议装载的首轮省 token).
+    installed_skill: Option<InstalledSkill>,
+    /// The agent's workspace already holds its Memo.md: this round resumes.
+    resumed: bool,
+}
+
+fn contract_mode(
+    state: &AppState,
+    store: &mut ProjectStore,
+    agent_id: &str,
+) -> Result<ContractPlan, RefrainError> {
+    let resumed = agent_memo_present(store, agent_id);
     if agent_id == l0_file_channel_agent() {
-        return Ok(ContractMode::Short);
+        return Ok(ContractPlan {
+            mode: ContractMode::Short,
+            installed_skill: None,
+            resumed,
+        });
     }
     let host = open_host(store)?;
-    Ok(if host.runs().is_empty() {
+    let mode = if host.runs().is_empty() {
         ContractMode::Full
     } else {
         ContractMode::Pointer
+    };
+    Ok(ContractPlan {
+        mode,
+        installed_skill: installed_skill_of(state, agent_id),
+        resumed,
     })
+}
+
+/// The installed protocol pointer for the round's connection, when there is
+/// one: the path the harness reads, and whether the copy is still current.
+/// `None` is not "stale" — it is "nothing installed", and the Full tier then
+/// carries the whole text as it always has.
+fn installed_skill_of(state: &AppState, agent_id: &str) -> Option<InstalledSkill> {
+    let connection = connection_for_agent(state, agent_id).ok()??;
+    let home = harnesses::home_dir()?;
+    let path = harnesses::skill_path(&home, connection.adapter)?;
+    let status = harnesses::skill_status(&home, connection.adapter);
+    if status == SkillStatus::None {
+        return None;
+    }
+    Some(InstalledSkill {
+        path: path.display().to_string(),
+        status,
+    })
+}
+
+/// Whether the agent's workspace already holds its Memo.md — the fact a
+/// resumed round is marked from. An unparseable id names no workspace, and
+/// no workspace honestly means "not a resumption".
+fn agent_memo_present(store: &ProjectStore, agent_id: &str) -> bool {
+    let Ok(agent) = parse_id(agent_id, "agent") else {
+        return false;
+    };
+    DirectoryContext::new(store.layout().state_dir.clone()).has_agent_memo(agent)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2065,7 +2402,7 @@ fn compile_package(
     material_paths: &[String],
     prompt: &str,
     carry: CarryMode,
-    contract: ContractMode,
+    plan: &ContractPlan,
     persona: Option<String>,
 ) -> Result<DispatchPackage, RefrainError> {
     let blocks = manuscript.head().blocks();
@@ -2132,6 +2469,10 @@ fn compile_package(
                 VerdictKindName::AcceptModified => ChangeKind::AcceptModified,
                 VerdictKindName::Reject => ChangeKind::Reject,
                 VerdictKindName::CommentOnly => ChangeKind::CommentOnly,
+                // 冲销对 Agent 的意义与拒绝相同：这段文字现在不在正文里。
+                // 流里接受与冲销成对出现，净效果就是「没有采纳」——更早的那条
+                // 接受记录仍是事实，这条告诉它结局。
+                VerdictKindName::Countermanded => ChangeKind::Reject,
             },
             reason: verdict.reason.clone(),
             final_text: verdict.final_text.clone(),
@@ -2176,11 +2517,14 @@ fn compile_package(
             DocumentRole::Material,
             &refrain_core::digest::content_hex(&opened.bytes),
             &text,
-            Disclosure::default(),
+            // The author's own setting; "never asked" is the enum's default.
+            opened.row.disclosure.unwrap_or_default(),
         ));
     }
     let input = DispatchInput {
         persona,
+        installed_skill: plan.installed_skill.clone(),
+        resumed: plan.resumed,
         manuscript: manuscript_text,
         changes,
         materials,
@@ -2188,11 +2532,12 @@ fn compile_package(
         request: prompt.to_string(),
         scopes: vec![BeforeScope { scope, text }],
         result_path: format!(
-            "runs/{0}/attempts/{0}/result.md",
-            refrain_host::host::RUN_ID_PLACEHOLDER
+            "agents/{1}/runs/{0}/attempts/{0}/result.md",
+            refrain_host::host::RUN_ID_PLACEHOLDER,
+            refrain_host::host::AGENT_ID_PLACEHOLDER
         ),
         max_bytes: ARTIFACT_MAX_BYTES,
-        contract_mode: contract,
+        contract_mode: plan.mode,
     };
     Ok(context_compiler::compile(&input))
 }
@@ -2345,7 +2690,7 @@ fn preview_dispatch(
                 path.clone(),
             )
         })?;
-        let mode = contract_mode(&mut entry.store, &agent_id)?;
+        let plan = contract_mode(_state, &mut entry.store, &agent_id)?;
         let package = compile_package(
             &mut entry.store,
             manuscript,
@@ -2354,7 +2699,7 @@ fn preview_dispatch(
             &material_paths,
             &prompt,
             carry,
-            mode,
+            &plan,
             persona_of(_state, &agent_id),
         )?;
         Ok(DispatchPreviewDto {
@@ -2464,7 +2809,7 @@ fn authorize_dispatch(
                 path.clone(),
             )
         })?;
-        let mode = contract_mode(&mut entry.store, &agent_id)?;
+        let plan = contract_mode(_state, &mut entry.store, &agent_id)?;
         let package = compile_package(
             &mut entry.store,
             manuscript,
@@ -2473,7 +2818,7 @@ fn authorize_dispatch(
             &material_paths,
             &prompt,
             carry,
-            mode,
+            &plan,
             persona_of(_state, &agent_id),
         )?;
         let task_id = parse_id(&task_id, "task")?;
@@ -2512,6 +2857,30 @@ fn find_run(runs: &[Run], run_id: Id) -> Result<&Run, RefrainError> {
         .ok_or_else(|| into_domain_host(HostRefusal::UnknownRun(run_id)))
 }
 
+/// Prepare the agent's persistent half of the workspace (Task B) and answer
+/// its id: the `agents/<agent-id>/` directory with a current AGENTS.md, so a
+/// harness CLI that walks up from the run directory finds the identity with
+/// zero request bytes. Content-compared, so a launch with no persona change
+/// writes nothing.
+fn ensure_agent_workspace(
+    state: &AppState,
+    state_dir: &Path,
+    agent: &str,
+) -> Result<Id, RefrainError> {
+    let agent_id = parse_id(agent, "agent")?;
+    DirectoryContext::new(state_dir.to_path_buf())
+        .ensure_agent_files(agent_id, persona_of(state, agent).as_deref())
+        .map_err(|error| {
+            RefrainError::new(
+                ErrorCode::Io,
+                "write the agent workspace",
+                agent.to_string(),
+            )
+            .with_detail(error.to_string())
+        })?;
+    Ok(agent_id)
+}
+
 #[tauri::command(async)]
 #[specta::specta]
 fn launch_run(
@@ -2532,7 +2901,8 @@ fn launch_run(
         return harness_dispatch_inner(&app, &state, &root_id, &agent, run_id);
     }
     state.with_project(&root_id, |_state, entry| {
-        let workspace = format!("runs/{run_id}");
+        let agent_id = ensure_agent_workspace(_state, &entry.store.layout().state_dir, &agent)?;
+        let workspace = refrain_host::staging::run_workspace(agent_id, run_id);
         {
             let mut host = open_host(&mut entry.store)?;
             host.execute(HostCommand::LaunchRun {
@@ -2780,11 +3150,19 @@ fn collect_attempt(
 // ── C11: local Harness connections over the frozen protocol ────────────────
 
 use harnesses::{
-    LocalHarness, SUPPORTED_CANDIDATES, candidate_for_adapter, connection_from_detected,
+    CLAUDE_CODE_CANDIDATE, ConnectionResolution, KIMI_CODE_CANDIDATE, LocalHarness,
+    SUPPORTED_CANDIDATES, candidate_for_adapter, connection_from_detected,
 };
 use refrain_host::adapters::{self, HarnessAdapter};
 use tauri::Emitter as _;
 
+/// The probe answer for one row of the connections surface.
+///
+/// `NeedsAttention` is no longer "re-link it": it names a stored connection
+/// whose binary answered before and does not answer now. The row keeps the
+/// stored identity, and `last_known_version` carries what last worked — so
+/// nothing is marked Connected that is not, and nothing asks for a re-link
+/// while the identity is intact.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum HarnessStatus {
@@ -2801,9 +3179,18 @@ pub struct HarnessDto {
     pub candidate_id: String,
     pub connection_id: Option<String>,
     pub label: String,
+    /// What the binary answers now; `None` when nothing answered this probe.
     pub version: Option<String>,
     pub tier: String,
     pub status: HarnessStatus,
+    /// Set exactly when `status` is `NeedsAttention`: the version the last
+    /// successful probe recorded. The "previously worked" half of the state —
+    /// `version` alone could not say it, because a dead binary answers nothing.
+    pub last_known_version: Option<String>,
+    /// The installed protocol's state on this machine: none / current /
+    /// stale, read from the file itself each time. The badge never claims
+    /// "installed" from the Config record alone — the file is the fact.
+    pub skill_status: SkillStatus,
 }
 
 /// What the app emits when a backgrounded producer settles.
@@ -2851,26 +3238,25 @@ fn list_harnesses(state: tauri::State<'_, AppState>) -> Result<Vec<HarnessDto>, 
             continue;
         };
         connected_candidates.insert(candidate_id);
-        let live = LocalHarness::from_connection(connection);
-        out.push(HarnessDto {
-            candidate_id: candidate_id.to_string(),
-            connection_id: Some(connection.id.to_string()),
-            label: SUPPORTED_CANDIDATES
-                .iter()
-                .find_map(|(id, label)| (*id == candidate_id).then_some(*label))
-                .unwrap_or(candidate_id)
-                .to_string(),
-            version: live.as_ref().map(|harness| harness.version().to_string()),
-            tier: live
-                .as_ref()
-                .map_or("可直接派发", |harness| tier_label(harness.tier()))
-                .to_string(),
-            status: if live.is_some() {
-                HarnessStatus::Connected
-            } else {
-                HarnessStatus::NeedsAttention
-            },
-        });
+        // A stored identity is probed, never trusted: a live answer is
+        // Connected, an install that moved heals through the Config
+        // authority under the same id, and a silent one is NeedsAttention
+        // with the last-known metadata retained — never a fake Connected,
+        // never a forced re-link while the identity is intact.
+        // `last_known_version` keeps "previously worked" visible there;
+        // `version` alone cannot say it — a dead binary answers nothing.
+        let live = match harnesses::resolve_connection(connection) {
+            ConnectionResolution::Live(harness) => {
+                heal_connection(store, connection, &harness)?;
+                Some(harness)
+            }
+            ConnectionResolution::Moved(harness) => {
+                heal_connection(store, connection, &harness)?;
+                Some(harness)
+            }
+            ConnectionResolution::Unreachable => None,
+        };
+        out.push(stored_harness_dto(candidate_id, connection, live.as_ref()));
     }
     for (candidate_id, label) in SUPPORTED_CANDIDATES {
         if connected_candidates.contains(candidate_id) {
@@ -2891,9 +3277,96 @@ fn list_harnesses(state: tauri::State<'_, AppState>) -> Result<Vec<HarnessDto>, 
             } else {
                 HarnessStatus::Missing
             },
+            last_known_version: None,
+            skill_status: skill_status_of(connection_kind(candidate_id)),
         });
     }
     Ok(out)
+}
+
+/// The adapter kind a fixed candidate stands for. The candidates and the
+/// kinds are two spellings of one list; the join lives here, once.
+fn connection_kind(candidate_id: &str) -> Option<refrain_store::config::AdapterKind> {
+    if candidate_id == CLAUDE_CODE_CANDIDATE {
+        Some(refrain_store::config::AdapterKind::ClaudeCode)
+    } else if candidate_id == KIMI_CODE_CANDIDATE {
+        Some(refrain_store::config::AdapterKind::KimiCode)
+    } else {
+        None
+    }
+}
+
+/// Read the installed protocol's state for a connection's kind. No home
+/// directory resolved is not an error — the badge simply says "none".
+fn skill_status_of(kind: Option<refrain_store::config::AdapterKind>) -> SkillStatus {
+    match (harnesses::home_dir(), kind) {
+        (Some(home), Some(kind)) => harnesses::skill_status(&home, kind),
+        _ => SkillStatus::None,
+    }
+}
+
+/// One stored connection as the surface lists it: live facts from the probe,
+/// or NeedsAttention with the last-known version retained.
+fn stored_harness_dto(
+    candidate_id: &str,
+    connection: &refrain_store::config::HarnessConnection,
+    live: Option<&LocalHarness>,
+) -> HarnessDto {
+    HarnessDto {
+        candidate_id: candidate_id.to_string(),
+        connection_id: Some(connection.id.to_string()),
+        label: SUPPORTED_CANDIDATES
+            .iter()
+            .find_map(|(id, label)| (*id == candidate_id).then_some(*label))
+            .unwrap_or(candidate_id)
+            .to_string(),
+        version: live.map(|harness| harness.version().to_string()),
+        tier: live
+            .map_or("可直接派发", |harness| tier_label(harness.tier()))
+            .to_string(),
+        status: if live.is_some() {
+            HarnessStatus::Connected
+        } else {
+            HarnessStatus::NeedsAttention
+        },
+        last_known_version: if live.is_none() {
+            connection.version.clone()
+        } else {
+            None
+        },
+        skill_status: skill_status_of(Some(connection.adapter)),
+    }
+}
+
+/// Re-anchor a stored connection onto the binary that answered, keeping its
+/// id and its argv/env choices: only the executable and the last-successful
+/// version move. Called when the probe succeeded but the stored facts drifted
+/// (an upgrade changed the path or the version) — and skipped when they did
+/// not, so listing a healthy connection writes nothing.
+fn heal_connection(
+    store: &refrain_store::config::ConfigStore,
+    connection: &refrain_store::config::HarnessConnection,
+    harness: &LocalHarness,
+) -> Result<(), RefrainError> {
+    let drifted = connection.executable != *harness.program()
+        || connection.version.as_deref() != Some(harness.version());
+    if !drifted {
+        return Ok(());
+    }
+    store
+        .apply(
+            refrain_store::config::ConfigChange::UpsertHarnessConnection(
+                refrain_store::config::HarnessConnection {
+                    executable: harness.program().to_path_buf(),
+                    version: Some(harness.version().to_string()),
+                    ..connection.clone()
+                },
+            ),
+        )
+        .map_err(|failure| {
+            RefrainError::new(ErrorCode::Io, "write the Config", failure.to_string())
+        })?;
+    Ok(())
 }
 
 /// Register one fixed PATH candidate. The renderer supplies a stable ID, not
@@ -2935,15 +3408,28 @@ fn upsert_harness_connection(
         .map_or_else(Id::new, |connection| connection.id);
     let snapshot = store
         .apply(
-            refrain_store::config::ConfigChange::UpsertHarnessConnection(connection_from_detected(
-                id, &harness,
-            )),
+            refrain_store::config::ConfigChange::UpsertHarnessConnection(
+                refrain_store::config::HarnessConnection {
+                    skill_digest: prior_skill_digest(&current.config, id),
+                    ..connection_from_detected(id, &harness)
+                },
+            ),
         )
         .map_err(|failure| {
             RefrainError::new(ErrorCode::Io, "write the Config", failure.to_string())
         })?;
     let _ = app.emit("config-changed", &snapshot.config.appearance.theme);
     Ok(snapshot)
+}
+
+/// The install record a re-detection must keep: re-linking is not
+/// re-installing, so the protocol digest rides across under the same id.
+fn prior_skill_digest(config: &refrain_store::config::Config, id: Id) -> Option<String> {
+    config
+        .harness_connections
+        .iter()
+        .find(|connection| connection.id == id)
+        .and_then(|connection| connection.skill_digest.clone())
 }
 
 /// Remove a connection by id (SPEC 6.5). Trust evidence in app.db is not the
@@ -2970,6 +3456,108 @@ fn remove_harness_connection(
         })?;
     let _ = app.emit("config-changed", &snapshot.config.appearance.theme);
     Ok(snapshot)
+}
+
+/// What one protocol install reports: where the file landed and the digest
+/// the Config recorded as provenance.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillInstallDto {
+    pub path: String,
+    pub digest: String,
+}
+
+/// Install the RefRain protocol into a connection's harness skill directory
+/// （协议装载：安装即注册 — the CLI auto-loads its skills directory, so the
+/// file's presence is the registration).
+///
+/// This is the application's only write outside the Root, which is exactly
+/// why it is a command and never a side effect of dispatch: nothing crosses
+/// that boundary without the author's click.
+#[tauri::command(async)]
+#[specta::specta]
+fn install_skill(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    connection_id: String,
+) -> Result<SkillInstallDto, RefrainError> {
+    let (snapshot, installed) = install_skill_inner(&state, &connection_id)?;
+    let _ = app.emit("config-changed", &snapshot.config.appearance.theme);
+    Ok(installed)
+}
+
+/// The install body: write the file (the fact), then record its digest in
+/// the Config (the provenance) — in that order, so a failed record never
+/// hides an installed file; the status badge reads the file either way.
+fn install_skill_inner(
+    state: &AppState,
+    connection_id: &str,
+) -> Result<(refrain_store::config::ConfigSnapshot, SkillInstallDto), RefrainError> {
+    let id = parse_id(connection_id, "connection")?;
+    let store = state.config.as_ref().ok_or_else(|| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "write a damaged Config",
+            "connections",
+        )
+    })?;
+    let snapshot = store.snapshot().map_err(|failure| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "read the Config",
+            failure.to_string(),
+        )
+    })?;
+    let connection = snapshot
+        .config
+        .harness_connections
+        .iter()
+        .find(|connection| connection.id == id)
+        .ok_or_else(|| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "install the protocol for a connection",
+                "no such connection",
+            )
+        })?;
+    let home = harnesses::home_dir().ok_or_else(|| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "install the protocol without a home directory",
+            "HOME",
+        )
+    })?;
+    let (path, digest) = harnesses::install_skill(&home, connection.adapter)
+        .ok_or_else(|| {
+            RefrainError::new(
+                ErrorCode::UnsupportedFormat,
+                "install the protocol for a harness without a skill directory",
+                candidate_for_adapter(connection.adapter).unwrap_or("unsupported adapter"),
+            )
+        })?
+        .map_err(|error| {
+            RefrainError::new(ErrorCode::Io, "install the protocol", "skill file")
+                .with_detail(error.to_string())
+        })?;
+    let snapshot = store
+        .apply(
+            refrain_store::config::ConfigChange::UpsertHarnessConnection(
+                refrain_store::config::HarnessConnection {
+                    skill_digest: Some(digest.clone()),
+                    ..connection.clone()
+                },
+            ),
+        )
+        .map_err(|failure| {
+            RefrainError::new(ErrorCode::Io, "write the Config", failure.to_string())
+        })?;
+    Ok((
+        snapshot,
+        SkillInstallDto {
+            path: path.display().to_string(),
+            digest,
+        },
+    ))
 }
 
 /// Re-check an existing Config connection. No path crosses the bridge.
@@ -3088,6 +3676,25 @@ fn persona_of(state: &AppState, agent_id: &str) -> Option<String> {
         })
 }
 
+/// The extra argv an AgentProfile carries for this agent id, if any. Read at
+/// launch and merged by the adapter — validation already happened at upsert,
+/// so a stored profile is trusted here the way a persona is.
+fn agent_argv_of(state: &AppState, agent_id: &str) -> Vec<String> {
+    state
+        .config
+        .as_ref()
+        .and_then(|store| store.snapshot().ok())
+        .and_then(|snapshot| {
+            snapshot
+                .config
+                .agents
+                .iter()
+                .find(|profile| profile.id.to_string() == agent_id)
+                .map(|profile| profile.argv.clone())
+        })
+        .unwrap_or_default()
+}
+
 /// One Agent as the surface lists it: the profile plus its channel's facts.
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -3096,8 +3703,21 @@ pub struct AgentDto {
     pub name: String,
     pub connection_id: Option<String>,
     pub has_persona: bool,
+    /// The persona text itself, so the edit form can prefill. `None` when the
+    /// profile carries none — the same state `has_persona` reports.
+    pub persona: Option<String>,
+    /// The agent's extra argv (model, effort — argv by nature), so the edit
+    /// form can show what launches with this agent. Empty by default.
+    pub argv: Vec<String>,
     pub channel: String,
     pub version: String,
+}
+
+/// The version string one connected harness reports, or the refusal the
+/// surface shows when the executable no longer answers.
+fn harness_version(live: Option<LocalHarness>) -> String {
+    live.map(|harness| harness.version().to_string())
+        .unwrap_or_else(|| "需要重新连接".to_string())
 }
 
 #[tauri::command(async)]
@@ -3119,6 +3739,8 @@ fn list_agents(state: tauri::State<'_, AppState>) -> Vec<AgentDto> {
                 name: profile.name.clone(),
                 connection_id: None,
                 has_persona: profile.persona.is_some(),
+                persona: profile.persona.clone(),
+                argv: profile.argv.clone(),
                 channel: "手动往返".to_string(),
                 version: "—".to_string(),
             },
@@ -3139,9 +3761,7 @@ fn list_agents(state: tauri::State<'_, AppState>) -> Vec<AgentDto> {
                                 })
                             })
                             .unwrap_or("暂不支持的连接");
-                        let version = live
-                            .map(|harness| harness.version().to_string())
-                            .unwrap_or_else(|| "需要重新连接".to_string());
+                        let version = harness_version(live);
                         (label.to_string(), version)
                     })
                     .unwrap_or_else(|| ("连接已删".to_string(), "—".to_string()));
@@ -3150,6 +3770,8 @@ fn list_agents(state: tauri::State<'_, AppState>) -> Vec<AgentDto> {
                     name: profile.name.clone(),
                     connection_id: Some(connection_id.to_string()),
                     has_persona: profile.persona.is_some(),
+                    persona: profile.persona.clone(),
+                    argv: profile.argv.clone(),
                     channel,
                     version,
                 }
@@ -3158,8 +3780,10 @@ fn list_agents(state: tauri::State<'_, AppState>) -> Vec<AgentDto> {
         .collect()
 }
 
-/// Create or update one Agent (SPEC 6.5: typed changes only). A connection
-/// reference must name an existing connection; `None` is the L0 channel.
+/// Create one Agent (SPEC 6.5: typed changes only). A connection reference
+/// must name an existing connection; `None` is the L0 channel. Edits go
+/// through `update_agent`: a create must never reuse an id it was handed,
+/// and a generated bridge signature cannot carry an optional argument.
 #[tauri::command(async)]
 #[specta::specta]
 fn upsert_agent(
@@ -3168,6 +3792,7 @@ fn upsert_agent(
     name: String,
     connection_id: Option<String>,
     persona: Option<String>,
+    argv: Vec<String>,
 ) -> Result<refrain_store::config::ConfigSnapshot, RefrainError> {
     if name.trim().is_empty() {
         return Err(RefrainError::new(
@@ -3176,6 +3801,7 @@ fn upsert_agent(
             "empty name",
         ));
     }
+    refrain_host::adapters::check_agent_argv(&argv).map_err(argv_refusal)?;
     let store = state.config.as_ref().ok_or_else(|| {
         RefrainError::new(
             ErrorCode::StateUnavailable,
@@ -3216,6 +3842,7 @@ fn upsert_agent(
                 name: name.trim().to_string(),
                 connection_id,
                 persona: persona.filter(|text| !text.trim().is_empty()),
+                argv,
             },
         ))
         .map_err(|failure| {
@@ -3223,6 +3850,137 @@ fn upsert_agent(
         })?;
     let _ = app.emit("config-changed", &snapshot.config.appearance.theme);
     Ok(snapshot)
+}
+
+/// The argv denylist refusal, translated into the bridge's error shape: the
+/// item that may not ride and why, said while the author is still editing.
+fn argv_refusal(failure: refrain_host::adapters::ArgvRefusal) -> RefrainError {
+    RefrainError::new(
+        ErrorCode::IllegalName,
+        "register agent argv",
+        failure.to_string(),
+    )
+}
+
+/// The shared validation behind the Agent commands: a non-empty name and a
+/// connection that exists. `None` for the id mints fresh (create); a given
+/// id edits in place. `upsert_agent` predates this helper and keeps its own
+/// inline copy — the command-depth ratchet freezes its body.
+fn agent_profile(
+    state: &AppState,
+    id: Option<&str>,
+    name: String,
+    connection_id: Option<String>,
+    persona: Option<String>,
+    argv: Vec<String>,
+) -> Result<refrain_store::config::AgentProfile, RefrainError> {
+    if name.trim().is_empty() {
+        return Err(RefrainError::new(
+            ErrorCode::IllegalName,
+            "name an agent",
+            "empty name",
+        ));
+    }
+    refrain_host::adapters::check_agent_argv(&argv).map_err(argv_refusal)?;
+    let id = match id {
+        Some(raw) => parse_id(raw, "agent")?,
+        None => Id::new(),
+    };
+    let store = state.config.as_ref().ok_or_else(|| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "write a damaged Config",
+            "agents",
+        )
+    })?;
+    let connection_id = match connection_id {
+        None => None,
+        Some(raw) => {
+            let id = parse_id(&raw, "connection")?;
+            let snapshot = store.snapshot().map_err(|failure| {
+                RefrainError::new(
+                    ErrorCode::StateUnavailable,
+                    "read the Config",
+                    failure.to_string(),
+                )
+            })?;
+            let connections = &snapshot.config.harness_connections;
+            if !connections.iter().any(|entry| entry.id == id) {
+                return Err(RefrainError::new(
+                    ErrorCode::StateUnavailable,
+                    "attach an agent to a connection",
+                    "no such connection",
+                ));
+            }
+            Some(id)
+        }
+    };
+    Ok(refrain_store::config::AgentProfile {
+        id,
+        name: name.trim().to_string(),
+        connection_id,
+        persona: persona.filter(|text| !text.trim().is_empty()),
+        argv,
+    })
+}
+
+/// Edit one Agent in place (SPEC 6.5: typed changes only). The id comes from
+/// `list_agents`; naming an id that does not exist is a typed refusal — an
+/// edit that silently creates is how agents multiplied in the first place.
+#[tauri::command(async)]
+#[specta::specta]
+fn update_agent(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: String,
+    name: String,
+    connection_id: Option<String>,
+    persona: Option<String>,
+    argv: Vec<String>,
+) -> Result<refrain_store::config::ConfigSnapshot, RefrainError> {
+    let profile = agent_profile(&state, Some(&id), name, connection_id, persona, argv)?;
+    let snapshot = apply_existing_agent(&state, profile)?;
+    let _ = app.emit("config-changed", &snapshot.config.appearance.theme);
+    Ok(snapshot)
+}
+
+/// Apply the profile after proving its id names an Agent that exists.
+fn apply_existing_agent(
+    state: &AppState,
+    profile: refrain_store::config::AgentProfile,
+) -> Result<refrain_store::config::ConfigSnapshot, RefrainError> {
+    let store = state.config.as_ref().ok_or_else(|| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "write a damaged Config",
+            "agents",
+        )
+    })?;
+    let known = store
+        .snapshot()
+        .map_err(|failure| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "read the Config",
+                failure.to_string(),
+            )
+        })?
+        .config
+        .agents
+        .iter()
+        .any(|existing| existing.id == profile.id);
+    if !known {
+        return Err(RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "edit an agent",
+            "no such agent",
+        ));
+    }
+    store
+        .apply(refrain_store::config::ConfigChange::UpsertAgent(profile))
+        .map_err(|failure| {
+            RefrainError::new(ErrorCode::Io, "write the Config", failure.to_string())
+        })
 }
 
 #[tauri::command(async)]
@@ -3276,9 +4034,10 @@ fn harness_dispatch_inner(
         .with_detail("the saved program is missing or failed its identity check")
     })?;
     let (workspace, workspace_abs, request_md) = state.with_project(root_id, |_state, entry| {
+        let agent_id = ensure_agent_workspace(_state, &entry.store.layout().state_dir, agent)?;
         let context = DirectoryContext::new(entry.store.layout().state_dir.clone());
         let mut host = open_host(&mut entry.store)?;
-        let workspace = format!("runs/{run_id}");
+        let workspace = refrain_host::staging::run_workspace(agent_id, run_id);
         host.execute(HostCommand::LaunchRun {
             run_id,
             workspace: workspace.clone(),
@@ -3314,6 +4073,8 @@ fn harness_dispatch_inner(
         run_id,
         workspace: workspace_abs,
         request_md,
+        connection_argv: connection.argv.clone(),
+        agent_argv: agent_argv_of(state, agent),
     }) {
         Ok(receipt) => receipt,
         Err(error) => {
@@ -3579,7 +4340,10 @@ fn create_material_with_body(
             .map_err(into_domain)?;
         // The executed action is the journaled one, through the same
         // conversion the replay path uses — one construction, no drift.
-        let domain_action = to_domain_action(action_dto)?;
+        let domain_action = to_domain_action(
+            action_dto,
+            DocumentFormat::of_path(&created.row.path).block_scan(),
+        )?;
         let outcome = {
             let manuscript = entry
                 .manuscripts
