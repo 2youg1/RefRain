@@ -18,6 +18,7 @@ export type ProjectOperation =
   | "open-file"
   | "create-project"
   | "create-document"
+  | "import-manuscript"
   | "import-material"
   | "delete-document"
   | "set-disclosure";
@@ -57,6 +58,8 @@ export interface ProjectAcquisitionPort {
   adoptFile(): Promise<ProjectOpenedDto | null>;
   createProject(name: string): Promise<ProjectOpenedDto | null>;
   createDocument(rootId: string, title: string, role: "chapter" | "material"): Promise<DocumentRow>;
+  /** 把一份认可格式的文本按原字节复制进 Root，角色是 Chapter。 */
+  importManuscript(rootId: string): Promise<DocumentRow | null>;
   importMaterial(rootId: string): Promise<DocumentRow | null>;
   /**
    * 一份导入来源的原始字节，供只读地看它的原件。
@@ -136,6 +139,12 @@ const productionAcquisition: ProjectAcquisitionPort = {
   async createDocument(rootId, title, role) {
     return (await unwrap(commands.createDocument(rootId, title, role))).document;
   },
+  async importManuscript(rootId) {
+    const picked = e2ePickedPath();
+    return picked === null
+      ? unwrap(commands.chooseAndImportManuscript(rootId))
+      : debugCommands.importManuscript(rootId, picked);
+  },
   async importMaterial(rootId) {
     const picked = e2ePickedPath();
     return picked === null
@@ -143,10 +152,13 @@ const productionAcquisition: ProjectAcquisitionPort = {
       : debugCommands.importMaterial(rootId, picked);
   },
   async importedSourceBytes(rootId, digest, format) {
-    // 桥上是 `number[]`（IPC 没有二进制）。转成 `Uint8Array` 在这里做一次，
-    // 而不是让每个调用方各转一次。
-    const bytes = await commands.importedSourceBytes(rootId, digest, format);
-    return bytes === null ? null : new Uint8Array(bytes);
+    // 走 custom protocol，不走 JSON 桥：`number[]` 过桥要把每个字节写成十进制
+    // 文本再逐元素重建，128 MiB 的原件实测至少 4.57× 内存放大（F-10）。
+    // 这里拿到的是 `ArrayBuffer`，放大率 1×。
+    const response = await fetch(`refrain-artifact://${rootId}/${digest}.${format}`);
+    // 404 是一个值：早于 schema v10 导入的 ARTIFACT，或克隆件已被移走。
+    if (!response.ok) return null;
+    return new Uint8Array(await response.arrayBuffer());
   },
 };
 
@@ -372,6 +384,26 @@ export class ProjectSession extends Session<ProjectOperation> {
     return created;
   }
 
+  /**
+   * 导入一份原稿：字节原样进 Root，角色是 Chapter。
+   *
+   * 返回新条目的路径，由外壳决定接着打开它——「导入之后跳过去」是外壳的编排，
+   * 和「新建之后跳过去」是同一件事，不在名录里各写一遍。
+   */
+  async importManuscript(): Promise<string | null> {
+    const open = this.#state;
+    if (open.kind !== "open") return null;
+    let imported: string | null = null;
+    await this.exclusive("import-manuscript", async () => {
+      const row = await this.#acquire.importManuscript(open.project.rootId);
+      if (row === null) return null;
+      this.add(row);
+      imported = row.path;
+      return `已导入为原稿：${row.path}`;
+    });
+    return imported;
+  }
+
   importMaterial(): Promise<void> {
     const open = this.#state;
     if (open.kind !== "open") return Promise.resolve();
@@ -379,7 +411,8 @@ export class ProjectSession extends Session<ProjectOperation> {
       const row = await this.#acquire.importMaterial(open.project.rootId);
       if (row === null) return null;
       this.add(row);
-      return "已导入";
+      // 公告要说出角色与项目内路径，否则作者只知道「有事发生了」。
+      return `已导入为 ARTIFACT：${row.path}`;
     });
   }
 

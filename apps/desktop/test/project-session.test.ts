@@ -35,12 +35,14 @@ const opened = (
   rootId: string,
   documents: DocumentRow[] = [row(`${rootId}-1`, `${rootId}-一.md`)],
   cursor: string | null = "next",
+  openedPath: string | null = documents[0]?.path ?? null,
 ): ProjectOpenedDto => ({
   rootId,
   backup: { kind: "nothingToCopy" },
   documents,
   documentTotal: documents.length + (cursor === null ? 0 : 1),
   documentCursor: cursor,
+  openedPath,
 });
 
 class ManualDelay implements DelayPort {
@@ -208,6 +210,7 @@ describe("ProjectSession 取得一个项目", () => {
     adoptFile: async () => opened("file-root"),
     createProject: async (name) => opened(`created-${name}`),
     createDocument: async (_rootId, title) => row("new-1", `${title}.md`),
+    importManuscript: async () => row("man-1", "拖入.md"),
     importMaterial: async () => row("mat-1", "资料.md"),
     ...overrides,
   });
@@ -280,19 +283,59 @@ describe("ProjectSession 取得一个项目", () => {
     expect(await session.createDocument("孤章", "chapter")).toBeNull();
   });
 
-  test("导入资料会说一声，好让作者知道它进来了", async () => {
+  test("导入 ARTIFACT 的公告说出角色与项目内路径，而不是只说「已导入」", async () => {
     const session = build(acquisition());
     await session.openFolder();
     await session.importMaterial();
-    expect(session.view()).toEqual({ kind: "reported", text: "已导入" });
+    // F-27：作者要能从公告本身分辨这一次导入的是资料还是原稿。
+    expect(session.view()).toEqual({ kind: "reported", text: "已导入为 ARTIFACT：资料.md" });
     expect(session.documents.some((entry) => entry.path === "资料.md")).toBe(true);
   });
 
-  test("导入被取消时不出现「已导入」这句话", async () => {
+  test("导入原稿是另一条路：角色是原稿，并把路径交回去给外壳打开", async () => {
+    const session = build(acquisition());
+    await session.openFolder();
+    const imported = await session.importManuscript();
+    expect(imported).toBe("拖入.md");
+    expect(session.view()).toEqual({ kind: "reported", text: "已导入为原稿：拖入.md" });
+    expect(session.documents.some((entry) => entry.path === "拖入.md")).toBe(true);
+  });
+
+  test("导入被取消时不出现公告", async () => {
     const session = build(acquisition({ importMaterial: async () => null }));
     await session.openFolder();
     await session.importMaterial();
     expect(session.view().kind).toBe("idle");
+  });
+
+  test("原稿导入被取消时交回 null，外壳因此不会去打开一份不存在的文档", async () => {
+    const session = build(acquisition({ importManuscript: async () => null }));
+    await session.openFolder();
+    expect(await session.importManuscript()).toBeNull();
+    expect(session.view().kind).toBe("idle");
+  });
+
+  test("还没有项目的时候导不进原稿", async () => {
+    const session = build(acquisition());
+    expect(await session.importManuscript()).toBeNull();
+  });
+
+  test("取得项目时交回落点，外壳据此打开正文而不是自己猜第一行", async () => {
+    const installed: ProjectOpenedDto[] = [];
+    const session = build(acquisition(), installed);
+    await session.openFolder();
+    // D10：落点由 Rust 判定，装上项目的那一刻它就在 DTO 里。
+    expect(installed[0]?.openedPath).toBe("folder-root-一.md");
+  });
+
+  test("空项目的落点是 null——只有这一种情形允许停在空工作区", async () => {
+    const installed: ProjectOpenedDto[] = [];
+    const session = build(
+      acquisition({ adoptFolder: async () => opened("empty-root", [], null, null) }),
+      installed,
+    );
+    await session.openFolder();
+    expect(installed[0]?.openedPath).toBeNull();
   });
 });
 

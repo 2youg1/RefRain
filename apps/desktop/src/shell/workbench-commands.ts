@@ -15,6 +15,7 @@ export type WorkbenchCommandId =
   | "open-document"
   | "new-chapter"
   | "new-material"
+  | "import-manuscript"
   | "import-material"
   | "save-document"
   | "open-dispatch"
@@ -150,10 +151,18 @@ export function commandCatalog(context: CommandContext): WorkbenchCommand[] {
       projectStep,
     ),
     command(
+      "import-manuscript",
+      "project",
+      "导入为原稿",
+      ["import manuscript", "markdown", "md", "原稿", "导入"],
+      context.hasProject,
+      projectStep,
+    ),
+    command(
       "import-material",
       "project",
-      "导入资料",
-      ["import", "pdf", "epub", "docx", "导入"],
+      "导入为 ARTIFACT",
+      ["import", "pdf", "epub", "docx", "资料", "导入"],
       context.hasProject,
       projectStep,
     ),
@@ -227,6 +236,7 @@ export function filterCommands(
       "open-review",
       "new-chapter",
       "new-material",
+      "import-manuscript",
       "import-material",
       "save-document",
       "open-dispatch",

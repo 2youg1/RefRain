@@ -193,7 +193,8 @@ function RailNav(props: {
   onBrandToggle: () => void;
   onCreateChapter: () => void;
   onCreateMaterial: () => void;
-  onImport: () => void;
+  onImportManuscript: () => void;
+  onImportMaterial: () => void;
   importDisabled: boolean;
   query: string;
   onQuery: (value: string) => void;
@@ -248,8 +249,11 @@ function RailNav(props: {
         <button type="button" onClick={props.onCreateMaterial}>
           新资料
         </button>
-        <button type="button" disabled={props.importDisabled} onClick={props.onImport}>
-          导入
+        <button type="button" disabled={props.importDisabled} onClick={props.onImportManuscript}>
+          导入原稿
+        </button>
+        <button type="button" disabled={props.importDisabled} onClick={props.onImportMaterial}>
+          导入 ARTIFACT
         </button>
       </div>
       <div class="rail-search">
@@ -687,6 +691,7 @@ function createCommandExecutor(deps: {
   createProject: () => Promise<void>;
   openDocument: () => Promise<void>;
   createDocument: (role: "chapter" | "material") => Promise<void>;
+  importManuscript: () => Promise<void>;
   importMaterial: () => Promise<void>;
   save: () => void;
 }): (id: WorkbenchCommandId) => void {
@@ -704,6 +709,7 @@ function createCommandExecutor(deps: {
       "open-document": () => void deps.openDocument(),
       "new-chapter": () => void deps.createDocument("chapter"),
       "new-material": () => void deps.createDocument("material"),
+      "import-manuscript": () => void deps.importManuscript(),
       "import-material": () => void deps.importMaterial(),
       "save-document": deps.save,
       "open-dispatch": () => deps.openStage("dispatch"),
@@ -1089,11 +1095,13 @@ export function Workbench(props: WorkbenchProps) {
     (error) => setNotice(describe(error)),
     undefined,
     // 装上一个项目，等于换了一份稿子的世界：打开的文档不再属于这里。
+    // 随即落到 Rust 判定的那一份正文（D10）；`null` 是「项目里没有 Chapter」。
     (opened) => {
       documentSession.useProject(opened.rootId);
       runWatch.retarget(opened.rootId);
       transition({ kind: "projectChanged" });
       setNotice(null);
+      void openIfNew(opened.openedPath);
     },
     describe,
   );
@@ -1230,8 +1238,7 @@ export function Workbench(props: WorkbenchProps) {
   const openSingleDocument = (): Promise<void> => projectSession.openSingleDocument();
   const createProject = async (): Promise<void> => {
     const name = await askInline("项目名");
-    if (name === null) return;
-    await projectSession.createProject(name);
+    if (name !== null) await projectSession.createProject(name);
   };
 
   const selectDocument = async (path: string, ordinal: number | null = null): Promise<void> => {
@@ -1242,21 +1249,18 @@ export function Workbench(props: WorkbenchProps) {
     panels.clear();
     transition({ kind: "documentSelected" });
     revealBlock(opened.blocks, ordinal, () => editor);
-    if (opened.staleJournal.length > 0) {
-      setNotice(`有 ${opened.staleJournal.length} 条未确认的行动无法恢复，已留作证据。`);
-    } else if (opened.replayed > 0) {
-      setNotice(`已恢复 ${opened.replayed} 条上次未确认的行动。`);
-    }
   };
 
+  // 拿到一条路径就打开它：取得项目的落点、新建、导入共用这一段。
+  const openIfNew = async (path: string | null): Promise<void> => {
+    if (path !== null) await selectDocument(path);
+  };
   const createDocument = async (role: "chapter" | "material"): Promise<void> => {
     const title = await askInline(role === "chapter" ? "新章名" : "新资料名");
-    if (title === null) return;
-    // 建好之后跳过去是外壳的编排；名录只管把它记下来。
-    const created = await projectSession.createDocument(title, role);
-    if (created !== null) await selectDocument(created);
+    if (title !== null) await openIfNew(await projectSession.createDocument(title, role));
   };
-
+  // 导入完成后立即打开新 Chapter：作者要的是「开始写」，不是名录里多一行。
+  const importManuscript = (): Promise<void> => projectSession.importManuscript().then(openIfNew);
   const importMaterial = (): Promise<void> => projectSession.importMaterial();
   const readSourceBytes = projectSession.importedSourceBytes.bind(projectSession);
 
@@ -1316,6 +1320,7 @@ export function Workbench(props: WorkbenchProps) {
     createProject,
     openDocument: openSingleDocument,
     createDocument,
+    importManuscript,
     importMaterial,
     save,
   });
@@ -1410,7 +1415,8 @@ export function Workbench(props: WorkbenchProps) {
               onBrandToggle={() => setRailReceded((value) => !value)}
               onCreateChapter={() => void createDocument("chapter")}
               onCreateMaterial={() => void createDocument("material")}
-              onImport={() => void importMaterial()}
+              onImportManuscript={() => void importManuscript()}
+              onImportMaterial={() => void importMaterial()}
               importDisabled={projectBusy()}
               query={search().query}
               onQuery={(value) => projectSession.setQuery(value)}
