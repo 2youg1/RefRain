@@ -57,6 +57,7 @@ Measure performance through the production path. Keep platform-specific claims o
 - Do not use `any`; accept `unknown` at a boundary and narrow it.
 - Use discriminated unions instead of independent Boolean state.
 - Keep imports static and at the top level.
+- Async and concurrent session code uses Effect. Read [EFFECT.md](EFFECT.md) for the territory map and the five canonical patterns before writing or reviewing it.
 
 ## Generated and published files
 
@@ -74,6 +75,7 @@ Repository prose is limited to `README.md` and the approved files under `docs/`.
 
 - [README](../README.md)
 - [Architecture and glossary](ARCHITECTURE.md)
+- [Effect conventions](EFFECT.md)
 - [Contributing](CONTRIBUTING.md)
 - [Roadmap](ROADMAP.md)
 - [Agent protocol](SKILL.md)
