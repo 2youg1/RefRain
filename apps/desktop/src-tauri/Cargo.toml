@@ -19,7 +19,7 @@ refrain-core = { workspace = true }
 refrain-app = { workspace = true }
 refrain-host = { workspace = true }
 refrain-store = { workspace = true }
-fontdb = "=0.23.0"
+fontdb = "=0.24.0"
 rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
