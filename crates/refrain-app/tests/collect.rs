@@ -278,6 +278,60 @@ fn a_scope_the_author_has_since_edited_fails_rather_than_guesses() {
 }
 
 #[test]
+fn a_scope_whose_text_repeats_is_refused_with_every_candidate() {
+    // 冻结原文在稿子里逐字出现两次。从前这里默认取第一处（审计 F-02 实测
+    // 复现：冲销改错了段），现在必须整个拒绝，并把两处候选都交出来——只有作者
+    // 知道他当初框的是哪一段。
+    //
+    // 这与「作者改过」是两件事，所以用两个错误码：那一条说文字不在了，这一条
+    // 说文字在，但不止一处。压成同一个码，作者会照着一条不适用的指引去找。
+    let root = scratch();
+    // 副歌就是重复段落——这个产品叫 RefRain，重复文本是它的命名级用例。
+    fs::write(
+        root.join(CHAPTER),
+        format!("{FIRST}\n\n{SECOND}\n\n{FIRST}\n"),
+    )
+    .unwrap();
+
+    let (_app, mut store) = store_at(&root);
+    let state_dir = store.layout().state_dir.clone();
+    let run_id = dispatched_run(&mut store, "runs/one");
+    stage(
+        &state_dir,
+        "runs/one",
+        run_id,
+        FIRST,
+        &replacement("改写后的一段。"),
+    );
+    let manuscript = manuscript_of(&root);
+    let manuscripts = [(CHAPTER.to_string(), manuscript.clone())]
+        .into_iter()
+        .collect();
+
+    let collected = collect_attempt(&mut store, &manuscripts, run_id, 10).unwrap();
+
+    let Collected::Failed { code, detail } = collected else {
+        panic!("a repeated scope must not become a proposal");
+    };
+    assert_eq!(code, "scope-text-ambiguous");
+    // 说清是几处，并交出候选块 id：只说「有歧义」，作者无从下手。
+    assert!(
+        detail.contains("matches 2 places"),
+        "the detail must say how many places matched, got {detail:?}"
+    );
+    // 断言用的必须是**送进去的那一份**稿子的块 id。再调一次 `manuscript_of`
+    // 会新读一遍文件、生成另一批 id，于是断言比对的是两个无关的世界——
+    // 第一版就是这样写的，红的是断言不是产品。
+    let ids = manuscript.head().blocks();
+    assert!(
+        detail.contains(&ids[0].id().to_string()) && detail.contains(&ids[2].id().to_string()),
+        "both candidates must be named, got {detail:?}"
+    );
+    // 一个提案都不能落地：不确定改哪一处时写入，比不写入坏得多。
+    assert!(store.proposals_for(CHAPTER).unwrap().is_empty());
+}
+
+#[test]
 fn a_scope_the_frozen_request_never_carried_is_refused() {
     // 契约来自冻结的请求，不来自结果自己的声称（SPEC 8.4）：结果指名一个请求
     // 里没有的范围时，不能因为它这么说就接受。

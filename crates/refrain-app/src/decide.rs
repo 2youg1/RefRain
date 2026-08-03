@@ -366,20 +366,52 @@ pub fn countermand_proposals(
                 "the merge left no bytes in the text, so there is no anchor to find and reverse",
             ));
         }
-        let blocks = crate::scope::find_scope_blocks(manuscript, &landed).ok_or_else(|| {
+        let blocks = match crate::scope::locate_scope(manuscript, &landed) {
+            crate::scope::ScopeLocation::Unique(blocks) => blocks,
             // 与提案过期同一类事实：作者后来动过这一段。交还当初合并进去
             // 的原文，他是唯一知道该怎么办的人。
-            RefrainError::new(
-                ErrorCode::StaleProposal,
-                "countermand a proposal whose merged text has moved",
-                path.to_owned(),
-            )
-            .with_detail(landed.clone())
-            .with_recovery(vec![
-                RecoveryStep::CompareWithFrozenText,
-                RecoveryStep::SendAgain,
-            ])
-        })?;
+            crate::scope::ScopeLocation::Moved => {
+                return Err(RefrainError::new(
+                    ErrorCode::StaleProposal,
+                    "countermand a proposal whose merged text has moved",
+                    path.to_owned(),
+                )
+                .with_detail(landed.clone())
+                .with_recovery(vec![
+                    RecoveryStep::CompareWithFrozenText,
+                    RecoveryStep::SendAgain,
+                ]));
+            }
+            // 当初合并进去的字节在稿子里出现了好几处，逐字都相同。
+            //
+            // 这正是审计 F-02 实测复现的那一幕：从前默认取第一处，于是冲销
+            // 改掉了另一段——作者看到的是他没有要求回退的文字被回退了，而
+            // 他真正想回退的那一段原封不动。两处都是他的字，改错一处就是丢字。
+            //
+            // 整批拒绝而不是猜：冲销已经是一次「把正文改回去」的写入，在不
+            // 确定改哪一处时写入，比不写入坏得多。
+            crate::scope::ScopeLocation::Ambiguous(candidates) => {
+                return Err(RefrainError::new(
+                    ErrorCode::StaleProposal,
+                    "countermand a proposal whose merged text appears more than once",
+                    path.to_owned(),
+                )
+                .with_detail(format!(
+                    "{} places in the manuscript hold these exact bytes: {}",
+                    candidates.len(),
+                    candidates
+                        .iter()
+                        .map(|blocks| blocks
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join("+"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+                .with_recovery(vec![RecoveryStep::CompareWithFrozenText]));
+            }
+        };
 
         changes.push(EditorChange::Replace(
             Replacement::new(blocks, Some(proposal.before().to_string())).map_err(|error| {

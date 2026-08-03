@@ -29,4 +29,4 @@ pub use journal::{
     task_row,
 };
 pub use review::rebuild_proposal;
-pub use scope::{before_sections, find_scope_blocks};
+pub use scope::{ScopeLocation, before_sections, locate_scope};

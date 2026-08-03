@@ -6,7 +6,7 @@
 
 use std::time::Instant;
 
-use refrain_app::scope::find_scope_blocks;
+use refrain_app::scope::{ScopeLocation, locate_scope};
 use refrain_core::{Id, Lineage, Manuscript, SourceSnapshot};
 
 fn naive(manuscript: &Manuscript, before: &str) -> Option<Vec<Id>> {
@@ -51,16 +51,25 @@ fn finding_a_late_scope_in_a_long_chapter_stays_linear() {
     let target = paragraphs[BLOCKS - 3..BLOCKS - 1].join("\n\n");
 
     let fresh_started = Instant::now();
-    let fresh = find_scope_blocks(&manuscript, &target);
+    let fresh = locate_scope(&manuscript, &target);
     let fresh_elapsed = fresh_started.elapsed();
 
     let naive_started = Instant::now();
     let old = naive(&manuscript, &target);
     let naive_elapsed = naive_started.elapsed();
 
-    // 先是同一个答案，再谈快慢。
-    assert_eq!(fresh, old, "the two implementations disagreed");
-    assert_eq!(fresh.unwrap().len(), 2);
+    // 先是同一个答案，再谈快慢。这份语料每段都带自己的序号，所以答案必然唯一；
+    // 拿 Unique 解包也顺带钉住了这一点——若扫描开始把不同的段落看成同一段，
+    // 这里会当场炸开，而不是悄悄比较两个 None。
+    let ScopeLocation::Unique(fresh_blocks) = &fresh else {
+        panic!("a corpus of distinct paragraphs must locate uniquely, got {fresh:?}");
+    };
+    assert_eq!(
+        Some(fresh_blocks.clone()),
+        old,
+        "the two implementations disagreed"
+    );
+    assert_eq!(fresh_blocks.len(), 2);
 
     println!(
         "scope_scale blocks={BLOCKS} fresh_us={} naive_us={}",

@@ -198,6 +198,59 @@ fn a_batch_countermand_is_one_action_and_one_undo_restores_everything() {
 }
 
 #[test]
+fn an_anchor_that_appears_twice_refuses_instead_of_reversing_the_wrong_one() {
+    // 审计 F-02 的原点。合并进正文的字节在稿子里逐字出现两次时，从前的定位
+    // 固定取第一处，于是冲销回退了**另一段**：作者没有要求回退的文字被改了，
+    // 他真正想回退的那一段原封不动。两处都是他的字，改错一处就是丢字。
+    //
+    // 冲销是一次写入。不确定改哪一处时写入，比不写入坏得多，所以整批拒绝。
+    let root = scratch();
+    let (_app, mut store) = store_at(&root);
+    let mut manuscript = open_manuscript(&root);
+    let proposal = merge(&mut store, &mut manuscript);
+
+    // 作者在别处又写了一段与合并结果逐字相同的话——副歌就是这样出现的，
+    // 而这个产品正叫 RefRain。
+    let last_block = manuscript
+        .head()
+        .blocks()
+        .iter()
+        .next_back()
+        .expect("a last block")
+        .id();
+    manuscript
+        .execute(TextCommand::Editor(EditorAction::new(
+            manuscript.head().id(),
+            vec![EditorChange::Replace(
+                Replacement::new(vec![last_block], Some(MERGED.to_string())).unwrap(),
+            )],
+            "author edit",
+        )))
+        .unwrap();
+
+    let text_before = head_text(&manuscript);
+    let refusal =
+        countermand_proposals(&mut store, &mut manuscript, CHAPTER, &[proposal], 20).unwrap_err();
+
+    assert_eq!(refusal.code, ErrorCode::StaleProposal);
+    // 说清是几处，而不是笼统一句「过期了」——那会让作者去找一段并没有消失的文字。
+    let detail = refusal.detail.as_deref().expect("a detail");
+    assert!(
+        detail.contains("2 places"),
+        "the refusal must say how many places hold these bytes, got {detail:?}"
+    );
+    // 一个字节都没动，账本也没有冲销记录。
+    assert_eq!(head_text(&manuscript), text_before);
+    assert_eq!(
+        ledger_kinds(&store),
+        vec![VerdictKindName::Accept, VerdictKindName::Accept]
+    );
+
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_moved_anchor_refuses_the_whole_countermand_and_records_nothing() {
     let root = scratch();
     let (_app, mut store) = store_at(&root);

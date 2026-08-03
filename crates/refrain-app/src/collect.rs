@@ -23,7 +23,7 @@ use refrain_host::staging::DirectoryContext;
 use refrain_store::project::ProjectStore;
 
 use crate::journal::{StoreJournal, into_domain, into_domain_host, json_of};
-use crate::scope::{before_sections, find_scope_blocks};
+use crate::scope::{ScopeLocation, before_sections, locate_scope};
 
 /// 收取的三种结局。
 ///
@@ -198,16 +198,39 @@ pub fn collect_attempt(
             let Some(before) = before_by_scope.get(&replacement.scope) else {
                 return fail(&mut host, run_id, "unknown-scope", &replacement.scope, now);
             };
-            let Some(blocks) = find_scope_blocks(manuscript, before) else {
-                // 作者在派发之后动过这一段。结果留在盘上，这一次带着原因失败，
-                // 而不是猜一个位置把提案套上去。
-                return fail(
-                    &mut host,
-                    run_id,
-                    "scope-text-moved",
-                    &replacement.scope,
-                    now,
-                );
+            let blocks = match locate_scope(manuscript, before) {
+                ScopeLocation::Unique(blocks) => blocks,
+                ScopeLocation::Moved => {
+                    // 作者在派发之后动过这一段。结果留在盘上，这一次带着原因失败，
+                    // 而不是猜一个位置把提案套上去。
+                    return fail(
+                        &mut host,
+                        run_id,
+                        "scope-text-moved",
+                        &replacement.scope,
+                        now,
+                    );
+                }
+                ScopeLocation::Ambiguous(candidates) => {
+                    // 这段冻结原文在稿子里逐字出现了好几次，按内容分辨不出是哪一处。
+                    // 从前这里默认取第一处，实测会把提案落在另一段上（审计 F-02）。
+                    // 候选的块 id 一并交出：作者是唯一知道他当初框的是哪一段的人。
+                    let detail = format!(
+                        "{} matches {} places in the manuscript: {}",
+                        replacement.scope,
+                        candidates.len(),
+                        candidates
+                            .iter()
+                            .map(|blocks| blocks
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                                .join("+"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                    return fail(&mut host, run_id, "scope-text-ambiguous", &detail, now);
+                }
             };
             let scope = EditScope::new(blocks.clone()).map_err(|error| {
                 RefrainError::new(
