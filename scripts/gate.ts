@@ -8,9 +8,11 @@ import { executableFor, TIER_A } from "./scriptc-tiers.ts";
 const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   // Rust uses these generated corpora at compile time, so generate them first.
   ["corpora", ["bun", "scripts/freeze-corpora.ts"]],
+  ["protocol:native", ["bun", "scripts/generate-native-protocol.ts", "--check"]],
   ["fmt:check", ["bun", "run", "fmt:check"]],
   ["check", ["bun", "run", "check"]],
   ["test", ["bun", "run", "test"]],
+  ["verify:native-ledger", ["bun", "scripts/verify-native-migration-ledger.ts"]],
   ["verify:no-spec-upload", ["bun", "scripts/verify-no-spec-upload.ts"]],
   ["verify:readme-parity", ["bun", "scripts/verify-readme-parity.ts"]],
   ["verify:no-network", ["bun", "scripts/verify-no-network.ts"]],

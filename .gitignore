@@ -17,6 +17,9 @@ dist/
 # Rust and Tauri generated output.
 target/
 apps/desktop/src-tauri/gen/
+apps/native/.native/
+apps/native/.zig-cache/
+apps/native/zig-out/
 
 # Legacy Electron/Svelte output. Remove each rule with its legacy module.
 legacy/packages/fs/*.node

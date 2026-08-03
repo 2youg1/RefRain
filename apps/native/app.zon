@@ -1,0 +1,35 @@
+.{
+    .id = "app.refrain.desktop",
+    .name = "refrain",
+    .display_name = "RefRain",
+    .description = "A local-first writing workbench.",
+    .version = "0.2.4",
+    .icons = .{"assets/icon.png"},
+    .platforms = .{"macos"},
+    .permissions = .{ "view", "command" },
+    .capabilities = .{ "native_views", "gpu_surfaces" },
+    .shell = .{
+        .windows = .{
+            .{
+                .label = "main",
+                .title = "RefRain",
+                .width = 1280,
+                .height = 800,
+                .min_width = 920,
+                .min_height = 600,
+                .restore_state = true,
+                .restore_policy = "center_on_primary",
+                .views = .{
+                    .{ .label = "document", .kind = "gpu_surface", .fill = true, .role = "Writing workbench", .accessibility_label = "RefRain document", .gpu_backend = "metal", .gpu_pixel_format = "bgra8_unorm", .gpu_present_mode = "timer", .gpu_alpha_mode = "opaque", .gpu_color_space = "srgb", .gpu_vsync = true },
+                },
+            },
+        },
+    },
+    .security = .{
+        .navigation = .{
+            .allowed_origins = .{},
+            .external_links = .{ .action = "deny" },
+        },
+    },
+    .web_engine = "system",
+}

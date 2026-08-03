@@ -3511,6 +3511,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "refrain-native-host"
+version = "0.2.4"
+dependencies = [
+ "refrain-app",
+]
+
+[[package]]
 name = "refrain-store"
 version = "0.2.4"
 dependencies = [

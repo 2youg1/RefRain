@@ -1,0 +1,10 @@
+.{
+    .name = .refrain_native,
+    .fingerprint = 0x7148acae8d309af,
+    .version = "0.2.4",
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .native_sdk = .{ .path = "node_modules/@native-sdk/cli" },
+    },
+    .paths = .{ "build.zig", "build.zig.zon", "src", "assets", "app.zon" },
+}

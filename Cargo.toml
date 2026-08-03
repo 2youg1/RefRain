@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+  "apps/native/host",
   "crates/refrain-core",
   "crates/refrain-store",
   "crates/refrain-host",

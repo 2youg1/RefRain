@@ -91,8 +91,7 @@ describe("predicting block heights from shape", () => {
   });
 
   test("shape predictions plus one calibration scalar beat it by a wide margin", () => {
-    const shaped = BlockHeightIndex.uniform(truth.length, 40);
-    shaped.setPredictedLines(predictions);
+    const shaped = BlockHeightIndex.predicted(predictions, 40);
     measureSample(shaped, truth, 200);
 
     const flat = BlockHeightIndex.uniform(truth.length, 40);
@@ -109,12 +108,10 @@ describe("predicting block heights from shape", () => {
   test("the calibration converges within a few dozen measurements", () => {
     // Measured: alpha reaches ~18.5 (the true factor) by 10 samples and stays
     // there — 17.46 at 10, 18.29 at 20, 18.65 at 200, 18.60 at 2000.
-    const few = BlockHeightIndex.uniform(truth.length, 40);
-    few.setPredictedLines(predictions);
+    const few = BlockHeightIndex.predicted(predictions, 40);
     measureSample(few, truth, 10);
 
-    const many = BlockHeightIndex.uniform(truth.length, 40);
-    many.setPredictedLines(predictions);
+    const many = BlockHeightIndex.predicted(predictions, 40);
     measureSample(many, truth, 500);
 
     expect(Math.abs(many.calibration - 18.5)).toBeLessThan(0.5);
@@ -127,8 +124,7 @@ describe("predicting block heights from shape", () => {
     // cannot absorb the ±18% per-block error this fixture injects, so the
     // worst-case prefix error settles at 7-9% and more samples do not lower it.
     // Reducing it further means a better shape formula, not a better scalar.
-    const index = BlockHeightIndex.uniform(truth.length, 40);
-    index.setPredictedLines(predictions);
+    const index = BlockHeightIndex.predicted(predictions, 40);
     measureSample(index, truth, 500);
     const error = worstPrefixError(index, truth);
     expect(error).toBeLessThan(0.12);
@@ -136,15 +132,13 @@ describe("predicting block heights from shape", () => {
   });
 
   test("with nothing measured it falls back to the flat estimate", () => {
-    const index = BlockHeightIndex.uniform(10, 40);
-    index.setPredictedLines([2, 2, 2, 2, 2, 2, 2, 2, 2, 2]);
+    const index = BlockHeightIndex.predicted([2, 2, 2, 2, 2, 2, 2, 2, 2, 2], 40);
     // No calibration exists yet, so predictions cannot be turned into pixels.
     expect(index.prefix(10)).toBe(400);
   });
 
   test("a measured block leaves the prediction tree exactly once", () => {
-    const index = BlockHeightIndex.uniform(3, 40);
-    index.setPredictedLines([2, 2, 2]);
+    const index = BlockHeightIndex.predicted([2, 2, 2], 40);
     index.update(0, 37);
     // One measured block at 37px over 2 predicted lines: alpha = 18.5.
     // The other two are predicted: 2 lines * 18.5 each.
@@ -155,8 +149,7 @@ describe("predicting block heights from shape", () => {
   });
 
   test("invalidating a block returns it to the prediction tree", () => {
-    const index = BlockHeightIndex.uniform(3, 40);
-    index.setPredictedLines([2, 2, 2]);
+    const index = BlockHeightIndex.predicted([2, 2, 2], 40);
     index.update(0, 37);
     index.update(1, 37);
     const before = index.prefix(3);
@@ -166,9 +159,8 @@ describe("predicting block heights from shape", () => {
   });
 
   test("blocks without a shape still use the flat estimate", () => {
-    const index = BlockHeightIndex.uniform(4, 40);
     // Only the first two carry shapes.
-    index.setPredictedLines([2, 2]);
+    const index = BlockHeightIndex.predicted([2, 2, 0, 0], 40);
     index.update(0, 37);
     // block 1 predicted at alpha (18.5) * 2 lines; blocks 2 and 3 unshaped.
     expect(index.prefix(4)).toBeCloseTo(37 + 37 + 40 + 40, 5);

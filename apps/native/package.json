@@ -1,0 +1,19 @@
+{
+  "name": "@refrain/native",
+  "version": "0.2.4",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "native check . --strict",
+    "build:null": "native build . --yes -Dplatform=null",
+    "test:null": "native test . --yes -Dplatform=null",
+    "core": "native dev . --core"
+  },
+  "dependencies": {
+    "@native-sdk/core": "0.7.2"
+  },
+  "devDependencies": {
+    "@native-sdk/cli": "0.7.2",
+    "@typescript/old": "npm:typescript@6.0.3"
+  }
+}

@@ -6,8 +6,12 @@ ensureNodeDriver(import.meta.url);
 
 interface Sample {
   readonly mountMs: number;
+  readonly mountSyncMs: number;
+  readonly mountFirstFrameMs: number;
   readonly mountedParagraphs: number;
   readonly focusMs: number;
+  readonly focusSyncMs: number;
+  readonly focusFirstFrameMs: number;
   readonly focusedBlock: string | null;
   readonly focusedAfterScroll: string | null;
   readonly compositionPinned: boolean;
@@ -157,9 +161,12 @@ try {
             { revision: `r:${runIndex}`, blocks },
             { submit: () => undefined },
           );
-          await new Promise<void>((resolve) =>
-            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+          const mountSyncMs = performance.now() - mountedAt;
+          const mountFirstFrameAt = await new Promise<number>((resolve) =>
+            requestAnimationFrame(() => resolve(performance.now())),
           );
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+          const mountFirstFrameMs = mountFirstFrameAt - mountedAt;
           const mountMs = performance.now() - mountedAt;
           const mountedParagraphs = host.querySelectorAll("p[data-block-id]").length;
           const outerHeight = (blockId: string): number => {
@@ -180,9 +187,12 @@ try {
           const logicalHeightRatio = viewport.scrollHeight / expectedLogicalHeight;
           const focusedAt = performance.now();
           handle.focus("b:50000", 4);
-          await new Promise<void>((resolve) =>
-            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+          const focusSyncMs = performance.now() - focusedAt;
+          const focusFirstFrameAt = await new Promise<number>((resolve) =>
+            requestAnimationFrame(() => resolve(performance.now())),
           );
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+          const focusFirstFrameMs = focusFirstFrameAt - focusedAt;
           const focusMs = performance.now() - focusedAt;
           // The manuscript is one editing host, so activeElement is the host.
           // What the author sees as "where I am" is the caret, so ask that.
@@ -253,8 +263,12 @@ try {
           handle.destroy();
           return {
             mountMs,
+            mountSyncMs,
+            mountFirstFrameMs,
             mountedParagraphs: Math.max(mountedParagraphs, paragraphsAfterScroll),
             focusMs,
+            focusSyncMs,
+            focusFirstFrameMs,
             focusedBlock,
             focusedAfterScroll,
             compositionPinned,
@@ -284,6 +298,22 @@ try {
     samples.map((sample) => sample.focusMs),
     0.95,
   );
+  const mountSyncP95 = percentile(
+    samples.map((sample) => sample.mountSyncMs),
+    0.95,
+  );
+  const mountFirstFrameP95 = percentile(
+    samples.map((sample) => sample.mountFirstFrameMs),
+    0.95,
+  );
+  const focusSyncP95 = percentile(
+    samples.map((sample) => sample.focusSyncMs),
+    0.95,
+  );
+  const focusFirstFrameP95 = percentile(
+    samples.map((sample) => sample.focusFirstFrameMs),
+    0.95,
+  );
   const maxParagraphs = Math.max(...samples.map((sample) => sample.mountedParagraphs));
   const repeatableLongTasks = samples.filter((sample) =>
     sample.longTasks.some((ms) => ms > 50),
@@ -296,7 +326,11 @@ try {
     runs: RUNS,
     blocks: BLOCKS,
     mountP95,
+    mountSyncP95,
+    mountFirstFrameP95,
     focusP95,
+    focusSyncP95,
+    focusFirstFrameP95,
     maxParagraphs,
     repeatableLongTasks,
     focused: samples.every((sample) => sample.focusedBlock === "b:50000"),

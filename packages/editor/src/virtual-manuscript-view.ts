@@ -110,12 +110,11 @@ const WINDOW_SCREENS = 3;
 /**
  * 窗口的块数下限与上限。
  *
- * 下限挡住「容器还没量出高度」那一帧（clientHeight 为 0 时窗口会算成空，作者看到
- * 一片空白）；上限挡住极端小字号下窗口膨胀到几百块，那时每帧的渲染成本会盖过
- * 虚拟化本身省下的。实测一屏的块数在 14（40px 字）到 62（9px 字）之间，
- * 乘三屏即 42 到 186——两端都在这个区间里。
+ * 下限只挡住「容器还没量出高度」的首帧：40px 字一屏实测 14 块，所以 16 块足以
+ * 避免空白，又不会在高段落正文中覆盖三屏公式。上限挡住极端小字号下窗口膨胀到
+ * 几百块；正常高度下仍由一屏块数乘 `WINDOW_SCREENS` 决定。
  */
-const MIN_WINDOW_BLOCKS = 60;
+const MIN_WINDOW_BLOCKS = 16;
 const MAX_WINDOW_BLOCKS = 400;
 /**
  * 判断「已经在结尾」时允许的估算误差，按块数计。
@@ -353,11 +352,10 @@ export class VirtualManuscriptView {
     this.#view = view;
     this.#submitChanges = submitChanges;
     this.#blocks = [...blocks];
-    this.#heightIndex = BlockHeightIndex.uniform(this.#blocks.length, INITIAL_BLOCK_HEIGHT);
     this.#measuredWidth = element.clientWidth;
     // Width has to be known before shapes can be turned into line counts, so
     // this runs after #measuredWidth is set. One place builds the index.
-    this.#rebuildHeightIndex();
+    this.#heightIndex = this.#buildHeightIndex(INITIAL_BLOCK_HEIGHT);
 
     const ResizeObserverConstructor = view.ResizeObserver;
     if (typeof ResizeObserverConstructor === "function") {
@@ -1594,20 +1592,28 @@ export class VirtualManuscriptView {
     return width > 0 ? this.#lineUnits() / 2 : 0;
   }
 
-  #rebuildHeightIndex(): void {
-    const rebuilt = BlockHeightIndex.uniform(this.#blocks.length, this.#heightIndex.estimate);
+  #buildHeightIndex(estimate: number): BlockHeightIndex {
     // Predict from each block's own shape before anything is measured. Blocks
     // without a shape (created locally, ahead of the domain's confirmation)
     // contribute nothing here and keep the flat estimate.
     const lineUnits = this.#lineUnits();
-    rebuilt.setPredictedLines(this.#blocks.map((block) => predictedLines(block, lineUnits)));
-    const positions = projectionIndex(this.#blocks);
-    for (const [id, height] of this.#measuredHeights) {
-      const index = positions.get(id);
-      if (index === undefined) this.#measuredHeights.delete(id);
-      else rebuilt.update(index, height);
+    const rebuilt = BlockHeightIndex.predicted(
+      this.#blocks.map((block) => predictedLines(block, lineUnits)),
+      estimate,
+    );
+    if (this.#measuredHeights.size > 0) {
+      const positions = projectionIndex(this.#blocks);
+      for (const [id, height] of this.#measuredHeights) {
+        const index = positions.get(id);
+        if (index === undefined) this.#measuredHeights.delete(id);
+        else rebuilt.update(index, height);
+      }
     }
-    this.#heightIndex = rebuilt;
+    return rebuilt;
+  }
+
+  #rebuildHeightIndex(): void {
+    this.#heightIndex = this.#buildHeightIndex(this.#heightIndex.estimate);
   }
 
   #observeLiveParagraphs(): void {
@@ -1652,15 +1658,25 @@ export class VirtualManuscriptView {
     const scrollIndex = this.#heightIndex.atOffset(this.#scrollHost.scrollTop);
     const focusIndex = center ?? Math.max(0, scrollIndex);
     const windowBlocks = this.#windowBlocks();
+    const screenBlocks = Math.ceil(windowBlocks / WINDOW_SCREENS);
+    const atDocumentEdge =
+      focusIndex < screenBlocks || this.#blocks.length - focusIndex <= screenBlocks;
+    // At either document edge one overscan screen has no content. Do not move
+    // that unused work to the other side; two screens still cover the viewport
+    // and its only possible reading direction.
+    const spanBlocks =
+      atDocumentEdge && this.#scrollHost.clientHeight > 0
+        ? windowBlocks - screenBlocks
+        : windowBlocks;
     // 焦点前留四分之一窗：作者多半往下读，把余量放在前进方向上。
     const visibleStart = virtual
       ? Math.max(
           0,
-          Math.min(this.#blocks.length - windowBlocks, focusIndex - Math.floor(windowBlocks / 4)),
+          Math.min(this.#blocks.length - spanBlocks, focusIndex - Math.floor(spanBlocks / 4)),
         )
       : 0;
     const visibleEnd = virtual
-      ? Math.min(this.#blocks.length, visibleStart + windowBlocks)
+      ? Math.min(this.#blocks.length, visibleStart + spanBlocks)
       : this.#blocks.length;
     const activeIndex = pinnedId === null ? -1 : this.#indexOf(pinnedId);
     const pinnedIndex =

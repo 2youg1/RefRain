@@ -17,6 +17,7 @@ pub mod cancel;
 pub mod collect;
 pub mod decide;
 pub mod journal;
+pub mod native;
 pub mod review;
 pub mod scope;
 pub mod upstream;
@@ -28,5 +29,6 @@ pub use journal::{
     StoreJournal, entity_of, into_domain, into_domain_host, json_of, run_kind, run_row, task_kind,
     task_row,
 };
+pub use native::{NativeHealth, NativeHealthError, native_health};
 pub use review::rebuild_proposal;
 pub use scope::{ScopeLocation, before_sections, locate_scope};

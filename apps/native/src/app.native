@@ -1,0 +1,19 @@
+<column gap="14" padding="20">
+  <row gap="10" cross="center">
+    <text grow="1">RefRain</text>
+    <if test="{hostReady}">
+      <badge variant="success">Native host ready</badge>
+    </if>
+    <else>
+      <badge variant="warning">Native host check</badge>
+    </else>
+  </row>
+  <separator />
+  <column gap="10" grow="1" main="center" cross="center">
+    <text>Native production surface</text>
+    <text>{status}</text>
+    <text>protocol {protocolVersion} · API {apiVersion} · capabilities {capabilities}</text>
+    <button variant="primary" on-press="check_health">Check native host</button>
+  </column>
+  <status-bar>One Model · one update loop · typed Rust boundary</status-bar>
+</column>

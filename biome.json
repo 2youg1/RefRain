@@ -6,6 +6,7 @@
       "!**/node_modules",
       "!**/dist",
       "!**/target",
+      "!**/.tmp",
       "!legacy",
       "!apps/desktop/src/generated",
       "!apps/desktop/src-tauri/gen",

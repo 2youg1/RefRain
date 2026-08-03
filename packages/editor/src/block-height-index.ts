@@ -79,6 +79,26 @@ export class BlockHeightIndex {
     return new BlockHeightIndex(length, estimate);
   }
 
+  /** Build the initial prediction trees in O(n), before any block is measured. */
+  static predicted(lines: readonly number[], estimate: number): BlockHeightIndex {
+    const index = new BlockHeightIndex(lines.length, estimate);
+    for (let at = 0; at < lines.length; at += 1) {
+      const predicted = lines[at];
+      if (predicted === undefined || !Number.isFinite(predicted) || predicted <= 0) continue;
+      index.#lines[at] = predicted;
+      index.#lineTree[at + 1] = predicted;
+      index.#shapedTree[at + 1] = 1;
+    }
+    for (let cursor = 1; cursor <= lines.length; cursor += 1) {
+      const parent = cursor + (cursor & -cursor);
+      if (parent > lines.length) continue;
+      index.#lineTree[parent] = (index.#lineTree[parent] ?? 0) + (index.#lineTree[cursor] ?? 0);
+      index.#shapedTree[parent] =
+        (index.#shapedTree[parent] ?? 0) + (index.#shapedTree[cursor] ?? 0);
+    }
+    return index;
+  }
+
   get length(): number {
     return this.#heights.length;
   }
@@ -97,30 +117,6 @@ export class BlockHeightIndex {
 
   setEstimate(height: number): void {
     if (Number.isFinite(height) && height > 0) this.#estimate = height;
-  }
-
-  /**
-   * Record how many lines each block is predicted to occupy.
-   *
-   * Comes from the byte shapes the boundary scan produced, so it is available
-   * before anything has been laid out. Blocks without a prediction fall back to
-   * the flat estimate, which is what this class did for every block before.
-   */
-  setPredictedLines(lines: readonly number[]): void {
-    const count = Math.min(lines.length, this.length);
-    for (let index = 0; index < count; index += 1) {
-      const predicted = lines[index];
-      if (predicted === undefined || !Number.isFinite(predicted) || predicted <= 0) continue;
-      const previous = this.#lines[index] ?? 0;
-      this.#lines[index] = predicted;
-      if ((this.#heights[index] ?? 0) > 0) {
-        // Measured: it is out of the tree, and its prediction only calibrates.
-        this.#calibratedLines += predicted - previous;
-        continue;
-      }
-      this.#add(this.#lineTree, index, predicted - previous);
-      if (previous === 0) this.#add(this.#shapedTree, index, 1);
-    }
   }
 
   /**

@@ -3,18 +3,16 @@ import { readFileSync } from "node:fs";
 /**
  * unsafe 的范围是一个决定，不是一个现状。
  *
- * 产品代码里现在只有一处 `unsafe`：`display.rs` 向 Win32 问显示器刷新率。
- * 那里没有安全封装可用——`GetMonitorInfoW` 与 `EnumDisplaySettingsW` 是裸
- * FFI，调用方必须自己保证结构体的 size 字段已经填好。**清除它做不到，只能
- * 把它挪到别处**，而挪走会让它离 `#[cfg(target_os)]` 守卫和 Linux 回退更远。
- * 所以这道门禁守的不是「零 unsafe」，是**它不扩散**。
+ * 产品代码里现在有两种必须显式登记的 unsafe 表面：`display.rs` 的 Win32
+ * 调用，以及 Native host 固定 C ABI 的 `no_mangle` 导出属性。前者无法用安全
+ * 封装表达结构体初始化约束；后者覆盖链接符号名。两者都只能收窄，不能扩散。
  *
  * 两件事各由一半负责：
  *
  * 1. 纯逻辑 crate 由 `#![forbid(unsafe_code)]` 挡住，编译器执行，比门禁强。
  *    这里断言那句 `forbid` **还在**——它是一行，删掉不会有任何测试变红。
- * 2. 装配层（`apps/desktop/src-tauri`）不能 forbid，因为它含那处 FFI。
- *    这里逐行扫描它，只接受登记在册的那一处。
+ * 2. 装配层不能 forbid，因为它们持有 FFI 或导出符号。这里逐行扫描 Tauri
+ *    与 Native host，只接受登记在册的声明。
  *
  * 扫描面用通配符而非枚举：新建的 crate 会自动落进检查，而枚举清单要人记得
  * 去加，没人记得。
@@ -31,8 +29,8 @@ import { collect } from "./gate-lib.ts";
 /** 必须由编译器禁止 unsafe 的 crate。通配符跟随代码，新 crate 自动入列。 */
 const PURE_CRATE_ROOTS = ["crates/*/src/lib.rs"];
 
-/** 装配层：含唯一一处正当的 FFI，故只能逐行扫描。 */
-const ASSEMBLY_SOURCES = ["apps/desktop/src-tauri/src/**/*.rs"];
+/** 装配层：含平台 FFI 或固定 ABI 导出，故只能逐行扫描。 */
+const ASSEMBLY_SOURCES = ["apps/desktop/src-tauri/src/**/*.rs", "apps/native/host/src/**/*.rs"];
 
 /**
  * 登记在册的 unsafe。
@@ -44,6 +42,8 @@ const ALLOWED: Readonly<Record<string, number>> = {
   // Win32 没有安全封装：两个 API 都要求调用方先填好结构体的 cbSize/dmSize，
   // 这个约束表达不进类型系统。已收敛在单个函数内，有 cfg 守卫与非 Windows 回退。
   "apps/desktop/src-tauri/src/display.rs": 1,
+  // Rust 2024 要求覆盖链接符号名显式标为 unsafe；函数体不含裸指针或 unsafe 块。
+  "apps/native/host/src/staticlib.rs": 2,
 };
 
 const failures: string[] = [];
@@ -74,9 +74,9 @@ for (const file of assemblyFiles) {
   const text = readFileSync(file, "utf8");
   text.split("\n").forEach((line, index) => {
     if (/^\s*(\/\/|\/\*|\*)/.test(line)) return;
-    // `unsafe {` 与 `unsafe fn`/`unsafe impl` 都算。`unsafe_font_names` 这类
-    // 标识符不算——要求 unsafe 后面是空白或块，否则同名变量会被误判。
-    if (/\bunsafe\s*(\{|fn\b|impl\b|trait\b)/.test(line)) {
+    // unsafe 块、声明与 Rust 2024 unsafe 属性都算。`unsafe_font_names` 这类
+    // 标识符不算——要求 unsafe 后面是声明、块或属性参数。
+    if (/\bunsafe\s*(\(|\{|fn\b|impl\b|trait\b)/.test(line)) {
       counted[file] = (counted[file] ?? 0) + 1;
       if (ALLOWED[file] === undefined) {
         failures.push(`${file}:${index + 1}: 未登记的 unsafe — ${line.trim()}`);
@@ -106,6 +106,6 @@ if (failures.length > 0) {
 
 const total = Object.values(counted).reduce((sum, one) => sum + one, 0);
 console.log(
-  `PASS  verify:unsafe-surface  (${libFiles.length} crates forbid unsafe; ${total} registered unsafe site(s) across ${assemblyFiles.length} assembly files)`,
+  `PASS  verify:unsafe-surface  (${libFiles.length} crates forbid unsafe; ${total} registered unsafe declaration(s) across ${assemblyFiles.length} assembly files)`,
 );
 process.exit(0);

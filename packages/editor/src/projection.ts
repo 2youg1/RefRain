@@ -9,7 +9,11 @@ const placeholders = new WeakMap<Block[], number>();
 export function projectionIndex(blocks: Block[]): Map<string, number> {
   const current = indexes.get(blocks);
   if (current !== undefined) return current;
-  const built = new Map(blocks.map((block, index) => [block.id, index]));
+  const built = new Map<string, number>();
+  for (let index = 0; index < blocks.length; index += 1) {
+    const block = blocks[index];
+    if (block !== undefined) built.set(block.id, index);
+  }
   indexes.set(blocks, built);
   return built;
 }
