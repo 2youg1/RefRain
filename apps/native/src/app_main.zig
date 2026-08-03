@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const runner = @import("runner");
 const native_sdk = @import("native_sdk");
 const manifest = @import("app_manifest_zon");
@@ -14,13 +15,18 @@ const shell_scene = native_sdk.app_manifest.shellConfigFrom(manifest);
 const canvas_label = native_sdk.app_manifest.firstGpuSurfaceLabel(shell_scene);
 const app_permissions = manifestStringList(manifest, "permissions");
 pub const app_markup = @embedFile("app.native");
+const CompiledView = native_sdk.canvas.CompiledMarkupView(Model, Msg, app_markup);
 
 pub fn main(init: std.process.Init) !void {
     const app_state = try Adapter.create(std.heap.page_allocator, .{}, .{
         .name = manifest.name,
         .scene = shell_scene,
         .canvas_label = canvas_label,
-        .markup = .{ .source = app_markup, .watch_path = "src/app.native", .io = init.io },
+        .view = CompiledView.build,
+        .markup = if (builtin.mode == .Debug)
+            .{ .source = app_markup, .watch_path = "src/app.native", .io = init.io }
+        else
+            null,
         .theme = comptime runner.manifestThemePack(),
         .theme_accent = comptime runner.manifestThemeAccent(),
     });

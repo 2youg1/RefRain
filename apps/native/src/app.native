@@ -2,10 +2,10 @@
   <row gap="10" cross="center">
     <text grow="1">RefRain</text>
     <if test="{hostReady}">
-      <badge variant="success">Native host ready</badge>
+      <badge variant="primary">Native host ready</badge>
     </if>
     <else>
-      <badge variant="warning">Native host check</badge>
+      <badge variant="secondary">Native host check</badge>
     </else>
   </row>
   <separator />
