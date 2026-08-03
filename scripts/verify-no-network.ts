@@ -48,7 +48,20 @@ const result = scan(
   {
     // A comment explaining the rule is not a violation of it. A URL inside a
     // doc comment is how the reason gets recorded.
-    ignoreLine: (line) => /^\s*(\/\/|\/\*|\*|#)/.test(line),
+    //
+    // `refrain-artifact://` 也不是违反：它是本进程自己注册的 custom protocol，
+    // 请求由 Rust 在同一进程里应答，一个字节都不出机器（F-10 / D5）。这条
+    // 承诺管的是出网，不是管 `fetch` 这个词。
+    //
+    // 放行的是**整行恰好只有这一个 fetch**，不是「这行里出现过它」：早先写成
+    // 后者时，`fetch("https://evil.example.com") || fetch(`refrain-artifact://…`)`
+    // 整行被一起放过，注入验红当场不咬人。白名单要窄到一个真实的攻击写法
+    // 无法藏在它后面。
+    ignoreLine: (line) =>
+      /^\s*(\/\/|\/\*|\*|#)/.test(line) ||
+      /^\s*(?:const\s+\w+\s*=\s*)?await\s+fetch\(\s*`refrain-artifact:\/\/[^`]*`\s*\);?\s*$/.test(
+        line,
+      ),
   },
 );
 
