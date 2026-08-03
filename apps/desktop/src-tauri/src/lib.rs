@@ -63,7 +63,7 @@ type ActiveRunHandle = Arc<Mutex<ActiveRun>>;
 /// opened through it.
 pub struct AppState {
     app_db: Mutex<Connection>,
-    projects: Mutex<HashMap<String, ProjectEntry>>,
+    projects: Mutex<HashMap<String, Arc<Mutex<ProjectEntry>>>>,
     kara: Mutex<KaraMachine>,
     config: Option<refrain_store::config::ConfigStore>,
     config_notice: Mutex<Option<String>>,
@@ -139,28 +139,38 @@ impl AppState {
         Ok(transition)
     }
 
+    /// 拿到一个项目的独占访问，而不是拿到全部项目的独占访问。
+    ///
+    /// 名录锁只管定位：找到那把项目自己的锁就立刻放开。原先这里持有全局锁直到
+    /// 闭包返回，于是任意两个项目上的收取、裁决与保存都被串成一列——多 Agent
+    /// 并发时这是容量上限，不是清洁癖（F-11，D5）。
     fn with_project<T>(
         &self,
         root_id: &str,
         use_entry: impl FnOnce(&AppState, &mut ProjectEntry) -> Result<T, RefrainError>,
     ) -> Result<T, RefrainError> {
-        let mut projects = self.projects.lock().map_err(|_| {
-            RefrainError::new(ErrorCode::StateUnavailable, "lock the project map", root_id)
+        let entry = {
+            let projects = self.projects.lock().map_err(|_| {
+                RefrainError::new(ErrorCode::StateUnavailable, "lock the project map", root_id)
+            })?;
+            Arc::clone(projects.get(root_id).ok_or_else(|| {
+                RefrainError::new(
+                    ErrorCode::StateUnavailable,
+                    "use a Root that is not open",
+                    root_id,
+                )
+            })?)
+        };
+        let mut entry = entry.lock().map_err(|_| {
+            RefrainError::new(ErrorCode::StateUnavailable, "lock the project", root_id)
         })?;
-        let entry = projects.get_mut(root_id).ok_or_else(|| {
-            RefrainError::new(
-                ErrorCode::StateUnavailable,
-                "use a Root that is not open",
-                root_id,
-            )
-        })?;
-        use_entry(self, entry)
+        use_entry(self, &mut entry)
     }
 
     fn adopt(
         &self,
         locator: &RootLocator,
-    ) -> Result<(String, BackupStatus, DocumentPage), RefrainError> {
+    ) -> Result<(String, BackupStatus, DocumentPage, Option<String>), RefrainError> {
         let mut app_db = self
             .app_db
             .lock()
@@ -173,6 +183,9 @@ impl AppState {
                 limit: MAX_DOCUMENT_PAGE_SIZE,
             })
             .map_err(into_domain)?;
+        // 取得与打开是同一个用例（D10）：这次选择对应的正文由 store 判定，
+        // 不让外壳从名录第一行去猜。
+        let landing = store.landing_document().map_err(into_domain)?;
         // A project becoming active starts a work session (D18): the one
         // automatic entry re-arms. It fires only when a manuscript opens.
         {
@@ -194,8 +207,8 @@ impl AppState {
             .map_err(|_| {
                 RefrainError::new(ErrorCode::StateUnavailable, "lock the project map", "adopt")
             })?
-            .insert(root_id.clone(), entry);
-        Ok((root_id, backup, page))
+            .insert(root_id.clone(), Arc::new(Mutex::new(entry)));
+        Ok((root_id, backup, page, landing))
     }
 }
 
@@ -208,6 +221,11 @@ pub struct ProjectOpenedDto {
     pub documents: Vec<DocumentRow>,
     pub document_total: u32,
     pub document_cursor: Option<String>,
+    /// 这次取得之后应该打开的正文，项目内相对路径。
+    ///
+    /// `None` 只有一个含义：项目里确实没有 Chapter，空工作区是正确结果。
+    /// 外壳不得在此之外自行挑选一份来开。
+    pub opened_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -433,13 +451,14 @@ fn adopt_root_at(
     kind: RootKind,
 ) -> Result<ProjectOpenedDto, RefrainError> {
     let locator = RootLocator { path, kind };
-    let (root_id, backup, page) = state.adopt(&locator)?;
+    let (root_id, backup, page, opened_path) = state.adopt(&locator)?;
     Ok(ProjectOpenedDto {
         root_id,
         backup,
         documents: page.documents,
         document_total: page.total,
         document_cursor: page.next,
+        opened_path,
     })
 }
 
@@ -462,13 +481,8 @@ async fn choose_and_adopt_root(
             .add_filter("Manuscript", &DocumentFormat::extensions())
             .blocking_pick_file(),
     };
-    selected
-        .map(|selected| {
-            let path = selected.into_path().map_err(|error| {
-                RefrainError::new(ErrorCode::Io, "use a chosen Root", error.to_string())
-            })?;
-            adopt_root_at(state, path, kind)
-        })
+    chosen_path(selected)?
+        .map(|path| adopt_root_at(state, path, kind))
         .transpose()
 }
 
@@ -520,20 +534,13 @@ async fn choose_and_create_project(
     name: String,
 ) -> Result<Option<ProjectOpenedDto>, RefrainError> {
     use tauri_plugin_dialog::DialogExt as _;
-    app.dialog()
+    let selected = app
+        .dialog()
         .file()
         .set_title("选择项目的父目录")
-        .blocking_pick_folder()
-        .map(|selected| {
-            let parent = selected.into_path().map_err(|error| {
-                RefrainError::new(
-                    ErrorCode::Io,
-                    "use a chosen project parent",
-                    error.to_string(),
-                )
-            })?;
-            create_project_at(state, parent, name)
-        })
+        .blocking_pick_folder();
+    chosen_path(selected)?
+        .map(|parent| create_project_at(state, parent, name))
         .transpose()
 }
 
@@ -623,6 +630,8 @@ fn open_document(
             .store
             .open_registered_document(&path)
             .map_err(into_domain)?;
+        // 打开成功即是「作者此刻在写这一份」：下次取得同一个 Root 回到这里。
+        entry.store.remember_landing(&path).map_err(into_domain)?;
         open_in_entry(state, entry, &path, opened)
     })
 }
@@ -1300,35 +1309,6 @@ fn universal_icon(state: tauri::State<'_, AppState>) -> Option<Vec<u8>> {
     refrain_store::icons::read_icon(&icon_assets_dir(&state), &digest).ok()
 }
 
-/// The immutable clone of an imported source, for reading its original pages.
-///
-/// A Material carries the projected text; this returns the bytes the file was
-/// imported from. The two are different things and the difference matters: for
-/// a PDF the projection is text with no page, no column and no figure, so an
-/// author checking a quotation against the original needs the original.
-///
-/// **Read only.** RefRain never writes back into a source (owner's ruling) and
-/// never writes into the backup directory after import.
-///
-/// Absent is a value: a Material imported before clones were kept, or one whose
-/// clone was removed, answers `None` rather than an error. The caller shows the
-/// text it already has.
-#[tauri::command(async)]
-#[specta::specta]
-fn imported_source_bytes(
-    state: tauri::State<'_, AppState>,
-    root_id: String,
-    digest: String,
-    format: String,
-) -> Option<Vec<u8>> {
-    let clone_dir = state
-        .with_project(&root_id, |_state, entry| {
-            Ok(entry.store.layout().source_backup_dir.join("materials"))
-        })
-        .ok()?;
-    refrain_store::materials::read_material_clone(&clone_dir, &digest, &format).ok()
-}
-
 /// Installed families and the weights the machine can actually draw. The
 /// catalog is scanned once per application session and never launches a shell.
 #[tauri::command]
@@ -1808,7 +1788,6 @@ macro_rules! refrain_commands {
         list_builtin_typography_presets,
         set_universal_icon,
         universal_icon,
-        imported_source_bytes,
         block_search,
         $($debug_command,)*
         list_proposals,
@@ -1841,6 +1820,7 @@ macro_rules! refrain_commands {
         install_skill,
         probe_connection,
         choose_and_import_material,
+        choose_and_import_manuscript,
         list_agents,
         upsert_agent,
         update_agent,
@@ -1865,12 +1845,66 @@ pub fn builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new().commands(refrain_commands![])
 }
 
+/// 原件字节的读取路径：`refrain-artifact://<root_id>/<digest>.<format>`。
+///
+/// ARTIFACT 自己带的是投影出的文本；这里交回的是它导入自的那些字节。两者不同，
+/// 而且这个不同要紧：PDF 的投影没有页、没有栏、没有插图，作者要核对一句引文
+/// 就得看原件。**只读**——RefRain 从不写回来源，导入后也不再写备份目录。
+///
+/// 它不走 JSON 桥。128 MiB 的原件经 `number[]` 过桥要序列化成十进制文本再
+/// 逐元素重建，实测至少 4.57× 内存放大（F-10）；custom protocol 交回的是字节
+/// 本身，前端拿到 `ArrayBuffer`，放大率回到 1×。
+///
+/// 404 是一个值，不是错误：早于 schema v10 导入的 ARTIFACT，或克隆件已被移走。
+/// 调用方显示手上已有的文本。
+///
+/// 权限没有因此放宽：URL 只携带 root_id 与 digest，落到磁盘的那一步仍由
+/// `read_material_clone` 用 digest 比对，且只在该项目的克隆目录里找。
+/// renderer 无法用这条路径读取任意文件。
+fn artifact_response(
+    context: tauri::UriSchemeContext<'_, tauri::Wry>,
+    request: tauri::http::Request<Vec<u8>>,
+) -> tauri::http::Response<Vec<u8>> {
+    use tauri::Manager as _;
+    let refused = |status: u16| {
+        tauri::http::Response::builder()
+            .status(status)
+            .body(Vec::new())
+            .unwrap_or_default()
+    };
+    let Some(state) = context.app_handle().try_state::<AppState>() else {
+        return refused(503);
+    };
+    // 主机名是 root_id，路径是 `<digest>.<format>`。两段都必须在。
+    let uri = request.uri();
+    let Some(root_id) = uri.host() else {
+        return refused(400);
+    };
+    let Some((digest, format)) = uri.path().trim_start_matches('/').rsplit_once('.') else {
+        return refused(400);
+    };
+    let Ok(clone_dir) = state.with_project(root_id, |_state, entry| {
+        Ok(entry.store.layout().source_backup_dir.join("materials"))
+    }) else {
+        return refused(404);
+    };
+    match refrain_store::materials::read_material_clone(&clone_dir, digest, format) {
+        Ok(bytes) => tauri::http::Response::builder()
+            .header("Content-Type", "application/octet-stream")
+            .header("Content-Length", bytes.len())
+            .body(bytes)
+            .unwrap_or_else(|_| refused(500)),
+        Err(_) => refused(404),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = builder();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .register_uri_scheme_protocol("refrain-artifact", artifact_response)
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             builder.mount_events(app);
@@ -4567,6 +4601,23 @@ fn chosen_file(path: PathBuf) -> Result<PathBuf, RefrainError> {
     Ok(canonical)
 }
 
+/// 把选择器交回的条目变成一条路径。
+///
+/// 四个选择器命令原本各写一遍同一段翻译，于是「取消 = None」「路径不可用 =
+/// Io」这条规则在四处各有一份。它属于这里：命令只说选了什么，不再各自决定
+/// 一次失败算哪一种。
+fn chosen_path(
+    selected: Option<tauri_plugin_dialog::FilePath>,
+) -> Result<Option<PathBuf>, RefrainError> {
+    selected
+        .map(|selected| {
+            selected.into_path().map_err(|error| {
+                RefrainError::new(ErrorCode::Io, "use a chosen source", error.to_string())
+            })
+        })
+        .transpose()
+}
+
 /// The native chooser and the import are one authority boundary: release IPC
 /// never receives a source path from the renderer.
 #[tauri::command]
@@ -4586,13 +4637,34 @@ async fn choose_and_import_material(
             &["pdf", "epub", "html", "htm", "docx", "pptx", "xlsx"],
         )
         .blocking_pick_file();
-    let Some(selected) = selected else {
+    let Some(path) = chosen_path(selected)? else {
         return Ok(None);
     };
-    let path = selected.into_path().map_err(|error| {
-        RefrainError::new(ErrorCode::Io, "use a chosen source", error.to_string())
-    })?;
     import_material_at(state, root_id, path).await.map(Some)
+}
+
+/// The native chooser and the import are one authority boundary: release IPC
+/// never receives a source path from the renderer.
+#[tauri::command]
+#[specta::specta]
+async fn choose_and_import_manuscript(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    root_id: String,
+) -> Result<Option<DocumentRow>, RefrainError> {
+    use tauri_plugin_dialog::DialogExt as _;
+    // 扩展名权威只有一处：`DocumentFormat`。这里写第二份清单，就等于给
+    // 「什么算可编辑正文」立第二个定义。
+    let selected = app
+        .dialog()
+        .file()
+        .set_title("导入为原稿")
+        .add_filter("Manuscript", &DocumentFormat::extensions())
+        .blocking_pick_file();
+    let Some(path) = chosen_path(selected)? else {
+        return Ok(None);
+    };
+    import_manuscript_at(state, root_id, path).await.map(Some)
 }
 
 /// Import one previously authorised source file as a Material. Expensive source

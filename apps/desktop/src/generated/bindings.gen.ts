@@ -17,6 +17,13 @@ export const commands = {
 	documents: DocumentRow[],
 	documentTotal: number,
 	documentCursor: string | null,
+	/**
+	 *  这次取得之后应该打开的正文，项目内相对路径。
+	 *
+	 *  `None` 只有一个含义：项目里确实没有 Chapter，空工作区是正确结果。
+	 *  外壳不得在此之外自行挑选一份来开。
+	 */
+	openedPath: string | null,
 } | null, RefrainError>(__TAURI_INVOKE("choose_and_adopt_root", { kind })),
 	/**  Let the author choose the parent and consume it while creating the project. */
 	chooseAndCreateProject: (name: string) => typedError<{
@@ -25,6 +32,13 @@ export const commands = {
 	documents: DocumentRow[],
 	documentTotal: number,
 	documentCursor: string | null,
+	/**
+	 *  这次取得之后应该打开的正文，项目内相对路径。
+	 *
+	 *  `None` 只有一个含义：项目里确实没有 Chapter，空工作区是正确结果。
+	 *  外壳不得在此之外自行挑选一份来开。
+	 */
+	openedPath: string | null,
 } | null, RefrainError>(__TAURI_INVOKE("choose_and_create_project", { name })),
 	/**  Return one bounded page from an already reconciled project index. */
 	documentPage: (rootId: string, after: string | null) => typedError<DocumentPageDto, RefrainError>(__TAURI_INVOKE("document_page", { rootId, after })),
@@ -116,22 +130,6 @@ export const commands = {
 	 *  empty string (INV-3's discipline).
 	 */
 	universalIcon: () => __TAURI_INVOKE<number[] | null>("universal_icon"),
-	/**
-	 *  The immutable clone of an imported source, for reading its original pages.
-	 *
-	 *  A Material carries the projected text; this returns the bytes the file was
-	 *  imported from. The two are different things and the difference matters: for
-	 *  a PDF the projection is text with no page, no column and no figure, so an
-	 *  author checking a quotation against the original needs the original.
-	 *
-	 *  **Read only.** RefRain never writes back into a source (owner's ruling) and
-	 *  never writes into the backup directory after import.
-	 *
-	 *  Absent is a value: a Material imported before clones were kept, or one whose
-	 *  clone was removed, answers `None` rather than an error. The caller shows the
-	 *  text it already has.
-	 */
-	importedSourceBytes: (rootId: string, digest: string, format: string) => __TAURI_INVOKE<number[] | null>("imported_source_bytes", { rootId, digest, format }),
 	/**
 	 *  Search and keep the blocks, so the result panel can show what matched.
 	 *
@@ -308,6 +306,34 @@ export const commands = {
 	 */
 	disclosure: Disclosure | null,
 } | null, RefrainError>(__TAURI_INVOKE("choose_and_import_material", { rootId })),
+	/**
+	 *  The native chooser and the import are one authority boundary: release IPC
+	 *  never receives a source path from the renderer.
+	 */
+	chooseAndImportManuscript: (rootId: string) => typedError<{
+	id: Id,
+	/**  Portable identity inside the Root: the relative path, `/`-joined. */
+	path: string,
+	role: DocumentRole,
+	digest: string | null,
+	/**  The confirmed revision id and lineage paired with the digest. */
+	currentHead: string | null,
+	headBlockIds: string | null,
+	/**
+	 *  For an imported Material: the digest of the file it came from, which
+	 *  names its immutable clone. `None` for anything not imported, and for
+	 *  Materials imported before schema v10.
+	 */
+	sourceDigest: string | null,
+	/**  The imported file's format, which completes the clone's filename. */
+	sourceFormat: string | null,
+	/**
+	 *  What the author permits for this document when it rides as a material.
+	 *  `None` is "never asked": the readers treat it as the enum's default,
+	 *  which is exactly what a pre-v11 row means.
+	 */
+	disclosure: Disclosure | null,
+} | null, RefrainError>(__TAURI_INVOKE("choose_and_import_manuscript", { rootId })),
 	listAgents: () => __TAURI_INVOKE<AgentDto[]>("list_agents"),
 	/**
 	 *  Create one Agent (SPEC 6.5: typed changes only). A connection reference
@@ -1274,6 +1300,13 @@ export type ProjectOpenedDto = {
 	documents: DocumentRow[],
 	documentTotal: number,
 	documentCursor: string | null,
+	/**
+	 *  这次取得之后应该打开的正文，项目内相对路径。
+	 *
+	 *  `None` 只有一个含义：项目里确实没有 Chapter，空工作区是正确结果。
+	 *  外壳不得在此之外自行挑选一份来开。
+	 */
+	openedPath: string | null,
 };
 
 /**  A frozen candidate for the surface. */
