@@ -36,7 +36,7 @@ const BODY_DEBT: Readonly<Record<string, number>> = {
   "DispatchSurface.tsx": 304,
   "ConnectionsSurface.tsx": 232,
   // Stale-proposal decisions and presentation live outside this composition surface.
-  "ReviewSurface.tsx": 253,
+  "ReviewSurface.tsx": 249,
   // 216：设置搜索接进界面的同时，分类标签栏也提成了模块级组件。加了一个功能
   // 而体积下降——搜索与标签栏都不是外壳的编排，是各自自成一体的一段。
   "SettingsSurface.tsx": 216,

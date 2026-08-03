@@ -1467,7 +1467,7 @@ export function Workbench(props: WorkbenchProps) {
                 <ReviewSurface
                   rootId={root().rootId}
                   path={active()?.document.path ?? ""}
-                  commitBatch={() => commitDecisions()}
+                  commitBatch={() => documentSession.commitDecisions()}
                   onClosed={() => openStage("writing")}
                 />
               </Show>
