@@ -17,27 +17,17 @@ for (const [source, fact, failure] of [
     "debug commands are not compile-time guarded",
   ],
   [rust, "refrain_commands![]", "the release registry is not the empty-debug command set"],
-  [rust, "choose_and_adopt_root", "Rust has no native Root chooser"],
-  [rust, "choose_and_create_project", "Rust has no native project-parent chooser"],
+  [rust, "struct TauriProjectPlatform", "Rust has no Project chooser adapter"],
+  [rust, ".project(&TauriProjectPlatform", "the desktop bypasses the Project use case"],
   [rust, "choose_and_import_material", "Rust has no native material chooser"],
   [rust, "open_registered_document(&path)", "open_document does not require a registered row"],
-  [bindings, "chooseAndAdoptRoot: (kind: RootKind)", "release bindings have no Root chooser"],
-  [bindings, "chooseAndCreateProject: (name: string)", "release bindings have no project chooser"],
+  [bindings, "project: (input: ProjectInput)", "release bindings have no Project group command"],
   [
     bindings,
     "chooseAndImportMaterial: (rootId: string)",
     "release bindings have no material chooser",
   ],
-  [
-    projectSession,
-    "commands.chooseAndAdoptRoot",
-    "the app does not use the Rust-owned Root chooser",
-  ],
-  [
-    projectSession,
-    "commands.chooseAndCreateProject",
-    "the app does not use the Rust-owned project chooser",
-  ],
+  [projectSession, "commands.project", "the app does not use the Rust Project use case"],
   [
     projectSession,
     "commands.chooseAndImportMaterial",
@@ -45,6 +35,36 @@ for (const [source, fact, failure] of [
   ],
 ] as const) {
   if (!source.includes(fact)) failures.push(failure);
+}
+
+for (const legacyProjectCommand of [
+  "choose_and_adopt_root",
+  "choose_and_create_project",
+  "document_page",
+  "document_search",
+  "block_search",
+  "delete_document",
+  "set_disclosure",
+]) {
+  if (rust.includes(legacyProjectCommand)) {
+    failures.push(`the release Rust surface still exposes ${legacyProjectCommand}`);
+  }
+}
+for (const legacyBinding of [
+  "chooseAndAdoptRoot",
+  "chooseAndCreateProject",
+  "documentPage",
+  "documentSearch",
+  "blockSearch",
+  "deleteDocument",
+  "setDisclosure",
+]) {
+  if (
+    bindings.includes(`\t${legacyBinding}: (`) ||
+    projectSession.includes(`commands.${legacyBinding}`)
+  ) {
+    failures.push(`the release TypeScript surface still exposes ${legacyBinding}`);
+  }
 }
 
 // 选择器只能有一个入口。上面几条证明 ProjectSession 用了它，这一条证明别人没有
@@ -105,12 +125,7 @@ if (debugBridgeCalls.join("\n") !== expectedDebugBridge.sort().join("\n")) {
   failures.push(`the E2E bridge command set drifted: ${debugBridgeCalls.join(", ")}`);
 }
 
-for (const privateOwner of [
-  "adopt_root_at",
-  "create_project_at",
-  "import_material_at",
-  "import_manuscript_at",
-]) {
+for (const privateOwner of ["import_material_at", "import_manuscript_at"]) {
   const at = rust.indexOf(`fn ${privateOwner}`);
   const prefix = at < 0 ? "" : rust.slice(Math.max(0, at - 120), at);
   if (at < 0) failures.push(`private path owner is missing: ${privateOwner}`);

@@ -3,6 +3,7 @@
 #![deny(unsafe_code)]
 
 mod document;
+mod project;
 mod protocol;
 #[allow(unsafe_code)]
 mod staticlib;

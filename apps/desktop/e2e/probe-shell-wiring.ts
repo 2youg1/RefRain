@@ -121,6 +121,7 @@ window.__probe = {
             documents: [fixture.chapter, fixture.materialA, fixture.materialB],
             documentTotal: 3,
             documentCursor: null,
+            openedPath: fixture.chapter.path,
           };
         case "open_document":
           return {
@@ -139,13 +140,23 @@ window.__probe = {
         case "list_text_actions":
           // 新在前：a-3 是当前位置，a-2 可回档（其后 1 步），a-1 已撤回。
           return [
-            { id: "a-3", ordinal: 3, cause: "author edit", createdAt: "1700000900000", undone: false },
+            {
+              id: "a-3",
+              ordinal: 3,
+              cause: "author edit",
+              createdAt: "1700000900000",
+              undone: state.revertCalls.length > 0,
+            },
             { id: "a-2", ordinal: 2, cause: "author edit", createdAt: "1700000800000", undone: false },
             { id: "a-1", ordinal: 1, cause: "open", createdAt: "1700000000000", undone: true },
           ];
         case "revert_to_action":
           state.revertCalls.push(args.actionId);
-          return { revision: "r0", undone: ["a-3"] };
+          return {
+            revision: "r0",
+            transitions: [{ revision: "r0", actionId: "a-3", touchedBlocks: ["b1", "b4"] }],
+            undone: ["a-3"],
+          };
         case "host_state":
           return { tasks: [], runs: [], recoveryRequired: [], awaitingLaunch: [] };
         case "kara_state":
@@ -175,12 +186,26 @@ window.__probe = {
           return state.undone
             ? { revision: "r1", blocks: fresh(fixture.blocks) }
             : { revision: "r2", blocks: fresh(fixture.blocks) };
-        case "delete_document":
-          state.deleted.push(args.path);
-          return args.path === fixture.materialA.path ? fixture.materialA : fixture.materialB;
-        case "set_disclosure":
-          state.disclosures.push([args.path, args.disclosure]);
-          return { ...fixture.materialB, disclosure: args.disclosure };
+        case "project":
+          if (args.input.kind === "deleteDocument") {
+            state.deleted.push(args.input.value.path);
+            return {
+              kind: "deleted",
+              value:
+                args.input.value.path === fixture.materialA.path
+                  ? fixture.materialA
+                  : fixture.materialB,
+            };
+          }
+          if (args.input.kind === "setDisclosure") {
+            state.disclosures.push([args.input.value.path, args.input.value.disclosure]);
+            return {
+              kind: "disclosureSet",
+              value: { ...fixture.materialB, disclosure: args.input.value.disclosure },
+            };
+          }
+          state.unknown.push("project:" + args.input.kind);
+          return null;
         default:
           state.unknown.push(cmd);
           return null;
@@ -298,7 +323,7 @@ ${cssAsset === null ? "" : '<link rel="stylesheet" href="/style.css">'}
       () => (window as unknown as { __probe: { deleted: string[] } }).__probe.deleted.length,
     );
     if (deletedAfterGuard !== 0) {
-      failures.push("T6：禁用项被点后仍发出了 delete_document");
+      failures.push("T6：禁用项被点后仍发出了 Project/DeleteDocument");
     }
     // 菜单在指针离开书架时收拢：挪走再开下一段。
     await page.mouse.move(8, 8);
@@ -395,7 +420,7 @@ ${cssAsset === null ? "" : '<link rel="stylesheet" href="/style.css">'}
     }));
     if (afterDelete.deleted[0] !== "资料甲.md" || !afterDelete.gone) {
       failures.push(
-        `T5：delete_document 应收到 资料甲.md 且行消失，实为 ${afterDelete.deleted.join("/")}，行消失=${afterDelete.gone}`,
+        `T5：Project/DeleteDocument 应收到 资料甲.md 且行消失，实为 ${afterDelete.deleted.join("/")}，行消失=${afterDelete.gone}`,
       );
     }
     await page.getByRole("button", { name: "资料乙.md", exact: true }).click({ button: "right" });
@@ -412,7 +437,7 @@ ${cssAsset === null ? "" : '<link rel="stylesheet" href="/style.css">'}
     );
     if (disclosure?.[0] !== "资料乙.md" || disclosure[1] !== "full") {
       failures.push(
-        `T5：set_disclosure 应收到 (资料乙.md, full)，实为 ${JSON.stringify(disclosure)}`,
+        `T5：Project/SetDisclosure 应收到 (资料乙.md, full)，实为 ${JSON.stringify(disclosure)}`,
       );
     }
 
@@ -443,7 +468,7 @@ ${cssAsset === null ? "" : '<link rel="stylesheet" href="/style.css">'}
     // 第一下立确认：确认句说清代价——其后还有几步将被撤回。
     await page.locator(".history li").nth(1).locator("button.history-row").click();
     const confirmText = await page.locator(".history .revert-confirm").textContent();
-    if (!confirmText?.includes("将撤回其后 1 步，回到这一步之后。")) {
+    if (!confirmText?.includes("将撤销其后 1 步，回到这一步之后。")) {
       failures.push(`T7：确认句应说清代价，实为 ${JSON.stringify(confirmText)}`);
     }
     // 第二下真的回档：桥收到 a-2，落点回读确认头，a-3 在视图里标为已撤回。

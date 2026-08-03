@@ -3,12 +3,12 @@
 // advertise a test seam as a release capability.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { DocumentRow, ProjectOpenedDto, RootKind } from "../generated/bindings.gen";
+import type { DocumentRow, ProjectOpened, RootKind } from "../generated/bindings.gen";
 
 export const debugCommands = {
-  adoptRoot: (path: string, kind: RootKind): Promise<ProjectOpenedDto> =>
+  adoptRoot: (path: string, kind: RootKind): Promise<ProjectOpened> =>
     invoke("debug_adopt_root", { path, kind }),
-  createProject: (parent: string, name: string): Promise<ProjectOpenedDto> =>
+  createProject: (parent: string, name: string): Promise<ProjectOpened> =>
     invoke("debug_create_project", { parent, name }),
   importMaterial: (rootId: string, sourcePath: string): Promise<DocumentRow> =>
     invoke("debug_import_material", { rootId, sourcePath }),

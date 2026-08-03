@@ -133,8 +133,6 @@ export function stubScript(options: StubOptions = {}): string {
     host_state: { tasks: [], runs: [], recoveryRequired: [], awaitingLaunch: [] },
     kara_state: { state: karaState, autoEntry: "manual", queued: [] },
     kara_event: { machine: { state: karaState, autoEntry: "manual", queued: [] }, effects: [] },
-    document_page: { documents: rows, total: rows.length, next: null },
-    document_search: rows,
     open_document: {
       document: rows[1],
       revision: "r1",
@@ -164,6 +162,7 @@ export function stubScript(options: StubOptions = {}): string {
     documents: rows,
     documentTotal: rows.length,
     documentCursor: null,
+    openedPath: rows[1]?.path ?? null,
   };
 
   return `
@@ -177,11 +176,23 @@ export function stubScript(options: StubOptions = {}): string {
       globalThis[\`_\${id}\`] = callback;
       return id;
     },
-    invoke(cmd) {
+    invoke(cmd, args = {}) {
       if (cmd === "plugin:event|listen" || cmd === "plugin:event|unlisten") return Promise.resolve(0);
-      /* typedError 自己包 {status,data}，所以这两条要回**裸**载荷，不能预包。 */
-      if (cmd === "choose_and_adopt_root" || cmd === "choose_and_create_project")
-        return Promise.resolve(ROOT);
+      if (cmd === "project") {
+        const input = args.input;
+        if (input.kind === "chooseAndAdoptRoot" || input.kind === "chooseAndCreateProject")
+          return Promise.resolve({ kind: "opened", value: ROOT });
+        if (input.kind === "documentPage")
+          return Promise.resolve({ kind: "page", value: { documents: ROOT.documents, total: ROOT.documents.length, next: null } });
+        if (input.kind === "documentSearch")
+          return Promise.resolve({ kind: "documents", value: { documents: ROOT.documents, truncated: false } });
+        if (input.kind === "blockSearch")
+          return Promise.resolve({ kind: "blocks", value: { blocks: [], truncated: false } });
+        if (input.kind === "deleteDocument")
+          return Promise.resolve({ kind: "deleted", value: ROOT.documents.find((row) => row.path === input.value.path) ?? ROOT.documents[0] });
+        if (input.kind === "setDisclosure")
+          return Promise.resolve({ kind: "disclosureSet", value: { ...(ROOT.documents.find((row) => row.path === input.value.path) ?? ROOT.documents[0]), disclosure: input.value.disclosure } });
+      }
       const answer = TABLE[cmd];
       /* 没编到的命令一律回 null：图是关于布局的，不是关于后端的。 */
       return Promise.resolve(answer === undefined ? null : answer);

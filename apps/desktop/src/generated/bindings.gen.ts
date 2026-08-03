@@ -10,40 +10,8 @@ export const commands = {
 	displayProfile: () => __TAURI_INVOKE<DisplayProfile>("display_profile"),
 	/**  Proves the whole chain: a Rust type, a generated binding, a real window. */
 	health: (echo: string) => __TAURI_INVOKE<HealthReport>("health", { echo }),
-	/**  Let the author choose the Root and consume that choice in this command. */
-	chooseAndAdoptRoot: (kind: RootKind) => typedError<{
-	rootId: string,
-	backup: BackupStatus,
-	documents: DocumentRow[],
-	documentTotal: number,
-	documentCursor: string | null,
-	/**
-	 *  这次取得之后应该打开的正文，项目内相对路径。
-	 *
-	 *  `None` 只有一个含义：项目里确实没有 Chapter，空工作区是正确结果。
-	 *  外壳不得在此之外自行挑选一份来开。
-	 */
-	openedPath: string | null,
-} | null, RefrainError>(__TAURI_INVOKE("choose_and_adopt_root", { kind })),
-	/**  Let the author choose the parent and consume it while creating the project. */
-	chooseAndCreateProject: (name: string) => typedError<{
-	rootId: string,
-	backup: BackupStatus,
-	documents: DocumentRow[],
-	documentTotal: number,
-	documentCursor: string | null,
-	/**
-	 *  这次取得之后应该打开的正文，项目内相对路径。
-	 *
-	 *  `None` 只有一个含义：项目里确实没有 Chapter，空工作区是正确结果。
-	 *  外壳不得在此之外自行挑选一份来开。
-	 */
-	openedPath: string | null,
-} | null, RefrainError>(__TAURI_INVOKE("choose_and_create_project", { name })),
-	/**  Return one bounded page from an already reconciled project index. */
-	documentPage: (rootId: string, after: string | null) => typedError<DocumentPageDto, RefrainError>(__TAURI_INVOKE("document_page", { rootId, after })),
-	/**  Search the complete project index. Request ordering belongs to the caller. */
-	documentSearch: (rootId: string, query: string, precision: SearchPrecision) => typedError<DocumentRow[], RefrainError>(__TAURI_INVOKE("document_search", { rootId, query, precision })),
+	/**  One project-group bridge replaces seven one-to-one production commands. */
+	project: (input: ProjectInput) => typedError<ProjectOutput, RefrainError>(__TAURI_INVOKE("project", { input })),
 	/**
 	 *  Open a document: bytes from disk, blocks from the byte-authoritative
 	 *  layout, the persisted revision chain resumed, and any journaled actions
@@ -52,20 +20,6 @@ export const commands = {
 	openDocument: (rootId: string, path: string) => typedError<OpenDocumentDto_Serialize, RefrainError>(__TAURI_INVOKE("open_document", { rootId, path })),
 	/**  Create a document in the Root and open it (SPEC 9.5). */
 	createDocument: (rootId: string, title: string, role: DocumentRole) => typedError<OpenDocumentDto_Serialize, RefrainError>(__TAURI_INVOKE("create_document", { rootId, title, role })),
-	/**
-	 *  Delete a document or a material: the file goes to the system recycle bin
-	 *  (INV-6) and nowhere else. The catalog row and the search index follow the
-	 *  file; the audit — proposals, verdicts, annotations — stays. An imported
-	 *  Material's source clone stays too: the Source Backup is never written,
-	 *  and a delete is not an exception. Returns the row that was deleted.
-	 */
-	deleteDocument: (rootId: string, path: string) => typedError<DocumentRow, RefrainError>(__TAURI_INVOKE("delete_document", { rootId, path })),
-	/**
-	 *  Write what the author permits for one material (范围). The next dispatch's
-	 *  material listing carries it — the permission lives on the document's row,
-	 *  not in the ticket's memory.
-	 */
-	setDisclosure: (rootId: string, path: string, disclosure: Disclosure) => typedError<DocumentRow, RefrainError>(__TAURI_INVOKE("set_disclosure", { rootId, path, disclosure })),
 	currentDocument: (rootId: string, path: string) => typedError<SessionDocumentDto, RefrainError>(__TAURI_INVOKE("current_document", { rootId, path })),
 	/**
 	 *  The one manuscript write path (INV-2): journaled first, executed through
@@ -130,14 +84,6 @@ export const commands = {
 	 *  empty string (INV-3's discipline).
 	 */
 	universalIcon: () => __TAURI_INVOKE<number[] | null>("universal_icon"),
-	/**
-	 *  Search and keep the blocks, so the result panel can show what matched.
-	 *
-	 *  `document_search` answers "which files"; this answers "which passages, and
-	 *  what do they say". A path cannot be highlighted — the query words are not
-	 *  in it — so showing the author where their words are needs the text.
-	 */
-	blockSearch: (rootId: string, query: string, precision: SearchPrecision) => typedError<BlockHit[], RefrainError>(__TAURI_INVOKE("block_search", { rootId, query, precision })),
 	/**  Every candidate for a document, newest last, for the review surface. */
 	listProposals: (rootId: string, path: string) => typedError<ProposalDto[], RefrainError>(__TAURI_INVOKE("list_proposals", { rootId, path })),
 	/**
@@ -798,12 +744,6 @@ export type DocumentFormat =
 /**  YAML configuration (`.yaml`, `.yml`). */
 "yaml";
 
-export type DocumentPageDto = {
-	documents: DocumentRow[],
-	total: number,
-	next: string | null,
-};
-
 /**  What a Markdown file is to the work. */
 export type DocumentRole =
 /**  A standalone work opened on its own (single-file Root). */
@@ -1293,20 +1233,55 @@ export type PreferencesChangeDto = { kind: "karaAutoEnter"; value: boolean } | {
 /**  The dragged free-form width; None returns the panel to its preset. */
 { kind: "setPanelWidthPx"; value: number | null } | { kind: "setRailWidth"; value: RailWidth } | { kind: "setCodeTheme"; value: string | null } | { kind: "setPanelAnimation"; value: boolean } | { kind: "setTypography"; value: TypographyConfig } | { kind: "saveTypographyPreset"; value: string } | { kind: "removeTypographyPreset"; value: Id } | { kind: "resetVisual" } | { kind: "resetTypography" } | { kind: "restoreAppearance"; value: AppearanceConfig };
 
-/**  A Root as the interface names it. */
-export type ProjectOpenedDto = {
+export type ProjectBlocks = {
+	blocks: BlockHit[],
+	truncated: boolean,
+};
+
+export type ProjectDocuments = {
+	documents: DocumentRow[],
+	truncated: boolean,
+};
+
+export type ProjectInput = { kind: "chooseAndAdoptRoot"; value: {
+	kind: RootKind,
+} } | { kind: "chooseAndCreateProject"; value: {
+	name: string,
+} } | { kind: "documentPage"; value: {
+	rootId: string,
+	after: string | null,
+} } | { kind: "documentSearch"; value: {
+	rootId: string,
+	query: string,
+	precision: SearchPrecision,
+} } | { kind: "blockSearch"; value: {
+	rootId: string,
+	query: string,
+	precision: SearchPrecision,
+} } | { kind: "deleteDocument"; value: {
+	rootId: string,
+	path: string,
+} } | { kind: "setDisclosure"; value: {
+	rootId: string,
+	path: string,
+	disclosure: Disclosure,
+} };
+
+export type ProjectOpened = {
 	rootId: string,
 	backup: BackupStatus,
 	documents: DocumentRow[],
 	documentTotal: number,
 	documentCursor: string | null,
-	/**
-	 *  这次取得之后应该打开的正文，项目内相对路径。
-	 *
-	 *  `None` 只有一个含义：项目里确实没有 Chapter，空工作区是正确结果。
-	 *  外壳不得在此之外自行挑选一份来开。
-	 */
 	openedPath: string | null,
+};
+
+export type ProjectOutput = { kind: "cancelled" } | { kind: "opened"; value: ProjectOpened } | { kind: "page"; value: ProjectPage } | { kind: "documents"; value: ProjectDocuments } | { kind: "blocks"; value: ProjectBlocks } | { kind: "deleted"; value: DocumentRow } | { kind: "disclosureSet"; value: DocumentRow };
+
+export type ProjectPage = {
+	documents: DocumentRow[],
+	total: number,
+	next: string | null,
 };
 
 /**  A frozen candidate for the surface. */
@@ -1474,7 +1449,6 @@ export type SaveOutcomeDto_Serialize = { kind: "saved"; value: {
 	stamp: FileStamp_Serialize,
 } };
 
-/**  How literal a search is: every query part must appear, or any part may. */
 export type SearchPrecision = "exact" | "loose";
 
 /**

@@ -10,5 +10,8 @@ description = "Native SDK composition boundary: fixed C ABI over RefRain use cas
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
+directories = { workspace = true }
 refrain-app = { workspace = true }
+rfd = { workspace = true }
+serde_json = { workspace = true }
 refrain-core = { workspace = true }

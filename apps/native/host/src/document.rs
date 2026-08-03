@@ -17,7 +17,8 @@ enum DispatchAction {
     Health = 1,
     OpenManuscript = 2,
     ApplyInput = 3,
-    Project = 4,
+    ObtainProjection = 4,
+    Project = 5,
 }
 
 impl TryFrom<u16> for DispatchAction {
@@ -28,7 +29,8 @@ impl TryFrom<u16> for DispatchAction {
             1 => Ok(Self::Health),
             2 => Ok(Self::OpenManuscript),
             3 => Ok(Self::ApplyInput),
-            4 => Ok(Self::Project),
+            4 => Ok(Self::ObtainProjection),
+            5 => Ok(Self::Project),
             _ => Err(()),
         }
     }
@@ -101,6 +103,9 @@ pub fn dispatch(request: RefrainNativeRequest) -> RefrainNativeResponse {
     };
     if action == DispatchAction::Health {
         return RefrainNativeResponse::empty(0, request.action);
+    }
+    if action == DispatchAction::Project {
+        return crate::project::dispatch(&request);
     }
 
     let sessions = SESSIONS.get_or_init(|| Mutex::new(Sessions::default()));
@@ -361,7 +366,7 @@ mod tests {
             0
         );
 
-        let mut project = request(DispatchAction::Project);
+        let mut project = request(DispatchAction::ObtainProjection);
         project.session = opened.session;
         let edited = dispatch(project);
         assert_eq!(&edited.text[..preedit.len()], preedit);
@@ -373,7 +378,7 @@ mod tests {
     #[test]
     fn viewport_and_revision_are_real_inputs_not_fixed_fixture_metadata() {
         let opened = dispatch(request(DispatchAction::OpenManuscript));
-        let mut middle_request = request(DispatchAction::Project);
+        let mut middle_request = request(DispatchAction::ObtainProjection);
         middle_request.session = opened.session;
         middle_request.viewport_first_block = 50_000;
         middle_request.viewport_block_count = 24;

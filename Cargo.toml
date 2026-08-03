@@ -40,6 +40,8 @@ specta-typescript = "=0.0.12"
 tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
 
 # The store crate owns every database handle; rusqlite appears nowhere else.
+directories = "=6.0.0"
+rfd = { version = "=0.17.2", default-features = false, features = ["pollster", "xdg-portal"] }
 rusqlite = { version = "=0.40.1", features = ["bundled"] }
 
 # The icon pipeline (C7): SVG needs a real parser (a hand-rolled one is the

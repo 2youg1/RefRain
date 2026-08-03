@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 pub mod annotations;
+pub mod application;
 pub mod atomic;
 pub mod config;
 pub(crate) mod files;

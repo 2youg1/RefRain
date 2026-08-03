@@ -13,6 +13,7 @@
 //! 调用，那里没有安全封装可用；`verify:unsafe-surface` 守着它不扩散。
 #![forbid(unsafe_code)]
 
+pub mod application;
 pub mod cancel;
 pub mod collect;
 pub mod decide;
@@ -23,6 +24,10 @@ pub mod review;
 pub mod scope;
 pub mod upstream;
 
+pub use application::{
+    Application, ProjectBlocks, ProjectDocuments, ProjectEntry, ProjectInput, ProjectOpened,
+    ProjectOutput, ProjectPage, ProjectPlatform, RootKind, SearchPrecision,
+};
 pub use cancel::{cancel_and_read_back, progress_of, refuse_cancel_without_handle};
 pub use collect::{Collected, collect_attempt};
 pub use decide::{commit_decision_batch, countermand_proposals};

@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type {
   BlockHit,
-  DocumentPageDto,
   DocumentRow,
-  ProjectOpenedDto,
+  ProjectOpened,
+  ProjectPage,
 } from "../src/generated/bindings.gen";
 import {
   type DelayPort,
@@ -36,7 +36,7 @@ const opened = (
   documents: DocumentRow[] = [row(`${rootId}-1`, `${rootId}-一.md`)],
   cursor: string | null = "next",
   openedPath: string | null = documents[0]?.path ?? null,
-): ProjectOpenedDto => ({
+): ProjectOpened => ({
   rootId,
   backup: { kind: "nothingToCopy" },
   documents,
@@ -86,7 +86,7 @@ describe("project session", () => {
     const delay = new ManualDelay();
     const searches: string[] = [];
     const catalog: ProjectCatalogPort = {
-      async page(): Promise<DocumentPageDto> {
+      async page(): Promise<ProjectPage> {
         throw new Error("not used");
       },
       async search(_rootId, query) {
@@ -122,7 +122,7 @@ describe("project session", () => {
     const pending = new Map<string, Deferred<readonly DocumentRow[]>>();
     const pendingHits = new Map<string, Deferred<readonly BlockHit[]>>();
     const catalog: ProjectCatalogPort = {
-      async page(): Promise<DocumentPageDto> {
+      async page(): Promise<ProjectPage> {
         throw new Error("not used");
       },
       search(_rootId, query) {
@@ -215,12 +215,9 @@ describe("ProjectSession 取得一个项目", () => {
     ...overrides,
   });
 
-  const build = (
-    port: ProjectAcquisitionPort,
-    installed: ProjectOpenedDto[] = [],
-  ): ProjectSession =>
+  const build = (port: ProjectAcquisitionPort, installed: ProjectOpened[] = []): ProjectSession =>
     new ProjectSession(
-      { page: async () => ({}) as DocumentPageDto, search: async () => [] },
+      { page: async () => ({}) as ProjectPage, search: async () => [] },
       new ManualDelay(),
       () => undefined,
       port,
@@ -229,7 +226,7 @@ describe("ProjectSession 取得一个项目", () => {
     );
 
   test("选中一个文件夹就装上那个项目", async () => {
-    const installed: ProjectOpenedDto[] = [];
+    const installed: ProjectOpened[] = [];
     const session = build(acquisition(), installed);
     await session.openFolder();
     expect(session.project?.rootId).toBe("folder-root");
@@ -237,7 +234,7 @@ describe("ProjectSession 取得一个项目", () => {
   });
 
   test("作者取消选择，什么都不发生", async () => {
-    const installed: ProjectOpenedDto[] = [];
+    const installed: ProjectOpened[] = [];
     const session = build(acquisition({ adoptFolder: async () => null }), installed);
     await session.openFolder();
     expect(session.project).toBeNull();
@@ -321,7 +318,7 @@ describe("ProjectSession 取得一个项目", () => {
   });
 
   test("取得项目时交回落点，外壳据此打开正文而不是自己猜第一行", async () => {
-    const installed: ProjectOpenedDto[] = [];
+    const installed: ProjectOpened[] = [];
     const session = build(acquisition(), installed);
     await session.openFolder();
     // D10：落点由 Rust 判定，装上项目的那一刻它就在 DTO 里。
@@ -329,7 +326,7 @@ describe("ProjectSession 取得一个项目", () => {
   });
 
   test("空项目的落点是 null——只有这一种情形允许停在空工作区", async () => {
-    const installed: ProjectOpenedDto[] = [];
+    const installed: ProjectOpened[] = [];
     const session = build(
       acquisition({ adoptFolder: async () => opened("empty-root", [], null, null) }),
       installed,

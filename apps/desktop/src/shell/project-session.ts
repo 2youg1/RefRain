@@ -4,9 +4,11 @@ import {
   type BlockHit,
   commands,
   type Disclosure,
-  type DocumentPageDto,
   type DocumentRow,
-  type ProjectOpenedDto,
+  type ProjectInput,
+  type ProjectOpened,
+  type ProjectOutput,
+  type ProjectPage,
   type SearchPrecision,
 } from "../generated/bindings.gen";
 import { e2ePickedPath } from "./pick";
@@ -24,7 +26,7 @@ export type ProjectOperation =
   | "set-disclosure";
 
 export interface ProjectCatalogPort {
-  page(rootId: string, after: string): Promise<DocumentPageDto>;
+  page(rootId: string, after: string): Promise<ProjectPage>;
   search(
     rootId: string,
     query: string,
@@ -54,9 +56,9 @@ export interface ProjectCatalogPort {
  * 返回 null 表示作者取消了选择：那不是失败，界面上什么都不该发生。
  */
 export interface ProjectAcquisitionPort {
-  adoptFolder(): Promise<ProjectOpenedDto | null>;
-  adoptFile(): Promise<ProjectOpenedDto | null>;
-  createProject(name: string): Promise<ProjectOpenedDto | null>;
+  adoptFolder(): Promise<ProjectOpened | null>;
+  adoptFile(): Promise<ProjectOpened | null>;
+  createProject(name: string): Promise<ProjectOpened | null>;
   createDocument(rootId: string, title: string, role: "chapter" | "material"): Promise<DocumentRow>;
   /** 把一份认可格式的文本按原字节复制进 Root，角色是 Chapter。 */
   importManuscript(rootId: string): Promise<DocumentRow | null>;
@@ -99,7 +101,7 @@ type ProjectState =
   | { readonly kind: "closed" }
   | {
       readonly kind: "open";
-      readonly project: ProjectOpenedDto;
+      readonly project: ProjectOpened;
       readonly catalog: CatalogState;
     };
 
@@ -117,23 +119,44 @@ export const browserDelay: DelayPort = {
  * e2e 那一支不是「测试代码混进产品」——桌面选择器在无人值守的窗口里打不开，
  * 而这五条路径本身就是要在真窗口里验证的东西。两支都走同一个 install。
  */
+type ProjectOutputOf<K extends ProjectOutput["kind"]> = Extract<ProjectOutput, { kind: K }>;
+
+async function callProject(input: ProjectInput): Promise<ProjectOutput> {
+  return unwrap(commands.project(input));
+}
+
+function expectProjectOutput<K extends ProjectOutput["kind"]>(
+  output: ProjectOutput,
+  kind: K,
+): ProjectOutputOf<K> {
+  if (output.kind !== kind) {
+    throw new Error(`Project use case returned ${output.kind}; expected ${kind}`);
+  }
+  return output as ProjectOutputOf<K>;
+}
+
+async function acquireProject(input: ProjectInput): Promise<ProjectOpened | null> {
+  const output = await callProject(input);
+  return output.kind === "cancelled" ? null : expectProjectOutput(output, "opened").value;
+}
+
 const productionAcquisition: ProjectAcquisitionPort = {
   async adoptFolder() {
     const picked = e2ePickedPath();
     return picked === null
-      ? unwrap(commands.chooseAndAdoptRoot("folder"))
+      ? acquireProject({ kind: "chooseAndAdoptRoot", value: { kind: "folder" } })
       : debugCommands.adoptRoot(picked, "folder");
   },
   async adoptFile() {
     const picked = e2ePickedPath();
     return picked === null
-      ? unwrap(commands.chooseAndAdoptRoot("file"))
+      ? acquireProject({ kind: "chooseAndAdoptRoot", value: { kind: "file" } })
       : debugCommands.adoptRoot(picked, "file");
   },
   async createProject(name) {
     const picked = e2ePickedPath();
     return picked === null
-      ? unwrap(commands.chooseAndCreateProject(name))
+      ? acquireProject({ kind: "chooseAndCreateProject", value: { name } })
       : debugCommands.createProject(picked, name);
   },
   async createDocument(rootId, title, role) {
@@ -159,19 +182,39 @@ const productionAcquisition: ProjectAcquisitionPort = {
 
 const productionCatalog: ProjectCatalogPort = {
   async page(rootId, after) {
-    return unwrap(commands.documentPage(rootId, after));
+    const output = await callProject({
+      kind: "documentPage",
+      value: { rootId: rootId, after },
+    });
+    return expectProjectOutput(output, "page").value;
   },
   async search(rootId, query, precision) {
-    return unwrap(commands.documentSearch(rootId, query, precision));
+    const output = await callProject({
+      kind: "documentSearch",
+      value: { rootId: rootId, query, precision },
+    });
+    return expectProjectOutput(output, "documents").value.documents;
   },
   async searchBlocks(rootId, query, precision) {
-    return unwrap(commands.blockSearch(rootId, query, precision));
+    const output = await callProject({
+      kind: "blockSearch",
+      value: { rootId: rootId, query, precision },
+    });
+    return expectProjectOutput(output, "blocks").value.blocks;
   },
   async remove(rootId, path) {
-    return unwrap(commands.deleteDocument(rootId, path));
+    const output = await callProject({
+      kind: "deleteDocument",
+      value: { rootId: rootId, path },
+    });
+    return expectProjectOutput(output, "deleted").value;
   },
   async setDisclosure(rootId, path, disclosure) {
-    return unwrap(commands.setDisclosure(rootId, path, disclosure));
+    const output = await callProject({
+      kind: "setDisclosure",
+      value: { rootId: rootId, path, disclosure },
+    });
+    return expectProjectOutput(output, "disclosureSet").value;
   },
 };
 
@@ -208,7 +251,7 @@ export class ProjectSession extends Session<ProjectOperation> {
   #request = 0;
   #cancelDelay: (() => void) | null = null;
 
-  get project(): ProjectOpenedDto | null {
+  get project(): ProjectOpened | null {
     return this.#state.kind === "open" ? this.#state.project : null;
   }
   get documents(): readonly DocumentRow[] {
@@ -295,14 +338,14 @@ export class ProjectSession extends Session<ProjectOperation> {
   }
 
   readonly #acquire: ProjectAcquisitionPort;
-  readonly #onInstalled: (project: ProjectOpenedDto) => void;
+  readonly #onInstalled: (project: ProjectOpened) => void;
 
   constructor(
     catalog: ProjectCatalogPort = productionCatalog,
     delay: DelayPort = browserDelay,
     report: (error: unknown) => void = () => undefined,
     acquire: ProjectAcquisitionPort = productionAcquisition,
-    onInstalled: (project: ProjectOpenedDto) => void = () => undefined,
+    onInstalled: (project: ProjectOpened) => void = () => undefined,
     describe: DescribeError = (error) => String(error),
   ) {
     super();
@@ -325,7 +368,7 @@ export class ProjectSession extends Session<ProjectOperation> {
     return this.activity;
   }
 
-  install(project: ProjectOpenedDto): void {
+  install(project: ProjectOpened): void {
     this.#invalidateRequests();
     this.#set({ kind: "open", project, catalog: { kind: "idle" } });
     this.#onInstalled(project);
@@ -412,10 +455,7 @@ export class ProjectSession extends Session<ProjectOperation> {
   }
 
   /** 四条取得路径共用的那一段：拿到非空就安装，取消什么都不做。 */
-  #acquireInto(
-    op: ProjectOperation,
-    acquire: () => Promise<ProjectOpenedDto | null>,
-  ): Promise<void> {
+  #acquireInto(op: ProjectOperation, acquire: () => Promise<ProjectOpened | null>): Promise<void> {
     return this.exclusive(op, async () => {
       const opened = await acquire();
       if (opened !== null) this.install(opened);

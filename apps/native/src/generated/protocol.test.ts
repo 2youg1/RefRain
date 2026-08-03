@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import * as protocol from "./protocol.ts";
 import {
   API_VERSION,
   CAPABILITY_MASK,
@@ -10,6 +11,7 @@ import {
   dispatchResponseRevision,
   dispatchResponseSession,
   dispatchResponseStatus,
+  dispatchResponseText,
   dispatchResponseTotalBlocks,
   dispatchResponseTotalBytes,
   dispatchResponseWindowStart,
@@ -19,14 +21,15 @@ import {
   PROTOCOL_VERSION,
   VIRTUAL_BLOCK_HEIGHT,
 } from "./protocol.ts";
-import * as protocol from "./protocol.ts";
 
 const MAGIC = new Uint8Array([82, 70, 82, 78]);
 
 test("generated protocol owns layout and errors, not product actions or request transport", () => {
   expect(VIRTUAL_BLOCK_HEIGHT).toBe(36);
   expect("encodeDispatchRequest" in protocol).toBe(false);
-  expect(Object.keys(protocol).some((name) => name.startsWith("ACTION_") || name.startsWith("INPUT_"))).toBe(false);
+  expect(
+    Object.keys(protocol).some((name) => name.startsWith("ACTION_") || name.startsWith("INPUT_")),
+  ).toBe(false);
 });
 
 test("generated response codec exposes projection metadata and typed failure", () => {
@@ -57,6 +60,23 @@ test("generated response codec exposes projection metadata and typed failure", (
   response[0] = 0;
   expect(isDispatchResponse(response)).toBe(false);
   expect(dispatchResponseStatus(response)).toBe(0);
+});
+
+test("generated response codec carries a bounded opaque use-case payload", () => {
+  const response = new Uint8Array(54);
+  response.set(MAGIC, 0);
+  writeU16(response, 4, PROTOCOL_VERSION);
+  writeU16(response, 6, 106);
+  writeU32(response, 48, 2);
+  response[52] = 123;
+  response[53] = 125;
+
+  expect(isDispatchResponse(response)).toBe(true);
+  expect(dispatchResponseText(response)).toEqual(new Uint8Array([123, 125]));
+
+  writeU32(response, 48, 3);
+  expect(isDispatchResponse(response)).toBe(false);
+  expect(dispatchResponseText(response)).toEqual(new Uint8Array(0));
 });
 
 test("protocol fingerprint is a generated SHA-256 identity", () => {

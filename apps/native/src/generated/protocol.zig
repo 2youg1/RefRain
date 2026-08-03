@@ -11,7 +11,8 @@ pub const default_viewport_blocks: u32 = 96;
 pub const virtual_block_height: f64 = 36.0;
 pub const protocol_fingerprint = "f21e1dcfa20d362a6744371f720fa945b36cf508c772d639d5b7c6a53d672aa1";
 pub const protocol_magic = [4]u8{ 82, 70, 82, 78 };
-pub const response_bytes: usize = 52;
+pub const response_header_bytes: usize = 52;
+pub const response_bytes: usize = response_header_bytes + projection_bytes;
 
 pub const ProtocolError = enum(u32) { protocol_mismatch = 1, invalid_request = 2, unknown_session = 3, domain_refusal = 4, host_failure = 5, stale_revision = 6 };
 
@@ -59,13 +60,17 @@ pub const RefrainNativeResponse = extern struct {
 };
 
 pub fn encodeDispatchResponse(response: RefrainNativeResponse) [response_bytes]u8 {
+    const requested_text_len: usize = response.text_len;
+    const invalid_text = requested_text_len > projection_bytes;
     const overflow = response.session > std.math.maxInt(u32) or
         response.revision > std.math.maxInt(u32) or
         response.total_bytes > std.math.maxInt(u32) or
         response.total_blocks > std.math.maxInt(u32) or
         response.window_start > std.math.maxInt(u32) or
-        response.first_block > std.math.maxInt(u32);
-    var out: [response_bytes]u8 = undefined;
+        response.first_block > std.math.maxInt(u32) or
+        invalid_text;
+    const text_len: usize = if (invalid_text) 0 else requested_text_len;
+    var out: [response_bytes]u8 = @splat(0);
     @memcpy(out[0..4], &protocol_magic);
     std.mem.writeInt(u16, out[4..6], response.protocol_version, .little);
     std.mem.writeInt(u16, out[6..8], response.action, .little);
@@ -80,18 +85,24 @@ pub fn encodeDispatchResponse(response: RefrainNativeResponse) [response_bytes]u
     std.mem.writeInt(u32, out[36..40], wireIndex(response.window_start), .little);
     std.mem.writeInt(u32, out[40..44], wireIndex(response.first_block), .little);
     std.mem.writeInt(u32, out[44..48], response.block_count, .little);
-    std.mem.writeInt(u32, out[48..52], response.text_len, .little);
+    std.mem.writeInt(u32, out[48..52], @intCast(text_len), .little);
+    @memcpy(out[response_header_bytes..][0..text_len], response.text[0..text_len]);
     return out;
+}
+
+pub fn encodedResponseLen(response: RefrainNativeResponse) usize {
+    return response_header_bytes + @min(@as(usize, response.text_len), projection_bytes);
 }
 
 fn wireIndex(value: u64) u32 {
     return std.math.cast(u32, value) orelse 0;
 }
 
-pub fn encodeProtocolError(value: ProtocolError, action: u16) [response_bytes]u8 {
+pub fn encodeProtocolError(value: ProtocolError, action: u16) [response_header_bytes]u8 {
     var response = emptyResponse(action);
     response.status = @intFromEnum(value);
-    return encodeDispatchResponse(response);
+    const encoded = encodeDispatchResponse(response);
+    return encoded[0..response_header_bytes].*;
 }
 
 pub fn emptyResponse(action: u16) RefrainNativeResponse {

@@ -13,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use refrain_app::ProjectEntry;
 use refrain_core::{
     DocumentFormat, DocumentRole, EditorAction, EditorChange, ErrorCode, Id, Insertion,
     KaraAutoEntry, KaraEvent, KaraMachine, KaraPolicy, KaraTransition, Lineage, Manuscript,
@@ -22,13 +23,9 @@ use refrain_core::{
 use refrain_store::history::{ActionSummary, HYDRATION_DEPTH, MAX_TEXT_ACTION_LIST};
 use refrain_store::mailbox::{MailboxBoxName, MailboxStanding};
 use refrain_store::project::{
-    BackupStatus, BlockHit, DocumentCommit, DocumentPage, DocumentPageQuery, DocumentRow,
-    FileStamp, MAX_DOCUMENT_PAGE_SIZE, MAX_DOCUMENT_SEARCH_RESULTS, ProjectFailure, ProjectStore,
-    RootLocator,
+    DocumentCommit, DocumentRow, FileStamp, ProjectFailure, ProjectStore,
 };
 use refrain_store::root::RootKind;
-use refrain_store::schema::{AppDb, Database};
-use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::Manager;
@@ -42,16 +39,7 @@ use fonts::{FontCatalog, FontFamilyDto};
 /// discipline applied to identity: unknown is a value, not a blank).
 const COMMIT: Option<&str> = option_env!("REFRAIN_COMMIT");
 
-/// Live handles for one adopted Root: its store and the manuscripts opened
-/// in this session.
-struct ProjectEntry {
-    store: ProjectStore,
-    manuscripts: HashMap<String, Manuscript>,
-}
-
 /// One live producer and the journal fact a concurrent observer must respect.
-/// The per-Run lock is held across process termination and the Cancelled write,
-/// so the observer cannot race that write with a terminal failure.
 struct ActiveRun {
     cancel: refrain_host::process::ProcessCancel,
     cancelled: bool,
@@ -59,11 +47,9 @@ struct ActiveRun {
 
 type ActiveRunHandle = Arc<Mutex<ActiveRun>>;
 
-/// Session state. `app.db` is the machine-level authority; projects are
-/// opened through it.
+/// Session state. `Application` owns app.db and every live project handle.
 pub struct AppState {
-    app_db: Mutex<Connection>,
-    projects: Mutex<HashMap<String, Arc<Mutex<ProjectEntry>>>>,
+    application: refrain_app::Application,
     kara: Mutex<KaraMachine>,
     config: Option<refrain_store::config::ConfigStore>,
     config_notice: Mutex<Option<String>>,
@@ -74,30 +60,7 @@ pub struct AppState {
 
 impl AppState {
     fn open(app_data_dir: &Path) -> Result<Self, RefrainError> {
-        std::fs::create_dir_all(app_data_dir).map_err(|error| {
-            RefrainError::new(
-                ErrorCode::Io,
-                "create the application data directory",
-                app_data_dir.display().to_string(),
-            )
-            .with_detail(error.to_string())
-        })?;
-        let mut app_db = Connection::open(app_data_dir.join("app.db")).map_err(|error| {
-            RefrainError::new(
-                ErrorCode::StateUnavailable,
-                "open app.db",
-                app_data_dir.display().to_string(),
-            )
-            .with_detail(error.to_string())
-        })?;
-        AppDb::migrate(&mut app_db).map_err(|error| {
-            RefrainError::new(
-                ErrorCode::StateUnavailable,
-                "migrate app.db",
-                app_data_dir.display().to_string(),
-            )
-            .with_detail(error.to_string())
-        })?;
+        let application = refrain_app::Application::open(app_data_dir)?;
         let (config, config_notice) = match refrain_store::config::ConfigStore::load(app_data_dir) {
             Ok((store, _snapshot)) => (Some(store), None),
             Err(failure) => {
@@ -108,8 +71,7 @@ impl AppState {
             }
         };
         Ok(Self {
-            app_db: Mutex::new(app_db),
-            projects: Mutex::new(HashMap::new()),
+            application,
             kara: Mutex::new(KaraMachine::new()),
             config,
             config_notice: Mutex::new(config_notice),
@@ -139,110 +101,26 @@ impl AppState {
         Ok(transition)
     }
 
-    /// 拿到一个项目的独占访问，而不是拿到全部项目的独占访问。
-    ///
-    /// 名录锁只管定位：找到那把项目自己的锁就立刻放开。原先这里持有全局锁直到
-    /// 闭包返回，于是任意两个项目上的收取、裁决与保存都被串成一列——多 Agent
-    /// 并发时这是容量上限，不是清洁癖（F-11，D5）。
+    /// Temporary adapter for command groups that have not migrated yet.
     fn with_project<T>(
         &self,
         root_id: &str,
-        use_entry: impl FnOnce(&AppState, &mut ProjectEntry) -> Result<T, RefrainError>,
+        use_entry: impl FnOnce(&AppState, &mut refrain_app::ProjectEntry) -> Result<T, RefrainError>,
     ) -> Result<T, RefrainError> {
-        let entry = {
-            let projects = self.projects.lock().map_err(|_| {
-                RefrainError::new(ErrorCode::StateUnavailable, "lock the project map", root_id)
-            })?;
-            Arc::clone(projects.get(root_id).ok_or_else(|| {
-                RefrainError::new(
-                    ErrorCode::StateUnavailable,
-                    "use a Root that is not open",
-                    root_id,
-                )
-            })?)
-        };
-        let mut entry = entry.lock().map_err(|_| {
-            RefrainError::new(ErrorCode::StateUnavailable, "lock the project", root_id)
+        self.application
+            .with_project(root_id, |entry| use_entry(self, entry))
+    }
+
+    fn rearm_kara(&self) -> Result<(), RefrainError> {
+        let mut kara = self.kara.lock().map_err(|_| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "lock the KARA machine",
+                "project",
+            )
         })?;
-        use_entry(self, &mut entry)
-    }
-
-    fn adopt(
-        &self,
-        locator: &RootLocator,
-    ) -> Result<(String, BackupStatus, DocumentPage, Option<String>), RefrainError> {
-        let mut app_db = self
-            .app_db
-            .lock()
-            .map_err(|_| RefrainError::new(ErrorCode::StateUnavailable, "lock app.db", "adopt"))?;
-        let (mut store, backup) = ProjectStore::adopt(&mut app_db, locator).map_err(into_domain)?;
-        let root_id = store.permit().root_id.to_string();
-        let page = store
-            .refresh_document_page(DocumentPageQuery {
-                after: None,
-                limit: MAX_DOCUMENT_PAGE_SIZE,
-            })
-            .map_err(into_domain)?;
-        // 取得与打开是同一个用例（D10）：这次选择对应的正文由 store 判定，
-        // 不让外壳从名录第一行去猜。
-        let landing = store.landing_document().map_err(into_domain)?;
-        // A project becoming active starts a work session (D18): the one
-        // automatic entry re-arms. It fires only when a manuscript opens.
-        {
-            let mut kara = self.kara.lock().map_err(|_| {
-                RefrainError::new(
-                    ErrorCode::StateUnavailable,
-                    "lock the KARA machine",
-                    "adopt",
-                )
-            })?;
-            kara.auto_entry = KaraAutoEntry::Pending;
-        }
-        let entry = ProjectEntry {
-            store,
-            manuscripts: HashMap::new(),
-        };
-        self.projects
-            .lock()
-            .map_err(|_| {
-                RefrainError::new(ErrorCode::StateUnavailable, "lock the project map", "adopt")
-            })?
-            .insert(root_id.clone(), Arc::new(Mutex::new(entry)));
-        Ok((root_id, backup, page, landing))
-    }
-}
-
-/// A Root as the interface names it.
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectOpenedDto {
-    pub root_id: String,
-    pub backup: BackupStatus,
-    pub documents: Vec<DocumentRow>,
-    pub document_total: u32,
-    pub document_cursor: Option<String>,
-    /// 这次取得之后应该打开的正文，项目内相对路径。
-    ///
-    /// `None` 只有一个含义：项目里确实没有 Chapter，空工作区是正确结果。
-    /// 外壳不得在此之外自行挑选一份来开。
-    pub opened_path: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct DocumentPageDto {
-    pub documents: Vec<DocumentRow>,
-    pub total: u32,
-    pub next: Option<String>,
-}
-
-impl From<DocumentPage> for DocumentPageDto {
-    fn from(page: DocumentPage) -> Self {
-        Self {
-            documents: page.documents,
-            total: page.total,
-            next: page.next,
-        }
+        kara.auto_entry = KaraAutoEntry::Pending;
+        Ok(())
     }
 }
 
@@ -443,176 +321,88 @@ fn health(echo: String) -> refrain_core::HealthReport {
     report
 }
 
-/// Adopt a path that already passed a Rust-owned chooser or the debug-only
-/// e2e seam. No release command accepts this path from the renderer.
+struct TauriProjectPlatform {
+    app: tauri::AppHandle,
+}
+
+impl refrain_app::ProjectPlatform for TauriProjectPlatform {
+    fn choose_root(&self, kind: RootKind) -> Result<Option<PathBuf>, RefrainError> {
+        use tauri_plugin_dialog::DialogExt as _;
+        let dialog = self.app.dialog().file().set_title(match kind {
+            RootKind::Folder => "选择项目文件夹",
+            RootKind::File => "选择一份手稿",
+        });
+        let selected = match kind {
+            RootKind::Folder => dialog.blocking_pick_folder(),
+            RootKind::File => dialog
+                .add_filter("Manuscript", &DocumentFormat::extensions())
+                .blocking_pick_file(),
+        };
+        chosen_path(selected)
+    }
+
+    fn choose_project_parent(&self) -> Result<Option<PathBuf>, RefrainError> {
+        use tauri_plugin_dialog::DialogExt as _;
+        chosen_path(
+            self.app
+                .dialog()
+                .file()
+                .set_title("选择项目的父目录")
+                .blocking_pick_folder(),
+        )
+    }
+}
+
+#[cfg(all(debug_assertions, not(feature = "generate-bindings")))]
+struct ChosenProjectPath(PathBuf);
+
+#[cfg(all(debug_assertions, not(feature = "generate-bindings")))]
+impl refrain_app::ProjectPlatform for ChosenProjectPath {
+    fn choose_root(&self, _kind: RootKind) -> Result<Option<PathBuf>, RefrainError> {
+        Ok(Some(self.0.clone()))
+    }
+
+    fn choose_project_parent(&self) -> Result<Option<PathBuf>, RefrainError> {
+        Ok(Some(self.0.clone()))
+    }
+}
+
+#[cfg(all(debug_assertions, not(feature = "generate-bindings")))]
 fn adopt_root_at(
     state: tauri::State<'_, AppState>,
     path: PathBuf,
     kind: RootKind,
-) -> Result<ProjectOpenedDto, RefrainError> {
-    let locator = RootLocator { path, kind };
-    let (root_id, backup, page, opened_path) = state.adopt(&locator)?;
-    Ok(ProjectOpenedDto {
-        root_id,
-        backup,
-        documents: page.documents,
-        document_total: page.total,
-        document_cursor: page.next,
-        opened_path,
-    })
+) -> Result<refrain_app::ProjectOpened, RefrainError> {
+    let output = state.application.project(
+        &ChosenProjectPath(path),
+        refrain_app::ProjectInput::ChooseAndAdoptRoot { kind },
+    )?;
+    state.rearm_kara()?;
+    match output {
+        refrain_app::ProjectOutput::Opened(project) => Ok(project),
+        _ => Err(RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "adopt a chosen Root",
+            "project use case returned no project",
+        )),
+    }
 }
 
-/// Let the author choose the Root and consume that choice in this command.
-#[tauri::command]
+/// One project-group bridge replaces seven one-to-one production commands.
+#[tauri::command(async)]
 #[specta::specta]
-async fn choose_and_adopt_root(
+fn project(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
-    kind: RootKind,
-) -> Result<Option<ProjectOpenedDto>, RefrainError> {
-    use tauri_plugin_dialog::DialogExt as _;
-    let dialog = app.dialog().file().set_title(match kind {
-        RootKind::Folder => "选择项目文件夹",
-        RootKind::File => "选择一份手稿",
-    });
-    let selected = match kind {
-        RootKind::Folder => dialog.blocking_pick_folder(),
-        RootKind::File => dialog
-            .add_filter("Manuscript", &DocumentFormat::extensions())
-            .blocking_pick_file(),
-    };
-    chosen_path(selected)?
-        .map(|path| adopt_root_at(state, path, kind))
-        .transpose()
-}
-
-/// Create a project beneath a parent that already passed a Rust-owned chooser.
-fn create_project_at(
-    state: tauri::State<'_, AppState>,
-    parent: PathBuf,
-    name: String,
-) -> Result<ProjectOpenedDto, RefrainError> {
-    if !refrain_store::root::is_legal_segment(&name) {
-        return Err(RefrainError::new(
-            ErrorCode::IllegalName,
-            "create a project named",
-            name,
-        ));
+    input: refrain_app::ProjectInput,
+) -> Result<refrain_app::ProjectOutput, RefrainError> {
+    let output = state
+        .application
+        .project(&TauriProjectPlatform { app }, input)?;
+    if matches!(output, refrain_app::ProjectOutput::Opened(_)) {
+        state.rearm_kara()?;
     }
-    let path = PathBuf::from(&parent).join(&name);
-    if path.try_exists().map_err(|error| {
-        RefrainError::new(
-            ErrorCode::Io,
-            "check a project path",
-            path.display().to_string(),
-        )
-        .with_detail(error.to_string())
-    })? {
-        return Err(RefrainError::new(
-            ErrorCode::Occupied,
-            "create a project at",
-            path.display().to_string(),
-        ));
-    }
-    std::fs::create_dir_all(&path).map_err(|error| {
-        RefrainError::new(
-            ErrorCode::Io,
-            "create a project directory",
-            path.display().to_string(),
-        )
-        .with_detail(error.to_string())
-    })?;
-    adopt_root_at(state, path, RootKind::Folder)
-}
-
-/// Let the author choose the parent and consume it while creating the project.
-#[tauri::command]
-#[specta::specta]
-async fn choose_and_create_project(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    name: String,
-) -> Result<Option<ProjectOpenedDto>, RefrainError> {
-    use tauri_plugin_dialog::DialogExt as _;
-    let selected = app
-        .dialog()
-        .file()
-        .set_title("选择项目的父目录")
-        .blocking_pick_folder();
-    chosen_path(selected)?
-        .map(|parent| create_project_at(state, parent, name))
-        .transpose()
-}
-
-/// Return one bounded page from an already reconciled project index.
-#[tauri::command(async)]
-#[specta::specta]
-fn document_page(
-    state: tauri::State<'_, AppState>,
-    root_id: String,
-    after: Option<String>,
-) -> Result<DocumentPageDto, RefrainError> {
-    state.with_project(&root_id, |_state, entry| {
-        entry
-            .store
-            .document_page(DocumentPageQuery {
-                after,
-                limit: MAX_DOCUMENT_PAGE_SIZE,
-            })
-            .map(DocumentPageDto::from)
-    })
-}
-
-/// How literal a search is: every query part must appear, or any part may.
-#[derive(Debug, Clone, Copy, Deserialize, Type)]
-#[serde(rename_all = "kebab-case")]
-pub enum SearchPrecision {
-    Exact,
-    Loose,
-}
-
-/// Search the complete project index. Request ordering belongs to the caller.
-#[tauri::command(async)]
-#[specta::specta]
-fn document_search(
-    state: tauri::State<'_, AppState>,
-    root_id: String,
-    query: String,
-    precision: SearchPrecision,
-) -> Result<Vec<DocumentRow>, RefrainError> {
-    let precision = match precision {
-        SearchPrecision::Exact => refrain_core::chinese_index::Precision::Exact,
-        SearchPrecision::Loose => refrain_core::chinese_index::Precision::Loose,
-    };
-    state.with_project(&root_id, |_state, entry| {
-        entry
-            .store
-            .search_documents_with(&query, precision, MAX_DOCUMENT_SEARCH_RESULTS)
-    })
-}
-
-/// Search and keep the blocks, so the result panel can show what matched.
-///
-/// `document_search` answers "which files"; this answers "which passages, and
-/// what do they say". A path cannot be highlighted — the query words are not
-/// in it — so showing the author where their words are needs the text.
-#[tauri::command(async)]
-#[specta::specta]
-fn block_search(
-    state: tauri::State<'_, AppState>,
-    root_id: String,
-    query: String,
-    precision: SearchPrecision,
-) -> Result<Vec<BlockHit>, RefrainError> {
-    let precision = match precision {
-        SearchPrecision::Exact => refrain_core::chinese_index::Precision::Exact,
-        SearchPrecision::Loose => refrain_core::chinese_index::Precision::Loose,
-    };
-    state.with_project(&root_id, |_state, entry| {
-        entry
-            .store
-            .search_blocks_with(&query, precision, MAX_DOCUMENT_SEARCH_RESULTS)
-    })
+    Ok(output)
 }
 
 /// Open a document: bytes from disk, blocks from the byte-authoritative
@@ -655,44 +445,6 @@ fn create_document(
             .map_err(into_domain)?;
         let path = created.row.path.clone();
         open_in_entry(state, entry, &path, created)
-    })
-}
-
-/// Delete a document or a material: the file goes to the system recycle bin
-/// (INV-6) and nowhere else. The catalog row and the search index follow the
-/// file; the audit — proposals, verdicts, annotations — stays. An imported
-/// Material's source clone stays too: the Source Backup is never written,
-/// and a delete is not an exception. Returns the row that was deleted.
-#[tauri::command(async)]
-#[specta::specta]
-fn delete_document(
-    state: tauri::State<'_, AppState>,
-    root_id: String,
-    path: String,
-) -> Result<DocumentRow, RefrainError> {
-    state.with_project(&root_id, |_state, entry| {
-        let row = entry.store.delete_document(&path).map_err(into_domain)?;
-        entry.manuscripts.remove(&path);
-        Ok(row)
-    })
-}
-
-/// Write what the author permits for one material (范围). The next dispatch's
-/// material listing carries it — the permission lives on the document's row,
-/// not in the ticket's memory.
-#[tauri::command(async)]
-#[specta::specta]
-fn set_disclosure(
-    state: tauri::State<'_, AppState>,
-    root_id: String,
-    path: String,
-    disclosure: Disclosure,
-) -> Result<DocumentRow, RefrainError> {
-    state.with_project(&root_id, |_state, entry| {
-        entry
-            .store
-            .set_disclosure(&path, disclosure)
-            .map_err(into_domain)
     })
 }
 
@@ -1762,14 +1514,9 @@ macro_rules! refrain_commands {
         collect_commands![
         display_profile,
         health,
-        choose_and_adopt_root,
-        choose_and_create_project,
-        document_page,
-        document_search,
+        project,
         open_document,
         create_document,
-        delete_document,
-        set_disclosure,
         current_document,
         apply_editor_action,
         undo_editor_action,
@@ -1788,7 +1535,6 @@ macro_rules! refrain_commands {
         list_builtin_typography_presets,
         set_universal_icon,
         universal_icon,
-        block_search,
         $($debug_command,)*
         list_proposals,
         record_verdict,
@@ -2358,7 +2104,7 @@ use refrain_core::context_compiler::{
     self, BeforeScope, ChangeEntry, ChangeKind, ContractMode, DispatchInput, DispatchPackage,
     InstalledSkill, ManifestEntry, SkillStatus,
 };
-use refrain_core::material_listing::{Disclosure, MaterialListing};
+use refrain_core::material_listing::MaterialListing;
 use refrain_host::host::{AgentHost, HostCommand, HostRefusal, ReviewTask, Run, RunProgress};
 use refrain_host::run_edge::RunEdge;
 use refrain_host::staging::DirectoryContext;
@@ -4780,7 +4526,7 @@ fn debug_adopt_root(
     state: tauri::State<'_, AppState>,
     path: String,
     kind: RootKind,
-) -> Result<ProjectOpenedDto, RefrainError> {
+) -> Result<refrain_app::ProjectOpened, RefrainError> {
     adopt_root_at(state, PathBuf::from(path), kind)
 }
 
@@ -4791,8 +4537,20 @@ fn debug_create_project(
     state: tauri::State<'_, AppState>,
     parent: String,
     name: String,
-) -> Result<ProjectOpenedDto, RefrainError> {
-    create_project_at(state, PathBuf::from(parent), name)
+) -> Result<refrain_app::ProjectOpened, RefrainError> {
+    let output = state.application.project(
+        &ChosenProjectPath(PathBuf::from(parent)),
+        refrain_app::ProjectInput::ChooseAndCreateProject { name },
+    )?;
+    state.rearm_kara()?;
+    match output {
+        refrain_app::ProjectOutput::Opened(project) => Ok(project),
+        _ => Err(RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "create a chosen project",
+            "project use case returned no project",
+        )),
+    }
 }
 
 #[cfg(all(debug_assertions, not(feature = "generate-bindings")))]

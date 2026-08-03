@@ -7,13 +7,15 @@ extern fn refrain_native_dispatch(request: protocol.RefrainNativeRequest) callco
 const rust_action_health: u16 = 1;
 const rust_action_open_manuscript: u16 = 2;
 const rust_action_apply_input: u16 = 3;
-const rust_action_project: u16 = 4;
+const rust_action_obtain_projection: u16 = 4;
+const rust_action_project: u16 = 5;
 
 const bridge_action_health: u16 = 101;
 const bridge_action_open_manuscript: u16 = 102;
 const bridge_action_text_event: u16 = 103;
 const bridge_action_viewport: u16 = 104;
 const bridge_action_undo: u16 = 105;
+const bridge_action_project: u16 = 106;
 
 const rust_input_set_selection: u16 = 1;
 const rust_input_insert_text: u16 = 2;
@@ -235,7 +237,7 @@ fn translateRequest(request_value: *protocol.RefrainNativeRequest, scroll_offset
                 scroll_offset_y,
                 request_value.viewport_block_count,
             ) orelse return false;
-            request_value.action = rust_action_project;
+            request_value.action = rust_action_obtain_projection;
         },
         bridge_action_undo => {
             if (request_value.input != 0 or request_value.text_len != 0) return false;
@@ -273,6 +275,10 @@ fn translateRequest(request_value: *protocol.RefrainNativeRequest, scroll_offset
                 return false;
             }
         },
+        bridge_action_project => {
+            if (request_value.input != 0 or request_value.flags != 0) return false;
+            request_value.action = rust_action_project;
+        },
         else => return false,
     }
     return true;
@@ -304,18 +310,32 @@ fn Callbacks(comptime Effects: type) type {
                 return;
             }
             var result = refrain_native_dispatch(request_value);
-            if (result.status == 0 and bridge_action != bridge_action_health) {
+            if (result.status == 0 and updatesDocumentProjection(bridge_action)) {
                 projection = result;
                 has_projection = true;
             }
             result.action = bridge_action;
-            feed(effects, key, result.status == 0, &protocol.encodeDispatchResponse(result));
+            if (bridge_action != bridge_action_project) result.text_len = 0;
+            const encoded = protocol.encodeDispatchResponse(result);
+            feed(
+                effects,
+                key,
+                result.status == 0,
+                encoded[0..protocol.encodedResponseLen(result)],
+            );
         }
 
         fn feed(effects: *Effects, key: u64, ok: bool, bytes: []const u8) void {
             effects.feedHostResult(key, ok, bytes) catch unreachable;
         }
     };
+}
+
+fn updatesDocumentProjection(action: u16) bool {
+    return action == bridge_action_open_manuscript or
+        action == bridge_action_text_event or
+        action == bridge_action_viewport or
+        action == bridge_action_undo;
 }
 
 const StubEffects = struct {
@@ -366,10 +386,40 @@ test "one dispatch health request crosses the Rust ABI" {
 
     try std.testing.expect(effects.response_ok);
     const response = effects.response[0..effects.response_len];
-    try std.testing.expectEqual(protocol.response_bytes, response.len);
+    try std.testing.expectEqual(protocol.response_header_bytes, response.len);
     try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, response[8..12], .little));
     try std.testing.expectEqual(protocol.api_version, std.mem.readInt(u16, response[12..14], .little));
     try std.testing.expectEqual(protocol.capability_mask, std.mem.readInt(u32, response[16..20], .little));
+}
+
+test "one project-group request preserves its opaque Rust payload without replacing document authority" {
+    var effects: StubEffects = .{};
+    bind(&effects);
+    projection = protocol.emptyResponse(rust_action_obtain_projection);
+    projection.revision = 77;
+    has_projection = true;
+
+    const input = "{\"kind\":\"notAProjectInput\"}";
+    var payload: [host_record_text_offset + input.len + host_record_tail_bytes]u8 = @splat(0);
+    writeF64(&payload, 0, @floatFromInt(bridge_action_project));
+    writeF64(&payload, 48, @floatFromInt(protocol.protocol_version));
+    std.mem.writeInt(u32, payload[host_record_text_length_offset..host_record_text_offset], @intCast(input.len), .little);
+    @memcpy(payload[host_record_text_offset..][0..input.len], input);
+    writeF64(
+        &payload,
+        host_record_text_offset + input.len,
+        @floatFromInt(protocol.default_viewport_blocks),
+    );
+    call(&effects, 71, &payload);
+
+    try std.testing.expect(!effects.response_ok);
+    const response = effects.response[0..effects.response_len];
+    try std.testing.expect(response.len > protocol.response_header_bytes);
+    try std.testing.expectEqual(bridge_action_project, std.mem.readInt(u16, response[6..8], .little));
+    const text_len = std.mem.readInt(u32, response[48..52], .little);
+    try std.testing.expectEqual(response.len, protocol.response_header_bytes + @as(usize, text_len));
+    try std.testing.expect(std.mem.startsWith(u8, response[protocol.response_header_bytes..], "decode the project input"));
+    try std.testing.expectEqual(@as(u64, 77), projection.revision);
 }
 
 test "open keeps the 11.4 MiB source in Rust and returns the requested block viewport" {
@@ -413,7 +463,7 @@ test "scroll offset selects the bounded Rust block projection" {
 }
 
 test "document view maps a reversed cross-block selection into projection offsets" {
-    projection = protocol.emptyResponse(rust_action_project);
+    projection = protocol.emptyResponse(rust_action_obtain_projection);
     projection.window_start = 100;
     projection.first_block = 10;
     projection.block_count = 2;
@@ -469,6 +519,15 @@ test "bridge translates SDK event tags into the distinct Rust input vocabulary" 
     try std.testing.expect(translateRequest(&undo, 0.0));
     try std.testing.expectEqual(rust_action_apply_input, undo.action);
     try std.testing.expectEqual(rust_input_undo, undo.input);
+
+    var project_input = std.mem.zeroes(protocol.RefrainNativeRequest);
+    project_input.action = bridge_action_project;
+    project_input.text_len = 2;
+    project_input.text[0] = '{';
+    project_input.text[1] = '}';
+    try std.testing.expect(translateRequest(&project_input, 0.0));
+    try std.testing.expectEqual(rust_action_project, project_input.action);
+    try std.testing.expect(!updatesDocumentProjection(bridge_action_project));
 }
 
 test "protocol mismatch, malformed, and unknown service requests remain typed failures" {

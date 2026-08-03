@@ -12,6 +12,7 @@ import {
   dispatchResponseRevision,
   dispatchResponseSession,
   dispatchResponseStatus,
+  dispatchResponseText,
   dispatchResponseTotalBlocks,
   dispatchResponseTotalBytes,
   dispatchResponseWindowStart,
@@ -31,6 +32,7 @@ const BRIDGE_OPEN_MANUSCRIPT = 102;
 const BRIDGE_TEXT_EVENT = 103;
 const BRIDGE_VIEWPORT = 104;
 const BRIDGE_UNDO = 105;
+const BRIDGE_PROJECT = 106;
 
 const EVENT_INSERT_TEXT = 1;
 const EVENT_DELETE_BACKWARD = 2;
@@ -55,6 +57,7 @@ export interface Model {
   readonly documentScroll: number;
   readonly viewportFirstBlock: number;
   readonly projectionWindowStart: number;
+  readonly projectResult: Uint8Array;
 }
 
 export type Msg =
@@ -62,17 +65,20 @@ export type Msg =
   | { readonly kind: "dispatch_err"; readonly bytes: Uint8Array }
   | { readonly kind: "document_input"; readonly event: TextInputEvent }
   | { readonly kind: "document_scroll"; readonly scroll: ScrollState }
-  | { readonly kind: "document_undo" };
+  | { readonly kind: "document_undo" }
+  | { readonly kind: "project_request"; readonly input: Uint8Array };
 
 export const viewUnbound = [
   "documentSession",
   "documentScroll",
   "viewportFirstBlock",
   "projectionWindowStart",
+  "projectResult",
   "dispatch_ok",
   "dispatch_err",
   "document_input",
   "document_scroll",
+  "project_request",
 ] as const;
 
 function checkingModel(): Model {
@@ -87,6 +93,7 @@ function checkingModel(): Model {
     documentScroll: 0,
     viewportFirstBlock: 0,
     projectionWindowStart: 0,
+    projectResult: new Uint8Array(0),
   };
 }
 
@@ -126,7 +133,11 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
     case "dispatch_ok": {
       const bytes = msg.bytes;
       if (!isDispatchResponse(bytes) || dispatchResponseStatus(bytes) !== 0) {
-        return { ...model, hostReady: false, status: asciiBytes("Native host returned an invalid contract.") };
+        return {
+          ...model,
+          hostReady: false,
+          status: asciiBytes("Native host returned an invalid contract."),
+        };
       }
       const action = dispatchResponseAction(bytes);
       if (action === BRIDGE_HEALTH) {
@@ -134,7 +145,11 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
           dispatchResponseApiVersion(bytes) !== API_VERSION ||
           (dispatchResponseCapabilities(bytes) & CAPABILITY_MASK) !== CAPABILITY_MASK
         ) {
-          return { ...model, hostReady: false, status: asciiBytes("Native host capability mismatch.") };
+          return {
+            ...model,
+            hostReady: false,
+            status: asciiBytes("Native host capability mismatch."),
+          };
         }
         const ready: Model = {
           ...model,
@@ -169,6 +184,14 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
             },
           ),
         ];
+      }
+      if (action === BRIDGE_PROJECT) {
+        return {
+          ...model,
+          hostReady: true,
+          status: asciiBytes("Rust project use case completed."),
+          projectResult: dispatchResponseText(bytes),
+        };
       }
       if (
         action !== BRIDGE_OPEN_MANUSCRIPT &&
@@ -289,6 +312,38 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
         ),
       ];
     }
+    case "project_request": {
+      if (msg.input.length > EVENT_TEXT_BYTES) {
+        return { ...model, status: asciiBytes("The project input exceeded the fixed ABI bound.") };
+      }
+      return [
+        model,
+        Cmd.request(
+          /* @generated:host-service */ "refrain.host",
+          {
+            action: BRIDGE_PROJECT,
+            anchor: 0,
+            cursor: 0,
+            flags: 0,
+            focus: 0,
+            input: 0,
+            protocolVersion: PROTOCOL_VERSION,
+            revision: model.documentRevision,
+            scrollOffsetY: model.documentScroll,
+            session: model.documentSession,
+            text: msg.input,
+            viewportBlockCount: DEFAULT_VIEWPORT_BLOCKS,
+            viewportFirstBlock: model.viewportFirstBlock,
+            windowStart: model.projectionWindowStart,
+          },
+          {
+            key: "native-dispatch",
+            ok: "dispatch_ok",
+            err: "dispatch_err",
+          },
+        ),
+      ];
+    }
   }
 }
 
@@ -316,7 +371,9 @@ function rejectDispatch(model: Model, bytes: Uint8Array): Model {
     return {
       ...model,
       documentRevision: dispatchResponseRevision(bytes),
-      status: asciiBytes("Document input raced a newer Rust revision; retry from the current view."),
+      status: asciiBytes(
+        "Document input raced a newer Rust revision; retry from the current view.",
+      ),
     };
   }
   return { ...model, status: asciiBytes("Native dispatch returned an unknown failure.") };
@@ -383,10 +440,7 @@ function textEventRequest(event: TextInputEvent): EncodedTextEvent | null {
   return { input, flags, anchor, focus, cursor, text };
 }
 
-function caretFlags(
-  direction: TextCaretDirection,
-  extend: boolean,
-): number {
+function caretFlags(direction: TextCaretDirection, extend: boolean): number {
   let flags = 0;
   switch (direction) {
     case "previous":

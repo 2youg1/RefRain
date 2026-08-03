@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { ScrollState } from "@native-sdk/core/events";
-import { ERROR_UNKNOWN_SESSION, PROTOCOL_VERSION } from "./generated/protocol.ts";
 import { type Model, update } from "./core.ts";
+import { ERROR_UNKNOWN_SESSION, PROTOCOL_VERSION } from "./generated/protocol.ts";
 
 const decoder = new TextDecoder();
 const model: Model = {
@@ -15,6 +15,7 @@ const model: Model = {
   documentScroll: 0,
   viewportFirstBlock: 0,
   projectionWindowStart: 0,
+  projectResult: new Uint8Array(0),
 };
 
 test("undo enters the one host dispatch without optimistic document state", () => {
@@ -67,6 +68,26 @@ test("the host projection response supplies the authoritative first block", () =
   expect(result.projectionWindowStart).toBe(5_976_883);
 });
 
+test("one opaque Project input enters one group dispatch", () => {
+  const input = new TextEncoder().encode('{"kind":"chooseAndAdoptRoot","value":{"kind":"folder"}}');
+  const result = update(model, { kind: "project_request", input });
+  expect(Array.isArray(result)).toBe(true);
+  if (!Array.isArray(result)) throw new Error("project input did not return an effect");
+  expect(result[0]).toBe(model);
+  if (result[1].op !== "request") throw new Error("project input did not issue the host request");
+  expect(readF64(result[1].payload, 0)).toBe(106);
+  expect(result[1].payload.slice(84, 84 + input.length)).toEqual(input);
+});
+
+test("one Project response remains an immutable Rust projection", () => {
+  const payload = new TextEncoder().encode('{"kind":"cancelled"}');
+  const result = update(model, { kind: "dispatch_ok", bytes: responseBytes(106, 0, payload) });
+  if (Array.isArray(result)) throw new Error("project response unexpectedly returned an effect");
+  expect(result.projectResult).toEqual(payload);
+  expect(result.documentRevision).toBe(model.documentRevision);
+  expect(result.documentBytes).toBe(model.documentBytes);
+});
+
 test("typed dispatch failure keeps the Rust boundary visible", () => {
   const response = responseBytes(105, ERROR_UNKNOWN_SESSION);
   const result = update(model, { kind: "dispatch_err", bytes: response });
@@ -87,12 +108,18 @@ function scroll(offsetY: number, viewportExtentY: number, contentExtentY: number
   };
 }
 
-function responseBytes(action: number, status: number): Uint8Array {
-  const response = new Uint8Array(52);
+function responseBytes(
+  action: number,
+  status: number,
+  payload: Uint8Array = new Uint8Array(0),
+): Uint8Array {
+  const response = new Uint8Array(52 + payload.length);
   response.set(new Uint8Array([82, 70, 82, 78]), 0);
   writeU16(response, 4, PROTOCOL_VERSION);
   writeU16(response, 6, action);
   writeU32(response, 8, status);
+  writeU32(response, 48, payload.length);
+  response.set(payload, 52);
   return response;
 }
 
