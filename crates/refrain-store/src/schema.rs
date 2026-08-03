@@ -558,6 +558,23 @@ impl Database for ProjectDb {
                     )
                 },
             },
+            Migration {
+                version: SchemaVersion(14),
+                name: "session-landing",
+                apply: |tx| {
+                    // 取得一个 Root 之后要落到哪一份正文，是项目的持久事实，不是
+                    // 前端组件状态：换一台机器、重开一次窗口，作者应该回到上次写的
+                    // 那一章。单行表，`id` 恒为 0，让「只有一个当前落点」由 schema
+                    // 保证，而不是靠调用方记得先删后插。
+                    tx.execute_batch(
+                        "CREATE TABLE session_landing (
+                             id       INTEGER PRIMARY KEY CHECK (id = 0),
+                             path     TEXT NOT NULL,
+                             opened_at INTEGER NOT NULL
+                         ) STRICT;",
+                    )
+                },
+            },
         ]
     }
 }

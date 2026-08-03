@@ -272,6 +272,15 @@ export class DocumentSession extends Session {
       this.#conflict = null;
       this.#relocating = null;
       this.#annotations = await this.gateway.listAnnotations(rootId, path);
+      // 上次未确认的行动怎么落地，是打开这一份文档的事实之一，说明它的那句话
+      // 也属于这里；外壳只负责显示公告，不负责判断恢复了几条。
+      if (opened.staleJournal.length > 0) {
+        this.notices.notice(
+          `有 ${opened.staleJournal.length} 条未确认的行动无法恢复，已留作证据。`,
+        );
+      } else if (opened.replayed > 0) {
+        this.notices.notice(`已恢复 ${opened.replayed} 条上次未确认的行动。`);
+      }
       this.emit();
       return opened;
     } catch (error) {

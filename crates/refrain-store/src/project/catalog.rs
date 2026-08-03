@@ -196,6 +196,72 @@ pub(super) fn decode_document(stored: StoredDocument) -> Result<DocumentRow, Ref
 }
 
 impl ProjectStore {
+    /// 取得这个 Root 之后应该打开哪一份正文。
+    ///
+    /// 「打开一个项目」这个用例只承诺一件事：作者看见自己的字。落点属于名录，
+    /// 因为只有名录同时知道 Root 是单文件还是文件夹、有哪些 Chapter、以及上次
+    /// 停在哪里；把它留给外壳，外壳就只能猜「第一行大概就是刚才那个文件」。
+    ///
+    /// 三条规则，按优先级：单文件 Root 就是那一份；否则回到记下的上次文档，
+    /// 但它必须仍在名录里（文件被删掉时记录会指向不存在的路径）；再否则取目录
+    /// 序第一篇 Chapter。项目确实没有 Chapter 时返回 `None`，那是唯一允许
+    /// 停在空工作区的情形。
+    pub fn landing_document(&mut self) -> Result<Option<String>, ProjectFailure> {
+        let documents = self.refresh_documents()?;
+        if self.permit.kind == RootKind::File {
+            return Ok(documents.first().map(|row| row.path.clone()));
+        }
+        let remembered = self.remembered_landing()?;
+        if let Some(path) = remembered
+            && documents.iter().any(|row| row.path == path)
+        {
+            return Ok(Some(path));
+        }
+        Ok(documents
+            .iter()
+            .find(|row| row.role == DocumentRole::Chapter)
+            .map(|row| row.path.clone()))
+    }
+
+    fn remembered_landing(&self) -> Result<Option<String>, ProjectFailure> {
+        self.db
+            .query_row("SELECT path FROM session_landing WHERE id = 0", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .optional()
+            .map_err(|error| {
+                ProjectFailure::Domain(
+                    RefrainError::new(
+                        ErrorCode::StateUnavailable,
+                        "read the session landing",
+                        "refrain.db",
+                    )
+                    .with_detail(error.to_string()),
+                )
+            })
+    }
+
+    /// 记下作者此刻在写哪一份，好让下次取得同一个 Root 时回到这里。
+    pub fn remember_landing(&mut self, relative: &str) -> Result<(), ProjectFailure> {
+        self.db
+            .execute(
+                "INSERT INTO session_landing (id, path, opened_at) VALUES (0, ?1, ?2)
+                 ON CONFLICT(id) DO UPDATE SET path = excluded.path, opened_at = excluded.opened_at",
+                params![relative, super::now_millis() as i64],
+            )
+            .map_err(|error| {
+                ProjectFailure::Domain(
+                    RefrainError::new(
+                        ErrorCode::StateUnavailable,
+                        "record the session landing",
+                        "refrain.db",
+                    )
+                    .with_detail(error.to_string()),
+                )
+            })?;
+        Ok(())
+    }
+
     /// Reconcile the authoritative scan in one transaction.
     ///
     /// An unchanged path-and-role fingerprint skips the temporary-table load

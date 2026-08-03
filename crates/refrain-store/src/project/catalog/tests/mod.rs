@@ -333,3 +333,92 @@ fn an_exact_hit_never_widens() {
     drop(app);
     fs::remove_dir_all(root).unwrap();
 }
+
+/// 落点四条规则各验一次。
+///
+/// 「打开一个项目」承诺的是作者看见自己的字（D10 / F-28）；这里钉的是决定
+/// 落在哪一份的那条规则，而不是外壳怎么用它。
+#[test]
+fn a_folder_root_lands_on_the_first_chapter_and_then_on_the_remembered_one() {
+    let root = std::env::temp_dir().join(format!("refrain-landing-{}", Id::new()));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("乙.md"), "第二章。\n").unwrap();
+    fs::write(root.join("甲.md"), "第一章。\n").unwrap();
+    let mut app = crate::schema::open_in_memory().unwrap();
+    AppDb::migrate(&mut app).unwrap();
+    let (mut store, _) = ProjectStore::adopt(
+        &mut app,
+        &RootLocator {
+            path: root.clone(),
+            kind: RootKind::Folder,
+        },
+    )
+    .unwrap();
+
+    // 没有记录时按目录序取第一篇 Chapter。
+    assert_eq!(store.landing_document().unwrap().as_deref(), Some("乙.md"));
+
+    // 记下来之后回到作者上次写的那一份，而不是回到目录序第一篇。
+    store.remember_landing("甲.md").unwrap();
+    assert_eq!(store.landing_document().unwrap().as_deref(), Some("甲.md"));
+
+    // 记录指向的文件不在名录里时回到第一篇，而不是回到空白。
+    store.remember_landing("已删除.md").unwrap();
+    assert_eq!(store.landing_document().unwrap().as_deref(), Some("乙.md"));
+
+    drop(store);
+    drop(app);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_single_file_root_lands_on_that_file() {
+    let root = std::env::temp_dir().join(format!("refrain-landing-file-{}", Id::new()));
+    fs::create_dir_all(&root).unwrap();
+    let file = root.join("独立稿.md");
+    fs::write(&file, "正文。\n").unwrap();
+    let mut app = crate::schema::open_in_memory().unwrap();
+    AppDb::migrate(&mut app).unwrap();
+    let (mut store, _) = ProjectStore::adopt(
+        &mut app,
+        &RootLocator {
+            path: file,
+            kind: RootKind::File,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        store.landing_document().unwrap().as_deref(),
+        Some("独立稿.md"),
+        "单文件 Root 必须落在刚选的那一份，不能靠名录第一行去猜"
+    );
+
+    drop(store);
+    drop(app);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// 空工作区只有一个正当理由：项目确实没有 Chapter。
+#[test]
+fn a_project_without_a_chapter_has_no_landing() {
+    let root = std::env::temp_dir().join(format!("refrain-landing-empty-{}", Id::new()));
+    fs::create_dir_all(root.join("资料")).unwrap();
+    fs::write(root.join("资料/参考.md"), "只是资料。\n").unwrap();
+    let mut app = crate::schema::open_in_memory().unwrap();
+    AppDb::migrate(&mut app).unwrap();
+    let (mut store, _) = ProjectStore::adopt(
+        &mut app,
+        &RootLocator {
+            path: root.clone(),
+            kind: RootKind::Folder,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(store.landing_document().unwrap(), None);
+
+    drop(store);
+    drop(app);
+    fs::remove_dir_all(root).unwrap();
+}
