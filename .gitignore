@@ -41,3 +41,8 @@ e2e/ime/shells/wv2/wv2pkg/
 # 测试语料是 scripts/freeze-corpora.ts 的产物，构建与门禁前自动生成。
 # 权威是那个脚本，不是磁盘上的字节（KL9 2026-07-30：上传不该包含这些）。
 /tests/corpora/*.md
+
+# TMPDIR for the recycle-bin tests: the trash service cannot write to
+# /.Trash-1000 when /tmp is a separate mount, so the documented command points
+# TMPDIR here. Scratch directories, never source.
+/.tmp/

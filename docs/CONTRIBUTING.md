@@ -131,6 +131,16 @@ at compile time, not at test time. On a clean checkout, cargo therefore stops at
 runs. `bun run gate` generates them as its first step, which is also why CI never
 saw this. `bun run corpora` does the generation on its own.
 
+The recycle-bin tests need a `TMPDIR` the desktop trash service can write to.
+Deletion goes to the system recycle bin and never silently downgrades to a
+permanent delete, so on a Linux host whose `/tmp` is a separate mount the trash
+service targets `/.Trash-1000` and three `refrain-store` tests stop with
+`PermissionDenied`. That is the platform, not the code:
+
+```sh
+TMPDIR=$PWD/.tmp cargo test --workspace --all-targets
+```
+
 The Rust checks are outside `bun run gate`. "The gate is green" is not the same
 as "this is ready".
 

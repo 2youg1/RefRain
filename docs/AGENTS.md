@@ -29,6 +29,15 @@ them with `include_bytes!` at compile time. On a clean checkout, cargo fails wit
 `bun run corpora` alone if you want the corpora without the full gate. This order
 matches the CI workflow.
 
+The recycle-bin tests need a `TMPDIR` the desktop trash service can write to. On
+a Linux host whose `/tmp` sits on a separate mount, `trash` targets
+`/.Trash-1000` and three `refrain-store` tests fail with `PermissionDenied`.
+Point `TMPDIR` at a writable directory first:
+
+```sh
+TMPDIR=$PWD/.tmp cargo test --workspace --all-targets
+```
+
 A new gate must be injection-verified: break the mechanism it depends on, require a specific red result, restore it, then require green. A missing symbol, fixture, or path must fail closed.
 
 Use fixtures that differ on the field under test. For a two-way mechanism, test both directions. Represent exhaustive sets with a shape that fails to compile when a member is missing.
