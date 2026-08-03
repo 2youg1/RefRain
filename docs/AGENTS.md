@@ -12,14 +12,22 @@ Read [ARCHITECTURE.md](ARCHITECTURE.md) before editing. Use its glossary; do not
 
 ## Verification
 
-Run all four checks:
+Run all four checks in this order:
 
 ```sh
+bun install
+bun run gate
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-targets
-bun run gate
 ```
+
+`bun run gate` must run before cargo. The roundtrip corpora under `tests/corpora`
+are generated, not committed; `crates/refrain-core/tests/source_layout.rs` reads
+them with `include_bytes!` at compile time. On a clean checkout, cargo fails with
+`couldn't read .../tests/corpora/*.md` until the gate generates them. Run
+`bun run corpora` alone if you want the corpora without the full gate. This order
+matches the CI workflow.
 
 A new gate must be injection-verified: break the mechanism it depends on, require a specific red result, restore it, then require green. A missing symbol, fixture, or path must fail closed.
 
