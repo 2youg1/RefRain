@@ -76,6 +76,7 @@ fn manuscripts(root: &Path) -> HashMap<String, Manuscript> {
 /// 编辑者选中一段、写下要求、点了派发——这一份就是那次点击冻结下来的东西。
 fn package_for(scope_text: &str) -> DispatchPackage {
     DispatchPackage {
+        scopes: Vec::new(),
         request_md: format!(
             "# Before\n\n<!-- scope ch01:b1 -->\n{scope_text}\n\n# Request\n\n这一段改得克制些。\n"
         ),

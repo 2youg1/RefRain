@@ -105,6 +105,7 @@ fn manuscripts_of(root: &Path) -> HashMap<String, Manuscript> {
 /// 一份冻结请求：作者选的范围逐字在里面，scope 标记就是 producer 要读的东西。
 fn package() -> DispatchPackage {
     DispatchPackage {
+        scopes: Vec::new(),
         request_md: format!(
             "# Before\n\n<!-- scope ch01:b1 -->\n{FIRST}\n\n# Request\n\n改克制些。\n"
         ),

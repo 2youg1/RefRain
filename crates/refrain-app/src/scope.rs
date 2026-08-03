@@ -114,6 +114,35 @@ pub fn locate_scope(manuscript: &Manuscript, before: &str) -> ScopeLocation {
     }
 }
 
+/// 冻结请求当初绑定的那几个块，现在还在不在这份稿子里。
+///
+/// 这是「按身份寻址」：派发时作者选中的块 id 已经是一个事实，把它带到收取时
+/// 用，定位就不再依赖文本内容。内容寻址的正确率随重复率下降（本仓库实测代码
+/// 文件 30.2% 的块有逐字相同的同伴），身份寻址不受影响——两段一模一样的文字
+/// 仍然是两个不同的块。
+///
+/// 返回值只回答「这几个块是否仍然连续地存在」。**它不检查文本有没有变**：
+/// 那是调用方的事，而且两种失败要说不同的话——块没了是作者删了它，块还在但
+/// 字节变了是作者改了它，作者要做的事不一样。
+#[must_use]
+pub fn locate_scope_by_identity(manuscript: &Manuscript, blocks: &[Id]) -> Option<Vec<Id>> {
+    if blocks.is_empty() {
+        return None;
+    }
+    let present = manuscript.head().blocks();
+    let mut positions = Vec::with_capacity(blocks.len());
+    for wanted in blocks {
+        let position = present.iter().position(|block| block.id() == *wanted)?;
+        positions.push(position);
+    }
+    // 必须仍然连续且保持原序：一个 Edit Scope 是一段连续的正文，中间被插进
+    // 新段落后，把首尾之间的新内容一并替换掉是作者没有要求的事。
+    if positions.windows(2).any(|pair| pair[1] != pair[0] + 1) {
+        return None;
+    }
+    Some(blocks.to_vec())
+}
+
 /// 比较 `[from, to]` 这几块连起来是否逐字节等于 `expected`，不做任何分配。
 fn joined_equals(
     blocks: &refrain_core::BlockSequence,

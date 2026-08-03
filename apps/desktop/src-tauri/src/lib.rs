@@ -2424,6 +2424,10 @@ fn compile_package(
         ));
     }
     let slug = doc_slug(path);
+    // The label the agent reads. It is a *position* — `b3` is the third block
+    // right now — so it is fine for a human to read and copy, and useless for
+    // finding the scope again after the author edits above it. The identities
+    // travel separately in `blocks`, below.
     let scope = match (selected.first(), selected.last()) {
         (Some((first, _)), Some((last, _))) if first == last => format!("{slug}:b{}", first + 1),
         (Some((first, _)), Some((last, _))) => format!("{slug}:b{}-b{}", first + 1, last + 1),
@@ -2435,6 +2439,14 @@ fn compile_package(
             ));
         }
     };
+    // The blocks in document order, which is not necessarily the order the
+    // caller listed them in: `selected` was built by walking the manuscript.
+    // Collection compares this sequence against the manuscript it finds later,
+    // so it must be the document's order, not the selection's.
+    let scope_blocks: Vec<Id> = selected
+        .iter()
+        .map(|(index, _)| blocks[*index].id())
+        .collect();
     let text = selected
         .iter()
         .map(|(_, text)| *text)
@@ -2530,7 +2542,11 @@ fn compile_package(
         materials,
         upstream: Vec::new(),
         request: prompt.to_string(),
-        scopes: vec![BeforeScope { scope, text }],
+        scopes: vec![BeforeScope {
+            scope,
+            text,
+            blocks: scope_blocks,
+        }],
         result_path: format!(
             "agents/{1}/runs/{0}/attempts/{0}/result.md",
             refrain_host::host::RUN_ID_PLACEHOLDER,

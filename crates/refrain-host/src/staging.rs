@@ -40,17 +40,48 @@ use std::path::{Path, PathBuf};
 
 use refrain_core::context_compiler::{DispatchPackage, ManifestEntry};
 use refrain_core::{Id, digest::content_hex};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::host::{FrozenContext, StagedDispatch};
 
 /// The snapshot as it lands on disk: what the author read, plus the
 /// canonical request with its run-id placeholder intact.
+///
+/// `scopes` carries the block identities each Edit Scope was cut from. The
+/// request file itself only shows the agent a readable position label
+/// (`ch01:b3`), which is a fine thing to copy back and a useless thing to
+/// locate with — insert a paragraph above it and the label points elsewhere.
+/// Collection reads the identities from here instead, so a scope is found by
+/// what it *is* rather than by what it *said* (审计 F-02).
 #[derive(Serialize)]
 struct ManifestSnapshot<'a> {
     digest: &'a str,
     manifest: &'a [ManifestEntry],
     request: &'a str,
+    scopes: Vec<ScopeIdentity>,
+}
+
+/// The same snapshot read back. Writing borrows and reading owns, so the two
+/// shapes cannot be one type; the field names are the contract between them,
+/// and `read_back_carries_the_scope_identities` is what keeps them honest.
+#[derive(Deserialize)]
+struct OwnedManifestSnapshot {
+    #[serde(default)]
+    scopes: Vec<ScopeIdentity>,
+}
+
+/// One Edit Scope's durable identity, as the manifest records it.
+///
+/// Separate from `BeforeScope` because this is the on-disk shape and it must
+/// stay readable by a build that wrote it before: the frozen text is not
+/// repeated here — the request file already holds it, and two copies of the
+/// same bytes would eventually disagree.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ScopeIdentity {
+    /// The label the agent sees and returns.
+    pub scope: String,
+    /// The blocks it was cut from, in document order.
+    pub blocks: Vec<Id>,
 }
 
 /// A `FrozenContext` over real directories. Construct with the project's
@@ -166,6 +197,26 @@ impl DirectoryContext {
         }
     }
 
+    /// The Edit Scope identities this Run's request was frozen with.
+    ///
+    /// `None` when the workspace has no manifest, and an empty vector when the
+    /// manifest predates identity-carrying (`serde(default)`). Both mean the
+    /// same thing to a caller — no identities to locate by — but they are kept
+    /// distinct because "no manifest" is a broken workspace while "an older
+    /// manifest" is a Run dispatched by an earlier build, and only the first
+    /// is worth investigating.
+    pub fn read_workspace_scopes(&self, workspace: &str) -> io::Result<Option<Vec<ScopeIdentity>>> {
+        let path = self.state_dir.join(workspace).join("context-manifest.json");
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let snapshot: OwnedManifestSnapshot =
+            serde_json::from_str(&text).map_err(io::Error::other)?;
+        Ok(Some(snapshot.scopes))
+    }
+
     /// Overwrite the promoted request (feeding an upstream section at launch).
     /// The frozen staged bytes are untouched — the freeze check already ran
     /// against them before promotion.
@@ -224,6 +275,14 @@ impl FrozenContext for DirectoryContext {
             digest: &package.digest,
             manifest: &package.manifest,
             request: &package.request_md,
+            scopes: package
+                .scopes
+                .iter()
+                .map(|scope| ScopeIdentity {
+                    scope: scope.scope.clone(),
+                    blocks: scope.blocks.clone(),
+                })
+                .collect(),
         })
         .map_err(io::Error::other)?;
         let manifest_file = manifests.join(format!("{}.json", package.digest));
@@ -317,6 +376,7 @@ mod tests {
         let request_md =
             "# Request\n改克制。\n\n# Reply format\n写进 runs/<run-id>/result.md。\n".to_string();
         DispatchPackage {
+            scopes: Vec::new(),
             digest: content_hex(request_md.as_bytes()),
             request_md,
             manifest: vec![ManifestEntry {

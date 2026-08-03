@@ -982,6 +982,7 @@ mod tests {
             "# Before\n<!-- scope ch01:b3 -->\n原文。\n\n# Request\n改克制。\n\n# Reply format\n把 <agent-result> 写进 runs/{RUN_ID_PLACEHOLDER}/attempts/{RUN_ID_PLACEHOLDER}/result.md。\n"
         );
         DispatchPackage {
+            scopes: Vec::new(),
             digest: content_hex(request_md.as_bytes()),
             request_md,
             manifest: vec![ManifestEntry {
@@ -1131,6 +1132,7 @@ mod tests {
             "# Before\n原文。\n\n# Request\n改克制。\n\n# Reply format\n写进 agents/{AGENT_ID_PLACEHOLDER}/runs/{RUN_ID_PLACEHOLDER}/attempts/{RUN_ID_PLACEHOLDER}/result.md。\n"
         );
         let package = DispatchPackage {
+            scopes: Vec::new(),
             digest: content_hex(request_md.as_bytes()),
             request_md,
             manifest: vec![],
@@ -1184,6 +1186,7 @@ mod tests {
         let request_md =
             format!("产出写进 agents/{AGENT_ID_PLACEHOLDER}/runs/{RUN_ID_PLACEHOLDER}/。");
         let package = DispatchPackage {
+            scopes: Vec::new(),
             digest: content_hex(request_md.as_bytes()),
             request_md,
             manifest: vec![],

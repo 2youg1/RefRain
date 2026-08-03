@@ -59,6 +59,7 @@ fn main() {
         scopes: vec![BeforeScope {
             scope: "ch01:b1".to_string(),
             text: "剑一直握在他手里。".to_string(),
+            blocks: vec![refrain_core::Id::new()],
         }],
         request: "把这一段改得更克制。".to_string(),
         contract_mode: ContractMode::Short,

@@ -12,6 +12,7 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use crate::Id;
 use crate::digest::content_hex;
 use crate::material_listing::MaterialListing;
 use crate::upstream_work::UpstreamWork;
@@ -26,12 +27,27 @@ pub enum Tokens {
     Unknown,
 }
 
-/// One Edit Scope in the `# Before` section: a scope id and the original text
-/// the agent must address with it, byte for byte.
+/// One Edit Scope in the `# Before` section: a scope id, the original text
+/// the agent must address with it, byte for byte, and the blocks that text
+/// came from.
+///
+/// `scope` is the label the agent reads and copies back (`ch01:b3`). It is a
+/// *position*, so it says nothing durable: insert a paragraph above and the
+/// same label points at different text. `blocks` carries the identities the
+/// author actually selected at dispatch, which survive edits elsewhere in the
+/// document. Locating a returned scope by identity is exact; locating it by
+/// text alone cannot tell two identical paragraphs apart (审计 F-02).
+///
+/// Both travel because they answer different questions. The label is what the
+/// agent can read and reproduce; the ids are how this application finds the
+/// scope again. Sending ids to the agent instead would make the request harder
+/// for a human to read and much easier for a model to mistype.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BeforeScope {
     pub scope: String,
     pub text: String,
+    /// The blocks this scope was cut from, in document order.
+    pub blocks: Vec<Id>,
 }
 
 /// One verdict from a previous round, as it serialises into `<changes>`.
@@ -159,6 +175,11 @@ pub struct DispatchPackage {
     pub request_md: String,
     pub manifest: Vec<ManifestEntry>,
     pub digest: String,
+    /// Each Edit Scope's durable identity, carried alongside the request so
+    /// collection can find the scope by block id rather than by matching its
+    /// text. The request file shows the agent only a position label; identity
+    /// travels here. See `BeforeScope`.
+    pub scopes: Vec<BeforeScope>,
 }
 
 fn digest_of(text: &str) -> String {
@@ -390,6 +411,10 @@ pub fn compile(input: &DispatchInput) -> DispatchPackage {
         digest: digest_of(&request_md),
         request_md,
         manifest,
+        // Identity travels with the package, not inside the request text: the
+        // agent never needs a block id, and putting one in the file it reads
+        // only invites it to copy the wrong thing back.
+        scopes: input.scopes.clone(),
     }
 }
 
@@ -502,10 +527,12 @@ mod tests {
             BeforeScope {
                 scope: "ch01:b3".to_string(),
                 text: "这里是第三段的原文。".to_string(),
+                blocks: vec![Id::new()],
             },
             BeforeScope {
                 scope: "ch01:b4".to_string(),
                 text: "这里是第四段的原文。".to_string(),
+                blocks: vec![Id::new()],
             },
         ]
     }

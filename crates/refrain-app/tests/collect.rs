@@ -50,6 +50,22 @@ fn manuscript_of(root: &Path) -> Manuscript {
 /// 不走完整的派发链路。那条链路自己有测试，而这里要问的是收取——把它需要的
 /// 目录结构直接铺出来，测试就只会因为收取的逻辑而失败。
 fn stage(state_dir: &Path, workspace: &str, run_id: Id, before: &str, reply: &str) {
+    stage_with_identity(state_dir, workspace, run_id, before, reply, None);
+}
+
+/// 同上，但另写一份 context-manifest.json，把这个 scope 当初绑定的块 id 带上。
+///
+/// 派发的真实路径会写这份文件（`DirectoryContext::stage` + `promote_request`），
+/// 而这些测试直接铺目录。`None` 造出的是「更早的构建派发的 Run」——没有身份，
+/// 收取回落到按原文定位。
+fn stage_with_identity(
+    state_dir: &Path,
+    workspace: &str,
+    run_id: Id,
+    before: &str,
+    reply: &str,
+    blocks: Option<&[Id]>,
+) {
     let dir = state_dir.join(workspace);
     fs::create_dir_all(&dir).unwrap();
     fs::write(
@@ -57,6 +73,20 @@ fn stage(state_dir: &Path, workspace: &str, run_id: Id, before: &str, reply: &st
         format!("# Before\n\n<!-- scope ch01:b1 -->\n{before}\n"),
     )
     .unwrap();
+    if let Some(blocks) = blocks {
+        let ids: Vec<String> = blocks.iter().map(ToString::to_string).collect();
+        fs::write(
+            dir.join("context-manifest.json"),
+            format!(
+                r#"{{"digest":"d","manifest":[],"request":"","scopes":[{{"scope":"ch01:b1","blocks":[{}]}}]}}"#,
+                ids.iter()
+                    .map(|id| format!("\"{id}\""))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+        )
+        .unwrap();
+    }
     let attempt = dir.join("attempts").join(run_id.to_string());
     fs::create_dir_all(&attempt).unwrap();
     fs::write(attempt.join("result.md"), reply).unwrap();
@@ -106,6 +136,7 @@ fn dispatched_run_with_edge(
         retry_runs: vec![],
         edges,
         package: DispatchPackage {
+            scopes: Vec::new(),
             request_md: String::new(),
             manifest: vec![],
             digest: "package".to_string(),
@@ -329,6 +360,68 @@ fn a_scope_whose_text_repeats_is_refused_with_every_candidate() {
     );
     // 一个提案都不能落地：不确定改哪一处时写入，比不写入坏得多。
     assert!(store.proposals_for(CHAPTER).unwrap().is_empty());
+}
+
+#[test]
+fn identity_lands_a_repeated_scope_on_the_block_the_author_actually_chose() {
+    // A 的判据。两段逐字相同时，按原文定位只能拒绝（B 已经做到不改错段），
+    // 但作者本来就有权得到结果——他当初选的是**哪一个**块，这个事实在派发那一刻
+    // 就存在，只是从前没被带过来。带上之后，重复不再是障碍。
+    //
+    // 这条钉住的是「落在正确那一处」，不只是「没有失败」：提案的 scope 必须是
+    // 第三个块，而不是文字相同的第一个块。
+    let root = scratch();
+    fs::write(
+        root.join(CHAPTER),
+        format!("{FIRST}\n\n{SECOND}\n\n{FIRST}\n"),
+    )
+    .unwrap();
+
+    let (_app, mut store) = store_at(&root);
+    let state_dir = store.layout().state_dir.clone();
+    let run_id = dispatched_run(&mut store, "runs/one");
+
+    let manuscript = manuscript_of(&root);
+    let blocks = manuscript.head().blocks();
+    // 作者选的是**第三块**——与第一块逐字相同的那一个。
+    let chosen = blocks[2].id();
+
+    stage_with_identity(
+        &state_dir,
+        "runs/one",
+        run_id,
+        FIRST,
+        &replacement("改写后的一段。"),
+        Some(&[chosen]),
+    );
+    let manuscripts = [(CHAPTER.to_string(), manuscript.clone())]
+        .into_iter()
+        .collect();
+
+    let collected = collect_attempt(&mut store, &manuscripts, run_id, 10).unwrap();
+
+    assert_eq!(
+        collected,
+        Collected::Completed {
+            proposals: 1,
+            memos: 0,
+            drafts: 0,
+        }
+    );
+    let proposals = store.proposals_for(CHAPTER).unwrap();
+    assert_eq!(proposals.len(), 1);
+    // 决定性的一条：提案绑在作者选的那一块上，不是文字相同的第一块。
+    // `scope` 存的是块 id 的 JSON 数组（见 collect.rs 的 `json_of`）。
+    let scope = &proposals[0].scope;
+    assert_eq!(
+        *scope,
+        format!("[\"{chosen}\"]"),
+        "the proposal must bind the block the author chose"
+    );
+    assert!(
+        !scope.contains(&blocks[0].id().to_string()),
+        "the identical first block must not be touched: {scope}"
+    );
 }
 
 #[test]

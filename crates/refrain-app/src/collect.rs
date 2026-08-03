@@ -23,7 +23,7 @@ use refrain_host::staging::DirectoryContext;
 use refrain_store::project::ProjectStore;
 
 use crate::journal::{StoreJournal, into_domain, into_domain_host, json_of};
-use crate::scope::{ScopeLocation, before_sections, locate_scope};
+use crate::scope::{ScopeLocation, before_sections, locate_scope, locate_scope_by_identity};
 
 /// 收取的三种结局。
 ///
@@ -122,6 +122,24 @@ pub fn collect_attempt(
         // 契约来自生产者当初读到的字节，永远不来自结果文件自己的声称（SPEC 8.4）。
         let scopes = before_sections(&request);
         let scope_ids: Vec<String> = scopes.iter().map(|(id, _)| id.clone()).collect();
+        // 派发时作者选中的块 id，随 manifest 一起提升进这个工作区。它是定位的
+        // 首选权威：内容寻址分辨不出两段一模一样的文字，身份寻址可以。
+        // 缺失（老 Run 的 manifest 没有这一节）不是失败——回落到按原文定位，
+        // 那条路本身已经在多处匹配时具名拒绝。
+        let identities: HashMap<String, Vec<Id>> = context
+            .read_workspace_scopes(&run.workspace)
+            .map_err(|error| {
+                RefrainError::new(
+                    ErrorCode::Io,
+                    "read the frozen scope identities",
+                    run.workspace.clone(),
+                )
+                .with_detail(error.to_string())
+            })?
+            .unwrap_or_default()
+            .into_iter()
+            .map(|identity| (identity.scope, identity.blocks))
+            .collect();
         let contract = agent_protocol::ArtifactContract {
             scopes: &scope_ids,
             basis: &basis,
@@ -198,7 +216,50 @@ pub fn collect_attempt(
             let Some(before) = before_by_scope.get(&replacement.scope) else {
                 return fail(&mut host, run_id, "unknown-scope", &replacement.scope, now);
             };
-            let blocks = match locate_scope(manuscript, before) {
+            // 身份优先。派发时这个 scope 绑定了哪几个块是一个已经存在的事实，
+            // 用它定位，两段一模一样的文字也不会混淆。
+            //
+            // 找到块之后仍要核对字节：块还在但文本变了，说明作者改了这一段，
+            // Agent 读到的已经不是现在的正文，套上去就是覆盖他没让改的字。
+            let located = match identities.get(&replacement.scope) {
+                Some(frozen_blocks) => {
+                    match locate_scope_by_identity(manuscript, frozen_blocks) {
+                        Some(blocks) => {
+                            let current = blocks
+                                .iter()
+                                .filter_map(|id| {
+                                    manuscript
+                                        .head()
+                                        .blocks()
+                                        .iter()
+                                        .find(|block| block.id() == *id)
+                                        .map(|block| block.text().to_string())
+                                })
+                                .collect::<Vec<_>>()
+                                .join(
+                                    std::str::from_utf8(manuscript.scan().separator())
+                                        .expect("separators are ASCII"),
+                                );
+                            if current == *before {
+                                ScopeLocation::Unique(blocks)
+                            } else {
+                                // 块还在，字节变了：与「作者改过」是同一件事，
+                                // 走同一条具名失败，而不是退回按原文搜一遍——
+                                // 那只会在别处找到一段碰巧相同的文字。
+                                ScopeLocation::Moved
+                            }
+                        }
+                        // 块不在了（作者删了它们，或它们不再连续）。此时原文
+                        // 匹配是仅剩的线索，且只在全文唯一时才可信。
+                        None => locate_scope(manuscript, before),
+                    }
+                }
+                // 这个 Run 的 manifest 没有身份（更早的构建派发的）。按原文定位，
+                // 多处匹配仍然具名拒绝。
+                None => locate_scope(manuscript, before),
+            };
+
+            let blocks = match located {
                 ScopeLocation::Unique(blocks) => blocks,
                 ScopeLocation::Moved => {
                     // 作者在派发之后动过这一段。结果留在盘上，这一次带着原因失败，
