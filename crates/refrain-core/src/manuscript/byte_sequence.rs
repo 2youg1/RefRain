@@ -93,6 +93,41 @@ impl ByteSequence {
         self.iter().collect()
     }
 
+    pub(super) fn len(&self) -> usize {
+        self.len
+    }
+
+    pub(super) fn is_char_boundary(&self, offset: usize) -> bool {
+        if offset == 0 || offset == self.len {
+            return true;
+        }
+        self.byte(offset)
+            .is_some_and(|byte| byte & 0b1100_0000 != 0b1000_0000)
+    }
+
+    pub(super) fn copy_range(&self, range: Range<usize>) -> Option<Vec<u8>> {
+        if range.start > range.end || range.end > self.len {
+            return None;
+        }
+        let mut bytes = Vec::with_capacity(range.end - range.start);
+        let mut cursor = 0;
+        for piece in self.pieces.iter() {
+            let piece_end = cursor + piece.len();
+            let start = range.start.max(cursor);
+            let end = range.end.min(piece_end);
+            if start < end {
+                bytes.extend_from_slice(
+                    &piece.bytes[piece.start + start - cursor..piece.start + end - cursor],
+                );
+            }
+            cursor = piece_end;
+            if cursor >= range.end {
+                break;
+            }
+        }
+        Some(bytes)
+    }
+
     pub(super) fn matches(&self, source: &[u8]) -> bool {
         self.len == source.len() && self.iter().eq(source.iter().copied())
     }
@@ -124,6 +159,18 @@ impl ByteSequence {
         self.pieces
             .iter()
             .flat_map(|piece| piece.bytes[piece.start..piece.end].iter().copied())
+    }
+
+    pub(super) fn byte(&self, offset: usize) -> Option<u8> {
+        let mut cursor = 0;
+        for piece in self.pieces.iter() {
+            let end = cursor + piece.len();
+            if offset < end {
+                return piece.bytes.get(piece.start + offset - cursor).copied();
+            }
+            cursor = end;
+        }
+        None
     }
 
     fn append_range(&self, range: Range<usize>, output: &mut Vec<Piece>) {

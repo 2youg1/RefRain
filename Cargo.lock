@@ -3515,6 +3515,7 @@ name = "refrain-native-host"
 version = "0.2.4"
 dependencies = [
  "refrain-app",
+ "refrain-core",
 ]
 
 [[package]]

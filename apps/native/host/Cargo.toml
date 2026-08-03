@@ -6,5 +6,9 @@ license.workspace = true
 rust-version.workspace = true
 description = "Native SDK composition boundary: fixed C ABI over RefRain use cases."
 
+[lib]
+crate-type = ["rlib", "staticlib"]
+
 [dependencies]
 refrain-app = { workspace = true }
+refrain-core = { workspace = true }

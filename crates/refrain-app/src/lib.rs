@@ -18,6 +18,7 @@ pub mod collect;
 pub mod decide;
 pub mod journal;
 pub mod native;
+pub mod native_document;
 pub mod review;
 pub mod scope;
 pub mod upstream;

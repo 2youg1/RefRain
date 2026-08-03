@@ -1,19 +1,14 @@
-<column gap="14" padding="20">
+<column gap="8">
   <row gap="10" cross="center">
-    <text grow="1">RefRain</text>
+    <text grow="1">RefRain · Native document surface</text>
     <if test="{hostReady}">
-      <badge variant="primary">Native host ready</badge>
+      <badge variant="primary">Rust authority ready</badge>
     </if>
     <else>
-      <badge variant="secondary">Native host check</badge>
+      <badge variant="secondary">Host check</badge>
     </else>
+    <button variant="secondary" on-press="document_undo">Undo</button>
   </row>
-  <separator />
-  <column gap="10" grow="1" main="center" cross="center">
-    <text>Native production surface</text>
-    <text>{status}</text>
-    <text>protocol {protocolVersion} · API {apiVersion} · capabilities {capabilities}</text>
-    <button variant="primary" on-press="check_health">Check native host</button>
-  </column>
-  <status-bar>One Model · one update loop · typed Rust boundary</status-bar>
+  <text>{status}</text>
+  <text>protocol {protocolVersion} · revision {documentRevision} · {documentBlocks} blocks · {documentBytes} bytes</text>
 </column>

@@ -535,6 +535,20 @@ pub enum TextRefusal {
     LineageLength { expected: usize, actual: usize },
     #[error("source block {block} is not UTF-8")]
     InvalidUtf8 { block: usize },
+    #[error("byte range {start}..{end} is outside document length {length}")]
+    InvalidByteRange {
+        start: usize,
+        end: usize,
+        length: usize,
+    },
+    #[error("byte offset {offset} splits a UTF-8 scalar")]
+    InvalidByteBoundary { offset: usize },
+    #[error("block range {start}..{end} is outside document block count {length}")]
+    InvalidBlockRange {
+        start: usize,
+        end: usize,
+        length: usize,
+    },
     #[error("a replacement range cannot be empty")]
     EmptyRange,
     #[error("an Edit Scope cannot be empty")]
@@ -871,8 +885,181 @@ impl Manuscript {
         self.head.block_ids()
     }
 
+    #[must_use]
+    pub fn byte_len(&self) -> usize {
+        self.materialized.len()
+    }
+
+    #[must_use]
+    pub fn is_byte_boundary(&self, offset: usize) -> bool {
+        self.materialized.is_char_boundary(offset)
+    }
+
+    #[must_use]
+    pub fn byte(&self, offset: usize) -> Option<u8> {
+        self.materialized.byte(offset)
+    }
+
+    pub fn read_bytes(&self, range: std::ops::Range<usize>) -> Result<Vec<u8>, TextRefusal> {
+        self.materialized
+            .copy_range(range.clone())
+            .ok_or(TextRefusal::InvalidByteRange {
+                start: range.start,
+                end: range.end,
+                length: self.materialized.len(),
+            })
+    }
+
+    /// Resolve a half-open block range to its exact source-byte envelope.
+    ///
+    /// The end uses the next block's start, not the previous block's end, so
+    /// separators remain attached to the projection and adjacent windows join
+    /// back into the original source without inventing delimiter bytes.
+    pub fn block_byte_range(
+        &self,
+        range: std::ops::Range<usize>,
+    ) -> Result<std::ops::Range<usize>, TextRefusal> {
+        let length = self.head.blocks.len();
+        if range.start > range.end || range.end > length {
+            return Err(TextRefusal::InvalidBlockRange {
+                start: range.start,
+                end: range.end,
+                length,
+            });
+        }
+        if range.is_empty() {
+            let offset = if range.start == length {
+                self.materialized.len()
+            } else {
+                self.offsets
+                    .span(range.start)
+                    .ok_or(TextRefusal::SourceDrift(SourceDrift))?
+                    .start
+            };
+            return Ok(offset..offset);
+        }
+        let start = self
+            .offsets
+            .span(range.start)
+            .ok_or(TextRefusal::SourceDrift(SourceDrift))?
+            .start;
+        let end = if range.end == length {
+            self.materialized.len()
+        } else {
+            self.offsets
+                .span(range.end)
+                .ok_or(TextRefusal::SourceDrift(SourceDrift))?
+                .start
+        };
+        Ok(start..end)
+    }
+
     pub fn materialize(&self) -> Result<Vec<u8>, SourceDrift> {
         Ok(self.materialized.to_vec())
+    }
+
+    /// Replace one UTF-8 byte range through the same Text Action and undo
+    /// history used by block-addressed edits.
+    ///
+    /// The editor speaks document offsets. The manuscript owns block lineage,
+    /// source gaps, and action records. This boundary translates once instead
+    /// of making every UI reproduce those rules. Only the affected block
+    /// envelope is copied; ordinary input inside one block keeps the existing
+    /// piece-table fast path.
+    pub fn replace_bytes(
+        &mut self,
+        range: std::ops::Range<usize>,
+        replacement: &str,
+        cause: impl Into<String>,
+    ) -> Result<TextTransition, TextRefusal> {
+        let length = self.materialized.len();
+        if range.start > range.end || range.end > length {
+            return Err(TextRefusal::InvalidByteRange {
+                start: range.start,
+                end: range.end,
+                length,
+            });
+        }
+        for offset in [range.start, range.end] {
+            if !self.materialized.is_char_boundary(offset) {
+                return Err(TextRefusal::InvalidByteBoundary { offset });
+            }
+        }
+
+        let block_count = self.head.blocks.len();
+        let first = (0..block_count)
+            .rev()
+            .find(|index| {
+                self.offsets
+                    .span(*index)
+                    .is_some_and(|span| span.start <= range.start)
+            })
+            .unwrap_or(0);
+        let last = (first..block_count)
+            .find(|index| {
+                self.offsets
+                    .span(*index)
+                    .is_some_and(|span| span.end >= range.end)
+            })
+            .unwrap_or(block_count.saturating_sub(1));
+        let first_span = self
+            .offsets
+            .span(first)
+            .ok_or(TextRefusal::SourceDrift(SourceDrift))?;
+        let last_span = self
+            .offsets
+            .span(last)
+            .ok_or(TextRefusal::SourceDrift(SourceDrift))?;
+        if range.start < first_span.start || range.end > last_span.end {
+            return Err(TextRefusal::InvalidByteRange {
+                start: range.start,
+                end: range.end,
+                length,
+            });
+        }
+
+        let before = self
+            .materialized
+            .copy_range(first_span.start..range.start)
+            .ok_or(TextRefusal::SourceDrift(SourceDrift))?;
+        let after = self
+            .materialized
+            .copy_range(range.end..last_span.end)
+            .ok_or(TextRefusal::SourceDrift(SourceDrift))?;
+        let mut text = Vec::with_capacity(before.len() + replacement.len() + after.len());
+        text.extend_from_slice(&before);
+        text.extend_from_slice(replacement.as_bytes());
+        text.extend_from_slice(&after);
+        let text = String::from_utf8(text).map_err(|_| TextRefusal::SourceDrift(SourceDrift))?;
+        let blocks = self.head.block_ids()[first..=last].to_vec();
+        let exact = if first != last {
+            Some(
+                self.materialized
+                    .replace(range.clone(), replacement.as_bytes())
+                    .ok_or(TextRefusal::SourceDrift(SourceDrift))?,
+            )
+        } else {
+            None
+        };
+        let exact_patch = BytePatch::at(
+            &self.materialized,
+            range.start,
+            range.end,
+            replacement.as_bytes(),
+        );
+        let mut transition = self.execute(TextCommand::Editor(EditorAction::new(
+            self.head.id,
+            vec![EditorChange::Replace(Replacement::new(blocks, Some(text))?)],
+            cause,
+        )))?;
+        if let Some(exact) = exact {
+            let exact_bytes = exact.to_vec();
+            self.offsets =
+                BlockOffsets::from_spans(self.scan.layout(&exact_bytes).blocks().to_vec());
+            self.materialized = exact;
+            transition.byte_patch = exact_patch;
+        }
+        Ok(transition)
     }
 
     pub fn execute(&mut self, command: TextCommand) -> Result<TextTransition, TextRefusal> {

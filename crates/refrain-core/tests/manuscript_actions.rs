@@ -486,3 +486,48 @@ fn an_action_carrying_verdicts_is_not_reverted_behind_the_ledger() {
     ));
     assert_eq!(manuscript.materialize().unwrap(), b"after\n\nkept");
 }
+
+#[test]
+fn byte_range_edit_crosses_paragraphs_and_undo_restores_exact_source() {
+    let source = "甲段。\n\n乙段。\n\n丙段。";
+    let mut manuscript = open(source.as_bytes());
+    let opened = manuscript.head().id();
+    let start = source.find("段。\n\n乙").unwrap();
+    let end = start + "段。\n\n乙".len();
+
+    manuscript
+        .replace_bytes(start..end, "—", "跨段输入")
+        .unwrap();
+
+    assert_eq!(
+        manuscript.materialize().unwrap(),
+        "甲—段。\n\n丙段。".as_bytes()
+    );
+    assert_eq!(manuscript.head().blocks().len(), 2);
+
+    manuscript.undo_last().unwrap();
+    assert_eq!(manuscript.materialize().unwrap(), source.as_bytes());
+    assert_eq!(manuscript.head().id(), opened);
+}
+
+#[test]
+fn byte_range_edit_refuses_out_of_bounds_and_split_utf8_without_moving() {
+    let source = "甲乙";
+    let mut manuscript = open(source.as_bytes());
+    let before = manuscript.head().clone();
+
+    assert!(matches!(
+        manuscript.replace_bytes(1..1, "x", "split scalar"),
+        Err(TextRefusal::InvalidByteBoundary { offset: 1 })
+    ));
+    assert!(matches!(
+        manuscript.replace_bytes(0..100, "x", "past end"),
+        Err(TextRefusal::InvalidByteRange {
+            start: 0,
+            end: 100,
+            length: 6
+        })
+    ));
+    assert_eq!(manuscript.head(), &before);
+    assert_eq!(manuscript.materialize().unwrap(), source.as_bytes());
+}

@@ -7,6 +7,9 @@ pub fn build(b: *std.Build) void {
         .name = "refrain",
         .main = "src/app_main.zig",
     });
+    const manuscript_font = b.path("assets/fonts/NotoSansSC-Variable.ttf");
+    artifacts.exe.root_module.addAnonymousImport("manuscript_font", .{ .root_source_file = manuscript_font });
+    artifacts.tests.root_module.addAnonymousImport("manuscript_font", .{ .root_source_file = manuscript_font });
 
     const core_root = transpileCore(b, dep);
     const exe_core = b.createModule(.{
@@ -26,17 +29,37 @@ pub fn build(b: *std.Build) void {
     const test_runner = artifacts.tests.root_module.import_table.get("runner").?;
     artifacts.tests.root_module.addImport("app_manifest_zon", test_runner.import_table.get("app_manifest_zon").?);
 
-    const rust_host = b.addSystemCommand(&.{
-        "rustc", "--edition=2024", "--crate-type=staticlib", "-C", "panic=abort", "-O",
-    });
-    rust_host.addFileArg(b.path("host/src/staticlib.rs"));
-    // Step 4 deletes this source include when the archive moves to Cargo-linked,
-    // stateful refrain-app use cases. Until then both builds execute one owner.
-    rust_host.addFileInput(b.path("../../crates/refrain-app/src/native.rs"));
-    rust_host.addArg("-o");
-    const archive = rust_host.addOutputFileArg("librefrain_native_host.a");
+    const rust_host = b.addSystemCommand(&.{ "cargo", "build", "--manifest-path" });
+    rust_host.addFileArg(b.path("../../Cargo.toml"));
+    rust_host.addArgs(&.{ "-p", "refrain-native-host", "--release" });
+    rust_host.addFileInput(b.path("../../Cargo.lock"));
+
+    const stage_host = b.addSystemCommand(&.{"cp"});
+    stage_host.step.dependOn(&rust_host.step);
+    stage_host.addFileArg(b.path("../../target/release/librefrain_native_host.a"));
+    const archive = stage_host.addOutputFileArg("librefrain_native_host.a");
     artifacts.exe.root_module.addObjectFile(archive);
     artifacts.tests.root_module.addObjectFile(archive);
+    linkRustRuntime(artifacts.exe.root_module);
+    linkRustRuntime(artifacts.tests.root_module);
+}
+
+/// Cargo reports these Linux native-static-libs for the stateful Rust archive.
+/// Other platform sets stay explicit so a new target fails at its actual seam.
+fn linkRustRuntime(module: *std.Build.Module) void {
+    module.linkSystemLibrary("c", .{});
+    switch (module.resolved_target.?.result.os.tag) {
+        .linux => inline for ([_][]const u8{ "gcc_s", "util", "rt", "pthread", "m", "dl" }) |library| {
+            module.linkSystemLibrary(library, .{ .use_pkg_config = .no });
+        },
+        .macos => inline for ([_][]const u8{ "System", "resolv", "m" }) |library| {
+            module.linkSystemLibrary(library, .{ .use_pkg_config = .no });
+        },
+        .windows => inline for ([_][]const u8{ "advapi32", "bcrypt", "kernel32", "ntdll", "userenv", "ws2_32" }) |library| {
+            module.linkSystemLibrary(library, .{ .use_pkg_config = .no });
+        },
+        else => @panic("RefRain's stateful Native host does not support this target"),
+    }
 }
 
 /// Reuse the SDK's pinned transpiler while retaining an app-owned runner for

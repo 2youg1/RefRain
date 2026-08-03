@@ -1,20 +1,22 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "magic": "RFRN",
   "service": "refrain.host",
-  "commands": [
-    {
-      "name": "health",
-      "code": 1,
-      "apiVersion": 1,
-      "capabilities": {
-        "typedRequests": 1
-      },
-      "errors": [
-        { "name": "protocolMismatch", "code": 1 },
-        { "name": "invalidRequest", "code": 2 },
-        { "name": "unknownRequest", "code": 3 }
-      ]
-    }
+  "protocolVersion": 2,
+  "apiVersion": 1,
+  "capabilityMask": 1,
+  "layout": {
+    "projectionBytes": 40960,
+    "eventTextBytes": 12000,
+    "defaultViewportBlocks": 96,
+    "virtualBlockHeight": 36
+  },
+  "errors": [
+    { "name": "protocolMismatch", "code": 1 },
+    { "name": "invalidRequest", "code": 2 },
+    { "name": "unknownSession", "code": 3 },
+    { "name": "domainRefusal", "code": 4 },
+    { "name": "hostFailure", "code": 5 },
+    { "name": "staleRevision", "code": 6 }
   ]
 }
