@@ -1,4 +1,4 @@
-import { unwrap } from "../bridge";
+import { readArtifactBytes, unwrap } from "../bridge";
 import { debugCommands } from "../e2e/debug-bridge";
 import {
   type BlockHit,
@@ -152,13 +152,8 @@ const productionAcquisition: ProjectAcquisitionPort = {
       : debugCommands.importMaterial(rootId, picked);
   },
   async importedSourceBytes(rootId, digest, format) {
-    // 走 custom protocol，不走 JSON 桥：`number[]` 过桥要把每个字节写成十进制
-    // 文本再逐元素重建，128 MiB 的原件实测至少 4.57× 内存放大（F-10）。
-    // 这里拿到的是 `ArrayBuffer`，放大率 1×。
-    const response = await fetch(`refrain-artifact://${rootId}/${digest}.${format}`);
-    // 404 是一个值：早于 schema v10 导入的 ARTIFACT，或克隆件已被移走。
-    if (!response.ok) return null;
-    return new Uint8Array(await response.arrayBuffer());
+    // 字节怎么过桥归 bridge.ts：那是前端唯一允许触碰请求原语的地方。
+    return readArtifactBytes(rootId, digest, format);
   },
 };
 

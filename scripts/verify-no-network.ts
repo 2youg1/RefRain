@@ -37,33 +37,52 @@ import { report, scan } from "./gate-lib.ts";
 const OUTBOUND =
   /\b(fetch|XMLHttpRequest|WebSocket|EventSource|navigator\.sendBeacon)\s*\(|\breqwest::|\bureq::|\bhyper::Client|https?:\/\/(?!localhost|127\.0\.0\.1|schema\.tauri\.app|biomejs\.dev)/;
 
-const result = scan(
-  [
-    "apps/desktop/src/**/*.{ts,tsx}",
-    "apps/desktop/src-tauri/src/**/*.rs",
-    "crates/**/src/**/*.rs",
-    "packages/**/src/**/*.ts",
-  ],
-  OUTBOUND,
-  {
-    // A comment explaining the rule is not a violation of it. A URL inside a
-    // doc comment is how the reason gets recorded.
-    //
-    // `refrain-artifact://` 也不是违反：它是本进程自己注册的 custom protocol，
-    // 请求由 Rust 在同一进程里应答，一个字节都不出机器（F-10 / D5）。这条
-    // 承诺管的是出网，不是管 `fetch` 这个词。
-    //
-    // 放行的是**整行恰好只有这一个 fetch**，不是「这行里出现过它」：早先写成
-    // 后者时，`fetch("https://evil.example.com") || fetch(`refrain-artifact://…`)`
-    // 整行被一起放过，注入验红当场不咬人。白名单要窄到一个真实的攻击写法
-    // 无法藏在它后面。
-    ignoreLine: (line) =>
-      /^\s*(\/\/|\/\*|\*|#)/.test(line) ||
-      /^\s*(?:const\s+\w+\s*=\s*)?await\s+fetch\(\s*`refrain-artifact:\/\/[^`]*`\s*\);?\s*$/.test(
-        line,
-      ),
-  },
-);
+const APPLICATION_SOURCES = [
+  "apps/desktop/src/**/*.{ts,tsx}",
+  "apps/desktop/src-tauri/src/**/*.rs",
+  "crates/**/src/**/*.rs",
+  "packages/**/src/**/*.ts",
+];
+
+/**
+ * `bridge.ts` is where the renderer touches the host, and the one file allowed
+ * to name a request primitive. Its single use is `refrain-artifact://`, a
+ * protocol this process registers and answers itself: not one byte leaves the
+ * machine (F-10 / D5).
+ *
+ * This is a scope rule, not an allowance. Nothing here says a particular line
+ * is acceptable — the file is excluded from the scan and then asserted
+ * separately below, which is why an outbound request cannot hide beside the
+ * permitted one. An earlier attempt did allow a line, and
+ * `fetch("https://…") || fetch("refrain-artifact://…")` walked straight past it.
+ */
+const BRIDGE = "apps/desktop/src/bridge.ts";
+
+const result = scan(APPLICATION_SOURCES, OUTBOUND, {
+  // A comment explaining the rule is not a violation of it. A URL inside a
+  // doc comment is how the reason gets recorded.
+  ignoreLine: (line) => /^\s*(\/\/|\/\*|\*|#)/.test(line),
+  skipFile: (file) => file === BRIDGE,
+});
+
+// The bridge earns its exclusion by staying exactly what it claims to be:
+// one request primitive, one scheme, and that scheme is the local protocol.
+const bridgeSource = await Bun.file(BRIDGE).text();
+const bridgeRequests = bridgeSource
+  .split("\n")
+  .filter((line) => !/^\s*(\/\/|\/\*|\*|#)/.test(line))
+  .filter((line) => OUTBOUND.test(line));
+if (bridgeRequests.length !== 1) {
+  console.error("FAIL  verify:no-network: the bridge must hold exactly one request primitive");
+  for (const line of bridgeRequests) console.error(`      ${line.trim()}`);
+  process.exit(1);
+}
+const only = bridgeRequests[0] ?? "";
+if (!/globalThis\.fetch\(`refrain-artifact:\/\/\$\{[^`]*`\)/.test(only)) {
+  console.error("FAIL  verify:no-network: the bridge's one request is not the local protocol");
+  console.error(`      ${only.trim()}`);
+  process.exit(1);
+}
 
 // Shiki must be reached through the precise entry only.
 const SHIKI_SOURCES = ["apps/desktop/src/**/*.{ts,tsx}", "packages/**/src/**/*.ts"];

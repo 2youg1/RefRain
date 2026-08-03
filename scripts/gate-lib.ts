@@ -112,7 +112,17 @@ export function collect(patterns: readonly string[], root = "."): string[] {
 export function scan(
   patterns: readonly string[],
   offence: RegExp,
-  options: { readonly root?: string; readonly ignoreLine?: (line: string) => boolean } = {},
+  options: {
+    readonly root?: string;
+    readonly ignoreLine?: (line: string) => boolean;
+    /**
+     * Exclude a file from this scan because a separate, stricter assertion
+     * covers it. A gate that merely ignores a line lets an offence hide beside
+     * the permitted one; excluding the file forces the caller to state what it
+     * asserts instead.
+     */
+    readonly skipFile?: (file: string) => boolean;
+  } = {},
 ): ScanResult {
   const root = options.root ?? ".";
   const files = collect(patterns, root);
@@ -125,6 +135,7 @@ export function scan(
   const perLine = new RegExp(offence.source, flags);
 
   for (const file of files) {
+    if (options.skipFile?.(file)) continue;
     const text = readFileSync(`${root}/${file}`, "utf8");
     const lines = text.split("\n");
     for (let index = 0; index < lines.length; index += 1) {
