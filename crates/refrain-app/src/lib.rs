@@ -17,6 +17,7 @@ pub mod application;
 pub mod cancel;
 pub mod collect;
 pub mod decide;
+pub mod document;
 pub mod journal;
 pub mod native;
 pub mod native_document;
@@ -25,12 +26,16 @@ pub mod scope;
 pub mod upstream;
 
 pub use application::{
-    Application, ProjectBlocks, ProjectDocuments, ProjectEntry, ProjectInput, ProjectOpened,
-    ProjectOutput, ProjectPage, ProjectPlatform, RootKind, SearchPrecision,
+    Application, ProjectBlocks, ProjectDocuments, ProjectEntry, ProjectImport, ProjectInput,
+    ProjectOpened, ProjectOutput, ProjectPage, ProjectPlatform, RootKind, SearchPrecision,
 };
 pub use cancel::{cancel_and_read_back, progress_of, refuse_cancel_without_handle};
 pub use collect::{Collected, collect_attempt};
 pub use decide::{commit_decision_batch, countermand_proposals};
+pub use document::{
+    BlockDto, EditorActionDto, EditorChangeDto, OpenDocumentDto, SaveOutcomeDto, TextTransitionDto,
+    to_domain_action, transition_dto,
+};
 pub use journal::{
     StoreJournal, entity_of, into_domain, into_domain_host, json_of, run_kind, run_row, task_kind,
     task_row,

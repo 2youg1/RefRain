@@ -133,15 +133,6 @@ export function stubScript(options: StubOptions = {}): string {
     host_state: { tasks: [], runs: [], recoveryRequired: [], awaitingLaunch: [] },
     kara_state: { state: karaState, autoEntry: "manual", queued: [] },
     kara_event: { machine: { state: karaState, autoEntry: "manual", queued: [] }, effects: [] },
-    open_document: {
-      document: rows[1],
-      revision: "r1",
-      blocks,
-      stamp: { mtime: 0, size: 0 },
-      replayed: 0,
-      staleJournal: [],
-      kara: null,
-    },
     current_document: { revision: "r1", blocks },
     list_annotations: [],
     list_proposals: [],
@@ -192,6 +183,19 @@ export function stubScript(options: StubOptions = {}): string {
           return Promise.resolve({ kind: "deleted", value: ROOT.documents.find((row) => row.path === input.value.path) ?? ROOT.documents[0] });
         if (input.kind === "setDisclosure")
           return Promise.resolve({ kind: "disclosureSet", value: { ...(ROOT.documents.find((row) => row.path === input.value.path) ?? ROOT.documents[0]), disclosure: input.value.disclosure } });
+        if (input.kind === "openDocument" || input.kind === "createDocument")
+          return Promise.resolve({ kind: "documentOpened", value: {
+            document: ROOT.documents.find((row) => row.path === input.value.path) ?? ROOT.documents[1] ?? ROOT.documents[0],
+            format: "markdown",
+            revision: "r1",
+            blocks: TABLE.current_document.blocks,
+            stamp: { mtime: 0, size: 0 },
+            replayed: 0,
+            staleJournal: [],
+            kara: null,
+          } });
+        if (input.kind === "chooseAndImportMaterial" || input.kind === "chooseAndImportManuscript")
+          return Promise.resolve({ kind: "imported", value: ROOT.documents[0] });
       }
       const answer = TABLE[cmd];
       /* 没编到的命令一律回 null：图是关于布局的，不是关于后端的。 */

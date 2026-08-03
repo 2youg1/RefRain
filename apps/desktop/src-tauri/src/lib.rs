@@ -13,14 +13,15 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use refrain_app::ProjectEntry;
-use refrain_core::{
-    DocumentFormat, DocumentRole, EditorAction, EditorChange, ErrorCode, Id, Insertion,
-    KaraAutoEntry, KaraEvent, KaraMachine, KaraPolicy, KaraTransition, Lineage, Manuscript,
-    RecoveryStep, RefrainError, Replacement, SourceSnapshot, TextCommand, TextRefusal,
-    TextTransition,
+use refrain_app::{
+    BlockDto, EditorActionDto, EditorChangeDto, ProjectEntry, SaveOutcomeDto, TextTransitionDto,
 };
-use refrain_store::history::{ActionSummary, HYDRATION_DEPTH, MAX_TEXT_ACTION_LIST};
+use refrain_core::{
+    DocumentFormat, DocumentRole, EditorAction, EditorChange, ErrorCode, Id, Insertion, KaraEvent,
+    KaraMachine, KaraPolicy, KaraTransition, Manuscript, RecoveryStep, RefrainError, Replacement,
+    TextCommand, TextRefusal, TextTransition,
+};
+use refrain_store::history::{ActionSummary, MAX_TEXT_ACTION_LIST};
 use refrain_store::mailbox::{MailboxBoxName, MailboxStanding};
 use refrain_store::project::{
     DocumentCommit, DocumentRow, FileStamp, ProjectFailure, ProjectStore,
@@ -50,7 +51,6 @@ type ActiveRunHandle = Arc<Mutex<ActiveRun>>;
 /// Session state. `Application` owns app.db and every live project handle.
 pub struct AppState {
     application: refrain_app::Application,
-    kara: Mutex<KaraMachine>,
     config: Option<refrain_store::config::ConfigStore>,
     config_notice: Mutex<Option<String>>,
     fonts: Arc<FontCatalog>,
@@ -70,9 +70,16 @@ impl AppState {
                 (None, Some(failure.to_string()))
             }
         };
+        let policy = KaraPolicy {
+            auto_enter_on_first_manuscript: config
+                .as_ref()
+                .and_then(|store| store.snapshot().ok())
+                .map(|snapshot| snapshot.config.kara.auto_enter_on_first_manuscript)
+                .unwrap_or(true),
+        };
+        application.set_kara_policy(policy)?;
         Ok(Self {
             application,
-            kara: Mutex::new(KaraMachine::new()),
             config,
             config_notice: Mutex::new(config_notice),
             fonts: Arc::new(FontCatalog::default()),
@@ -81,24 +88,8 @@ impl AppState {
         })
     }
 
-    fn kara_policy(&self) -> KaraPolicy {
-        KaraPolicy {
-            auto_enter_on_first_manuscript: self
-                .config
-                .as_ref()
-                .and_then(|store| store.snapshot().ok())
-                .map(|snapshot| snapshot.config.kara.auto_enter_on_first_manuscript)
-                .unwrap_or(true),
-        }
-    }
-
     fn kara_step(&self, event: KaraEvent) -> Result<KaraTransition, RefrainError> {
-        let mut kara = self.kara.lock().map_err(|_| {
-            RefrainError::new(ErrorCode::StateUnavailable, "lock the KARA machine", "kara")
-        })?;
-        let transition = kara.step(event, self.kara_policy());
-        *kara = transition.machine.clone();
-        Ok(transition)
+        self.application.kara_step(event)
     }
 
     /// Temporary adapter for command groups that have not migrated yet.
@@ -110,116 +101,6 @@ impl AppState {
         self.application
             .with_project(root_id, |entry| use_entry(self, entry))
     }
-
-    fn rearm_kara(&self) -> Result<(), RefrainError> {
-        let mut kara = self.kara.lock().map_err(|_| {
-            RefrainError::new(
-                ErrorCode::StateUnavailable,
-                "lock the KARA machine",
-                "project",
-            )
-        })?;
-        kara.auto_entry = KaraAutoEntry::Pending;
-        Ok(())
-    }
-}
-
-/// A document ready for the editor: blocks with stable ids, the revision the
-/// editor's actions will be based on, and the stamp a later save needs.
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct OpenDocumentDto {
-    pub document: DocumentRow,
-    /// What the bytes are: Markdown prose, or the plain-text format the
-    /// extension names. The editor reads it to pick its mode and its grammar.
-    pub format: DocumentFormat,
-    pub revision: String,
-    pub blocks: Vec<BlockDto>,
-    pub stamp: FileStamp,
-    /// Journaled actions replayed on open (crash survivors), for the status line.
-    pub replayed: u32,
-    /// Journaled actions that could not be validated on open: Safety content.
-    pub stale_journal: Vec<String>,
-    /// The KARA transition this open caused, if any (D18).
-    pub kara: Option<KaraTransition>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct BlockDto {
-    pub id: String,
-    pub text: String,
-    /// Display-width equivalents: CJK and full-width punctuation count two.
-    /// Wrapping follows display width, not code point count, and in CJK prose
-    /// the two differ by nearly a factor of two.
-    pub width_units: u32,
-    /// Line breaks the author typed. A block occupies at least this many plus one.
-    pub hard_lines: u32,
-    /// The widest single line: a narrow block does not wrap just because it is long.
-    pub max_line_units: u32,
-    /// A fence keeps the author's lines instead of wrapping.
-    pub is_fence: bool,
-}
-
-impl BlockDto {
-    /// Carry a block across the bridge together with its shape.
-    ///
-    /// The viewport needs the shape to estimate this block's height before it
-    /// has laid anything out, and the shape is read from the same text that is
-    /// already being sent — so sending it costs one branch-free width scan and
-    /// saves the viewport from guessing this block's height from other blocks.
-    ///
-    /// The width scan is format-agnostic arithmetic. The kind classification
-    /// is Markdown's: under the plain scan a line that starts with a fence
-    /// marker is still just a line, so `is_fence` is always false.
-    fn of(block: &refrain_core::manuscript::Block, scan: refrain_core::BlockScan) -> Self {
-        let text = block.text();
-        let shape = refrain_core::block_shape::BlockShape::of(text);
-        let is_fence = match scan {
-            refrain_core::BlockScan::Markdown => {
-                shape.kind == refrain_core::block_shape::BlockKind::Fence
-            }
-            refrain_core::BlockScan::Plain => false,
-        };
-        Self {
-            id: block.id().to_string(),
-            text: text.to_owned(),
-            width_units: shape.width_units,
-            hard_lines: shape.hard_lines,
-            max_line_units: shape.max_line_units,
-            is_fence,
-        }
-    }
-}
-
-/// The editor's settled input, as it crosses the bridge.
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct EditorActionDto {
-    pub base: String,
-    pub changes: Vec<EditorChangeDto>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase", tag = "kind", content = "value")]
-pub enum EditorChangeDto {
-    Replace {
-        blocks: Vec<String>,
-        text: Option<String>,
-    },
-    Insert {
-        before: Option<String>,
-        texts: Vec<String>,
-    },
-}
-
-/// The confirmed outcome of one applied action.
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct TextTransitionDto {
-    pub revision: String,
-    pub action_id: String,
-    pub touched_blocks: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type, PartialEq, Eq)]
@@ -284,22 +165,6 @@ pub enum DecisionOutcomeDto {
     },
 }
 
-/// What a save became. `ChangedUnderneath` is a Safety surface, not an error.
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase", tag = "kind", content = "value")]
-pub enum SaveOutcomeDto {
-    Saved {
-        stamp: FileStamp,
-        #[serde(rename = "recoveryEvidence")]
-        recovery_evidence: Option<String>,
-    },
-    ChangedUnderneath {
-        #[serde(rename = "onDisk")]
-        on_disk: String,
-        stamp: FileStamp,
-    },
-}
-
 // host 实体 ↔ store 行 的翻译，连同 StoreJournal 接缝与两个错误转换，已搬进
 // refrain-app::journal。它们既不属于 host（host 不认识数据库）也不属于 store
 // （store 不认识 ReviewTask），住在桥上时只能连着一个 Tauri 窗口一起验证。
@@ -351,6 +216,28 @@ impl refrain_app::ProjectPlatform for TauriProjectPlatform {
                 .blocking_pick_folder(),
         )
     }
+
+    fn choose_import(
+        &self,
+        kind: refrain_app::ProjectImport,
+    ) -> Result<Option<PathBuf>, RefrainError> {
+        use tauri_plugin_dialog::DialogExt as _;
+        let dialog = self.app.dialog().file();
+        let selected = match kind {
+            refrain_app::ProjectImport::Material => dialog
+                .set_title("选择资料")
+                .add_filter(
+                    "Sources",
+                    &["pdf", "epub", "html", "htm", "docx", "pptx", "xlsx"],
+                )
+                .blocking_pick_file(),
+            refrain_app::ProjectImport::Manuscript => dialog
+                .set_title("导入为原稿")
+                .add_filter("Manuscript", &DocumentFormat::extensions())
+                .blocking_pick_file(),
+        };
+        chosen_path(selected)
+    }
 }
 
 #[cfg(all(debug_assertions, not(feature = "generate-bindings")))]
@@ -365,6 +252,13 @@ impl refrain_app::ProjectPlatform for ChosenProjectPath {
     fn choose_project_parent(&self) -> Result<Option<PathBuf>, RefrainError> {
         Ok(Some(self.0.clone()))
     }
+
+    fn choose_import(
+        &self,
+        _kind: refrain_app::ProjectImport,
+    ) -> Result<Option<PathBuf>, RefrainError> {
+        Ok(Some(self.0.clone()))
+    }
 }
 
 #[cfg(all(debug_assertions, not(feature = "generate-bindings")))]
@@ -377,7 +271,6 @@ fn adopt_root_at(
         &ChosenProjectPath(path),
         refrain_app::ProjectInput::ChooseAndAdoptRoot { kind },
     )?;
-    state.rearm_kara()?;
     match output {
         refrain_app::ProjectOutput::Opened(project) => Ok(project),
         _ => Err(RefrainError::new(
@@ -396,196 +289,9 @@ fn project(
     state: tauri::State<'_, AppState>,
     input: refrain_app::ProjectInput,
 ) -> Result<refrain_app::ProjectOutput, RefrainError> {
-    let output = state
+    state
         .application
-        .project(&TauriProjectPlatform { app }, input)?;
-    if matches!(output, refrain_app::ProjectOutput::Opened(_)) {
-        state.rearm_kara()?;
-    }
-    Ok(output)
-}
-
-/// Open a document: bytes from disk, blocks from the byte-authoritative
-/// layout, the persisted revision chain resumed, and any journaled actions
-/// replayed through the same validation (SPEC 7.2).
-#[tauri::command(async)]
-#[specta::specta]
-fn open_document(
-    state: tauri::State<'_, AppState>,
-    root_id: String,
-    path: String,
-) -> Result<OpenDocumentDto, RefrainError> {
-    state.with_project(&root_id, |state, entry| {
-        let opened = entry
-            .store
-            .open_registered_document(&path)
-            .map_err(into_domain)?;
-        // 打开成功即是「作者此刻在写这一份」：下次取得同一个 Root 回到这里。
-        entry.store.remember_landing(&path).map_err(into_domain)?;
-        open_in_entry(state, entry, &path, opened)
-    })
-}
-
-/// Create a document in the Root and open it (SPEC 9.5).
-#[tauri::command(async)]
-#[specta::specta]
-fn create_document(
-    state: tauri::State<'_, AppState>,
-    root_id: String,
-    title: String,
-    role: DocumentRole,
-) -> Result<OpenDocumentDto, RefrainError> {
-    state.with_project(&root_id, |state, entry| {
-        let created = entry
-            .store
-            .create(&refrain_store::project::CreateDocument {
-                title: title.clone(),
-                role,
-            })
-            .map_err(into_domain)?;
-        let path = created.row.path.clone();
-        open_in_entry(state, entry, &path, created)
-    })
-}
-
-/// The shared tail of open/create: build or resume the manuscript and replay
-/// the journal.
-fn open_in_entry(
-    state: &AppState,
-    entry: &mut ProjectEntry,
-    path: &str,
-    opened: refrain_store::project::OpenDocument,
-) -> Result<OpenDocumentDto, RefrainError> {
-    // D18: opening a manuscript may consume the work session's one automatic
-    // entry. Materials and management surfaces never fire this.
-    let kara = if matches!(
-        opened.row.role,
-        DocumentRole::Document | DocumentRole::Chapter
-    ) {
-        let auto_entry = state
-            .kara
-            .lock()
-            .map_err(|_| {
-                RefrainError::new(ErrorCode::StateUnavailable, "lock the KARA machine", path)
-            })?
-            .auto_entry;
-        Some(state.kara_step(KaraEvent::FirstManuscriptOpened(auto_entry))?)
-    } else {
-        None
-    };
-    // A file the catalogue lists by extension may still not be UTF-8 (GBK
-    // manuscripts are common). Refuse it as a fact the author can act on;
-    // `SourceSnapshot::read` would panic the whole process instead.
-    //
-    // The path decides how the bytes divide into blocks: Markdown structure
-    // for prose, one line per block for every plain-text format.
-    let scan = DocumentFormat::of_path(path).block_scan();
-    let snapshot =
-        SourceSnapshot::read_checked_with(opened.bytes.clone(), scan).map_err(|error| {
-            RefrainError::new(ErrorCode::UnsupportedFormat, "open a document", path)
-                .with_detail(format!("not UTF-8 text: {error}"))
-        })?;
-    let block_count = snapshot.block_count();
-
-    // Resume the persisted chain only when the digest on disk is the one the
-    // continuity belongs to; anything else is a fresh lineage, and journaled
-    // actions from the old chain are stale evidence, not text.
-    let continuity = match (
-        &opened.row.current_head,
-        &opened.row.head_block_ids,
-        &opened.row.digest,
-    ) {
-        (Some(head), Some(ids), Some(digest)) if digest == &opened.stamp.digest => {
-            let ids: Vec<Id> = serde_json::from_str(ids).unwrap_or_default();
-            if ids.len() == block_count {
-                parse_id(head, "current head")
-                    .ok()
-                    .map(|head| (head, Lineage::from_ids(ids)))
-            } else {
-                None
-            }
-        }
-        _ => None,
-    };
-
-    // The persisted undo chain hydrates only when continuity resumes: the
-    // rows chain to the persisted head, and a fresh lineage makes them
-    // unreachable by construction.
-    let history = match &continuity {
-        Some((head, _)) => entry
-            .store
-            .action_history()
-            .chain(path, *head, HYDRATION_DEPTH)
-            .map_err(into_domain_store)?,
-        None => Vec::new(),
-    };
-
-    let (mut manuscript, continuity_ok) = match continuity {
-        Some((head, lineage)) => (
-            Manuscript::open_at(snapshot, lineage, head, history).map_err(|error| {
-                RefrainError::new(ErrorCode::Io, "resume a manuscript", path)
-                    .with_detail(error.to_string())
-            })?,
-            true,
-        ),
-        None => (
-            Manuscript::open(snapshot, Lineage::fresh(block_count)).map_err(|error| {
-                RefrainError::new(ErrorCode::Io, "open a manuscript", path)
-                    .with_detail(error.to_string())
-            })?,
-            false,
-        ),
-    };
-
-    let mut replayed = 0_u32;
-    let mut stale_journal: Vec<String> = Vec::new();
-    for (journal_id, action_json) in entry.store.journal_take(path).map_err(into_domain)? {
-        if !continuity_ok {
-            stale_journal.push(action_json);
-            continue;
-        }
-        let dto: EditorActionDto = match serde_json::from_str(&action_json) {
-            Ok(dto) => dto,
-            Err(_) => {
-                stale_journal.push(action_json);
-                continue;
-            }
-        };
-        match to_domain_action(dto, scan) {
-            Ok(action) => match manuscript.execute(TextCommand::Editor(action)) {
-                Ok(transition) => {
-                    record_text_action(&entry.store, path, &transition)?;
-                    entry
-                        .store
-                        .journal_remove(journal_id)
-                        .map_err(into_domain)?;
-                    replayed += 1;
-                }
-                Err(_) => stale_journal.push(action_json),
-            },
-            Err(_) => stale_journal.push(action_json),
-        }
-    }
-
-    let revision = manuscript.head().id().to_string();
-    let blocks = manuscript
-        .head()
-        .blocks()
-        .iter()
-        .map(|block| BlockDto::of(block, scan))
-        .collect();
-    entry.manuscripts.insert(path.to_string(), manuscript);
-
-    Ok(OpenDocumentDto {
-        document: opened.row,
-        format: DocumentFormat::of_path(path),
-        revision,
-        blocks,
-        stamp: opened.stamp,
-        replayed,
-        stale_journal,
-        kara,
-    })
+        .project(&TauriProjectPlatform { app }, input)
 }
 
 /// The session's current view of an open document: the confirmed head, no
@@ -977,14 +683,7 @@ fn kara_event(
 #[tauri::command]
 #[specta::specta]
 fn kara_state(state: tauri::State<'_, AppState>) -> Result<KaraMachine, RefrainError> {
-    let kara = state.kara.lock().map_err(|_| {
-        RefrainError::new(
-            ErrorCode::StateUnavailable,
-            "lock the KARA machine",
-            "kara_state",
-        )
-    })?;
-    Ok(kara.clone())
+    state.application.kara_state()
 }
 
 /// The themes the generator emitted, embedded once (INV-16): the picker and
@@ -1515,8 +1214,6 @@ macro_rules! refrain_commands {
         display_profile,
         health,
         project,
-        open_document,
-        create_document,
         current_document,
         apply_editor_action,
         undo_editor_action,
@@ -1565,8 +1262,6 @@ macro_rules! refrain_commands {
         remove_harness_connection,
         install_skill,
         probe_connection,
-        choose_and_import_material,
-        choose_and_import_manuscript,
         list_agents,
         upsert_agent,
         update_agent,
@@ -4128,169 +3823,6 @@ fn list_material_drafts(
     })
 }
 
-/// The shared Human Material Action body (SPEC 8.7): create the document,
-/// write its body through the same journaled text path the editor uses,
-/// persist. Used by draft resolution, by source import (C12.3), and by
-/// drag-drop manuscript import (C12.6).
-/// Where a Material's bytes came from, when it was imported rather than
-/// authored.
-///
-/// A struct rather than two `Option<String>` parameters: the digest and the
-/// format are both optional strings, so as arguments they can be swapped
-/// without the compiler noticing, and the failure would surface much later as
-/// a clone that cannot be found.
-struct ImportedFrom<'a> {
-    digest: &'a str,
-    format: &'a str,
-}
-
-fn create_material_with_body(
-    state: &AppState,
-    entry: &mut ProjectEntry,
-    title: &str,
-    body: &str,
-    role: DocumentRole,
-    imported_from: Option<ImportedFrom<'_>>,
-) -> Result<DocumentRow, RefrainError> {
-    let created = entry
-        .store
-        .create(&refrain_store::project::CreateDocument {
-            title: title.to_string(),
-            role,
-        })
-        .map_err(into_domain)?;
-    let opened = entry
-        .store
-        .open_document(&created.row.path)
-        .map_err(into_domain)?;
-    open_in_entry(state, entry, &created.row.path, opened)?;
-
-    let paragraphs: Vec<String> = body
-        .split("\n\n")
-        .map(str::trim)
-        .filter(|paragraph| !paragraph.is_empty())
-        .map(str::to_string)
-        .collect();
-    if !paragraphs.is_empty() {
-        let base = entry
-            .manuscripts
-            .get(&created.row.path)
-            .map(|manuscript| manuscript.head().id().to_string())
-            .ok_or_else(|| {
-                RefrainError::new(
-                    ErrorCode::StateUnavailable,
-                    "write a material that is not open",
-                    created.row.path.clone(),
-                )
-            })?;
-        let action_dto = EditorActionDto {
-            base,
-            changes: vec![EditorChangeDto::Insert {
-                before: None,
-                texts: paragraphs.clone(),
-            }],
-        };
-        let action_json = serde_json::to_string(&action_dto).map_err(|error| {
-            RefrainError::new(
-                ErrorCode::Io,
-                "serialise the material body",
-                created.row.path.clone(),
-            )
-            .with_detail(error.to_string())
-        })?;
-        let journal_id = entry
-            .store
-            .journal_append(&created.row.path, &action_json)
-            .map_err(into_domain)?;
-        // The executed action is the journaled one, through the same
-        // conversion the replay path uses — one construction, no drift.
-        let domain_action = to_domain_action(
-            action_dto,
-            DocumentFormat::of_path(&created.row.path).block_scan(),
-        )?;
-        let outcome = {
-            let manuscript = entry
-                .manuscripts
-                .get_mut(&created.row.path)
-                .ok_or_else(|| {
-                    RefrainError::new(
-                        ErrorCode::StateUnavailable,
-                        "write a material that is not open",
-                        created.row.path.clone(),
-                    )
-                })?;
-            manuscript.execute(TextCommand::Editor(domain_action))
-        };
-        match outcome {
-            Ok(_transition) => {
-                entry
-                    .store
-                    .journal_remove(journal_id)
-                    .map_err(into_domain)?;
-            }
-            Err(refusal) => {
-                return Err(RefrainError::new(
-                    ErrorCode::Io,
-                    "write the material body",
-                    created.row.path.clone(),
-                )
-                .with_detail(refusal.to_string()));
-            }
-        }
-    }
-    match persist_in_entry(entry, &created.row.path, None)? {
-        SaveOutcomeDto::Saved { .. } => {
-            let Some(source) = imported_from else {
-                return Ok(created.row);
-            };
-            // Record which file this came from, now that the document exists.
-            // The body already names the source in a sentence a reader can
-            // see; these columns are what the reader's PDF pane resolves, so
-            // that showing the original never depends on parsing prose the
-            // author is free to rewrite.
-            let row = DocumentRow {
-                source_digest: Some(source.digest.to_string()),
-                source_format: Some(source.format.to_string()),
-                ..created.row
-            };
-            entry
-                .store
-                .record_imported_source(&row.path, source.digest, source.format)
-                .map_err(into_domain)?;
-            Ok(row)
-        }
-        SaveOutcomeDto::ChangedUnderneath { .. } => Err(RefrainError::new(
-            ErrorCode::Io,
-            "confirm a new material",
-            "the file moved underneath",
-        )),
-    }
-}
-
-/// One unresolved draft by id.
-///
-/// Its own function because "no such draft" is a distinct outcome with a
-/// distinct message, and reading it inline put two concerns — finding the
-/// draft, and acting on it — in one body.
-fn draft_by_id(
-    entry: &mut ProjectEntry,
-    draft_id: &str,
-) -> Result<refrain_store::materials::MaterialDraftRow, RefrainError> {
-    entry
-        .store
-        .material_drafts()
-        .map_err(into_domain)?
-        .into_iter()
-        .find(|row| row.id == draft_id)
-        .ok_or_else(|| {
-            RefrainError::new(
-                ErrorCode::StateUnavailable,
-                "resolve a draft",
-                "no such draft",
-            )
-        })
-}
-
 /// The only way a draft becomes a Material (SPEC 8.7: a Human Material
 /// Action). Save writes the body through the same text path as the editor —
 /// create, insert, confirm — never a direct file write. Dismiss keeps the
@@ -4304,48 +3836,12 @@ fn commit_material_action(
     edited_body: Option<String>,
     dismiss: bool,
 ) -> Result<Option<DocumentRow>, RefrainError> {
-    state.with_project(&root_id, |state, entry| {
-        let draft = draft_by_id(entry, &draft_id)?;
-        if dismiss {
-            entry
-                .store
-                .material_draft_take(&draft_id)
-                .map_err(into_domain)?;
-            return Ok(None);
-        }
-
-        let body = edited_body.unwrap_or_else(|| draft.body.clone());
-        // `None`: an agent's draft has no imported file behind it.
-        let material = DocumentRole::Material;
-        let row = create_material_with_body(state, entry, &draft.title, &body, material, None)?;
-        entry
-            .store
-            .material_draft_take(&draft_id)
-            .map_err(into_domain)?;
-        Ok(Some(row))
-    })
+    state
+        .application
+        .commit_material_action(&root_id, &draft_id, edited_body, dismiss)
 }
 
 // ── C12.3: source import — six reference formats become Materials ──────────
-
-fn chosen_file(path: PathBuf) -> Result<PathBuf, RefrainError> {
-    let canonical = path.canonicalize().map_err(|error| {
-        RefrainError::new(
-            ErrorCode::Io,
-            "use a chosen source",
-            path.display().to_string(),
-        )
-        .with_detail(error.to_string())
-    })?;
-    if !canonical.is_file() {
-        return Err(RefrainError::new(
-            ErrorCode::UnsupportedFormat,
-            "use a chosen source",
-            canonical.display().to_string(),
-        ));
-    }
-    Ok(canonical)
-}
 
 /// 把选择器交回的条目变成一条路径。
 ///
@@ -4362,161 +3858,6 @@ fn chosen_path(
             })
         })
         .transpose()
-}
-
-/// The native chooser and the import are one authority boundary: release IPC
-/// never receives a source path from the renderer.
-#[tauri::command]
-#[specta::specta]
-async fn choose_and_import_material(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    root_id: String,
-) -> Result<Option<DocumentRow>, RefrainError> {
-    use tauri_plugin_dialog::DialogExt as _;
-    let selected = app
-        .dialog()
-        .file()
-        .set_title("选择资料")
-        .add_filter(
-            "Reference",
-            &["pdf", "epub", "html", "htm", "docx", "pptx", "xlsx"],
-        )
-        .blocking_pick_file();
-    let Some(path) = chosen_path(selected)? else {
-        return Ok(None);
-    };
-    import_material_at(state, root_id, path).await.map(Some)
-}
-
-/// The native chooser and the import are one authority boundary: release IPC
-/// never receives a source path from the renderer.
-#[tauri::command]
-#[specta::specta]
-async fn choose_and_import_manuscript(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    root_id: String,
-) -> Result<Option<DocumentRow>, RefrainError> {
-    use tauri_plugin_dialog::DialogExt as _;
-    // 扩展名权威只有一处：`DocumentFormat`。这里写第二份清单，就等于给
-    // 「什么算可编辑正文」立第二个定义。
-    let selected = app
-        .dialog()
-        .file()
-        .set_title("导入为原稿")
-        .add_filter("Manuscript", &DocumentFormat::extensions())
-        .blocking_pick_file();
-    let Some(path) = chosen_path(selected)? else {
-        return Ok(None);
-    };
-    import_manuscript_at(state, root_id, path).await.map(Some)
-}
-
-/// Import one previously authorised source file as a Material. Expensive source
-/// work runs without the project lock; only the final journaled creation enters
-/// the live session.
-async fn import_material_at(
-    state: tauri::State<'_, AppState>,
-    root_id: String,
-    source_path: PathBuf,
-) -> Result<DocumentRow, RefrainError> {
-    let source_path = chosen_file(source_path)?;
-    let clone_dir = state.with_project(&root_id, |_state, entry| {
-        Ok(entry.store.layout().source_backup_dir.join("materials"))
-    })?;
-    let clone_base = clone_dir
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_default();
-    let prepared = tauri::async_runtime::spawn_blocking(move || {
-        refrain_store::materials::prepare_material_source(&source_path, &clone_dir)
-    })
-    .await
-    .map_err(|error| {
-        RefrainError::new(
-            ErrorCode::StateUnavailable,
-            "prepare a material source",
-            "worker",
-        )
-        .with_detail(error.to_string())
-    })?
-    .map_err(into_domain)?;
-
-    let ingested = prepared.material;
-    let clone_display = prepared
-        .clone
-        .strip_prefix(&clone_base)
-        .unwrap_or(&prepared.clone)
-        .display();
-    let header = format!(
-        "> 来源：{}（{} · blake3 {}）；原件克隆：{}",
-        ingested.source_path.display(),
-        ingested.format.as_str(),
-        &ingested.source_digest[..12],
-        clone_display
-    );
-    let body = format!("{header}\n\n{}", ingested.text);
-    state.with_project(&root_id, |state, entry| {
-        create_material_with_body(
-            state,
-            entry,
-            &ingested.title,
-            &body,
-            DocumentRole::Material,
-            Some(ImportedFrom {
-                digest: &ingested.source_digest,
-                format: ingested.format.as_str(),
-            }),
-        )
-    })
-}
-
-// ── C12.6: drag-drop import — text becomes a chapter, the rest a Material ──
-
-/// Import one previously authorised UTF-8 text file as a chapter.
-async fn import_manuscript_at(
-    state: tauri::State<'_, AppState>,
-    root_id: String,
-    source_path: PathBuf,
-) -> Result<DocumentRow, RefrainError> {
-    let source_path = chosen_file(source_path)?;
-    let (title, text) = tauri::async_runtime::spawn_blocking(move || {
-        let bytes = refrain_store::ingest::read_source(&source_path)?;
-        let text_bytes = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
-            &bytes[3..]
-        } else {
-            &bytes[..]
-        };
-        let text = String::from_utf8(text_bytes.to_vec()).map_err(|_| {
-            RefrainError::new(
-                ErrorCode::UnsupportedFormat,
-                "read the dropped file",
-                "not UTF-8 text",
-            )
-        })?;
-        let title = source_path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .filter(|stem| !stem.is_empty())
-            .unwrap_or("拖入")
-            .to_string();
-        Ok::<_, RefrainError>((title, text))
-    })
-    .await
-    .map_err(|error| {
-        RefrainError::new(
-            ErrorCode::StateUnavailable,
-            "prepare a manuscript source",
-            "worker",
-        )
-        .with_detail(error.to_string())
-    })??;
-    state.with_project(&root_id, |state, entry| {
-        // Dropped UTF-8 text becomes a chapter: the text *is* the manuscript,
-        // so there is no separate original to read alongside it.
-        create_material_with_body(state, entry, &title, &text, DocumentRole::Chapter, None)
-    })
 }
 
 #[cfg(all(debug_assertions, not(feature = "generate-bindings")))]
@@ -4542,7 +3883,6 @@ fn debug_create_project(
         &ChosenProjectPath(PathBuf::from(parent)),
         refrain_app::ProjectInput::ChooseAndCreateProject { name },
     )?;
-    state.rearm_kara()?;
     match output {
         refrain_app::ProjectOutput::Opened(project) => Ok(project),
         _ => Err(RefrainError::new(
@@ -4556,21 +3896,43 @@ fn debug_create_project(
 #[cfg(all(debug_assertions, not(feature = "generate-bindings")))]
 #[tauri::command]
 #[specta::specta]
-async fn debug_import_material(
+fn debug_import_material(
     state: tauri::State<'_, AppState>,
     root_id: String,
     source_path: String,
 ) -> Result<DocumentRow, RefrainError> {
-    import_material_at(state, root_id, PathBuf::from(source_path)).await
+    let output = state.application.project(
+        &ChosenProjectPath(PathBuf::from(source_path)),
+        refrain_app::ProjectInput::ChooseAndImportMaterial { root_id },
+    )?;
+    match output {
+        refrain_app::ProjectOutput::Imported(row) => Ok(row),
+        _ => Err(RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "import a chosen material",
+            "project use case returned no document",
+        )),
+    }
 }
 
 #[cfg(all(debug_assertions, not(feature = "generate-bindings")))]
 #[tauri::command]
 #[specta::specta]
-async fn debug_import_manuscript(
+fn debug_import_manuscript(
     state: tauri::State<'_, AppState>,
     root_id: String,
     source_path: String,
 ) -> Result<DocumentRow, RefrainError> {
-    import_manuscript_at(state, root_id, PathBuf::from(source_path)).await
+    let output = state.application.project(
+        &ChosenProjectPath(PathBuf::from(source_path)),
+        refrain_app::ProjectInput::ChooseAndImportManuscript { root_id },
+    )?;
+    match output {
+        refrain_app::ProjectOutput::Imported(row) => Ok(row),
+        _ => Err(RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "import a chosen manuscript",
+            "project use case returned no document",
+        )),
+    }
 }

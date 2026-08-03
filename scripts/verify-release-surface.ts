@@ -6,8 +6,10 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 const rust = readFileSync("apps/desktop/src-tauri/src/lib.rs", "utf8");
 const bindings = readFileSync("apps/desktop/src/generated/bindings.gen.ts", "utf8");
 const debugBridge = readFileSync("apps/desktop/src/e2e/debug-bridge.ts", "utf8");
+const application = readFileSync("crates/refrain-app/src/application.rs", "utf8");
 // 「取得一个项目」搬进了 ProjectSession：选择器归 Rust 这条事实的权威随之移位。
 const projectSession = readFileSync("apps/desktop/src/shell/project-session.ts", "utf8");
+const documentSession = readFileSync("apps/desktop/src/shell/document-session.ts", "utf8");
 const failures: string[] = [];
 
 for (const [source, fact, failure] of [
@@ -19,20 +21,16 @@ for (const [source, fact, failure] of [
   [rust, "refrain_commands![]", "the release registry is not the empty-debug command set"],
   [rust, "struct TauriProjectPlatform", "Rust has no Project chooser adapter"],
   [rust, ".project(&TauriProjectPlatform", "the desktop bypasses the Project use case"],
-  [rust, "choose_and_import_material", "Rust has no native material chooser"],
-  [rust, "open_registered_document(&path)", "open_document does not require a registered row"],
+  [rust, "fn choose_import(", "Rust has no native import chooser"],
+  [application, "ProjectInput::OpenDocument", "the Project use case cannot open a document"],
+  [
+    application,
+    "ProjectInput::ChooseAndImportMaterial",
+    "the Project use case cannot import a Material",
+  ],
   [bindings, "project: (input: ProjectInput)", "release bindings have no Project group command"],
-  [
-    bindings,
-    "chooseAndImportMaterial: (rootId: string)",
-    "release bindings have no material chooser",
-  ],
   [projectSession, "commands.project", "the app does not use the Rust Project use case"],
-  [
-    projectSession,
-    "commands.chooseAndImportMaterial",
-    "the app does not use the Rust-owned source chooser",
-  ],
+  [documentSession, "commands.project", "document opening bypasses the Project use case"],
 ] as const) {
   if (!source.includes(fact)) failures.push(failure);
 }
@@ -45,8 +43,12 @@ for (const legacyProjectCommand of [
   "block_search",
   "delete_document",
   "set_disclosure",
+  "open_document",
+  "create_document",
+  "choose_and_import_material",
+  "choose_and_import_manuscript",
 ]) {
-  if (rust.includes(legacyProjectCommand)) {
+  if (rust.includes(`fn ${legacyProjectCommand}(`)) {
     failures.push(`the release Rust surface still exposes ${legacyProjectCommand}`);
   }
 }
@@ -58,10 +60,15 @@ for (const legacyBinding of [
   "blockSearch",
   "deleteDocument",
   "setDisclosure",
+  "openDocument",
+  "createDocument",
+  "chooseAndImportMaterial",
+  "chooseAndImportManuscript",
 ]) {
   if (
     bindings.includes(`\t${legacyBinding}: (`) ||
-    projectSession.includes(`commands.${legacyBinding}`)
+    projectSession.includes(`commands.${legacyBinding}`) ||
+    documentSession.includes(`commands.${legacyBinding}`)
   ) {
     failures.push(`the release TypeScript surface still exposes ${legacyBinding}`);
   }
@@ -125,12 +132,14 @@ if (debugBridgeCalls.join("\n") !== expectedDebugBridge.sort().join("\n")) {
   failures.push(`the E2E bridge command set drifted: ${debugBridgeCalls.join(", ")}`);
 }
 
-for (const privateOwner of ["import_material_at", "import_manuscript_at"]) {
-  const at = rust.indexOf(`fn ${privateOwner}`);
-  const prefix = at < 0 ? "" : rust.slice(Math.max(0, at - 120), at);
-  if (at < 0) failures.push(`private path owner is missing: ${privateOwner}`);
-  if (/#\[tauri::command(\(async\))?\]/.test(prefix)) {
-    failures.push(`private path owner is exposed as IPC: ${privateOwner}`);
+for (const supersededDesktopOwner of [
+  "open_in_entry",
+  "create_material_with_body",
+  "import_material_at",
+  "import_manuscript_at",
+]) {
+  if (rust.includes(`fn ${supersededDesktopOwner}`)) {
+    failures.push(`the desktop still owns ${supersededDesktopOwner}`);
   }
 }
 

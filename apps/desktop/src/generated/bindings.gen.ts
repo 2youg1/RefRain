@@ -11,15 +11,7 @@ export const commands = {
 	/**  Proves the whole chain: a Rust type, a generated binding, a real window. */
 	health: (echo: string) => __TAURI_INVOKE<HealthReport>("health", { echo }),
 	/**  One project-group bridge replaces seven one-to-one production commands. */
-	project: (input: ProjectInput) => typedError<ProjectOutput, RefrainError>(__TAURI_INVOKE("project", { input })),
-	/**
-	 *  Open a document: bytes from disk, blocks from the byte-authoritative
-	 *  layout, the persisted revision chain resumed, and any journaled actions
-	 *  replayed through the same validation (SPEC 7.2).
-	 */
-	openDocument: (rootId: string, path: string) => typedError<OpenDocumentDto_Serialize, RefrainError>(__TAURI_INVOKE("open_document", { rootId, path })),
-	/**  Create a document in the Root and open it (SPEC 9.5). */
-	createDocument: (rootId: string, title: string, role: DocumentRole) => typedError<OpenDocumentDto_Serialize, RefrainError>(__TAURI_INVOKE("create_document", { rootId, title, role })),
+	project: (input: ProjectInput) => typedError<ProjectOutput_Serialize, RefrainError>(__TAURI_INVOKE("project", { input })),
 	currentDocument: (rootId: string, path: string) => typedError<SessionDocumentDto, RefrainError>(__TAURI_INVOKE("current_document", { rootId, path })),
 	/**
 	 *  The one manuscript write path (INV-2): journaled first, executed through
@@ -224,62 +216,6 @@ export const commands = {
 	installSkill: (connectionId: string) => typedError<SkillInstallDto, RefrainError>(__TAURI_INVOKE("install_skill", { connectionId })),
 	/**  Re-check an existing Config connection. No path crosses the bridge. */
 	probeConnection: (connectionId: string) => typedError<string, RefrainError>(__TAURI_INVOKE("probe_connection", { connectionId })),
-	/**
-	 *  The native chooser and the import are one authority boundary: release IPC
-	 *  never receives a source path from the renderer.
-	 */
-	chooseAndImportMaterial: (rootId: string) => typedError<{
-	id: Id,
-	/**  Portable identity inside the Root: the relative path, `/`-joined. */
-	path: string,
-	role: DocumentRole,
-	digest: string | null,
-	/**  The confirmed revision id and lineage paired with the digest. */
-	currentHead: string | null,
-	headBlockIds: string | null,
-	/**
-	 *  For an imported Material: the digest of the file it came from, which
-	 *  names its immutable clone. `None` for anything not imported, and for
-	 *  Materials imported before schema v10.
-	 */
-	sourceDigest: string | null,
-	/**  The imported file's format, which completes the clone's filename. */
-	sourceFormat: string | null,
-	/**
-	 *  What the author permits for this document when it rides as a material.
-	 *  `None` is "never asked": the readers treat it as the enum's default,
-	 *  which is exactly what a pre-v11 row means.
-	 */
-	disclosure: Disclosure | null,
-} | null, RefrainError>(__TAURI_INVOKE("choose_and_import_material", { rootId })),
-	/**
-	 *  The native chooser and the import are one authority boundary: release IPC
-	 *  never receives a source path from the renderer.
-	 */
-	chooseAndImportManuscript: (rootId: string) => typedError<{
-	id: Id,
-	/**  Portable identity inside the Root: the relative path, `/`-joined. */
-	path: string,
-	role: DocumentRole,
-	digest: string | null,
-	/**  The confirmed revision id and lineage paired with the digest. */
-	currentHead: string | null,
-	headBlockIds: string | null,
-	/**
-	 *  For an imported Material: the digest of the file it came from, which
-	 *  names its immutable clone. `None` for anything not imported, and for
-	 *  Materials imported before schema v10.
-	 */
-	sourceDigest: string | null,
-	/**  The imported file's format, which completes the clone's filename. */
-	sourceFormat: string | null,
-	/**
-	 *  What the author permits for this document when it rides as a material.
-	 *  `None` is "never asked": the readers treat it as the enum's default,
-	 *  which is exactly what a pre-v11 row means.
-	 */
-	disclosure: Disclosure | null,
-} | null, RefrainError>(__TAURI_INVOKE("choose_and_import_manuscript", { rootId })),
 	listAgents: () => __TAURI_INVOKE<AgentDto[]>("list_agents"),
 	/**
 	 *  Create one Agent (SPEC 6.5: typed changes only). A connection reference
@@ -520,17 +456,9 @@ export type BackupStatus = { kind: "taken"; value: {
 export type BlockDto = {
 	id: string,
 	text: string,
-	/**
-	 *  Display-width equivalents: CJK and full-width punctuation count two.
-	 *  Wrapping follows display width, not code point count, and in CJK prose
-	 *  the two differ by nearly a factor of two.
-	 */
 	widthUnits: number,
-	/**  Line breaks the author typed. A block occupies at least this many plus one. */
 	hardLines: number,
-	/**  The widest single line: a narrow block does not wrap just because it is long. */
 	maxLineUnits: number,
-	/**  A fence keeps the author's lines instead of wrapping. */
 	isFence: boolean,
 };
 
@@ -782,7 +710,6 @@ export type DocumentRow = {
 	disclosure: Disclosure | null,
 };
 
-/**  The editor's settled input, as it crosses the bridge. */
 export type EditorActionDto = {
 	base: string,
 	changes: EditorChangeDto[],
@@ -1145,53 +1072,27 @@ export type MaterialDraftRow_Serialize = {
  */
 export type NightLamp = "off" | "side" | "overhead";
 
-/**
- *  A document ready for the editor: blocks with stable ids, the revision the
- *  editor's actions will be based on, and the stamp a later save needs.
- */
 export type OpenDocumentDto = OpenDocumentDto_Serialize | OpenDocumentDto_Deserialize;
 
-/**
- *  A document ready for the editor: blocks with stable ids, the revision the
- *  editor's actions will be based on, and the stamp a later save needs.
- */
 export type OpenDocumentDto_Deserialize = {
 	document: DocumentRow,
-	/**
-	 *  What the bytes are: Markdown prose, or the plain-text format the
-	 *  extension names. The editor reads it to pick its mode and its grammar.
-	 */
 	format: DocumentFormat,
 	revision: string,
 	blocks: BlockDto[],
 	stamp: FileStamp_Deserialize,
-	/**  Journaled actions replayed on open (crash survivors), for the status line. */
 	replayed: number,
-	/**  Journaled actions that could not be validated on open: Safety content. */
 	staleJournal: string[],
-	/**  The KARA transition this open caused, if any (D18). */
 	kara: KaraTransition | null,
 };
 
-/**
- *  A document ready for the editor: blocks with stable ids, the revision the
- *  editor's actions will be based on, and the stamp a later save needs.
- */
 export type OpenDocumentDto_Serialize = {
 	document: DocumentRow,
-	/**
-	 *  What the bytes are: Markdown prose, or the plain-text format the
-	 *  extension names. The editor reads it to pick its mode and its grammar.
-	 */
 	format: DocumentFormat,
 	revision: string,
 	blocks: BlockDto[],
 	stamp: FileStamp_Serialize,
-	/**  Journaled actions replayed on open (crash survivors), for the status line. */
 	replayed: number,
-	/**  Journaled actions that could not be validated on open: Safety content. */
 	staleJournal: string[],
-	/**  The KARA transition this open caused, if any (D18). */
 	kara: KaraTransition | null,
 };
 
@@ -1247,6 +1148,17 @@ export type ProjectInput = { kind: "chooseAndAdoptRoot"; value: {
 	kind: RootKind,
 } } | { kind: "chooseAndCreateProject"; value: {
 	name: string,
+} } | { kind: "openDocument"; value: {
+	rootId: string,
+	path: string,
+} } | { kind: "createDocument"; value: {
+	rootId: string,
+	title: string,
+	role: DocumentRole,
+} } | { kind: "chooseAndImportMaterial"; value: {
+	rootId: string,
+} } | { kind: "chooseAndImportManuscript"; value: {
+	rootId: string,
 } } | { kind: "documentPage"; value: {
 	rootId: string,
 	after: string | null,
@@ -1276,7 +1188,11 @@ export type ProjectOpened = {
 	openedPath: string | null,
 };
 
-export type ProjectOutput = { kind: "cancelled" } | { kind: "opened"; value: ProjectOpened } | { kind: "page"; value: ProjectPage } | { kind: "documents"; value: ProjectDocuments } | { kind: "blocks"; value: ProjectBlocks } | { kind: "deleted"; value: DocumentRow } | { kind: "disclosureSet"; value: DocumentRow };
+export type ProjectOutput = ProjectOutput_Serialize | ProjectOutput_Deserialize;
+
+export type ProjectOutput_Deserialize = ({ kind: "cancelled" }) & { value?: never } | { kind: "opened"; value: ProjectOpened } | { kind: "documentOpened"; value: OpenDocumentDto_Deserialize } | { kind: "imported"; value: DocumentRow } | { kind: "page"; value: ProjectPage } | { kind: "documents"; value: ProjectDocuments } | { kind: "blocks"; value: ProjectBlocks } | { kind: "deleted"; value: DocumentRow } | { kind: "disclosureSet"; value: DocumentRow };
+
+export type ProjectOutput_Serialize = ({ kind: "cancelled" }) & { value?: never } | { kind: "opened"; value: ProjectOpened } | { kind: "documentOpened"; value: OpenDocumentDto_Serialize } | { kind: "imported"; value: DocumentRow } | { kind: "page"; value: ProjectPage } | { kind: "documents"; value: ProjectDocuments } | { kind: "blocks"; value: ProjectBlocks } | { kind: "deleted"; value: DocumentRow } | { kind: "disclosureSet"; value: DocumentRow };
 
 export type ProjectPage = {
 	documents: DocumentRow[],
@@ -1428,10 +1344,8 @@ export type RunEdgeKindDto =
 /**  Answers the same question as the target, without seeing it. */
 "alternates";
 
-/**  What a save became. `ChangedUnderneath` is a Safety surface, not an error. */
 export type SaveOutcomeDto = SaveOutcomeDto_Serialize | SaveOutcomeDto_Deserialize;
 
-/**  What a save became. `ChangedUnderneath` is a Safety surface, not an error. */
 export type SaveOutcomeDto_Deserialize = { kind: "saved"; value: {
 	stamp: FileStamp_Deserialize,
 	recoveryEvidence: string | null,
@@ -1440,7 +1354,6 @@ export type SaveOutcomeDto_Deserialize = { kind: "saved"; value: {
 	stamp: FileStamp_Deserialize,
 } };
 
-/**  What a save became. `ChangedUnderneath` is a Safety surface, not an error. */
 export type SaveOutcomeDto_Serialize = { kind: "saved"; value: {
 	stamp: FileStamp_Serialize,
 	recoveryEvidence: string | null,
@@ -1507,7 +1420,6 @@ export type TextActionSummaryDto = {
 
 export type TextAlignment = "left" | "justify";
 
-/**  The confirmed outcome of one applied action. */
 export type TextTransitionDto = {
 	revision: string,
 	actionId: string,

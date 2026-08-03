@@ -4,10 +4,14 @@
 //! disclosure, and deletion. Platform code supplies only a chooser. Selected
 //! paths enter Rust and never cross the Native or TypeScript boundary.
 
+use crate::document::{ImportedFrom, OpenDocumentDto, create_with_body, open_in_entry};
 use crate::journal::into_domain;
 use refrain_core::chinese_index::Precision;
 use refrain_core::material_listing::Disclosure;
-use refrain_core::{ErrorCode, Manuscript, RefrainError};
+use refrain_core::{
+    DocumentRole, ErrorCode, KaraAutoEntry, KaraEvent, KaraMachine, KaraPolicy, KaraTransition,
+    Manuscript, RefrainError,
+};
 use refrain_store::application::{ApplicationStore, ApplicationStoreError};
 use refrain_store::project::{
     BackupStatus, BlockHit, DocumentPage, DocumentPageQuery, DocumentRow, MAX_DOCUMENT_PAGE_SIZE,
@@ -25,6 +29,13 @@ use std::sync::{Arc, Mutex};
 pub trait ProjectPlatform {
     fn choose_root(&self, kind: RootKind) -> Result<Option<PathBuf>, RefrainError>;
     fn choose_project_parent(&self) -> Result<Option<PathBuf>, RefrainError>;
+    fn choose_import(&self, kind: ProjectImport) -> Result<Option<PathBuf>, RefrainError>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectImport {
+    Material,
+    Manuscript,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
@@ -56,6 +67,21 @@ pub enum ProjectInput {
     },
     ChooseAndCreateProject {
         name: String,
+    },
+    OpenDocument {
+        root_id: String,
+        path: String,
+    },
+    CreateDocument {
+        root_id: String,
+        title: String,
+        role: DocumentRole,
+    },
+    ChooseAndImportMaterial {
+        root_id: String,
+    },
+    ChooseAndImportManuscript {
+        root_id: String,
     },
     DocumentPage {
         root_id: String,
@@ -130,6 +156,8 @@ pub struct ProjectBlocks {
 pub enum ProjectOutput {
     Cancelled,
     Opened(ProjectOpened),
+    DocumentOpened(Box<OpenDocumentDto>),
+    Imported(DocumentRow),
     Page(ProjectPage),
     Documents(ProjectDocuments),
     Blocks(ProjectBlocks),
@@ -148,6 +176,8 @@ pub struct ProjectEntry {
 pub struct Application {
     store: Mutex<ApplicationStore>,
     projects: Mutex<HashMap<String, Arc<Mutex<ProjectEntry>>>>,
+    kara: Mutex<KaraMachine>,
+    kara_policy: Mutex<KaraPolicy>,
 }
 
 impl Application {
@@ -155,7 +185,46 @@ impl Application {
         Ok(Self {
             store: Mutex::new(ApplicationStore::open(data_dir).map_err(application_store_failure)?),
             projects: Mutex::new(HashMap::new()),
+            kara: Mutex::new(KaraMachine::new()),
+            kara_policy: Mutex::new(KaraPolicy {
+                auto_enter_on_first_manuscript: true,
+            }),
         })
+    }
+
+    pub fn set_kara_policy(&self, policy: KaraPolicy) -> Result<(), RefrainError> {
+        *self.kara_policy.lock().map_err(|_| {
+            RefrainError::new(ErrorCode::StateUnavailable, "lock the KARA policy", "kara")
+        })? = policy;
+        Ok(())
+    }
+
+    pub fn kara_step(&self, event: KaraEvent) -> Result<KaraTransition, RefrainError> {
+        let policy = *self.kara_policy.lock().map_err(|_| {
+            RefrainError::new(ErrorCode::StateUnavailable, "lock the KARA policy", "kara")
+        })?;
+        let mut kara = self.kara.lock().map_err(|_| {
+            RefrainError::new(ErrorCode::StateUnavailable, "lock the KARA machine", "kara")
+        })?;
+        let transition = kara.step(event, policy);
+        *kara = transition.machine.clone();
+        Ok(transition)
+    }
+
+    pub fn kara_state(&self) -> Result<KaraMachine, RefrainError> {
+        self.kara.lock().map(|kara| kara.clone()).map_err(|_| {
+            RefrainError::new(ErrorCode::StateUnavailable, "lock the KARA machine", "kara")
+        })
+    }
+
+    fn rearm_kara(&self) -> Result<(), RefrainError> {
+        self.kara
+            .lock()
+            .map_err(|_| {
+                RefrainError::new(ErrorCode::StateUnavailable, "lock the KARA machine", "kara")
+            })?
+            .auto_entry = KaraAutoEntry::Pending;
+        Ok(())
     }
 
     pub fn project(
@@ -220,6 +289,48 @@ impl Application {
                 })()
                 .map_err(|error| selected_path_failure(error, "create a project", name.clone()))?;
                 Ok(ProjectOutput::Opened(opened))
+            }
+            ProjectInput::OpenDocument { root_id, path } => self
+                .open_document(&root_id, &path)
+                .map(Box::new)
+                .map(ProjectOutput::DocumentOpened),
+            ProjectInput::CreateDocument {
+                root_id,
+                title,
+                role,
+            } => self
+                .create_document(&root_id, &title, role)
+                .map(Box::new)
+                .map(ProjectOutput::DocumentOpened),
+            ProjectInput::ChooseAndImportMaterial { root_id } => {
+                let Some(path) =
+                    platform
+                        .choose_import(ProjectImport::Material)
+                        .map_err(|error| {
+                            selected_path_failure(error, "choose a material", "selected material")
+                        })?
+                else {
+                    return Ok(ProjectOutput::Cancelled);
+                };
+                self.import_material(&root_id, path)
+                    .map(ProjectOutput::Imported)
+            }
+            ProjectInput::ChooseAndImportManuscript { root_id } => {
+                let Some(path) =
+                    platform
+                        .choose_import(ProjectImport::Manuscript)
+                        .map_err(|error| {
+                            selected_path_failure(
+                                error,
+                                "choose a manuscript",
+                                "selected manuscript",
+                            )
+                        })?
+                else {
+                    return Ok(ProjectOutput::Cancelled);
+                };
+                self.import_manuscript(&root_id, path)
+                    .map(ProjectOutput::Imported)
             }
             ProjectInput::DocumentPage { root_id, after } => self
                 .with_project(&root_id, |entry| {
@@ -291,6 +402,186 @@ impl Application {
         }
     }
 
+    fn open_document(&self, root_id: &str, path: &str) -> Result<OpenDocumentDto, RefrainError> {
+        self.with_project(root_id, |entry| {
+            let opened = entry
+                .store
+                .open_registered_document(path)
+                .map_err(into_domain)?;
+            entry.store.remember_landing(path).map_err(into_domain)?;
+            let kara = self.manuscript_opened(opened.row.role, path)?;
+            open_in_entry(entry, path, opened, kara)
+        })
+    }
+
+    fn create_document(
+        &self,
+        root_id: &str,
+        title: &str,
+        role: DocumentRole,
+    ) -> Result<OpenDocumentDto, RefrainError> {
+        self.with_project(root_id, |entry| {
+            let created = entry
+                .store
+                .create(&refrain_store::project::CreateDocument {
+                    title: title.to_string(),
+                    role,
+                })
+                .map_err(into_domain)?;
+            let path = created.row.path.clone();
+            let kara = self.manuscript_opened(role, &path)?;
+            open_in_entry(entry, &path, created, kara)
+        })
+    }
+
+    fn import_material(
+        &self,
+        root_id: &str,
+        selected: PathBuf,
+    ) -> Result<DocumentRow, RefrainError> {
+        let source = chosen_file(selected).map_err(|error| {
+            selected_path_failure(error, "import a material", "selected material")
+        })?;
+        let clone_dir = self.with_project(root_id, |entry| {
+            Ok(entry.store.layout().source_backup_dir.join("materials"))
+        })?;
+        let clone_base = clone_dir
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        let prepared = refrain_store::materials::prepare_material_source(&source, &clone_dir)
+            .map_err(into_domain)
+            .map_err(|error| {
+                selected_path_failure(error, "prepare a material", "selected material")
+            })?;
+        let ingested = prepared.material;
+        let source_name = source
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("source");
+        let clone_display = prepared
+            .clone
+            .strip_prefix(&clone_base)
+            .unwrap_or(&prepared.clone)
+            .display();
+        let header = format!(
+            "> 来源：{source_name}（{} · blake3 {}）；原件克隆：{clone_display}",
+            ingested.format.as_str(),
+            &ingested.source_digest[..12],
+        );
+        let body = format!("{header}\n\n{}", ingested.text);
+        self.with_project(root_id, |entry| {
+            let (row, _opened) = create_with_body(
+                entry,
+                &ingested.title,
+                &body,
+                DocumentRole::Material,
+                Some(ImportedFrom {
+                    digest: &ingested.source_digest,
+                    format: ingested.format.as_str(),
+                }),
+                None,
+            )?;
+            Ok(row)
+        })
+    }
+
+    fn import_manuscript(
+        &self,
+        root_id: &str,
+        selected: PathBuf,
+    ) -> Result<DocumentRow, RefrainError> {
+        let source = chosen_file(selected).map_err(|error| {
+            selected_path_failure(error, "import a manuscript", "selected manuscript")
+        })?;
+        let bytes = refrain_store::ingest::read_source(&source).map_err(|error| {
+            selected_path_failure(error, "read an imported manuscript", "selected manuscript")
+        })?;
+        let text_bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&bytes);
+        let text = String::from_utf8(text_bytes.to_vec()).map_err(|_| {
+            RefrainError::new(
+                ErrorCode::UnsupportedFormat,
+                "read an imported manuscript",
+                "not UTF-8 text",
+            )
+        })?;
+        let title = source
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .filter(|stem| !stem.is_empty())
+            .unwrap_or("拖入")
+            .to_string();
+        self.with_project(root_id, |entry| {
+            let kara = self.manuscript_opened(DocumentRole::Chapter, &title)?;
+            let (row, _opened) =
+                create_with_body(entry, &title, &text, DocumentRole::Chapter, None, kara)?;
+            Ok(row)
+        })
+    }
+
+    pub fn commit_material_action(
+        &self,
+        root_id: &str,
+        draft_id: &str,
+        edited_body: Option<String>,
+        dismiss: bool,
+    ) -> Result<Option<DocumentRow>, RefrainError> {
+        self.with_project(root_id, |entry| {
+            let draft = entry
+                .store
+                .material_drafts()
+                .map_err(into_domain)?
+                .into_iter()
+                .find(|row| row.id == draft_id)
+                .ok_or_else(|| {
+                    RefrainError::new(
+                        ErrorCode::StateUnavailable,
+                        "resolve a draft",
+                        "no such draft",
+                    )
+                })?;
+            if dismiss {
+                entry
+                    .store
+                    .material_draft_take(draft_id)
+                    .map_err(into_domain)?;
+                return Ok(None);
+            }
+
+            let body = edited_body.unwrap_or_else(|| draft.body.clone());
+            let (row, _opened) = create_with_body(
+                entry,
+                &draft.title,
+                &body,
+                DocumentRole::Material,
+                None,
+                None,
+            )?;
+            entry
+                .store
+                .material_draft_take(draft_id)
+                .map_err(into_domain)?;
+            Ok(Some(row))
+        })
+    }
+
+    fn manuscript_opened(
+        &self,
+        role: DocumentRole,
+        subject: &str,
+    ) -> Result<Option<KaraTransition>, RefrainError> {
+        if !matches!(role, DocumentRole::Document | DocumentRole::Chapter) {
+            return Ok(None);
+        }
+        let auto_entry = self.kara_state()?.auto_entry;
+        self.kara_step(KaraEvent::FirstManuscriptOpened(auto_entry))
+            .map(Some)
+            .map_err(|mut error| {
+                error.subject = subject.to_string();
+                error
+            })
+    }
+
     pub fn with_project<T>(
         &self,
         root_id: &str,
@@ -341,6 +632,7 @@ impl Application {
                     manuscripts: HashMap::new(),
                 })),
             );
+        self.rearm_kara()?;
         Ok(ProjectOpened {
             root_id,
             backup,
@@ -350,6 +642,25 @@ impl Application {
             opened_path,
         })
     }
+}
+
+fn chosen_file(path: PathBuf) -> Result<PathBuf, RefrainError> {
+    let canonical = path.canonicalize().map_err(|error| {
+        RefrainError::new(
+            ErrorCode::Io,
+            "use a chosen source",
+            path.display().to_string(),
+        )
+        .with_detail(error.to_string())
+    })?;
+    if !canonical.is_file() {
+        return Err(RefrainError::new(
+            ErrorCode::UnsupportedFormat,
+            "use a chosen source",
+            canonical.display().to_string(),
+        ));
+    }
+    Ok(canonical)
 }
 
 fn selected_path_failure(

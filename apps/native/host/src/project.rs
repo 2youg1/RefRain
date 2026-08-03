@@ -3,7 +3,9 @@ use crate::protocol::{
     PROJECTION_BYTES, RefrainNativeRequest, RefrainNativeResponse,
 };
 use directories::ProjectDirs;
-use refrain_app::{Application, ProjectInput, ProjectOutput, ProjectPlatform, RootKind};
+use refrain_app::{
+    Application, ProjectImport, ProjectInput, ProjectOutput, ProjectPlatform, RootKind,
+};
 use refrain_core::{DocumentFormat, RefrainError};
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -30,6 +32,23 @@ impl ProjectPlatform for NativeProjectPlatform {
         Ok(rfd::FileDialog::new()
             .set_title("选择项目的父目录")
             .pick_folder())
+    }
+
+    fn choose_import(&self, kind: ProjectImport) -> Result<Option<PathBuf>, RefrainError> {
+        let dialog = rfd::FileDialog::new();
+        Ok(match kind {
+            ProjectImport::Material => dialog
+                .set_title("选择资料")
+                .add_filter(
+                    "Sources",
+                    &["pdf", "epub", "html", "htm", "docx", "pptx", "xlsx"],
+                )
+                .pick_file(),
+            ProjectImport::Manuscript => dialog
+                .set_title("导入为原稿")
+                .add_filter("Manuscript", &DocumentFormat::extensions())
+                .pick_file(),
+        })
     }
 }
 
@@ -132,9 +151,11 @@ fn truncate_output(output: &mut ProjectOutput) -> bool {
             blocks.truncated = true;
             true
         }
-        ProjectOutput::Cancelled | ProjectOutput::Deleted(_) | ProjectOutput::DisclosureSet(_) => {
-            false
-        }
+        ProjectOutput::DocumentOpened(document) => document.blocks.pop().is_some(),
+        ProjectOutput::Cancelled
+        | ProjectOutput::Imported(_)
+        | ProjectOutput::Deleted(_)
+        | ProjectOutput::DisclosureSet(_) => false,
     }
 }
 
@@ -193,6 +214,10 @@ mod tests {
         }
 
         fn choose_project_parent(&self) -> Result<Option<PathBuf>, RefrainError> {
+            Ok(self.0.lock().unwrap().take())
+        }
+
+        fn choose_import(&self, _kind: ProjectImport) -> Result<Option<PathBuf>, RefrainError> {
             Ok(self.0.lock().unwrap().take())
         }
     }

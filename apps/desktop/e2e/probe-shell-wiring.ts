@@ -123,18 +123,7 @@ window.__probe = {
             documentCursor: null,
             openedPath: fixture.chapter.path,
           };
-        case "open_document":
-          return {
-            // 回显请求的路径：探针要开的不止第一章——守卫测试得真的把一篇
-            // 资料开进编辑器，才能说「正在编辑的文档」那一条。
-            document: { ...fixture.chapter, path: args.path },
-            revision: "r1",
-            blocks: fresh(fixture.blocks),
-            stamp: { modifiedMs: "1", bytes: "1", digest: "d" },
-            replayed: 0,
-            staleJournal: [],
-            kara: null,
-          };
+
         case "list_annotations":
           return [];
         case "list_text_actions":
@@ -187,6 +176,23 @@ window.__probe = {
             ? { revision: "r1", blocks: fresh(fixture.blocks) }
             : { revision: "r2", blocks: fresh(fixture.blocks) };
         case "project":
+          if (args.input.kind === "openDocument") {
+            return {
+              kind: "documentOpened",
+              value: {
+                // 回显请求的路径：探针要开的不止第一章——守卫测试得真的把一篇
+                // 资料开进编辑器，才能说「正在编辑的文档」那一条。
+                document: { ...fixture.chapter, path: args.input.value.path },
+                format: "markdown",
+                revision: "r1",
+                blocks: fresh(fixture.blocks),
+                stamp: { modifiedMs: "1", bytes: "1", digest: "d" },
+                replayed: 0,
+                staleJournal: [],
+                kara: null,
+              },
+            };
+          }
           if (args.input.kind === "deleteDocument") {
             state.deleted.push(args.input.value.path);
             return {

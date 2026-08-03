@@ -160,19 +160,29 @@ const productionAcquisition: ProjectAcquisitionPort = {
       : debugCommands.createProject(picked, name);
   },
   async createDocument(rootId, title, role) {
-    return (await unwrap(commands.createDocument(rootId, title, role))).document;
+    const output = await callProject({
+      kind: "createDocument",
+      value: { rootId, title, role },
+    });
+    return expectProjectOutput(output, "documentOpened").value.document;
   },
   async importManuscript(rootId) {
     const picked = e2ePickedPath();
-    return picked === null
-      ? unwrap(commands.chooseAndImportManuscript(rootId))
-      : debugCommands.importManuscript(rootId, picked);
+    if (picked !== null) return debugCommands.importManuscript(rootId, picked);
+    const output = await callProject({
+      kind: "chooseAndImportManuscript",
+      value: { rootId },
+    });
+    return output.kind === "cancelled" ? null : expectProjectOutput(output, "imported").value;
   },
   async importMaterial(rootId) {
     const picked = e2ePickedPath();
-    return picked === null
-      ? unwrap(commands.chooseAndImportMaterial(rootId))
-      : debugCommands.importMaterial(rootId, picked);
+    if (picked !== null) return debugCommands.importMaterial(rootId, picked);
+    const output = await callProject({
+      kind: "chooseAndImportMaterial",
+      value: { rootId },
+    });
+    return output.kind === "cancelled" ? null : expectProjectOutput(output, "imported").value;
   },
   async importedSourceBytes(rootId, digest, format) {
     // 字节怎么过桥归 bridge.ts：那是前端唯一允许触碰请求原语的地方。

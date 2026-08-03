@@ -20,6 +20,7 @@ import type {
   DocumentRow,
   FileStamp_Serialize,
   OpenDocumentDto_Serialize,
+  ProjectOutput,
   RecoveryStep,
   SessionDocumentDto,
   TextTransitionDto,
@@ -130,7 +131,13 @@ export interface SessionNotices {
 /** The production gateway: the six generated commands this session needs. */
 export const browserGateway: DocumentGateway = {
   async openDocument(rootId, path) {
-    return unwrap(commands.openDocument(rootId, path));
+    const output: ProjectOutput = await unwrap(
+      commands.project({ kind: "openDocument", value: { rootId, path } }),
+    );
+    if (output.kind !== "documentOpened") {
+      throw new Error(`Project use case returned ${output.kind}; expected documentOpened`);
+    }
+    return output.value;
   },
   async currentDocument(rootId, path) {
     return unwrap(commands.currentDocument(rootId, path));
