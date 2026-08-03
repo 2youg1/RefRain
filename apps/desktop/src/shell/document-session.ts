@@ -77,6 +77,11 @@ export interface DocumentGateway {
     path: string,
     stamp: FileStamp_Serialize | null,
   ): Promise<PersistOutcome>;
+  commitDecisionBatch(
+    rootId: string,
+    path: string,
+    stamp: FileStamp_Serialize | null,
+  ): Promise<DecisionOutcome>;
   listAnnotations(rootId: string, document: string): Promise<AnnotationDto[]>;
   upsertAnnotation(request: UpsertAnnotation): Promise<AnnotationDto>;
   deleteAnnotation(rootId: string, id: string): Promise<boolean>;
@@ -85,6 +90,16 @@ export interface DocumentGateway {
 export type PersistOutcome =
   | { kind: "saved"; value: { stamp: FileStamp_Serialize; recoveryEvidence?: string | null } }
   | { kind: "conflict"; value: { onDisk: string; stamp: FileStamp_Serialize } };
+
+/** 一次裁决留下的持久事实（D1）。裁决即落盘，所以它和保存一样有冲突这一态。
+ * `pendingRepair` 有值时正文已在盘上，待修的是会话记录——不能当成保存失败，
+ * 那会让作者重来，而重来会拿旧戳比对自己刚写下的字节。 */
+export type DecisionOutcome =
+  | {
+      kind: "committed";
+      value: { stamp: FileStamp_Serialize; pendingRepair?: string | null };
+    }
+  | { kind: "changedUnderneath"; value: { onDisk: string; stamp: FileStamp_Serialize } };
 
 export interface UpsertAnnotation {
   readonly rootId: string;
@@ -125,6 +140,11 @@ export const browserGateway: DocumentGateway = {
   },
   async persistRevision(rootId, path, stamp) {
     return (await unwrap(commands.persistRevision(rootId, path, stamp))) as PersistOutcome;
+  },
+  async commitDecisionBatch(rootId, path, stamp) {
+    return (await unwrap(
+      commands.commitDecisionBatch(rootId, path, stamp),
+    )) as unknown as DecisionOutcome;
   },
   async listAnnotations(rootId, document) {
     return unwrap(commands.listAnnotations(rootId, document));
@@ -294,6 +314,39 @@ export class DocumentSession extends Session {
       }
     } catch (error) {
       this.#save = { kind: "failed", reason: this.describe(error), recovery: recoveryOf(error) };
+    }
+    this.emit();
+  }
+
+  /**
+   * 提交一批裁决。裁决即落盘（D1），所以它和 save 一样要过 stamp——它不是
+   * 「先改内存、等作者按保存」，账本说「已接受」的那一刻磁盘就得同真。
+   *
+   * 裁决走这里而不是让审阅界面直接调命令，是因为 stamp 只有一个持有者。
+   * 界面自己拿一份，两处就会各自过期。
+   */
+  async commitDecisions(): Promise<void> {
+    const rootId = this.#rootId;
+    const open = this.#document;
+    if (rootId === null || open === null) return;
+    const outcome = await this.gateway.commitDecisionBatch(rootId, open.document.path, this.#stamp);
+    if (outcome.kind === "committed") {
+      // 新戳来自刚写下的字节；沿用旧戳会让下一次写把自己判成外部冲突。
+      this.#stamp = outcome.value.stamp;
+      this.#save = { kind: "clean" };
+      this.#savedAt = new Date();
+      if (outcome.value.pendingRepair) {
+        this.notices.notice(`正文已保存，会话记录待修复：${outcome.value.pendingRepair}`);
+      }
+    } else {
+      // 磁盘被别人改过。裁决没有落地，正文与账本都没动。
+      const session = await this.gateway.currentDocument(rootId, open.document.path);
+      this.#save = { kind: "failed", reason: "磁盘上的版本已经变了", recovery: [] };
+      this.#conflict = {
+        mine: session.blocks.map((block) => block.text).join("\n\n"),
+        theirs: outcome.value.onDisk,
+        stamp: outcome.value.stamp,
+      };
     }
     this.emit();
   }

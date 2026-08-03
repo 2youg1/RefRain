@@ -20,6 +20,7 @@
 
 import { describe, unwrap } from "../bridge";
 import type {
+  FileStamp_Serialize,
   HostStateDto,
   MailboxStanding_Serialize,
   ProposalDto,
@@ -54,7 +55,8 @@ export const browserMailboxGateway: TicketMailboxGateway = {
   setReviewBatch: async (rootId, path, cursor, batch) => {
     await unwrap(commands.setReviewBatch(rootId, path, cursor, batch));
   },
-  commitDecisionBatch: (rootId, path) => unwrap(commands.commitDecisionBatch(rootId, path)),
+  commitDecisionBatch: (rootId, path, stamp) =>
+    unwrap(commands.commitDecisionBatch(rootId, path, stamp)),
 };
 
 export interface TicketMailboxGateway {
@@ -76,7 +78,12 @@ export interface TicketMailboxGateway {
     finalText: string | null,
   ): Promise<{ id: string }>;
   setReviewBatch(rootId: string, path: string, cursor: number, batch: string[]): Promise<void>;
-  commitDecisionBatch(rootId: string, path: string): Promise<unknown>;
+  /** 裁决即落盘（D1），所以它要 stamp——`null` 表示不做 compare-and-swap。 */
+  commitDecisionBatch(
+    rootId: string,
+    path: string,
+    stamp: FileStamp_Serialize | null,
+  ): Promise<unknown>;
 }
 
 export type MailboxRow = {
@@ -148,7 +155,15 @@ export class TicketMailbox extends Broadcast {
    */
   #standing = new Map<string, { rank: number | null; pinned: boolean; discarded: boolean }>();
 
-  constructor(private readonly gateway: TicketMailboxGateway) {
+  /**
+   * `stampOf` 交出作者当前盖过的那一份磁盘状态。裁决即落盘（D1），而 stamp
+   * 的唯一持有者是 DocumentSession——信箱自己存一份，两处就会各自过期。
+   * 未接线时返回 null：不做 compare-and-swap，与接线前的行为一致。
+   */
+  constructor(
+    private readonly gateway: TicketMailboxGateway,
+    private readonly stampOf?: () => FileStamp_Serialize | null,
+  ) {
     super();
   }
 
@@ -437,7 +452,7 @@ export class TicketMailbox extends Broadcast {
     // 接受类裁决落成正文：单成一批，立即合并。退回只是记录，正文不动。
     if (kind !== "reject" && verdictIds.length > 0) {
       await this.gateway.setReviewBatch(rootId, path, 0, verdictIds);
-      await this.gateway.commitDecisionBatch(rootId, path);
+      await this.gateway.commitDecisionBatch(rootId, path, this.stampOf?.() ?? null);
     }
     await this.refresh(rootId, path);
     return null;

@@ -1467,7 +1467,7 @@ export function Workbench(props: WorkbenchProps) {
                 <ReviewSurface
                   rootId={root().rootId}
                   path={active()?.document.path ?? ""}
-                  onCommitted={() => void bentoState.adoptCommitted()}
+                  commitBatch={() => commitDecisions()}
                   onClosed={() => openStage("writing")}
                 />
               </Show>

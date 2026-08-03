@@ -108,7 +108,7 @@ fn stage_proposal(
 /// 走完真实的合并路径：提案 + 接受裁决 + 提交批次。
 fn merge(store: &mut ProjectStore, manuscript: &mut Manuscript) -> String {
     let proposal = stage_proposal(store, manuscript, 0, OPENING, Some(MERGED));
-    commit_decision_batch(store, manuscript, CHAPTER).unwrap();
+    commit_decision_batch(store, manuscript, CHAPTER, None).unwrap();
     proposal
 }
 
@@ -161,7 +161,7 @@ fn a_batch_countermand_is_one_action_and_one_undo_restores_everything() {
     let first = merge(&mut store, &mut manuscript);
     let second = {
         let proposal = stage_proposal(&mut store, &manuscript, 1, SECOND, Some(MERGED_SECOND));
-        commit_decision_batch(&mut store, &mut manuscript, CHAPTER).unwrap();
+        commit_decision_batch(&mut store, &mut manuscript, CHAPTER, None).unwrap();
         proposal
     };
     assert!(head_text(&manuscript).contains(MERGED));
@@ -354,7 +354,7 @@ fn countermanding_a_deletion_merge_is_refused_with_its_reason() {
     // 删除型合并：正文里少了那一段，没有字节可当锚定物。
     let proposal = {
         let proposal = stage_proposal(&mut store, &manuscript, 0, OPENING, None);
-        commit_decision_batch(&mut store, &mut manuscript, CHAPTER).unwrap();
+        commit_decision_batch(&mut store, &mut manuscript, CHAPTER, None).unwrap();
         proposal
     };
     assert_eq!(head_text(&manuscript), SECOND);

@@ -21,7 +21,7 @@ const ERROR_CEILING = 0;
  * ceilings, which the gate enforces by failing on a stale entry.
  */
 const DEBT: Readonly<Record<string, { readonly lines: number; readonly errors: number }>> = {
-  commit_decision_batch: { lines: 22, errors: 1 },
+  commit_decision_batch: { lines: 17, errors: 0 },
   cancel_run: { lines: 60, errors: 3 },
   upsert_annotation: { lines: 76, errors: 5 },
   inject_fixture_proposal: { lines: 71, errors: 4 },

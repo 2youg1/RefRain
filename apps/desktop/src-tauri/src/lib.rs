@@ -363,6 +363,31 @@ pub struct UpsertAnnotationRequest {
     pub body: Option<String>,
 }
 
+/// 一次裁决留下的持久事实（D1）。裁决即落盘，所以它和保存一样有三种结局。
+///
+/// `ChangedUnderneath` 与保存那边同名同义：磁盘上的字节不是作者盖戳时看到的
+/// 那一份。此时正文没动、账本没写，什么都没发生过。
+///
+/// `Committed` 的 `pendingRepair` 分开两个世界：`null` 是正文与派生状态全都
+/// 落了盘；有值是正文已落盘、continuity/history 待修。两者都带**新** stamp——
+/// 待修那一态若沿用旧戳，重试会拿旧戳去比对自己刚写下的字节，把自己判成外部
+/// 冲突（F-03）。
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase", tag = "kind", content = "value")]
+pub enum DecisionOutcomeDto {
+    Committed {
+        transition: TextTransitionDto,
+        stamp: FileStamp,
+        #[serde(rename = "pendingRepair")]
+        pending_repair: Option<String>,
+    },
+    ChangedUnderneath {
+        #[serde(rename = "onDisk")]
+        on_disk: String,
+        stamp: FileStamp,
+    },
+}
+
 /// What a save became. `ChangedUnderneath` is a Safety surface, not an error.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase", tag = "kind", content = "value")]
@@ -2187,22 +2212,65 @@ fn commit_decision_batch(
     state: tauri::State<'_, AppState>,
     root_id: String,
     path: String,
-) -> Result<TextTransitionDto, RefrainError> {
+    expected: Option<FileStamp>,
+) -> Result<DecisionOutcomeDto, RefrainError> {
     state.with_project(&root_id, |_state, entry| {
         // 分别借用两个字段：提交要改 store，也要改打开着的稿子。
         let ProjectEntry {
             store, manuscripts, ..
         } = entry;
-        let manuscript = manuscripts.get_mut(&path).ok_or_else(|| {
-            RefrainError::new(
-                ErrorCode::StateUnavailable,
-                "commit against a document that is not open",
-                path.clone(),
-            )
-        })?;
-        let transition = refrain_app::commit_decision_batch(store, manuscript, &path)?;
-        record_text_action(store, &path, &transition)?;
-        Ok(transition_dto(&transition))
+        let manuscript = open_manuscript_mut(manuscripts, &path, "commit")?;
+        // 裁决即落盘（D1）：这个调用返回时，接受过的字已经在磁盘上了。
+        let outcome = refrain_app::commit_decision_batch(store, manuscript, &path, expected)?;
+        commit_outcome_dto(store, &path, outcome)
+    })
+}
+
+/// 取出打开着的那一份稿子。没打开是作者的事实，不是内部错误——`action` 说清
+/// 是哪一个动作撞上了它。
+fn open_manuscript_mut<'a>(
+    manuscripts: &'a mut HashMap<String, Manuscript>,
+    path: &str,
+    action: &str,
+) -> Result<&'a mut Manuscript, RefrainError> {
+    manuscripts.get_mut(path).ok_or_else(|| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            format!("{action} against a document that is not open"),
+            path.to_owned(),
+        )
+    })
+}
+
+/// 把用例的三态翻成桥上的两支，顺带记下正文动过的那一次 Text Action。
+///
+/// 冲突时什么都没发生过——正文没动，也就没有 Text Action 可记；这条判断留在
+/// 一个地方，桥上的命令体就不必解释三种世界各自要做什么。
+fn commit_outcome_dto(
+    store: &mut refrain_store::project::ProjectStore,
+    path: &str,
+    outcome: refrain_app::decide::DecisionOutcome,
+) -> Result<DecisionOutcomeDto, RefrainError> {
+    use refrain_app::decide::DecisionOutcome;
+    let (transition, stamp, pending_repair) = match outcome {
+        DecisionOutcome::Conflict { on_disk, stamp } => {
+            return Ok(DecisionOutcomeDto::ChangedUnderneath {
+                on_disk: String::from_utf8_lossy(&on_disk).into_owned(),
+                stamp,
+            });
+        }
+        DecisionOutcome::Durable { transition, stamp } => (transition, stamp, None),
+        DecisionOutcome::BodyDurable {
+            transition,
+            stamp,
+            detail,
+        } => (transition, stamp, Some(detail)),
+    };
+    record_text_action(store, path, &transition)?;
+    Ok(DecisionOutcomeDto::Committed {
+        transition: transition_dto(&transition),
+        stamp,
+        pending_repair,
     })
 }
 

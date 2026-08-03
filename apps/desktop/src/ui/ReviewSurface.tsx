@@ -40,7 +40,9 @@ export type { Unit } from "../shell/review-verdicts";
 export type ReviewSurfaceProps = {
   rootId: string;
   path: string;
-  onCommitted?: () => void;
+  /** 落盘交给 stamp 的持有者（DocumentSession）。裁决即落盘（D1），而 stamp
+   * 只能有一个持有者——审阅界面自己拿一份，两处就会各自过期。 */
+  commitBatch: () => Promise<void>;
   onClosed?: () => void;
 };
 
@@ -133,9 +135,9 @@ async function performJudge(
 
 type CommitResult = { kind: "committed" } | Failure;
 
-async function performCommit(rootId: string, path: string): Promise<CommitResult> {
+async function performCommit(commitBatch: () => Promise<void>): Promise<CommitResult> {
   try {
-    await unwrap(commands.commitDecisionBatch(rootId, path));
+    await commitBatch();
     return { kind: "committed" };
   } catch (cause) {
     return failure(cause);
@@ -310,12 +312,8 @@ export function ReviewSurface(props: ReviewSurfaceProps): JSX.Element {
       setNotice({ kind: "refused", text: "没有入批的裁决。" });
       return;
     }
-    const result = await performCommit(props.rootId, props.path);
-    if (result.kind === "failed") {
-      setNotice(result.stale ?? result);
-      return;
-    }
-    props.onCommitted?.();
+    const result = await performCommit(props.commitBatch);
+    if (result.kind === "failed") setNotice(result.stale ?? result);
   };
 
   const openEditor = (): void => {

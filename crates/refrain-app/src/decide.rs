@@ -16,24 +16,54 @@ use refrain_core::{
     TextCommand, TextRefusal, TextTransition,
 };
 use refrain_store::ledger::{VerdictKindName, VerdictRecord};
-use refrain_store::project::ProjectStore;
+use refrain_store::project::{DocumentCommit, FileStamp, ProjectFailure, ProjectStore};
 
 use crate::journal::into_domain;
+
+/// 裁决走完之后，这次动作留在磁盘上的事实。
+///
+/// 三态而不是「成功/失败」二值，因为有三种不同的世界，作者要做的事各不相同：
+/// 正文与派生状态都落了盘、正文落了盘但派生状态待修、以及磁盘在作者不知情时
+/// 被别人改过。把它们压进一个错误通道，就是 F-03 的成因——重试会被自己判成
+/// 外部冲突。
+#[derive(Debug)]
+pub enum DecisionOutcome {
+    /// 正文与派生状态全部落盘。`stamp` 是这次写入之后的新戳。
+    Durable {
+        transition: TextTransition,
+        stamp: FileStamp,
+    },
+    /// 正文已落盘，continuity/history 待修复。**带着新 stamp**：重试要用它，
+    /// 否则重试会拿旧戳去比对自己刚写下的字节，把自己判成外部冲突。
+    BodyDurable {
+        transition: TextTransition,
+        stamp: FileStamp,
+        detail: String,
+    },
+    /// 磁盘上的字节不是作者盖戳时看到的那一份。真正的外部改动，不能覆盖。
+    Conflict { on_disk: Vec<u8>, stamp: FileStamp },
+}
 
 /// 提交一份暂存的裁决批次。
 ///
 /// `manuscript` 是这份文稿当前打开的那一份——裁决落地要改它的文本，块 id 也只
 /// 在它身上成立。
 ///
+/// `expected` 是作者盖过戳的那一份磁盘状态。**裁决即落盘**：裁决是档案性动作，
+/// 它写进 Ledger，所以账本说「已接受」的那一刻磁盘必须同真，不能把「按保存」
+/// 留给作者（F-01）。落盘走的是同一个 compare-and-swap，因为裁决没有比手工
+/// 保存更多的权力去覆盖别人的改动。
+///
 /// # Errors
 ///
 /// 批次为空、账本行与当前提案对不上、slice id 格式不对、修改型裁决缺少正文，
-/// 都在这里拒绝并说明是哪一行。
+/// 都在这里拒绝并说明是哪一行。外部改动不是错误，它是 `Conflict` 那一态。
 pub fn commit_decision_batch(
     store: &mut ProjectStore,
     manuscript: &mut Manuscript,
     path: &str,
-) -> Result<TextTransition, RefrainError> {
+    expected: Option<FileStamp>,
+) -> Result<DecisionOutcome, RefrainError> {
     let batch_ids = staged_batch(store, path)?;
     let rows = store
         .ledger()
@@ -74,7 +104,68 @@ pub fn commit_decision_batch(
     store
         .review_session_set(path, 0, "[]")
         .map_err(into_domain)?;
-    Ok(transition)
+
+    // 裁决即落盘（D1）。合并已经发生在内存里，账本也已经记下「已接受」——
+    // 此刻磁盘还是旧正文，正是 F-01 那个可实测的分裂。落盘用与手工保存同一个
+    // compare-and-swap：裁决没有比作者按保存更多的权力去覆盖别人的改动。
+    let bytes = manuscript.materialize().map_err(|error| {
+        RefrainError::new(ErrorCode::Io, "materialise a manuscript", path.to_owned())
+            .with_detail(error.to_string())
+    })?;
+    let committed = match store.commit(&DocumentCommit {
+        path: path.to_owned(),
+        bytes,
+        expected,
+    }) {
+        Ok(outcome) => outcome,
+        Err(ProjectFailure::ChangedUnderneath(conflict)) => {
+            return Ok(DecisionOutcome::Conflict {
+                on_disk: conflict.on_disk,
+                stamp: conflict.stamp,
+            });
+        }
+        Err(other) => return Err(into_domain(other)),
+    };
+
+    // 派生状态跟在正文后面。它失败时正文**已经在盘上**了，所以不能报「保存
+    // 失败」——那会让作者以为要重来，而重来会拿旧戳比对自己刚写的字节，把
+    // 自己判成外部冲突（F-03）。带上新 stamp 说清楚：正文已 durable，待修的
+    // 是别的东西。
+    let live: Vec<Id> = manuscript
+        .actions()
+        .iter()
+        .map(refrain_core::TextAction::id)
+        .collect();
+    let head = manuscript.head().id().to_string();
+    let lineage = match serde_json::to_string(&manuscript.lineage_ids()) {
+        Ok(lineage) => lineage,
+        Err(error) => {
+            return Ok(DecisionOutcome::BodyDurable {
+                transition,
+                stamp: committed.stamp,
+                detail: error.to_string(),
+            });
+        }
+    };
+    if let Err(error) = store.save_continuity(path, &head, &lineage) {
+        return Ok(DecisionOutcome::BodyDurable {
+            transition,
+            stamp: committed.stamp,
+            detail: error.to_string(),
+        });
+    }
+    if let Err(error) = store.action_history().sync_chain(path, &live) {
+        return Ok(DecisionOutcome::BodyDurable {
+            transition,
+            stamp: committed.stamp,
+            detail: error.to_string(),
+        });
+    }
+
+    Ok(DecisionOutcome::Durable {
+        transition,
+        stamp: committed.stamp,
+    })
 }
 
 /// 把领域的拒绝翻译成作者能行动的错误。

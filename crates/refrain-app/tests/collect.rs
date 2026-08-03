@@ -425,6 +425,46 @@ fn identity_lands_a_repeated_scope_on_the_block_the_author_actually_chose() {
 }
 
 #[test]
+fn an_identified_scope_whose_bytes_changed_still_fails_rather_than_overwrites() {
+    // 身份让定位不再依赖文本，但**不能**让它不再核对文本。块还在、字节变了，
+    // 说明作者自己改了这一段：Agent 读到的已经不是现在的正文，照套上去就是
+    // 覆盖他没让改的字。身份回答「是哪一段」，字节回答「还能不能用」，
+    // 两个问题都要问。
+    //
+    // 没有这条测试，「身份命中后跳过字节比较」这个缺陷是全绿的——
+    // 既有的那条 stale 测试不带身份，走的是另一条分支。
+    let root = scratch();
+    let (_app, mut store) = store_at(&root);
+    let state_dir = store.layout().state_dir.clone();
+    let run_id = dispatched_run(&mut store, "runs/one");
+
+    let manuscript = manuscript_of(&root);
+    let chosen = manuscript.head().blocks()[0].id();
+
+    // 冻结的是作者后来改掉的文字：块 id 仍然指向那一块，但字节已经不同。
+    stage_with_identity(
+        &state_dir,
+        "runs/one",
+        run_id,
+        "派发时的原文，作者后来改掉了。",
+        &replacement("基于旧文本的改写。"),
+        Some(&[chosen]),
+    );
+    let manuscripts = [(CHAPTER.to_string(), manuscript)].into_iter().collect();
+
+    let collected = collect_attempt(&mut store, &manuscripts, run_id, 10).unwrap();
+
+    assert_eq!(
+        collected,
+        Collected::Failed {
+            code: "scope-text-moved".to_string(),
+            detail: "ch01:b1".to_string(),
+        }
+    );
+    assert!(store.proposals_for(CHAPTER).unwrap().is_empty());
+}
+
+#[test]
 fn a_scope_the_frozen_request_never_carried_is_refused() {
     // 契约来自冻结的请求，不来自结果自己的声称（SPEC 8.4）：结果指名一个请求
     // 里没有的范围时，不能因为它这么说就接受。

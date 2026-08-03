@@ -163,7 +163,11 @@ export const commands = {
 	 *  The one commit path: staged judgments become one Text Action (SPEC 7.4).
 	 *  The batch and cursor clear; candidates stay for the audit.
 	 */
-	commitDecisionBatch: (rootId: string, path: string) => typedError<TextTransitionDto, RefrainError>(__TAURI_INVOKE("commit_decision_batch", { rootId, path })),
+	commitDecisionBatch: (rootId: string, path: string, expected: {
+	modifiedMs: string,
+	bytes: string,
+	digest: string,
+} | null) => typedError<DecisionOutcomeDto_Serialize, RefrainError>(__TAURI_INVOKE("commit_decision_batch", { rootId, path, expected })),
 	/**
 	 *  The countermanding verdict (逆向裁决): reverse already-merged proposals —
 	 *  the ledger appends one countermanding record per proposal, and the text
@@ -643,6 +647,59 @@ export type ConfigSnapshot = {
 	 */
 	recoveryEvidence: string | null,
 };
+
+/**
+ *  一次裁决留下的持久事实（D1）。裁决即落盘，所以它和保存一样有三种结局。
+ *
+ *  `ChangedUnderneath` 与保存那边同名同义：磁盘上的字节不是作者盖戳时看到的
+ *  那一份。此时正文没动、账本没写，什么都没发生过。
+ *
+ *  `Committed` 的 `pendingRepair` 分开两个世界：`null` 是正文与派生状态全都
+ *  落了盘；有值是正文已落盘、continuity/history 待修。两者都带**新** stamp——
+ *  待修那一态若沿用旧戳，重试会拿旧戳去比对自己刚写下的字节，把自己判成外部
+ *  冲突（F-03）。
+ */
+export type DecisionOutcomeDto = DecisionOutcomeDto_Serialize | DecisionOutcomeDto_Deserialize;
+
+/**
+ *  一次裁决留下的持久事实（D1）。裁决即落盘，所以它和保存一样有三种结局。
+ *
+ *  `ChangedUnderneath` 与保存那边同名同义：磁盘上的字节不是作者盖戳时看到的
+ *  那一份。此时正文没动、账本没写，什么都没发生过。
+ *
+ *  `Committed` 的 `pendingRepair` 分开两个世界：`null` 是正文与派生状态全都
+ *  落了盘；有值是正文已落盘、continuity/history 待修。两者都带**新** stamp——
+ *  待修那一态若沿用旧戳，重试会拿旧戳去比对自己刚写下的字节，把自己判成外部
+ *  冲突（F-03）。
+ */
+export type DecisionOutcomeDto_Deserialize = { kind: "committed"; value: {
+	transition: TextTransitionDto,
+	stamp: FileStamp_Deserialize,
+	pendingRepair: string | null,
+} } | { kind: "changedUnderneath"; value: {
+	onDisk: string,
+	stamp: FileStamp_Deserialize,
+} };
+
+/**
+ *  一次裁决留下的持久事实（D1）。裁决即落盘，所以它和保存一样有三种结局。
+ *
+ *  `ChangedUnderneath` 与保存那边同名同义：磁盘上的字节不是作者盖戳时看到的
+ *  那一份。此时正文没动、账本没写，什么都没发生过。
+ *
+ *  `Committed` 的 `pendingRepair` 分开两个世界：`null` 是正文与派生状态全都
+ *  落了盘；有值是正文已落盘、continuity/history 待修。两者都带**新** stamp——
+ *  待修那一态若沿用旧戳，重试会拿旧戳去比对自己刚写下的字节，把自己判成外部
+ *  冲突（F-03）。
+ */
+export type DecisionOutcomeDto_Serialize = { kind: "committed"; value: {
+	transition: TextTransitionDto,
+	stamp: FileStamp_Serialize,
+	pendingRepair: string | null,
+} } | { kind: "changedUnderneath"; value: {
+	onDisk: string,
+	stamp: FileStamp_Serialize,
+} };
 
 /**
  *  How much of one material the author lets the agent reach.

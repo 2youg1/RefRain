@@ -8,7 +8,7 @@
 //! 对照因此只在唯一命中时成立——朴素实现遇到重复会返回第一处，那正是被废掉的
 //! 那个答案。凡是对照，都显式限定在唯一命中上，不把旧行为偷偷当成基准。
 
-use refrain_app::scope::{ScopeLocation, before_sections, locate_scope};
+use refrain_app::scope::{ScopeLocation, before_sections, locate_scope, locate_scope_by_identity};
 use refrain_core::{BlockScan, Id, Lineage, Manuscript, SourceSnapshot};
 
 /// 被替换掉的那个实现，一字不改地留在这里当参照。
@@ -174,6 +174,63 @@ fn a_plain_text_manuscript_refuses_repeated_lines() {
         panic!("a repeated closing brace must be ambiguous, not the first one");
     };
     assert_eq!(candidates.len(), 2);
+}
+
+#[test]
+fn identity_finds_a_scope_that_text_alone_cannot_tell_apart() {
+    // A 的核心。两段逐字相同时，按内容定位只能拒绝；按身份定位得到确切答案，
+    // 因为「哪一块」在派发那一刻就已经是事实。
+    let manuscript = manuscript_of(&["重复。", "中间。", "重复。"]);
+    let blocks = manuscript.head().blocks();
+    let third = blocks[2].id();
+
+    // 内容寻址分辨不出。
+    assert!(matches!(
+        locate_scope(&manuscript, "重复。"),
+        ScopeLocation::Ambiguous(_)
+    ));
+    // 身份寻址分辨得出，而且给的是第三块不是第一块。
+    let found = locate_scope_by_identity(&manuscript, &[third]).expect("identity locates");
+    assert_eq!(found, vec![third]);
+    assert_ne!(found[0], blocks[0].id());
+}
+
+#[test]
+fn identity_refuses_blocks_the_author_has_deleted() {
+    // 块不在了：作者删掉了那一段。身份给不出答案，调用方回落到原文匹配。
+    let manuscript = manuscript_of(&["一。", "二。"]);
+    let gone = Id::new();
+    assert_eq!(locate_scope_by_identity(&manuscript, &[gone]), None);
+}
+
+#[test]
+fn identity_refuses_a_scope_that_is_no_longer_contiguous() {
+    // 作者在原本相邻的两块之间插了一段新的。一个 Edit Scope 是一段连续的正文；
+    // 若仍按首尾替换，中间那段新写的字会被一并改掉——那是作者没有要求的事。
+    //
+    // 没有这条测试，删掉连续性守卫是全绿的。
+    let manuscript = manuscript_of(&["甲。", "乙。", "丙。"]);
+    let blocks = manuscript.head().blocks();
+    let first = blocks[0].id();
+    let third = blocks[2].id();
+
+    // 相邻的两块可以定位。
+    assert!(locate_scope_by_identity(&manuscript, &[first, blocks[1].id()]).is_some());
+    // 中间隔了一块的两块不行。
+    assert_eq!(locate_scope_by_identity(&manuscript, &[first, third]), None);
+    // 逆序也不行：顺序是文档顺序，不是调用方随手给的顺序。
+    assert_eq!(
+        locate_scope_by_identity(&manuscript, &[blocks[1].id(), first]),
+        None
+    );
+}
+
+#[test]
+fn identity_refuses_an_empty_selection() {
+    // 空集合没有身份可言。返回 Some(vec![]) 会让调用方拿到一个「定位成功但
+    // 什么都没选中」的范围，那是一次没有对象的替换。
+    let manuscript = manuscript_of(&["一。"]);
+    assert_eq!(locate_scope_by_identity(&manuscript, &[]), None);
 }
 
 #[test]
