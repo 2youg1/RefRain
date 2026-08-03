@@ -45,6 +45,8 @@
     "verify:corner-authority": "bun scripts/verify-corner-authority.ts",
     "verify:typeset-purity": "bun scripts/verify-typeset-purity.ts",
     "verify:effect-territory": "bun scripts/verify-effect-territory.ts",
+    "verify:scriptc-coverage": "bun scripts/verify-scriptc-coverage.ts",
+    "scriptc:build": "bun scripts/scriptc-build.ts",
     "verify:rail-indent": "bun scripts/verify-rail-indent.ts",
     "verify:chrome-reveal": "bun scripts/verify-chrome-reveal.ts",
     "verify:fonts": "bun scripts/verify-fonts.ts",

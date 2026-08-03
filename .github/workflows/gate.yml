@@ -14,6 +14,7 @@ permissions:
 
 env:
   BUN_VERSION: 1.3.14
+  SCRIPTC_VERSION: "0.0.21"
   RUST_VERSION: "1.97.1"
 
 jobs:
@@ -61,6 +62,19 @@ jobs:
       - name: Install Playwright Chromium
         if: runner.os != 'Linux'
         run: bun x playwright install chromium
+
+      # Tier A gates run as compiled executables with no Bun fallback (D15),
+      # so the gate cannot start until they exist.
+      - name: Install ScriptC
+        run: |
+          bun install --global scriptc@${{ env.SCRIPTC_VERSION }}
+          scriptc --version
+
+      - name: Install clang for ScriptC
+        if: runner.os == 'Linux'
+        run: sudo apt-get install --yes clang
+
+      - run: bun run scriptc:build
 
       - run: bun run gate
 

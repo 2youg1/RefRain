@@ -2,6 +2,8 @@
 /** Run each selected gate without a pipe and preserve its exit status. */
 
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { executableFor, TIER_A } from "./scriptc-tiers.ts";
 
 const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   // Rust uses these generated corpora at compile time, so generate them first.
@@ -102,6 +104,7 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["verify:contract-tier-per-task", ["bun", "scripts/verify-contract-tier-per-task.ts"]],
   ["verify:release-version", ["bun", "scripts/verify-release-version.ts"]],
   ["verify:release-workflow", ["bun", "scripts/verify-release-workflow.ts"]],
+  ["verify:scriptc-coverage", ["bun", "scripts/verify-scriptc-coverage.ts"]],
   ["verify:gates-run", ["bun", "scripts/verify-gates-run.ts"]],
   // 壳层接线的行为探针：真 Workbench、真点击、真浏览器——unit 与 wiring 测试
   // 都证不了 Solid 真的重渲染。需要浏览器，所以归 headless evidence。
@@ -143,10 +146,29 @@ const selected = stages.filter(([name]) => {
 });
 const failures: string[] = [];
 
+/**
+ * A tier A gate runs as its compiled executable, never as `bun scripts/*.ts`.
+ *
+ * A missing executable fails that gate rather than falling back to Bun: with a
+ * fallback the compiled artefact was never the authority, and a ScriptC
+ * regression would turn no gate red (roadmap D15). Run `bun run scriptc:build`
+ * first — CI does.
+ */
+function commandFor(name: string, argv: readonly string[]): readonly string[] {
+  const script = TIER_A[name];
+  if (script === undefined) return argv;
+  return [executableFor(script)];
+}
+
 for (const [name, argv] of selected) {
   const started = Date.now();
-  const [command, ...args] = argv;
+  const [command, ...args] = commandFor(name, argv);
   if (command === undefined) throw new Error(`stage ${name} has no command`);
+  if (TIER_A[name] !== undefined && !existsSync(command)) {
+    console.log(`FAIL  ${name}  (tier A executable missing: ${command} — run scriptc:build)`);
+    failures.push(name);
+    continue;
+  }
   const result = spawnSync(command, args, { stdio: "inherit" });
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
 

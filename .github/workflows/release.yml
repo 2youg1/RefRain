@@ -64,7 +64,6 @@ jobs:
 
       - name: Compile the release policy with ScriptC
         id: scriptc_policy
-        continue-on-error: true
         shell: pwsh
         run: |
           scriptc coverage scripts/release-assets.ts
@@ -76,21 +75,14 @@ jobs:
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart("v")
-          if (Test-Path target/release/release-assets.exe) {
-            Write-Host "release policy: running the ScriptC-compiled executable"
-            & target/release/release-assets.exe `
-              $version `
-              apps/desktop/src-tauri/tauri.conf.json `
-              target/release/bundle/nsis `
-              release-assets
-          } else {
-            Write-Host "release policy: ScriptC could not compile on this runner; running the same script on Bun"
-            bun scripts/release-assets.ts `
-              $version `
-              apps/desktop/src-tauri/tauri.conf.json `
-              target/release/bundle/nsis `
-              release-assets
-          }
+          # The compiled executable is the only path. A Bun fallback would mean
+          # the artefact was never the authority and a ScriptC regression would
+          # ship unnoticed (roadmap D15).
+          & target/release/release-assets.exe `
+            $version `
+            apps/desktop/src-tauri/tauri.conf.json `
+            target/release/bundle/nsis `
+            release-assets
           if ($LASTEXITCODE -ne 0) { throw "release policy failed" }
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
