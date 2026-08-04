@@ -22,7 +22,13 @@ import { Glob } from "bun";
 
 const onDisk: string[] = [];
 for await (const file of new Glob("verify-*.ts").scan({ cwd: "scripts" })) {
-  onDisk.push(file.split(/[/\\]/).pop() ?? file);
+  const name = file.split(/[/\\]/).pop() ?? file;
+  // `verify-*.test.ts` is a counterfactual test for a gate, not a gate. `bun
+  // test` runs it; `gate.ts` never names it. Scanning it as a gate reports a
+  // permanent orphan that no wiring can clear — the fix would be to register a
+  // test file as a gate stage, which then runs twice and reports twice.
+  if (name.endsWith(".test.ts")) continue;
+  onDisk.push(name);
 }
 
 if (onDisk.length === 0) {

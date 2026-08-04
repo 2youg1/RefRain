@@ -31,14 +31,10 @@ import { report, scan } from "./gate-lib.ts";
 const HTML_SINK =
   /\b(innerHTML|outerHTML|insertAdjacentHTML|document\.write|createContextualFragment)\b/;
 
-const result = scan(
-  ["apps/desktop/src/**/*.{ts,tsx}", "packages/*/src/**/*.ts", "packages/*/src/**/*.tsx"],
-  HTML_SINK,
-  {
-    // 注释里提到这些名字是说明理由，不是使用它们——本文件顶部的说明就是例子。
-    ignoreLine: (line) => /^\s*(\/\/|\/\*|\*)/.test(line),
-  },
-);
+const result = scan(["apps/native/src/**/*.ts"], HTML_SINK, {
+  // 注释里提到这些名字是说明理由，不是使用它们——本文件顶部的说明就是例子。
+  ignoreLine: (line) => /^\s*(\/\/|\/\*|\*)/.test(line),
+});
 
 report(
   "verify:no-html-sink",

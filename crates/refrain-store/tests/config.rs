@@ -4,10 +4,11 @@
 //! file rewritten by an older one.
 
 use refrain_core::Id;
+use refrain_core::persona::Persona;
 use refrain_store::config::{
-    AdapterKind, AppearanceConfig, Config, ConfigChange, ConfigFailure, ConfigStore, FontConfig,
-    HarnessConnection, PanelWidth, PaperMode, TextAlignment, TypographyConfig,
-    builtin_typography_presets,
+    AdapterKind, AgentProfile, AppearanceConfig, Config, ConfigChange, ConfigFailure, ConfigStore,
+    FontConfig, HarnessConnection, PanelWidth, PaperMode, TextAlignment, TypographyConfig,
+    TypographyField, builtin_typography_presets,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -457,7 +458,9 @@ fn upserting_an_agent_with_an_existing_id_edits_in_place() {
         id,
         name: name.to_string(),
         connection_id: None,
-        persona: persona.map(str::to_string),
+        persona: persona.map(|text| Persona::Work {
+            body: text.to_string(),
+        }),
         argv: Vec::new(),
     };
     store
@@ -472,7 +475,13 @@ fn upserting_an_agent_with_an_existing_id_edits_in_place() {
     assert_eq!(snapshot.config.agents.len(), 1);
     assert_eq!(snapshot.config.agents[0].id, id);
     assert_eq!(snapshot.config.agents[0].name, "定稿");
-    assert_eq!(snapshot.config.agents[0].persona.as_deref(), Some("审稿人"));
+    assert_eq!(
+        snapshot.config.agents[0]
+            .persona
+            .as_ref()
+            .map(Persona::body),
+        Some("审稿人")
+    );
 
     // The create path: a fresh id appends, so create and edit stay apart.
     let fresh = refrain_store::config::AgentProfile {
@@ -689,7 +698,9 @@ fn an_agents_persona_round_trips_through_create_and_update() {
                 id,
                 name: "译审".to_string(),
                 connection_id: None,
-                persona: Some("以林译风格润色，保留异化句式。".to_string()),
+                persona: Some(Persona::Work {
+                    body: "以林译风格润色，保留异化句式。".to_string(),
+                }),
                 argv: Vec::new(),
             },
         ))
@@ -701,7 +712,7 @@ fn an_agents_persona_round_trips_through_create_and_update() {
         .find(|agent| agent.id == id)
         .expect("the created agent is listed");
     assert_eq!(
-        listed.persona.as_deref(),
+        listed.persona.as_ref().map(Persona::body),
         Some("以林译风格润色，保留异化句式。")
     );
 
@@ -713,7 +724,9 @@ fn an_agents_persona_round_trips_through_create_and_update() {
                 id,
                 name: "译审".to_string(),
                 connection_id: None,
-                persona: Some("克制润色，只动标点。".to_string()),
+                persona: Some(Persona::Work {
+                    body: "克制润色，只动标点。".to_string(),
+                }),
                 argv: Vec::new(),
             },
         ))
@@ -724,7 +737,10 @@ fn an_agents_persona_round_trips_through_create_and_update() {
         .iter()
         .find(|agent| agent.id == id)
         .expect("the updated agent is listed");
-    assert_eq!(listed.persona.as_deref(), Some("克制润色，只动标点。"));
+    assert_eq!(
+        listed.persona.as_ref().map(Persona::body),
+        Some("克制润色，只动标点。")
+    );
     assert_eq!(updated.config.agents.len(), 1, "an update must not clone");
 
     // The value also survives the disk, not only the snapshot in hand.
@@ -735,6 +751,181 @@ fn an_agents_persona_round_trips_through_create_and_update() {
         .iter()
         .find(|agent| agent.id == id)
         .expect("the agent survives a reload");
-    assert_eq!(listed.persona.as_deref(), Some("克制润色，只动标点。"));
+    assert_eq!(
+        listed.persona.as_ref().map(Persona::body),
+        Some("克制润色，只动标点。")
+    );
     fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn adjusting_one_typographic_field_leaves_the_other_thirteen_alone() {
+    // 界面上作者调的是一项。让它送整份，就得先持有另外 13 项的当前值——
+    // 而并发下那份值可能已经旧了：调字号的同时若有别处改过行高，整份
+    // 替换会把行高改回界面读到的那个旧值。
+    let dir = scratch();
+    let (store, before) = ConfigStore::load(&dir).unwrap();
+    let baseline = before.config.appearance.typography.clone();
+
+    let after = store
+        .apply(ConfigChange::AdjustTypography {
+            field: TypographyField::TextSize,
+            delta: 10,
+        })
+        .unwrap();
+    let typography = &after.config.appearance.typography;
+
+    assert_eq!(
+        typography.text_size_tenths_px,
+        baseline.text_size_tenths_px + 10
+    );
+    // 其余全部逐字相同。近失手：整份替换会让这几条中的某一条变成默认值，
+    // 而作者不会立刻注意到——他正盯着字号。
+    assert_eq!(typography.line_height_percent, baseline.line_height_percent);
+    assert_eq!(typography.measure_tenths_em, baseline.measure_tenths_em);
+    assert_eq!(typography.fonts, baseline.fonts);
+    assert_eq!(typography.alignment, baseline.alignment);
+    assert_eq!(typography.zoom_percent, baseline.zoom_percent);
+}
+
+#[test]
+fn a_typographic_field_stops_at_its_bound_instead_of_wrapping() {
+    // 撞到边界就停：绕回会让按住按钮的作者从最大跳到最小，而他看到的
+    // 是正文突然缩成一团。上下界不是审美选择——10px 以下认不出汉字
+    // 笔画，行长短于 20 个字身每行放不下一个完整句子。
+    let dir = scratch();
+    let (store, _) = ConfigStore::load(&dir).unwrap();
+
+    let huge = store
+        .apply(ConfigChange::AdjustTypography {
+            field: TypographyField::TextSize,
+            delta: 10_000,
+        })
+        .unwrap();
+    assert_eq!(huge.config.appearance.typography.text_size_tenths_px, 400);
+
+    let tiny = store
+        .apply(ConfigChange::AdjustTypography {
+            field: TypographyField::TextSize,
+            delta: -10_000,
+        })
+        .unwrap();
+    assert_eq!(tiny.config.appearance.typography.text_size_tenths_px, 100);
+}
+
+#[test]
+fn each_adjustable_field_moves_only_itself() {
+    // 三项各自独立。共用一个字段的写入点会让调行高把字号也改了，而
+    // 两次读数都「变了」，界面上看不出是哪一项串了。
+    let dir = scratch();
+    let (store, _) = ConfigStore::load(&dir).unwrap();
+    let mut previous = store.apply(ConfigChange::ResetTypography).unwrap();
+
+    for (field, expected) in [
+        (TypographyField::LineHeight, "line"),
+        (TypographyField::Measure, "measure"),
+    ] {
+        let after = store
+            .apply(ConfigChange::AdjustTypography { field, delta: 5 })
+            .unwrap();
+        let old = &previous.config.appearance.typography;
+        let new = &after.config.appearance.typography;
+        match expected {
+            "line" => {
+                assert_eq!(new.line_height_percent, old.line_height_percent + 5);
+                assert_eq!(new.text_size_tenths_px, old.text_size_tenths_px);
+                assert_eq!(new.measure_tenths_em, old.measure_tenths_em);
+            }
+            _ => {
+                assert_eq!(new.measure_tenths_em, old.measure_tenths_em + 5);
+                assert_eq!(new.text_size_tenths_px, old.text_size_tenths_px);
+                assert_eq!(new.line_height_percent, old.line_height_percent);
+            }
+        }
+        previous = after;
+    }
+}
+
+#[test]
+fn toggling_an_agent_persona_keeps_the_author_s_text() {
+    // 作者试完扮演想切回干活，那段角色描述还在。丢掉它，他得重写——
+    // 而「切换」这个词本身承诺了不会丢。
+    let dir = scratch();
+    let (store, _) = ConfigStore::load(&dir).unwrap();
+    let body = "我是沈青，二十七岁，话很少。";
+    let agent = AgentProfile {
+        id: Id::new(),
+        name: "沈青".to_string(),
+        connection_id: None,
+        persona: Some(Persona::Work {
+            body: body.to_string(),
+        }),
+        argv: Vec::new(),
+    };
+    let agent_id = agent.id;
+    store.apply(ConfigChange::UpsertAgent(agent)).unwrap();
+
+    let after = store
+        .apply(ConfigChange::ToggleAgentPersona(agent_id))
+        .unwrap();
+    let persona = after.config.agents[0].persona.as_ref().unwrap();
+    assert!(persona.is_cosplay(), "the mode did not change");
+    assert_eq!(persona.body(), body, "the author's text was lost");
+
+    // 切回去要回到原样：一个只能单向切的开关不是开关。
+    let back = store
+        .apply(ConfigChange::ToggleAgentPersona(agent_id))
+        .unwrap();
+    let persona = back.config.agents[0].persona.as_ref().unwrap();
+    assert!(!persona.is_cosplay());
+    assert_eq!(persona.body(), body);
+}
+
+#[test]
+fn toggling_an_agent_without_a_persona_creates_nothing() {
+    // 近失手：没有身份就切换，会凭空造出一个空的 Cosplay 身份——而作者
+    // 什么也没写。那个 Agent 于是带着一份只有演法预设的身份文件出发。
+    let dir = scratch();
+    let (store, _) = ConfigStore::load(&dir).unwrap();
+    let agent = AgentProfile {
+        id: Id::new(),
+        name: "无名".to_string(),
+        connection_id: None,
+        persona: None,
+        argv: Vec::new(),
+    };
+    let agent_id = agent.id;
+    store.apply(ConfigChange::UpsertAgent(agent)).unwrap();
+
+    let after = store
+        .apply(ConfigChange::ToggleAgentPersona(agent_id))
+        .unwrap();
+    assert!(after.config.agents[0].persona.is_none());
+}
+
+#[test]
+fn toggling_an_agent_that_does_not_exist_is_a_named_refusal() {
+    // 无声通过会让界面以为切换成功，而作者按下去什么也没变。
+    let dir = scratch();
+    let (store, _) = ConfigStore::load(&dir).unwrap();
+    let error = store
+        .apply(ConfigChange::ToggleAgentPersona(Id::new()))
+        .unwrap_err();
+    assert!(error.to_string().contains("does not exist"), "{error}");
+}
+
+#[test]
+fn the_cosplay_preset_is_one_global_setting() {
+    // 全局一份，不做每 Agent 覆盖：两份配置会让「现在到底发了哪段」
+    // 重新分裂，而那正是 Persona 这个类型要消除的。
+    let dir = scratch();
+    let (store, before) = ConfigStore::load(&dir).unwrap();
+    assert!(
+        !before.config.appearance.cosplay_preset.is_empty(),
+        "a fresh config has no default preset"
+    );
+    let after = store
+        .apply(ConfigChange::SetCosplayPreset("只写对白。".to_string()))
+        .unwrap();
+    assert_eq!(after.config.appearance.cosplay_preset, "只写对白。");
 }

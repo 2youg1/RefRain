@@ -42,7 +42,7 @@ pub enum Tokens {
 /// agent can read and reproduce; the ids are how this application finds the
 /// scope again. Sending ids to the agent instead would make the request harder
 /// for a human to read and much easier for a model to mistype.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct BeforeScope {
     pub scope: String,
     pub text: String,
@@ -170,7 +170,8 @@ pub struct ManifestEntry {
 }
 
 /// The compiled package: the request file and its manifest.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
 pub struct DispatchPackage {
     pub request_md: String,
     pub manifest: Vec<ManifestEntry>,
@@ -180,6 +181,13 @@ pub struct DispatchPackage {
     /// text. The request file shows the agent only a position label; identity
     /// travels here. See `BeforeScope`.
     pub scopes: Vec<BeforeScope>,
+    /// 稳定前缀有多少字节：缓存最多能覆盖到这里。
+    ///
+    /// **为什么报字节而不报「已命中」**：命中与否由 provider 决定，而 RefRain
+    /// 的应用进程不出网（INV）。只有 Harness 回传 `cached_tokens` 时命中才是
+    /// 事实；在那之前这个数说的是「我把多少字节排在了变化点之前」，
+    /// 是我方能保证的那一半（D14）。
+    pub prefix_bytes: u32,
 }
 
 fn digest_of(text: &str) -> String {
@@ -254,7 +262,51 @@ pub fn serialize_changes(changes: &[ChangeEntry]) -> String {
 /// The per-request short contract (§8.4), generated from the protocol shape —
 /// the same source the parser and the full documentation read, so the three
 /// can never disagree about an element or a code.
-pub fn short_contract(input: &DispatchInput) -> String {
+pub fn short_contract(_input: &DispatchInput) -> String {
+    SHORT_CONTRACT_RULES.to_string()
+}
+
+/// 合同里与本轮无关的那一段：协议形状与不变的规矩。
+///
+/// **为什么单独拿出来**：它是请求里最大的一块稳定字节。与 scope 名字、结果路径
+/// 混在一起时，正文一改整段都失效——实测公共前缀从 1,652 掉到 720 字节。
+/// 拆开之后这一段进稳定前缀，本轮细节留在它后面（D14）。
+const SHORT_CONTRACT_RULES: &str =
+    "Reply with one <agent-result version=\"2\"> element and nothing else — no
+preamble, no closing remark, no code fence. Text outside the element is
+rejected and the run fails.
+
+<agent-result version=\"2\">
+  <replacement scope=\"SCOPE-ID\">the rewritten text</replacement>
+  <comments>
+    <comment target=\"SCOPE-ID\">an observation that changes nothing</comment>
+  </comments>
+  <memo topic=\"optional label\">what you want to still know next time</memo>
+  <material-draft kind=\"KIND\" title=\"TITLE\">
+    <basis ref=\"DOCUMENT@REVISION\" />
+    <body><![CDATA[the draft]]></body>
+  </material-draft>
+</agent-result>
+
+Rules:
+- One <replacement> per scope at most. Repeating a scope fails the run.
+- An empty <replacement> deletes that scope's text.
+- Every <comment> goes inside <comments>, and uses target= rather than scope=.
+- <material-draft> becomes a draft only; nothing it says reaches the manuscript.
+- You are writing a proposal, not the manuscript. A human reads every change
+  and decides. Nothing you write reaches the text without that decision.
+
+Materials listed under \"# Context\" arrive as listings, not as text. To read
+one, open the file at its path, or search it — the listing's access= says
+which is permitted, and blocks= says how many blocks it has. Quote a block
+by its ordinal. Never read `.refrain-source/`: that is the backup taken when
+the Root was adopted, not what the author is writing now.";
+
+/// 合同里随本轮变的三件事：这一轮有哪些 scope、写到哪、最多多少字节。
+///
+/// 它们必须排在稳定规则之后——每一个都带着本轮的身份（scope 名、含 Run id
+/// 的结果路径），放在前面会让整份合同失去缓存资格。
+fn round_contract(input: &DispatchInput) -> String {
     let scopes = input
         .scopes
         .iter()
@@ -262,35 +314,9 @@ pub fn short_contract(input: &DispatchInput) -> String {
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "Reply with one <agent-result version=\"2\"> element and nothing else — no\n\
-         preamble, no closing remark, no code fence. Text outside the element is\n\
-         rejected and the run fails.\n\n\
-         <agent-result version=\"2\">\n\
-         \x20 <replacement scope=\"SCOPE-ID\">the rewritten text</replacement>\n\
-         \x20 <comments>\n\
-         \x20   <comment target=\"SCOPE-ID\">an observation that changes nothing</comment>\n\
-         \x20 </comments>\n\
-         \x20 <memo topic=\"optional label\">what you want to still know next time</memo>\n\
-         \x20 <material-draft kind=\"KIND\" title=\"TITLE\">\n\
-         \x20   <basis ref=\"DOCUMENT@REVISION\" />\n\
-         \x20   <body><![CDATA[the draft]]></body>\n\
-         \x20 </material-draft>\n\
-         </agent-result>\n\n\
-         Rules:\n\
-         - Use the scope ids marked in \"# Before\" above, exactly as written:\n{scopes}\n\
-         - One <replacement> per scope at most. Repeating a scope fails the run.\n\
-         - An empty <replacement> deletes that scope's text.\n\
-         - Every <comment> goes inside <comments>, and uses target= rather than scope=.\n\
-         - <material-draft> becomes a draft only; nothing it says reaches the manuscript.\n\
+        "- Use the scope ids marked in \"# Before\" below, exactly as written:\n{scopes}\n\
          - Write the artifact to: {result}\n\
-         - The artifact body must not exceed {max} bytes.\n\
-         - You are writing a proposal, not the manuscript. A human reads every change\n\
-         \x20 and decides. Nothing you write reaches the text without that decision.\n\n\
-         Materials listed under \"# Context\" arrive as listings, not as text. To read\n\
-         one, open the file at its path, or search it — the listing's access= says\n\
-         which is permitted, and blocks= says how many blocks it has. Quote a block\n\
-         by its ordinal. Never read `.refrain-source/`: that is the backup taken when\n\
-         the Root was adopted, not what the author is writing now.",
+         - The artifact body must not exceed {max} bytes.",
         scopes = scopes,
         result = input.result_path,
         max = input.max_bytes,
@@ -337,8 +363,15 @@ pub fn compile(input: &DispatchInput) -> DispatchPackage {
             scope.scope, scope.text
         ));
     }
+    // 本轮的合同细节接在这里：scope 名、结果路径与字节上限都随本轮变，
+    // 与它们指涉的 scope 同处一节，而不是把整份合同拖出缓存前缀（D14）。
+    before.push_str("\n\n");
+    before.push_str(&round_contract(input));
     sections.push(("before", "edit-scopes".to_string(), before));
 
+    // Context 内部也要分层（D14）：persona 与材料是 P1（作者改它们才动），
+    // changes 与 upstream 每轮都变。混在一起时，一次裁决就会让整段材料
+    // 掉出缓存前缀——而材料恰恰是最大的一块。
     let mut context_parts: Vec<(String, String)> = Vec::new();
     // 接续轮要写在纸面上：这个 Agent 的工作区里已有它自己维护的 Memo.md，
     // 而本轮请求不带任何会话上下文。不说，它会把「没有上文」读成「本来就没有」。
@@ -354,17 +387,19 @@ pub fn compile(input: &DispatchInput) -> DispatchPackage {
     if let Some(manuscript) = &input.manuscript {
         context_parts.push(("manuscript".to_string(), manuscript.clone()));
     }
-    if !input.changes.is_empty() {
-        context_parts.push(("changes".to_string(), serialize_changes(&input.changes)));
-    }
     for material in &input.materials {
         context_parts.push((
             format!("material:{}", material.path),
             material.to_contract_element(),
         ));
     }
-    // 上游产出排在材料之后：材料是作者给的背景，上游是这一轮真正要处理的东西，
-    // 挨着 `# Request` 更容易被读到。
+    // 这一段起每轮都变，所以排在全部 P1 之后：上一轮的裁决与上游产出。
+    // 上游排在裁决之后——它是这一轮真正要处理的东西，挨着 `# Request`
+    // 更容易被读到。
+    let stable_context_count = context_parts.len();
+    if !input.changes.is_empty() {
+        context_parts.push(("changes".to_string(), serialize_changes(&input.changes)));
+    }
     for work in &input.upstream {
         context_parts.push((format!("upstream:{}", work.run), work.to_contract_element()));
     }
@@ -381,6 +416,21 @@ pub fn compile(input: &DispatchInput) -> DispatchPackage {
         )
     };
 
+    // Context 里 P1 那一段在整份请求里到哪个字节为止。
+    // 直接从拼好的文本上量，而不是另写一个加法——加法与拼接一定会漂开。
+    let stable_context_bytes = if context.is_empty() || stable_context_count == 0 {
+        0
+    } else {
+        let stable_only = context_parts
+            .iter()
+            .take(stable_context_count)
+            .map(|(_, content)| content.clone())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        // `\n\n` 是它与前一节（合同）之间的分隔。
+        "\n\n# Context\n\n".len() + stable_only.len()
+    };
+
     let request = format!("# Request\n\n{}", input.request);
     let contract_body = match input.contract_mode {
         ContractMode::Short => short_contract(input),
@@ -391,26 +441,52 @@ pub fn compile(input: &DispatchInput) -> DispatchPackage {
     let reply =
         "# Agent reply\n\n<!-- Your <agent-result> element replaces this comment. -->".to_string();
 
-    let mut parts = vec![sections[0].2.clone()];
+    // D14 的排序：稳定的在前，每轮变的在后。
+    //
+    // **为什么这个顺序是承重的**：provider 的 prompt cache 按 exact prefix
+    // 匹配，所以任何一层放错位置，它后面的全部字节都缓存不到。实测（examples/
+    // prefix_probe.rs）：把 `# Before` 放在第一节时，改一段正文之后 3,034 字节
+    // 的请求只剩 33 字节公共前缀——身份、格式合同这些全程不变的层一个都没活下来。
+    //
+    // 反转之后：身份与格式合同是 P0（Persona/协议版本变才动），Context 的材料与
+    // 上游是 P1，`# Before` 的正文与 `# Request` 是 S0（每轮都变）。
+    // 缓存边界因此落在 S0 之前，而不是文件开头。
+    //
+    // `# Agent reply` 仍在最末：它是给 Agent 写回复的位置标记，必须在它读完
+    // 全部输入之后。
+    let stable = vec![contract.clone()];
+    let mut parts = stable.clone();
     if !context.is_empty() {
         parts.push(context.clone());
     }
+    parts.push(sections[0].2.clone());
     parts.push(request.clone());
-    parts.push(contract.clone());
     parts.push(reply.clone());
     let request_md = parts.join("\n\n");
 
-    let mut manifest = vec![entry("before", "edit-scopes", &sections[0].2)];
+    // 稳定前缀到哪为止：合同的稳定规则 + Context 里的 P1 部分（persona、
+    // 材料）。它之后是每轮都变的裁决、上游、正文与请求。
+    // 报这个边界而不是宣称「已优化」——命中与否只有 Harness 回传 usage
+    // 时才知道（D14）。
+    let stable_contract_bytes = match input.contract_mode {
+        ContractMode::Short => "# Reply format\n\n".len() + SHORT_CONTRACT_RULES.len(),
+        // Full 与 Pointer 的合同整段不含本轮身份，所以整段都稳定。
+        ContractMode::Full | ContractMode::Pointer => contract.len(),
+    };
+    let prefix_bytes = (stable_contract_bytes + stable_context_bytes) as u32;
+
+    let mut manifest = vec![entry("reply-format", "protocol-schema", &contract)];
     for (source, content) in &context_parts {
         manifest.push(entry("context", source, content));
     }
+    manifest.push(entry("before", "edit-scopes", &sections[0].2));
     manifest.push(entry("request", "author", &request));
-    manifest.push(entry("reply-format", "protocol-schema", &contract));
 
     DispatchPackage {
         digest: digest_of(&request_md),
         request_md,
         manifest,
+        prefix_bytes,
         // Identity travels with the package, not inside the request text: the
         // agent never needs a block id, and putting one in the file it reads
         // only invites it to copy the wrong thing back.
@@ -673,7 +749,10 @@ mod tests {
         let request = package.request_md.find("# Request").unwrap();
         let format = package.request_md.find("# Reply format").unwrap();
         let reply = package.request_md.find("# Agent reply").unwrap();
-        assert!(before < context && context < request && request < format && format < reply);
+        // D14：稳定的在前，每轮变的在后。格式合同（协议版本变才动）领先于
+        // Context（作者改材料才动），后者领先于 `# Before` 与 `# Request`
+        // （每轮都变）。`# Agent reply` 是写回复的位置，必须在最末。
+        assert!(format < context && context < before && before < request && request < reply);
 
         assert!(package.request_md.contains("<!-- scope ch01:b3 -->"));
         assert!(
@@ -687,6 +766,52 @@ mod tests {
                 .contains("<reason>不要用设问句结尾</reason>")
         );
         assert!(package.request_md.contains("version=\"2\""));
+    }
+
+    /// D14：改一轮正文之后，稳定前缀必须整段活下来。
+    ///
+    /// 这条守的是排序本身，而不是某一个字节数。实测过反例：`# Before` 排第一
+    /// 时，3,034 字节的请求在改一段正文后只剩 33 字节公共前缀——身份与格式
+    /// 合同一个都没活下来，而两份请求单看都完全正确。近失手因此是「顺序错了
+    /// 但内容全对」，只有量公共前缀才能读出来。
+    #[test]
+    fn the_stable_prefix_survives_a_changed_round() {
+        let first = compile(&input());
+        let mut changed = input();
+        changed.scopes = vec![BeforeScope {
+            scope: "ch01:b3".to_string(),
+            blocks: Vec::new(),
+            text: "这一轮作者把这一段整个改掉了。".to_string(),
+        }];
+        changed.request = "换一个完全不同的请求。".to_string();
+        let second = compile(&changed);
+
+        let shared = first
+            .request_md
+            .as_bytes()
+            .iter()
+            .zip(second.request_md.as_bytes())
+            .take_while(|(a, b)| a == b)
+            .count();
+
+        assert!(
+            shared >= first.prefix_bytes as usize,
+            "稳定前缀 {} 字节必须整段存活，实际只剩 {shared}",
+            first.prefix_bytes
+        );
+        // 前缀不能是空的：报一个 0 等于说「什么都缓存不到」而不报错。
+        assert!(first.prefix_bytes > 0);
+        // 存活还不够——Context 里的 P1 部分（persona、材料）也必须落在变化点
+        // 之前。反例实测：把每轮变的裁决排在 persona 与材料之前，上面那条仍然
+        // 成立（合同整段还在），但一次裁决就会把整段材料推出缓存前缀，
+        // 而材料恰恰是最大的一块。这里断言 persona 的原文在前缀之内。
+        let persona = input().persona.expect("persona");
+        assert!(
+            first.request_md[..first.prefix_bytes as usize].contains(&persona),
+            "persona 是 P0，必须落在稳定前缀之内：前缀 {} 字节，persona 在 {:?}",
+            first.prefix_bytes,
+            first.request_md.find(&persona)
+        );
     }
 
     #[test]
@@ -704,14 +829,13 @@ mod tests {
     #[test]
     fn the_short_contract_mentions_every_scope_once() {
         let package = compile(&input());
-        let contract = package
-            .request_md
-            .split("# Reply format")
-            .nth(1)
-            .expect("reply format");
-        assert_eq!(contract.matches("<!-- scope ch01:b3 -->").count(), 1);
-        assert_eq!(contract.matches("<!-- scope ch01:b4 -->").count(), 1);
-        assert!(contract.contains(".refrain/runs/r1/attempts/a1/result.md"));
+        // 本轮的合同细节（scope 名、结果路径）现在住在 `# Before` 节——它们
+        // 随本轮变，与稳定的协议规则分开，好让后者留在缓存前缀里（D14）。
+        let at = package.request_md.find("# Before").expect("before section");
+        let before = &package.request_md[at..];
+        assert_eq!(before.matches("<!-- scope ch01:b3 -->").count(), 2);
+        assert_eq!(before.matches("<!-- scope ch01:b4 -->").count(), 2);
+        assert!(before.contains(".refrain/runs/r1/attempts/a1/result.md"));
     }
 
     /// 每轮携带的那一份契约，必须说清怎么读材料。
@@ -775,8 +899,12 @@ mod tests {
             "上游产出必须逐字出现在下游请求里"
         );
         // 逐字包含还不够：出现两次半段也能满足 contains。数一遍字节。
-        let opened = package.request_md.find("<body><![CDATA[").unwrap() + "<body><![CDATA[".len();
-        let closed = package.request_md[opened..].find("]]></body>").unwrap();
+        // 从 `# Context` 起找，跳过合同模板里那段示例 CDATA——D14 把合同排到
+        // 了 Context 之前，所以文件里第一个 `<body><![CDATA[` 是示例而非上游。
+        let context_at = package.request_md.find("# Context").unwrap();
+        let body = &package.request_md[context_at..];
+        let opened = body.find("<body><![CDATA[").unwrap() + "<body><![CDATA[".len();
+        let closed = body[opened..].find("]]></body>").unwrap();
         assert_eq!(
             closed,
             artifact.len(),

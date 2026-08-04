@@ -674,13 +674,21 @@ fn continuity_survives_reopening_and_migrates_from_v1() {
         "the ladder advanced the old database to the latest version"
     );
 
+    let first_open = store.open_document("01.md").unwrap();
+    assert_eq!(
+        first_open.row.current_head, None,
+        "the first canonical open clears continuity when the migrated digest is stale"
+    );
     store
         .save_continuity("01.md", "head-9", r#"["b1","b2"]"#)
         .unwrap();
-    let opened = store.open_document("01.md").unwrap();
+    drop(store);
+
+    let (mut reopened_store, _) = adopt(&mut app, &root);
+    let opened = reopened_store.open_document("01.md").unwrap();
     assert_eq!(opened.row.current_head.as_deref(), Some("head-9"));
     assert_eq!(opened.row.head_block_ids.as_deref(), Some(r#"["b1","b2"]"#));
-    drop(store);
+    drop(reopened_store);
     fs::remove_dir_all(root).unwrap();
 }
 

@@ -34,6 +34,43 @@ impl BlockOffsets {
         Some(previous)
     }
 
+    /// Find the block envelope that covers a byte range without walking every
+    /// block. Gaps belong to their neighbouring envelope exactly as the source
+    /// materialiser treats them: the start chooses the last block beginning at
+    /// or before it, and the end chooses the first block ending at or after it.
+    pub(super) fn envelope(&self, start: usize, end: usize) -> Option<(usize, usize)> {
+        let first = self.block_at_or_before(start)?;
+        let mut low = first;
+        let mut high = self.baseline.len();
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if self.span(middle)?.end < end {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        let last = low.min(self.baseline.len().checked_sub(1)?);
+        Some((first, last))
+    }
+
+    pub(super) fn block_at_or_before(&self, offset: usize) -> Option<usize> {
+        if self.baseline.is_empty() {
+            return None;
+        }
+        let mut low = 0;
+        let mut high = self.baseline.len();
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if self.span(middle)?.start <= offset {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        Some(low.saturating_sub(1))
+    }
+
     fn prefix(&self, end: usize) -> i64 {
         let mut cursor = end.min(self.deltas.len());
         let mut sum = 0;
@@ -80,5 +117,20 @@ mod tests {
         assert_eq!(offsets.replace(1, 1), Some(ByteSpan { start: 5, end: 10 }));
         assert_eq!(offsets.span(1), Some(ByteSpan { start: 5, end: 6 }));
         assert_eq!(offsets.span(2), Some(ByteSpan { start: 8, end: 11 }));
+    }
+
+    #[test]
+    fn byte_envelopes_find_blocks_across_source_gaps_after_edits() {
+        let mut offsets = BlockOffsets::from_spans(vec![
+            ByteSpan { start: 1, end: 4 },
+            ByteSpan { start: 6, end: 9 },
+            ByteSpan { start: 11, end: 14 },
+        ]);
+        offsets.replace(1, 5).unwrap();
+
+        assert_eq!(offsets.envelope(0, 0), Some((0, 0)));
+        assert_eq!(offsets.envelope(5, 12), Some((0, 2)));
+        assert_eq!(offsets.envelope(6, 10), Some((1, 1)));
+        assert_eq!(offsets.block_at_or_before(14), Some(2));
     }
 }

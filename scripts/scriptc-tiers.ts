@@ -14,10 +14,18 @@
  * Membership is verified, not declared: `verify:scriptc-coverage` re-runs
  * `scriptc coverage` over every build-time script and fails when a name here
  * is no longer fully static, or when a fully static script is missing here.
+ * Step 10 deleted the gates that guarded the DOM/Solid/Tauri surface, so this
+ * table shrank with them; three Native-era gates joined it in the same pass.
  */
 
 /** Where `bun run scriptc:build` writes the executables. */
 export const SCRIPTC_OUT = "target/scriptc";
+
+/** ScriptC-compiled production programs that are not source-quality gates. */
+export const RELEASE_ASSETS_SOURCE = "scripts/release-assets.ts";
+export const RELEASE_PROGRAMS: Readonly<Record<string, string>> = {
+  "release:assets": RELEASE_ASSETS_SOURCE,
+};
 
 /**
  * Tier A membership, by gate name. The value is the source script; the
@@ -26,28 +34,30 @@ export const SCRIPTC_OUT = "target/scriptc";
 export const TIER_A: Readonly<Record<string, string>> = {
   "verify:alternates-isolation": "scripts/verify-alternates-isolation.ts",
   "verify:bridge": "scripts/verify-bridge.ts",
-  "verify:command-depth": "scripts/verify-command-depth.ts",
-  "verify:component-depth": "scripts/verify-component-depth.ts",
-  "verify:config-authority": "scripts/verify-config-authority.ts",
-  "verify:contract-tier-per-task": "scripts/verify-contract-tier-per-task.ts",
   "verify:core-purity": "scripts/verify-core-purity.ts",
+  "verify:corner-authority": "scripts/verify-corner-authority.ts",
   "verify:editor-kernel": "scripts/verify-editor-kernel.ts",
   "verify:effect-territory": "scripts/verify-effect-territory.ts",
-  "verify:font-licenses": "scripts/verify-font-licenses.ts",
+  "verify:native-document-performance": "scripts/verify-native-document-performance.ts",
+  "verify:native-ime": "scripts/verify-native-ime.ts",
   "verify:no-html-sink": "scripts/verify-no-html-sink.ts",
-  "verify:no-js": "scripts/verify-no-js.ts",
-  "verify:reactive-subscription": "scripts/verify-reactive-subscription.ts",
   "verify:release-version": "scripts/verify-release-version.ts",
   "verify:roundtrip": "scripts/verify-roundtrip.ts",
   "verify:skill-doc-current": "scripts/verify-skill-doc-current.ts",
-  "verify:strata": "scripts/verify-strata.ts",
   "verify:trash-only": "scripts/verify-trash-only.ts",
   "verify:unsafe-surface": "scripts/verify-unsafe-surface.ts",
   "verify:verification-order": "scripts/verify-verification-order.ts",
 };
 
-/** The executable a tier A gate runs as. */
+/** Every program that ScriptC must compile without a dynamic remainder. */
+export const SCRIPTC_PROGRAMS: Readonly<Record<string, string>> = {
+  ...TIER_A,
+  ...RELEASE_PROGRAMS,
+};
+
+/** The executable a ScriptC source runs as. */
 export function executableFor(script: string): string {
   const name = script.slice(script.lastIndexOf("/") + 1, -".ts".length);
-  return `${SCRIPTC_OUT}/${name}`;
+  const suffix = process.platform === "win32" ? ".exe" : "";
+  return `${SCRIPTC_OUT}/${name}${suffix}`;
 }

@@ -39,6 +39,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use refrain_core::context_compiler::{DispatchPackage, ManifestEntry};
+use refrain_core::persona::Persona;
 use refrain_core::{Id, digest::content_hex};
 use serde::{Deserialize, Serialize};
 
@@ -108,24 +109,27 @@ pub fn run_workspace(agent_id: Id, run_id: Id) -> String {
 /// so a persona edit and a format bump take the same path.
 pub const AGENT_FILE_VERSION: &str = "v1";
 
-/// The AGENTS.md for one agent: its persona as identity, plus a pointer to
-/// where the protocol actually lives — the request file, whose `# Reply
-/// format` section rides every round. Generated, never hand-edited; the
-/// header comment says so.
+/// The AGENTS.md for one agent: the author's own bytes, and nothing the
+/// author did not write.
+///
+/// **作者原文逐字节进入文件（D13）。** 早先这里 `trim()` 了它，加了「# 身份」
+/// 标题，还写进一段协议指针——三处都是应用替作者说话。后果具体：一句
+/// 「你是一位资深编辑」后面被补上一段协议说明，那个 Agent 会把说明也当成
+/// 身份的一部分；而首尾空白可能是作者有意排的版。
+///
+/// 协议不进这个文件：它每轮随 `request.md` 走（`# Reply format` 一节）。
+/// 写进身份文件，协议改一次就要重写每个 Agent 的身份文件。
+///
+/// Cosplay 的演法预设由 `Persona::agent_file` 追加在原文之后——这里不判
+/// 模式，那是那个类型自己的性质。
 #[must_use]
-pub fn agent_file(persona: Option<&str>) -> String {
-    let identity = match persona {
-        Some(text) if !text.trim().is_empty() => text.trim().to_string(),
-        _ => "（作者未配置身份。）".to_string(),
-    };
-    format!(
-        "<!-- refrain-agent-file:{AGENT_FILE_VERSION} — 生成物：persona 变更时重写，勿手改 -->\n\
-         # 身份\n\n\
-         {identity}\n\n\
-         # 协议\n\n\
-         每轮的协议在 request.md 的 `# Reply format` 一节；Memo.md 由你维护：\n\
-         动工前先全文读它，收工前更新它。\n"
-    )
+pub fn agent_file(persona: Option<&Persona>, cosplay_preset: &str) -> String {
+    match persona {
+        Some(persona) => persona.agent_file(cosplay_preset),
+        // 没有配置身份时写一个空文件而不是一句「（作者未配置身份。）」——
+        // 那句话本身会被 Agent 读成身份的一部分。
+        None => String::new(),
+    }
 }
 
 impl DirectoryContext {
@@ -161,11 +165,16 @@ impl DirectoryContext {
     /// Content-compared rather than timestamped: a persona edit changes the
     /// content and rewrites the file; a launch that changes nothing writes
     /// nothing, so dispatching stays free of disk chatter.
-    pub fn ensure_agent_files(&self, agent_id: Id, persona: Option<&str>) -> io::Result<PathBuf> {
+    pub fn ensure_agent_files(
+        &self,
+        agent_id: Id,
+        persona: Option<&Persona>,
+        cosplay_preset: &str,
+    ) -> io::Result<PathBuf> {
         let dir = self.agent_dir(agent_id);
         fs::create_dir_all(&dir)?;
         let file = dir.join("AGENTS.md");
-        let wanted = agent_file(persona);
+        let wanted = agent_file(persona, cosplay_preset);
         let current = match fs::read_to_string(&file) {
             Ok(text) => Some(text),
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
@@ -222,22 +231,6 @@ impl DirectoryContext {
     /// against them before promotion.
     pub fn write_workspace_request(&self, workspace: &str, contents: &str) -> io::Result<()> {
         fs::write(self.state_dir.join(workspace).join("request.md"), contents)
-    }
-
-    /// A result the producer left in this Run's attempt directory, if any.
-    /// One attempt per Run in v0.2: a retry is a new Run with a new attempt.
-    pub fn read_result(&self, workspace: &str, run_id: Id) -> io::Result<Option<Vec<u8>>> {
-        let path = self
-            .state_dir
-            .join(workspace)
-            .join("attempts")
-            .join(run_id.to_string())
-            .join("result.md");
-        match fs::read(&path) {
-            Ok(bytes) => Ok(Some(bytes)),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error),
-        }
     }
 
     /// Land an argv producer's reply as the attempt's result (L1/L2): the
@@ -341,6 +334,21 @@ impl FrozenContext for DirectoryContext {
             Err(error) => Err(error),
         }
     }
+
+    /// One attempt per Run in v0.2: a retry is a new Run with a new attempt.
+    fn read_result(&self, workspace: &str, run_id: Id) -> Result<Option<Vec<u8>>, io::Error> {
+        let path = self
+            .state_dir
+            .join(workspace)
+            .join("attempts")
+            .join(run_id.to_string())
+            .join("result.md");
+        match fs::read(&path) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
 }
 
 /// Directory durability is a Unix concern; Windows has no user-space
@@ -365,6 +373,7 @@ fn sync_file(path: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
     use refrain_core::context_compiler::Tokens;
+    use refrain_core::persona::DEFAULT_COSPLAY_PRESET;
 
     fn scratch() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("refrain-staging-{}", Id::new()));
@@ -377,6 +386,7 @@ mod tests {
             "# Request\n改克制。\n\n# Reply format\n写进 runs/<run-id>/result.md。\n".to_string();
         DispatchPackage {
             scopes: Vec::new(),
+            prefix_bytes: 0,
             digest: content_hex(request_md.as_bytes()),
             request_md,
             manifest: vec![ManifestEntry {
@@ -468,42 +478,83 @@ mod tests {
     }
 
     /// AGENTS.md 从 persona 生成，带版本行；persona 变更时内容比对重写，
-    /// 没变更就不写。
+    /// 作者原文逐字节进文件；没变更就不写。
+    ///
+    /// 这条测试此前断言的是被 D13 推翻的行为——版本头、「# 身份」标题、
+    /// 一段协议指针。三处都是应用替作者说话：Agent 会把那段协议说明也
+    /// 读成身份的一部分。
     #[test]
-    fn the_agent_file_carries_the_persona_and_regenerates_on_change() {
+    fn the_agent_file_is_the_author_s_bytes_and_regenerates_on_change() {
         let dir = scratch();
         let context = DirectoryContext::new(dir.clone());
         let agent = Id::new();
+        let editor = Persona::Work {
+            // 首尾空白是作者排的版，不该被 trim 掉。
+            body: "  你是一位克制的编辑。\n".to_string(),
+        };
 
         let file = context
-            .ensure_agent_files(agent, Some("你是一位克制的编辑。"))
+            .ensure_agent_files(agent, Some(&editor), DEFAULT_COSPLAY_PRESET)
             .unwrap();
         let text = fs::read_to_string(&file).unwrap();
-        assert!(text.starts_with("<!-- refrain-agent-file:v1"));
-        assert!(text.contains("你是一位克制的编辑。"));
-        // 协议指针：指向每轮都有的 request.md，不指向某台机器的某个 harness。
-        assert!(text.contains("# Reply format"));
-        assert!(text.contains("Memo.md"));
+        assert_eq!(text, editor.body(), "the author's bytes changed");
 
         // 同内容重写是无操作——派发不该带来磁盘噪音。
         let written = fs::metadata(&file).unwrap().modified().unwrap();
         context
-            .ensure_agent_files(agent, Some("你是一位克制的编辑。"))
+            .ensure_agent_files(agent, Some(&editor), DEFAULT_COSPLAY_PRESET)
             .unwrap();
         assert_eq!(fs::metadata(&file).unwrap().modified().unwrap(), written);
 
         // persona 变了，文件跟着变。
+        let proofreader = Persona::Work {
+            body: "你是一位严格的校对。".to_string(),
+        };
         context
-            .ensure_agent_files(agent, Some("你是一位严格的校对。"))
+            .ensure_agent_files(agent, Some(&proofreader), DEFAULT_COSPLAY_PRESET)
             .unwrap();
         let updated = fs::read_to_string(&file).unwrap();
-        assert!(updated.contains("你是一位严格的校对。"));
+        assert_eq!(updated, proofreader.body());
         assert!(!updated.contains("克制的编辑"));
+    }
 
-        // 没有 persona 也生成：身份如实缺席，指针仍在。
-        let blank = context.ensure_agent_files(Id::new(), None).unwrap();
-        let text = fs::read_to_string(blank).unwrap();
-        assert!(text.contains("（作者未配置身份。）"));
+    /// 换模式改变文件，而两态的前 body.len() 字节相同。
+    #[test]
+    fn switching_to_cosplay_appends_the_preset_after_the_author_s_bytes() {
+        let dir = scratch();
+        let context = DirectoryContext::new(dir.clone());
+        let agent = Id::new();
+        let body = "我是沈青，二十七岁，话很少。".to_string();
+
+        let work = Persona::Work { body: body.clone() };
+        let file = context
+            .ensure_agent_files(agent, Some(&work), DEFAULT_COSPLAY_PRESET)
+            .unwrap();
+        let work_text = fs::read_to_string(&file).unwrap();
+
+        let cosplay = work.toggled();
+        context
+            .ensure_agent_files(agent, Some(&cosplay), DEFAULT_COSPLAY_PRESET)
+            .unwrap();
+        let cosplay_text = fs::read_to_string(&file).unwrap();
+
+        // 两态必须真的不同，否则「切换模式」是个什么也不做的按钮。
+        assert_ne!(work_text, cosplay_text);
+        // 而作者的字在两态下逐字节相同。
+        assert_eq!(&cosplay_text[..body.len()], body);
+        assert!(cosplay_text.contains("第一人称"), "the preset is missing");
+    }
+
+    /// 没有身份就写空文件，而不是写一句会被读成身份的话。
+    #[test]
+    fn no_persona_writes_nothing_rather_than_a_sentence_about_having_none() {
+        let dir = scratch();
+        let context = DirectoryContext::new(dir);
+        let blank = context
+            .ensure_agent_files(Id::new(), None, DEFAULT_COSPLAY_PRESET)
+            .unwrap();
+        // 近失手：写「（作者未配置身份。）」，Agent 会把那句话当成身份。
+        assert_eq!(fs::read_to_string(blank).unwrap(), "");
     }
 
     /// Memo.md 是接续轮的事实来源：它一出现，has_agent_memo 就为真。
@@ -515,7 +566,9 @@ mod tests {
         let agent = Id::new();
         assert!(!context.has_agent_memo(agent));
 
-        context.ensure_agent_files(agent, None).unwrap();
+        context
+            .ensure_agent_files(agent, None, DEFAULT_COSPLAY_PRESET)
+            .unwrap();
         assert!(
             !context.has_agent_memo(agent),
             "AGENTS.md 不是 Memo.md：生成身份不等于有记忆"

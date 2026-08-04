@@ -106,6 +106,30 @@ impl DocumentFormat {
             .unwrap_or(Self::Markdown)
     }
 
+    /// The number this format travels as across the C ABI.
+    ///
+    /// Written out rather than derived from the enum's declaration order: the
+    /// order is an editing convenience, and reordering the variants for
+    /// readability would silently repaint every open document in the wrong
+    /// grammar. A new format takes the next free number and never reuses one.
+    #[must_use]
+    pub fn wire_code(self) -> u32 {
+        match self {
+            Self::Markdown => 0,
+            Self::Latex => 1,
+            Self::TypeScript => 2,
+            Self::Rust => 3,
+            Self::Python => 4,
+            Self::Go => 5,
+            Self::Lean => 6,
+            Self::Css => 7,
+            Self::Html => 8,
+            Self::Xml => 9,
+            Self::Toml => 10,
+            Self::Yaml => 11,
+        }
+    }
+
     /// Every extension the workbench edits, for the file chooser's filter.
     /// Read from the same table admission reads.
     #[must_use]
@@ -134,14 +158,54 @@ impl DocumentFormat {
             | Self::Yaml => BlockScan::Plain,
         }
     }
-    // 格式 → 高亮语法的唯一权威在 `packages/editor/src/code-highlight.ts`
-    // （DOCUMENT_LANGUAGE）：着色是编辑器的事，核心不背第二份映射。HTML 按
-    // 设计用 XML 语法（真 html 语法静态拉入 247KB JS，实测记录在案）。
+    // 这里只回答「这个扩展名是什么格式、按哪种规则分块」，不回答「怎么着色」。
+    //
+    // 着色曾由旧 DOM 表面负责，两份映射分居两处是有意的：核心不背第二份。
+    // 那一层随步骤 10 退场，所以**当前没有任何着色实现**——格式识别与逐字节
+    // 往返不受影响，它们本来就在这一侧。
+    //
+    // 原生表面接上代码阅读时，着色映射仍应住在表面一侧（Native SDK 的 `code`
+    // 部件自带受限着色），而不是搬进核心。
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_format_travels_as_a_distinct_stable_number() {
+        // 这些数字是跨界契约：Zig 的 `document_language.syntaxOf` 按它们查表。
+        // 写死在这里而不是从声明顺序推导，所以有人为了可读性重排枚举时，
+        // 变红的是这条测试，而不是用户打开一份 Rust 文件却看到 Python 的颜色。
+        let expected: &[(DocumentFormat, u32)] = &[
+            (DocumentFormat::Markdown, 0),
+            (DocumentFormat::Latex, 1),
+            (DocumentFormat::TypeScript, 2),
+            (DocumentFormat::Rust, 3),
+            (DocumentFormat::Python, 4),
+            (DocumentFormat::Go, 5),
+            (DocumentFormat::Lean, 6),
+            (DocumentFormat::Css, 7),
+            (DocumentFormat::Html, 8),
+            (DocumentFormat::Xml, 9),
+            (DocumentFormat::Toml, 10),
+            (DocumentFormat::Yaml, 11),
+        ];
+        for (format, code) in expected {
+            assert_eq!(
+                format.wire_code(),
+                *code,
+                "{format:?} changed its wire code"
+            );
+        }
+        // 两种格式共用一个号，界面就会把其中一种用另一种的语法上色，
+        // 而两侧单看都自洽。
+        let mut codes: Vec<u32> = expected.iter().map(|(_, code)| *code).collect();
+        codes.sort_unstable();
+        let count = codes.len();
+        codes.dedup();
+        assert_eq!(codes.len(), count, "two formats share a wire code");
+    }
 
     #[test]
     fn every_listed_extension_resolves_to_its_format() {

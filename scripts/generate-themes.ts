@@ -20,7 +20,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const target = join(here, "..", "apps", "desktop", "src", "themes.css");
 
 type Oklch = readonly [L: number, C: number, H: number];
 
@@ -339,15 +338,13 @@ const derive = (t: Theme): Record<string, Oklch> => {
 
 // ── emit, and refuse to emit something unreadable ─────────────────────────
 
-const wrap = (text: string, width = 34): string[] => {
-  const lines: string[] = [];
-  for (let i = 0; i < text.length; i += width) lines.push(text.slice(i, i + width));
-  return lines;
-};
-
 const failures: string[] = [];
 
-const block = (t: Theme): string => {
+/**
+ * 校验一套主题的对比度、明度分层与色相归属，把不达标处记进 `failures`。
+ * 只判不写：色表由下面的 `zigTable` 生成，这里不产出任何文本。
+ */
+const audit = (t: Theme): void => {
   const v = derive(t);
   const paper = v.paper as Oklch;
   const rail = v.rail as Oklch;
@@ -460,52 +457,9 @@ const block = (t: Theme): string => {
     failures.push(
       `${t.cn} 光标色相 ${caret[2]} 偏离印章 ${(v.seal as Oklch)[2]}——光标仍应读作本主题的重点色`,
     );
-
-  const head = `${t.cn} ${t.slug} · ${t.mode === "day" ? "日间" : "夜间"} · ${t.lineage}`;
-  const out = [`/* ── ${head} ${"─".repeat(Math.max(2, 56 - head.length * 2))} */`, "/*"];
-  for (const line of wrap(t.why)) out.push(` * ${line}`);
-  for (const line of wrap(`出典：${t.source}`)) out.push(` * ${line}`);
-  out.push(" *", " * APCA Lc（W3C Silver 草案；WCAG 2 在深色底上判断失准）");
-  for (const [label, lc, floor] of measured)
-    out.push(` *   ${label} ${String(lc).padStart(7)}   门槛 |${floor}|`);
-  out.push(
-    " *",
-    " * 本段由 scripts/generate-themes.ts 生成，勿手改。",
-    " * 改锚点后重跑 `bun scripts/generate-themes.ts`。",
-    " */",
-  );
-
-  /*
-   * The default theme needs both selectors, not just `:root`.
-   *
-   * With only the bare `:root` rule, a first launch looked right and choosing
-   * 濤 from the settings panel did nothing: the click sets `data-theme="tou"`,
-   * and no rule answered to that name, so the palette silently stayed on
-   * whatever the previous theme had left behind. "Default" and "chosen
-   * explicitly" are two states and both have to render.
-   */
-  const selector = t.isDefault
-    ? `:root,\n:root[data-theme="${t.slug}"]`
-    : `:root[data-theme="${t.slug}"]`;
-  out.push(`${selector} {`, `  color-scheme: ${t.mode === "night" ? "dark" : "light"};`, "");
-  {
-    // Trailing zeros are stripped and integers keep no decimal point, because
-    // that is what biome normalises these literals to — a generated file that
-    // never passes fmt:check makes the gate useless for the files people write.
-    const trim = (n: number, places: number): string => Number(n.toFixed(places)).toString();
-    for (const [name, c] of Object.entries(v))
-      out.push(
-        `  --${name}: oklch(${trim(c[0], 3)} ${trim(c[1], 4)} ${trim(c[2], 1)}); /* ${hex(c)} */`,
-      );
-
-    // 语义别名层已退役：界面直接说色相（--agent、--pending），九个 --role-*
-    // 别名没有任何消费方。一个色相一个权威，不需要第二层名字。
-  }
-  out.push("}");
-  return out.join("\n");
 };
 
-const body = THEMES.map(block).join("\n\n");
+for (const theme of THEMES) audit(theme);
 
 if (failures.length > 0) {
   for (const line of failures) console.error(`  ${line}`);
@@ -521,44 +475,134 @@ const named = (mode: "day" | "night"): string =>
     .map((t) => t.cn)
     .join("・");
 
-const header = `/*
- * RefRain — ${THEMES.length} 套主题。由 scripts/generate-themes.ts 生成，勿手改。
- *
- * 昼夜不是同一套配色的正反两面。一套主题属于一个时段，为那个时段设计：
- * 日间${THEMES.filter((t) => t.mode === "day").length}套（${named("day")}）与夜间${THEMES.filter((t) => t.mode === "night").length}套（${named("night")}）各自成立。
- * 夜间不是把日间反相得来的——那样得到的是被翻过来的屏幕，不是灯下的纸。
- *
- * 颜色一律以 OKLCH 声明。同一亮度上换色相不会让灰色发浑，这是 HSL 做不到的，
- * 也是夜间那几套能读作「一盏灯照着纸」而非「一块发光的板」的原因。
- *
- * 对比度用 APCA（W3C Silver 草案）而非 WCAG 2 的亮度比：WCAG 2 在深色底上
- * 会把浅字算得比实际好读，而这里有数套主题整个活在那种条件下。每套注释里的
- * Lc 是生成时实测的——正文门槛 |75|，界面与强调 |45|，不达标则脚本拒绝写出。
- *
- * 每套只由四个锚点定义（纸・墨・印・副强调），其余全部推导。加一套主题是写
- * 四个颜色而非四十个，「侧栏跟随纸面」这类关系也就不可能只在某一套里走样。
- */
-
-`;
-
-writeFileSync(target, `${header}${body}\n`, "utf8");
-
-// The slug list crosses layers exactly once: the theme list is this data, so
-// Rust validation and the Settings picker read the same generated file rather
-// than each keeping a hand copy that drifts.
-writeFileSync(
-  join(here, "..", "apps", "desktop", "src-tauri", "themes.gen.json"),
-  `${JSON.stringify(
-    THEMES.map((t) => ({ slug: t.slug, cn: t.cn, mode: t.mode })),
-    null,
-    2,
-  )}\n`,
-  "utf8",
-);
-console.log(`PASS  ${THEMES.length} themes → ${target}`);
 console.log(
   `      ${THEMES.filter((t) => t.mode === "day").length} day, ${THEMES.filter((t) => t.mode === "night").length} night; every Lc clears its floor`,
 );
+
+// ── the Native theme table (step 6: 七套主题进原生表面) ────────────────────
+//
+// **接上哪个功能**：Native 文档表面的主题。SDK 的 `manifestThemePack()` 只给一套
+// 中性灰，RefRain 的七套主题原本只存在于 CSS 里，原生表面看不见。
+//
+// **在全局逻辑中负责什么**：把同一份锚点数据翻成 SDK 的 `ColorTokens`，外加
+// 文档表面自己要用的几个语义色（印、代理、裁决三态）。**不是第二权威**——
+// 色值仍然只在上面那张 THEMES 表里定义一次，这里只是第四个消费者，
+// 与 `themes.css`、`themes.gen.json`、审阅色表同源。
+//
+// **能复用什么**：`derive()` 与 `srgb()` 原样复用，所以 Zig 侧的颜色与 CSS
+// 侧逐字节相同；APCA 门槛在上面已经拦过一次，不达标的主题根本走不到这里。
+
+const zigColor = (c: Oklch): string => {
+  const [r, g, b] = srgb(c);
+  return `Color.rgb8(${r}, ${g}, ${b})`;
+};
+
+/**
+ * SDK `ColorTokenOverrides` 里由 RefRain token 决定的字段。
+ *
+ * 用 overrides 而非整份 `ColorTokens`：没列进来的字段（syntax_*、scrim、
+ * shadow 等）保留 SDK 自己那套，而不是被一份不完整的表覆盖成默认值。
+ */
+const SDK_COLOR_MAP: readonly (readonly [field: string, token: string])[] = [
+  ["background", "paper"],
+  ["surface", "sheet"],
+  ["surface_subtle", "paper-raised"],
+  ["surface_pressed", "paper-sunk"],
+  ["text", "ink"],
+  ["text_muted", "ink-soft"],
+  ["border", "rule"],
+  ["accent", "seal"],
+  ["accent_text", "paper"],
+  ["destructive", "refused"],
+  ["success", "accepted"],
+  ["warning", "pending"],
+  ["info", "source"],
+  ["focus_ring", "caret"],
+  ["disabled", "ink-ghost"],
+];
+
+/** 文档表面自己要读的语义色，SDK 的 ColorTokens 里没有对应位置。 */
+const REFRAIN_EXTRA: readonly string[] = [
+  "rail",
+  "rail-ink",
+  "rail-faint",
+  "rail-rule",
+  "ink-faint",
+  "caret",
+  "seal",
+  "agent",
+  "accepted",
+  "refused",
+  "source",
+  "pending",
+];
+
+const zigIdent = (token: string): string => token.replace(/-/g, "_");
+
+const zigBlock = (t: Theme): string => {
+  const v = derive(t);
+  const sdk = SDK_COLOR_MAP.map(
+    ([field, token]) => `            .${field} = ${zigColor(v[token] as Oklch)},`,
+  ).join("\n");
+  const extra = REFRAIN_EXTRA.map(
+    (token) => `        .${zigIdent(token)} = ${zigColor(v[token] as Oklch)},`,
+  ).join("\n");
+  return `    // ${t.cn} · ${t.mode === "day" ? "日间" : "夜间"} · ${t.lineage}
+    .{
+        .slug = "${t.slug}",
+        .name = "${t.cn}",
+        .night = ${t.mode === "night"},
+        .colors = .{
+${sdk}
+        },
+${extra}
+    },`;
+};
+
+const zigTable = `// RefRain — ${THEMES.length} 套主题的原生色表。
+// 由 scripts/generate-themes.ts 生成，勿手改；改锚点后重跑该脚本。
+//
+// 色值与 apps/desktop/src/themes.css 同一份锚点推导而来，逐字节相同：
+// 两侧都走 derive() → srgb()。APCA 门槛（正文 |75|、界面与强调 |45|）在生成时
+// 已经拦过，不达标的主题不会出现在这里。
+//
+// 每套只由四个锚点定义（纸・墨・印・副强调），其余全部推导。
+
+const native_sdk = @import("native_sdk");
+const Color = native_sdk.canvas.Color;
+const ColorTokenOverrides = native_sdk.canvas.ColorTokenOverrides;
+
+pub const Theme = struct {
+    slug: []const u8,
+    name: []const u8,
+    night: bool,
+    /// 供 SDK 控件使用的标准语义色，只覆盖 RefRain 定义过的字段。
+    colors: ColorTokenOverrides,
+${REFRAIN_EXTRA.map((token) => `    /// RefRain 自有语义色：--${token}\n    ${zigIdent(token)}: Color,`).join("\n")}
+};
+
+pub const themes = [_]Theme{
+${THEMES.map(zigBlock).join("\n")}
+};
+
+/// 默认主题的下标。产品首次启动用它。
+pub const default_index: usize = ${THEMES.findIndex((t) => t.isDefault === true)};
+
+/// 按 slug 取主题；未知 slug 落到默认，与设置面板的行为一致。
+pub fn bySlug(slug: []const u8) Theme {
+    for (themes) |theme| {
+        if (std.mem.eql(u8, theme.slug, slug)) return theme;
+    }
+    return themes[default_index];
+}
+
+const std = @import("std");
+`;
+
+const zigTarget = join(here, "..", "apps", "native", "src", "generated", "themes.zig");
+mkdirSync(dirname(zigTarget), { recursive: true });
+writeFileSync(zigTarget, zigTable, "utf8");
+console.log(`PASS  ${THEMES.length} themes → ${zigTarget}`);
 
 // ── the signing preview (SPEC D12: 预览页先入库再签) ───────────────────────
 //

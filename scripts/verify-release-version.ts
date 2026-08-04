@@ -4,9 +4,7 @@ import { readFileSync } from "node:fs";
 const files = {
   cargo: "Cargo.toml",
   cargoLock: "Cargo.lock",
-  tauri: "apps/desktop/src-tauri/tauri.conf.json",
-  desktop: "apps/desktop/package.json",
-  editor: "packages/editor/package.json",
+  appZon: "apps/native/app.zon",
   bunLock: "bun.lock",
 } as const;
 
@@ -69,9 +67,21 @@ if (workspaceGlobs.length === 0) {
   failures.push("package.json: 读不出 workspaces；这道门禁失去了它的检查域");
 }
 
-for (const file of [files.tauri, ...workspaceGlobs.map((dir) => `${dir}/package.json`)]) {
+for (const file of workspaceGlobs.map((dir) => `${dir}/package.json`)) {
   surfaces.push([file, requireJsonVersion(readFileSync(file, "utf8"), file)]);
 }
+
+// app.zon 是 Native 打包读的那份版本号——步骤 10 之后它取代了 tauri.conf.json。
+// ZON 不是 JSON，所以按字段名取，而不是 JSON.parse。
+surfaces.push([
+  files.appZon,
+  requireMatch(
+    readFileSync(files.appZon, "utf8"),
+    /\.version\s*=\s*"([^"]+)"/,
+    files.appZon,
+    ".version",
+  ),
+]);
 
 // bun.lock is JSONC (trailing commas), so parse the workspace records by their
 // exact paths rather than pretending JSON.parse accepts its grammar.

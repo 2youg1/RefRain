@@ -14,7 +14,7 @@ import { report, scan } from "./gate-lib.ts";
 
 const HAND_WRITTEN = /\binvoke\s*\(|\b__TAURI__\b|@tauri-apps\/api\/core/;
 
-const result = scan(["apps/desktop/src/**/*.{ts,tsx}", "packages/**/src/**/*.ts"], HAND_WRITTEN, {
+const result = scan(["apps/native/src/**/*.ts"], HAND_WRITTEN, {
   ignoreLine: (line) => /^\s*(\/\/|\/\*|\*)/.test(line),
 });
 
@@ -22,8 +22,7 @@ const result = scan(["apps/desktop/src/**/*.{ts,tsx}", "packages/**/src/**/*.ts"
 // The E2E bridge names debug-only Rust commands; verify:release-surface pins
 // that finite set and proves those commands are absent from release IPC.
 const allowedBridge = (file: string): boolean =>
-  file.endsWith("apps/desktop/src/generated/bindings.gen.ts") ||
-  file.endsWith("apps/desktop/src/e2e/debug-bridge.ts");
+  file.endsWith("apps/native/src/generated/protocol.ts");
 const outside = result.findings.filter((finding) => !allowedBridge(finding.file));
 
 report(

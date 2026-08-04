@@ -1,84 +1,45 @@
 use crate::protocol::{
-    API_VERSION, CAPABILITY_MASK, DEFAULT_VIEWPORT_BLOCKS, ERROR_DOMAIN_REFUSAL,
-    ERROR_HOST_FAILURE, ERROR_INVALID_REQUEST, ERROR_PROTOCOL_MISMATCH, ERROR_STALE_REVISION,
-    ERROR_UNKNOWN_SESSION, EVENT_TEXT_BYTES, PROJECTION_BYTES, PROTOCOL_VERSION,
-    RefrainNativeRequest, RefrainNativeResponse,
+    ACTION_APPLY_INPUT, ACTION_HEALTH, ACTION_OBTAIN_PROJECTION, ACTION_OPEN_MANUSCRIPT,
+    ACTION_PROJECT, API_VERSION, CAPABILITY_MASK, CARET_END, CARET_EXTEND_FLAG, CARET_NEXT,
+    CARET_NEXT_WORD, CARET_PREVIOUS, CARET_PREVIOUS_WORD, CARET_START, DEFAULT_VIEWPORT_BLOCKS,
+    ERROR_DOMAIN_REFUSAL, ERROR_HOST_FAILURE, ERROR_INVALID_REQUEST, ERROR_PROTOCOL_MISMATCH,
+    ERROR_STALE_REVISION, ERROR_UNKNOWN_SESSION, INPUT_CANCEL_COMPOSITION, INPUT_CLEAR,
+    INPUT_COMMIT_COMPOSITION, INPUT_DELETE_BACKWARD, INPUT_DELETE_FORWARD,
+    INPUT_DELETE_WORD_BACKWARD, INPUT_DELETE_WORD_FORWARD, INPUT_INSERT_TEXT, INPUT_MOVE_CARET,
+    INPUT_SAVE, INPUT_SET_COMPOSITION, INPUT_SET_SELECTION, INPUT_UNDO, PROJECTION_BYTES,
+    PROTOCOL_VERSION, RefrainNativeRequest, RefrainNativeResponse, VIRTUAL_BLOCK_HEIGHT,
 };
 use refrain_app::native_document::{
-    ByteSelection, CaretDirection, DocumentError, DocumentInput, DocumentOpen, DocumentProjection,
-    DocumentSurface, DocumentViewport,
+    ByteSelection, CaretDirection, DocumentAnchor, DocumentError, DocumentInput, DocumentOpen,
+    DocumentProjection, DocumentSurface, DocumentViewport,
 };
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
-#[repr(u16)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DispatchAction {
-    Health = 1,
-    OpenManuscript = 2,
-    ApplyInput = 3,
-    ObtainProjection = 4,
-    Project = 5,
-}
+const DOCUMENT_PATH_ENV: &str = "REFRAIN_NATIVE_DOCUMENT_PATH";
+const DOCUMENT_STATE_PATH_ENV: &str = "REFRAIN_NATIVE_DOCUMENT_STATE_PATH";
+/// Opt in to the 100,000-block synthetic manuscript. Only the scale harness
+/// sets it; production launches open a real file or refuse.
+const SCALE_FIXTURE_ENV: &str = "REFRAIN_NATIVE_SCALE_FIXTURE";
 
-impl TryFrom<u16> for DispatchAction {
-    type Error = ();
-
-    fn try_from(value: u16) -> Result<Self, Self::Error> {
-        match value {
-            1 => Ok(Self::Health),
-            2 => Ok(Self::OpenManuscript),
-            3 => Ok(Self::ApplyInput),
-            4 => Ok(Self::ObtainProjection),
-            5 => Ok(Self::Project),
-            _ => Err(()),
-        }
-    }
-}
-
-#[repr(u16)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InputKind {
-    SetSelection = 1,
-    InsertText = 2,
-    DeleteBackward = 3,
-    DeleteForward = 4,
-    DeleteWordBackward = 5,
-    DeleteWordForward = 6,
-    Clear = 7,
-    MoveCaret = 8,
-    SetComposition = 9,
-    CommitComposition = 10,
-    CancelComposition = 11,
-    Undo = 12,
-}
-
-impl TryFrom<u16> for InputKind {
-    type Error = ();
-
-    fn try_from(value: u16) -> Result<Self, Self::Error> {
-        match value {
-            1 => Ok(Self::SetSelection),
-            2 => Ok(Self::InsertText),
-            3 => Ok(Self::DeleteBackward),
-            4 => Ok(Self::DeleteForward),
-            5 => Ok(Self::DeleteWordBackward),
-            6 => Ok(Self::DeleteWordForward),
-            7 => Ok(Self::Clear),
-            8 => Ok(Self::MoveCaret),
-            9 => Ok(Self::SetComposition),
-            10 => Ok(Self::CommitComposition),
-            11 => Ok(Self::CancelComposition),
-            12 => Ok(Self::Undo),
-            _ => Err(()),
-        }
-    }
+/// One open document plus the projection bytes its last response lent out.
+///
+/// Keeping the bytes here is what lets a response carry a pointer instead of a
+/// 40 KiB inline array: they stay valid until this session projects again.
+struct Session {
+    document: DocumentSurface,
+    projection: String,
+    /// CLREQ line starts for `projection`, kept alive for exactly as long as
+    /// the text they index — the response borrows both, so they must be
+    /// replaced together on every projection.
+    line_starts: Vec<u32>,
 }
 
 #[derive(Default)]
 struct Sessions {
     next: u64,
-    documents: HashMap<u64, DocumentSurface>,
+    documents: HashMap<u64, Session>,
 }
 
 static SESSIONS: OnceLock<Mutex<Sessions>> = OnceLock::new();
@@ -94,42 +55,40 @@ impl From<DocumentError> for DispatchError {
     }
 }
 
-pub fn dispatch(request: RefrainNativeRequest) -> RefrainNativeResponse {
+pub fn dispatch(request: RefrainNativeRequest, text: &[u8]) -> RefrainNativeResponse {
     if request.protocol_version != PROTOCOL_VERSION {
         return RefrainNativeResponse::empty(ERROR_PROTOCOL_MISMATCH, request.action);
     }
-    let Ok(action) = DispatchAction::try_from(request.action) else {
-        return RefrainNativeResponse::empty(ERROR_INVALID_REQUEST, request.action);
-    };
-    if action == DispatchAction::Health {
-        return RefrainNativeResponse::empty(0, request.action);
-    }
-    if action == DispatchAction::Project {
-        return crate::project::dispatch(&request);
+    match request.action {
+        ACTION_HEALTH => return RefrainNativeResponse::empty(0, request.action),
+        ACTION_PROJECT => return crate::project::dispatch(&request, text),
+        ACTION_OPEN_MANUSCRIPT | ACTION_APPLY_INPUT | ACTION_OBTAIN_PROJECTION => {}
+        _ => return RefrainNativeResponse::empty(ERROR_INVALID_REQUEST, request.action),
     }
 
     let sessions = SESSIONS.get_or_init(|| Mutex::new(Sessions::default()));
     let Ok(mut sessions) = sessions.lock() else {
         return RefrainNativeResponse::empty(ERROR_HOST_FAILURE, request.action);
     };
-    if action == DispatchAction::OpenManuscript {
-        return open_manuscript(&mut sessions, request);
+    if request.action == ACTION_OPEN_MANUSCRIPT {
+        return open_manuscript(&mut sessions, request, text);
     }
-    let Some(document) = sessions.documents.get_mut(&request.session) else {
+    let Some(session) = sessions.documents.get_mut(&request.session) else {
         return RefrainNativeResponse::empty(ERROR_UNKNOWN_SESSION, request.action);
     };
 
-    if action == DispatchAction::ApplyInput && request.revision != revision_of(document) {
-        return projection_response(
-            request.session,
-            request.action,
-            document,
-            &request,
-            ERROR_STALE_REVISION,
-        );
-    }
-    if action == DispatchAction::ApplyInput {
-        let result = input_of(&request).and_then(|input| document.apply(input).map_err(Into::into));
+    if request.action == ACTION_APPLY_INPUT {
+        if request.revision != revision_of(&session.document) {
+            return projection_response(
+                request.session,
+                request.action,
+                session,
+                &request,
+                ERROR_STALE_REVISION,
+            );
+        }
+        let result = input_of(&request, text)
+            .and_then(|input| session.document.apply(input).map_err(Into::into));
         match result {
             Ok(())
             | Err(DispatchError::Domain(DocumentError::Text(
@@ -139,7 +98,7 @@ pub fn dispatch(request: RefrainNativeRequest) -> RefrainNativeResponse {
                 return projection_response(
                     request.session,
                     request.action,
-                    document,
+                    session,
                     &request,
                     ERROR_INVALID_REQUEST,
                 );
@@ -148,79 +107,158 @@ pub fn dispatch(request: RefrainNativeRequest) -> RefrainNativeResponse {
                 return projection_response(
                     request.session,
                     request.action,
-                    document,
+                    session,
                     &request,
                     ERROR_DOMAIN_REFUSAL,
                 );
             }
         }
     }
-    projection_response(request.session, request.action, document, &request, 0)
+    projection_response(request.session, request.action, session, &request, 0)
 }
 
+/// Open the document the author chose.
+///
+/// Request text carries `root_id` and the document's relative path on two
+/// lines — the same borrowed pointer every other input uses, so this adds no
+/// protocol field. The Root id comes from the `project` use case
+/// (`ACTION_PROJECT`); the absolute path is resolved here by
+/// `ProjectStore::document_file` and never crosses back out. Empty text keeps
+/// the environment-variable path the performance and automation harnesses use.
 fn open_manuscript(
     sessions: &mut Sessions,
     request: RefrainNativeRequest,
+    text: &[u8],
 ) -> RefrainNativeResponse {
-    let Ok(document) = DocumentSurface::open(DocumentOpen::ScaleFixture) else {
+    let source = match requested_document_open(text, &HarnessOverrides::from_env()) {
+        Ok(source) => source,
+        Err(status) => return RefrainNativeResponse::empty(status, request.action),
+    };
+    let Ok(document) = DocumentSurface::open(source) else {
         return RefrainNativeResponse::empty(ERROR_HOST_FAILURE, request.action);
     };
     let Some(session) = sessions.next.checked_add(1) else {
         return RefrainNativeResponse::empty(ERROR_HOST_FAILURE, request.action);
     };
     sessions.next = session;
-    let response = projection_response(session, request.action, &document, &request, 0);
-    sessions.documents.insert(session, document);
-    response
+    let entry = sessions.documents.entry(session).or_insert(Session {
+        document,
+        projection: String::new(),
+        line_starts: Vec::new(),
+    });
+    projection_response(session, request.action, entry, &request, 0)
 }
 
-fn input_of(request: &RefrainNativeRequest) -> Result<DocumentInput, DispatchError> {
-    let input = InputKind::try_from(request.input).map_err(|_| DispatchError::InvalidRequest)?;
-    Ok(match input {
-        InputKind::SetSelection => DocumentInput::SetSelection(ByteSelection {
+fn input_of(request: &RefrainNativeRequest, bytes: &[u8]) -> Result<DocumentInput, DispatchError> {
+    Ok(match request.input {
+        INPUT_SET_SELECTION => DocumentInput::SetSelection(ByteSelection {
             anchor: global_offset(request.window_start, request.anchor)?,
             focus: global_offset(request.window_start, request.focus)?,
         }),
-        InputKind::InsertText => DocumentInput::InsertText(text(request)?.to_owned()),
-        InputKind::DeleteBackward => DocumentInput::DeleteBackward,
-        InputKind::DeleteForward => DocumentInput::DeleteForward,
-        InputKind::DeleteWordBackward => DocumentInput::DeleteWordBackward,
-        InputKind::DeleteWordForward => DocumentInput::DeleteWordForward,
-        InputKind::Clear => DocumentInput::Clear,
-        InputKind::MoveCaret => DocumentInput::MoveCaret {
-            direction: match request.flags & 0xff {
-                1 => CaretDirection::Previous,
-                2 => CaretDirection::Next,
-                3 => CaretDirection::PreviousWord,
-                4 => CaretDirection::NextWord,
-                5 => CaretDirection::Start,
-                6 => CaretDirection::End,
+        INPUT_INSERT_TEXT => DocumentInput::InsertText(text(request, bytes)?.to_owned()),
+        INPUT_DELETE_BACKWARD => DocumentInput::DeleteBackward,
+        INPUT_DELETE_FORWARD => DocumentInput::DeleteForward,
+        INPUT_DELETE_WORD_BACKWARD => DocumentInput::DeleteWordBackward,
+        INPUT_DELETE_WORD_FORWARD => DocumentInput::DeleteWordForward,
+        INPUT_CLEAR => DocumentInput::Clear,
+        INPUT_MOVE_CARET => DocumentInput::MoveCaret {
+            direction: match request.flags & !CARET_EXTEND_FLAG {
+                CARET_PREVIOUS => CaretDirection::Previous,
+                CARET_NEXT => CaretDirection::Next,
+                CARET_PREVIOUS_WORD => CaretDirection::PreviousWord,
+                CARET_NEXT_WORD => CaretDirection::NextWord,
+                CARET_START => CaretDirection::Start,
+                CARET_END => CaretDirection::End,
                 _ => return Err(DispatchError::InvalidRequest),
             },
-            extend: request.flags & 0x100 != 0,
+            extend: request.flags & CARET_EXTEND_FLAG != 0,
         },
-        InputKind::SetComposition => DocumentInput::SetComposition {
-            text: text(request)?.to_owned(),
+        INPUT_SET_COMPOSITION => DocumentInput::SetComposition {
+            text: text(request, bytes)?.to_owned(),
             cursor: to_usize(request.cursor)?,
         },
-        InputKind::CommitComposition => DocumentInput::CommitComposition,
-        InputKind::CancelComposition => DocumentInput::CancelComposition,
-        InputKind::Undo => DocumentInput::Undo,
+        INPUT_COMMIT_COMPOSITION => DocumentInput::CommitComposition,
+        INPUT_CANCEL_COMPOSITION => DocumentInput::CancelComposition,
+        INPUT_UNDO => DocumentInput::Undo,
+        INPUT_SAVE => DocumentInput::Save,
+        _ => return Err(DispatchError::InvalidRequest),
     })
 }
 
+/// Resolve which manuscript an `openManuscript` request names.
+///
+/// Precedence is deliberate: a path in the request wins, because it is the
+/// author's actual choice. `harness` carries the two environment overrides so
+/// the rule stays testable without mutating process state; production passes
+/// [`HarnessOverrides::from_env`]. The scale fixture is reachable only through
+/// `REFRAIN_NATIVE_SCALE_FIXTURE`, so a production launch can no longer open
+/// 100,000 synthetic blocks by default — it refuses instead.
+fn requested_document_open(text: &[u8], harness: &HarnessOverrides) -> Result<DocumentOpen, u32> {
+    if !text.is_empty() {
+        // `root_id\nrelative/path.md`. Two lines rather than a struct because
+        // this is the only variable-length request payload the open action
+        // carries, and the protocol already lends one text pointer.
+        let payload = std::str::from_utf8(text).map_err(|_| ERROR_INVALID_REQUEST)?;
+        let (root_id, relative) = payload.split_once('\n').ok_or(ERROR_INVALID_REQUEST)?;
+        let path =
+            crate::project::document_file(root_id, relative).map_err(|_| ERROR_DOMAIN_REFUSAL)?;
+        let state_path = path.with_extension("refrain-state.json");
+        return Ok(DocumentOpen::Persistent { path, state_path });
+    }
+    if let Some(path) = harness.document_path.clone() {
+        let state_path = harness
+            .state_path
+            .clone()
+            .unwrap_or_else(|| path.with_extension("refrain-state.json"));
+        return Ok(DocumentOpen::Persistent { path, state_path });
+    }
+    if harness.scale_fixture {
+        return Ok(DocumentOpen::ScaleFixture);
+    }
+    Err(ERROR_INVALID_REQUEST)
+}
+
+/// The three launch overrides the performance and automation harnesses use.
+/// Production reads them once per open; tests construct them directly.
+struct HarnessOverrides {
+    document_path: Option<PathBuf>,
+    state_path: Option<PathBuf>,
+    scale_fixture: bool,
+}
+
+impl HarnessOverrides {
+    fn from_env() -> Self {
+        Self {
+            document_path: std::env::var_os(DOCUMENT_PATH_ENV).map(PathBuf::from),
+            state_path: std::env::var_os(DOCUMENT_STATE_PATH_ENV).map(PathBuf::from),
+            scale_fixture: std::env::var_os(SCALE_FIXTURE_ENV).is_some(),
+        }
+    }
+}
+
 fn projection_response(
-    session: u64,
+    session_id: u64,
     action: u16,
-    document: &DocumentSurface,
+    session: &mut Session,
     request: &RefrainNativeRequest,
     status: u32,
 ) -> RefrainNativeResponse {
-    let viewport = DocumentViewport {
-        first_block: match to_usize(request.viewport_first_block) {
-            Ok(value) => value,
+    // A scroll offset resolves against the manuscript's block count, so the
+    // platform sends pixels and Rust decides which block starts the window.
+    let anchor = if request.scroll_offset_y > 0.0 {
+        DocumentAnchor::Scroll {
+            offset: request.scroll_offset_y,
+            block_height: VIRTUAL_BLOCK_HEIGHT,
+        }
+    } else {
+        match to_usize(request.viewport_first_block) {
+            Ok(value) => DocumentAnchor::Block(value),
             Err(_) => return RefrainNativeResponse::empty(ERROR_INVALID_REQUEST, action),
-        },
+        }
+    };
+    let viewport = DocumentViewport {
+        anchor,
+        columns_em: request.columns_em as f32,
         block_count: usize::try_from(if request.viewport_block_count == 0 {
             DEFAULT_VIEWPORT_BLOCKS
         } else {
@@ -229,18 +267,31 @@ fn projection_response(
         .unwrap_or(usize::MAX),
         max_bytes: PROJECTION_BYTES,
     };
-    let Ok(projection) = document.project(viewport) else {
+    let Ok(projection) = session.document.project(viewport) else {
         return RefrainNativeResponse::empty(ERROR_HOST_FAILURE, action);
     };
-    fill_projection(session, action, status, projection)
+    fill_projection(
+        session_id,
+        action,
+        status,
+        projection,
+        &mut session.projection,
+        &mut session.line_starts,
+    )
 }
 
+/// Store the projected text in `owner` and answer with a response that borrows it.
 fn fill_projection(
     session: u64,
     action: u16,
     status: u32,
     projection: DocumentProjection,
+    owner: &mut String,
+    line_owner: &mut Vec<u32>,
 ) -> RefrainNativeResponse {
+    *owner = projection.text;
+    line_owner.clear();
+    line_owner.extend(projection.line_starts.iter().map(|start| *start as u32));
     let mut response = RefrainNativeResponse::empty(status, action);
     response.api_version = API_VERSION;
     response.capabilities = CAPABILITY_MASK;
@@ -251,16 +302,19 @@ fn fill_projection(
     response.window_start = projection.window_start as u64;
     response.first_block = projection.first_block as u64;
     response.block_count = projection.block_count as u32;
-    response.text_len = projection.text.len() as u32;
-    response.text[..projection.text.len()].copy_from_slice(projection.text.as_bytes());
-    response.selection_anchor = projection.selection.anchor as u64;
-    response.selection_focus = projection.selection.focus as u64;
+    response.text_len = owner.len() as u32;
+    response.text = owner.as_ptr();
+    response.line_start_count = line_owner.len() as u32;
+    response.line_starts = line_owner.as_ptr();
+    response.document_format = projection.format.wire_code();
+    response.selection_anchor = projection.selection.start as u64;
+    response.selection_focus = projection.selection.end as u64;
+    response.document_selection_start = projection.document_selection.start as u64;
+    response.document_selection_end = projection.document_selection.end as u64;
     if let Some(composition) = projection.composition {
-        response.composition_start = composition.range.start as u64;
-        response.composition_end = composition.range.end as u64;
-        response.composition_cursor = composition.cursor as u64;
-        response.composition_len = composition.text.len() as u32;
-        response.composition[..composition.text.len()].copy_from_slice(composition.text.as_bytes());
+        response.composition_start = composition.start as u64;
+        response.composition_end = composition.end as u64;
+        response.composition_len = (composition.end - composition.start) as u32;
     }
     response
 }
@@ -268,19 +322,21 @@ fn fill_projection(
 fn revision_of(document: &DocumentSurface) -> u64 {
     document
         .project(DocumentViewport {
-            first_block: 0,
+            anchor: DocumentAnchor::Block(0),
             block_count: 0,
             max_bytes: 0,
+            columns_em: 0.0,
         })
         .map_or(u64::MAX, |projection| projection.revision)
 }
 
-fn text(request: &RefrainNativeRequest) -> Result<&str, DispatchError> {
+/// Decode the borrowed bytes as the UTF-8 text one input carries.
+fn text<'a>(request: &RefrainNativeRequest, text: &'a [u8]) -> Result<&'a str, DispatchError> {
     let length = usize::try_from(request.text_len).map_err(|_| DispatchError::InvalidRequest)?;
-    if length > EVENT_TEXT_BYTES {
+    if length != text.len() {
         return Err(DispatchError::InvalidRequest);
     }
-    std::str::from_utf8(&request.text[..length]).map_err(|_| DispatchError::InvalidRequest)
+    std::str::from_utf8(text).map_err(|_| DispatchError::InvalidRequest)
 }
 
 fn global_offset(window_start: u64, local: u64) -> Result<usize, DispatchError> {
@@ -298,12 +354,13 @@ fn to_usize(value: u64) -> Result<usize, DispatchError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::staticlib::borrow_response_text as response_text;
     use refrain_app::native_document::{DOCUMENT_FIXTURE_BLOCKS, DOCUMENT_FIXTURE_BYTES};
 
-    fn request(action: DispatchAction) -> RefrainNativeRequest {
+    fn request(action: u16) -> RefrainNativeRequest {
         RefrainNativeRequest {
             protocol_version: PROTOCOL_VERSION,
-            action: action as u16,
+            action,
             input: 0,
             flags: 0,
             session: 0,
@@ -313,27 +370,90 @@ mod tests {
             focus: 0,
             cursor: 0,
             viewport_first_block: 0,
+            scroll_offset_y: 0.0,
+            columns_em: 0.0,
             viewport_block_count: 32,
             text_len: 0,
-            text: [0; EVENT_TEXT_BYTES],
+            text: std::ptr::null(),
         }
     }
 
-    fn apply(session: u64, revision: u64, input: InputKind) -> RefrainNativeRequest {
-        let mut request = request(DispatchAction::ApplyInput);
+    /// Dispatch the way the C ABI entry point does: request plus its bytes.
+    fn send(request: RefrainNativeRequest) -> RefrainNativeResponse {
+        dispatch(request, &[])
+    }
+
+    /// Dispatch one request whose text is borrowed from `bytes`.
+    fn send_text(mut request: RefrainNativeRequest, bytes: &[u8]) -> RefrainNativeResponse {
+        request.text_len = bytes.len() as u32;
+        request.text = bytes.as_ptr();
+        dispatch(request, bytes)
+    }
+
+    fn apply(session: u64, revision: u64, input: u16) -> RefrainNativeRequest {
+        let mut request = request(ACTION_APPLY_INPUT);
         request.session = session;
         request.revision = revision;
-        request.input = input as u16;
+        request.input = input;
         request
     }
 
     #[test]
+    fn save_is_one_exhaustive_document_input_without_a_path_payload() {
+        let save = apply(1, 0, INPUT_SAVE);
+        assert!(matches!(input_of(&save, &[]), Ok(DocumentInput::Save)));
+        assert_eq!(save.text_len, 0);
+        assert!(save.text.is_null());
+    }
+
+    /// Step 4: an open request names a Root, never a filesystem path.
+    ///
+    /// Guards the boundary that keeps a chosen absolute path inside Rust. A
+    /// bare path has no `\n`, so it cannot be read as `root_id` + relative and
+    /// is refused; a well-formed pair for a Root that is not open is refused by
+    /// the project layer. With neither a request payload nor a harness
+    /// variable the open refuses outright — that is what stops a production
+    /// launch from silently opening 100,000 synthetic blocks.
+    #[test]
+    fn open_manuscript_names_a_root_and_refuses_a_bare_path_or_no_source() {
+        let absolute = send_text(request(ACTION_OPEN_MANUSCRIPT), b"/tmp/chosen.md");
+        assert_eq!(
+            absolute.status, ERROR_INVALID_REQUEST,
+            "a bare filesystem path is not a Root reference"
+        );
+
+        let unopened = send_text(
+            request(ACTION_OPEN_MANUSCRIPT),
+            "no-such-root\n章.md".as_bytes(),
+        );
+        assert_eq!(
+            unopened.status, ERROR_DOMAIN_REFUSAL,
+            "a Root that is not open cannot resolve a document"
+        );
+
+        // Refusal is asserted on the resolver with the overrides passed in, so
+        // it cannot depend on process environment a sibling test also sets.
+        let refused = requested_document_open(
+            &[],
+            &HarnessOverrides {
+                document_path: None,
+                state_path: None,
+                scale_fixture: false,
+            },
+        );
+        assert!(
+            refused.is_err(),
+            "an openManuscript with no Root reference and no harness variable must be refused"
+        );
+    }
+
+    #[test]
     fn one_dispatch_opens_projects_edits_composes_and_undoes_one_rust_document() {
-        let health = dispatch(request(DispatchAction::Health));
+        let health = send(request(ACTION_HEALTH));
         assert_eq!(health.status, 0);
         assert_eq!(health.api_version, API_VERSION);
 
-        let opened = dispatch(request(DispatchAction::OpenManuscript));
+        let opened = send(request(ACTION_OPEN_MANUSCRIPT));
         assert_eq!(opened.status, 0);
         assert!(opened.session > 0);
         assert_eq!(opened.total_bytes, DOCUMENT_FIXTURE_BYTES as u64);
@@ -341,64 +461,68 @@ mod tests {
         assert_eq!(opened.first_block, 0);
         assert_eq!(opened.block_count, 32);
         assert!((opened.text_len as usize) < PROJECTION_BYTES);
-        assert_eq!(&opened.text[9..15], "中文".as_bytes());
+        assert_eq!(&response_text(&opened).as_bytes()[9..15], "中文".as_bytes());
 
-        let mut selected = apply(opened.session, opened.revision, InputKind::SetSelection);
+        let mut selected = apply(opened.session, opened.revision, INPUT_SET_SELECTION);
         selected.anchor = 0;
         selected.focus = 6;
-        let selected = dispatch(selected);
+        let selected = send(selected);
         assert_eq!(selected.status, 0);
 
-        let mut composition = apply(opened.session, selected.revision, InputKind::SetComposition);
+        let mut composition = apply(opened.session, selected.revision, INPUT_SET_COMPOSITION);
         let preedit = "入力".as_bytes();
-        composition.text_len = preedit.len() as u32;
         composition.cursor = preedit.len() as u64;
-        composition.text[..preedit.len()].copy_from_slice(preedit);
-        let composition = dispatch(composition);
+        let composition = send_text(composition, preedit);
         assert_eq!(composition.status, 0);
         assert_eq!(
-            dispatch(apply(
+            send(apply(
                 opened.session,
                 composition.revision,
-                InputKind::CommitComposition,
+                INPUT_COMMIT_COMPOSITION,
             ))
             .status,
             0
         );
 
-        let mut project = request(DispatchAction::ObtainProjection);
+        let mut project = request(ACTION_OBTAIN_PROJECTION);
         project.session = opened.session;
-        let edited = dispatch(project);
-        assert_eq!(&edited.text[..preedit.len()], preedit);
-        let undone = dispatch(apply(opened.session, edited.revision, InputKind::Undo));
+        let edited = send(project);
+        assert_eq!(&response_text(&edited).as_bytes()[..preedit.len()], preedit);
+        let undone = send(apply(opened.session, edited.revision, INPUT_UNDO));
         assert_eq!(undone.status, 0);
-        assert_eq!(&undone.text[..6], b"000000");
+        assert_eq!(&response_text(&undone).as_bytes()[..6], b"000000");
     }
 
     #[test]
     fn viewport_and_revision_are_real_inputs_not_fixed_fixture_metadata() {
-        let opened = dispatch(request(DispatchAction::OpenManuscript));
-        let mut middle_request = request(DispatchAction::ObtainProjection);
+        let opened = send(request(ACTION_OPEN_MANUSCRIPT));
+        let mut middle_request = request(ACTION_OBTAIN_PROJECTION);
         middle_request.session = opened.session;
         middle_request.viewport_first_block = 50_000;
         middle_request.viewport_block_count = 24;
-        let middle = dispatch(middle_request);
+        // A response's text is only valid until its session projects again, so
+        // the opening window is copied before the next dispatch replaces it.
+        let first_window = response_text(&opened).chars().take(8).collect::<String>();
+        let middle = send(middle_request);
         assert_eq!(middle.status, 0);
         assert_eq!(middle.first_block, 50_000);
         assert_eq!(middle.block_count, 24);
         assert!(middle.window_start > opened.text_len as u64);
-        assert_ne!(&middle.text[..16], &opened.text[..16]);
+        assert_ne!(
+            response_text(&middle).chars().take(8).collect::<String>(),
+            first_window
+        );
 
-        let stale = dispatch(apply(opened.session, opened.revision + 1, InputKind::Undo));
+        let stale = send(apply(opened.session, opened.revision + 1, INPUT_UNDO));
         assert_eq!(stale.status, ERROR_STALE_REVISION);
         assert_eq!(stale.revision, opened.revision);
     }
 
     #[test]
     fn abi_layout_is_fixed_for_c_and_zig_consumers() {
-        assert_eq!(std::mem::size_of::<RefrainNativeRequest>(), 12_072);
+        assert_eq!(std::mem::size_of::<RefrainNativeRequest>(), 96);
         assert_eq!(std::mem::align_of::<RefrainNativeRequest>(), 8);
-        assert_eq!(std::mem::size_of::<RefrainNativeResponse>(), 53_080);
+        assert_eq!(std::mem::size_of::<RefrainNativeResponse>(), 152);
         assert_eq!(std::mem::align_of::<RefrainNativeResponse>(), 8);
     }
 }

@@ -79,29 +79,22 @@ Lean 4, CSS, HTML, XML, TOML and YAML open, edit and save back byte-for-byte as
 plain text — with the embedded highlighter picking the grammar by extension,
 and no Markdown machinery touching the source.
 
-Markdown renders in place rather than in a preview pane beside your text.
-Lines are broken by RefRain rather than by the browser, so a full-width
-punctuation mark is compressed at the end of a line and — in Japanese — hung in
-the margin, and the breaks come out the same on every platform. Emphasis,
-strong, code and strikethrough are drawn while their markers stay
-visible and dimmed, so what you see is still what is in the file. A GFM table
-aligns its columns without a single space being added to the source. A
-`mermaid` or `nomnoml` fence is drawn as a diagram next to its own source — and
-a diagram type the renderer does not know keeps its fence and shows as text,
-because a diagram that cannot be drawn must not make your words disappear.
+Lines are broken by RefRain itself, because no engine breaks Chinese correctly:
+the one it replaced could only break at a space or a tab, and a Chinese
+paragraph has neither. RefRain applies the CLREQ line-breaking rules — a
+full-width punctuation mark is compressed at the end of a line, an unbreakable
+unit overflows rather than being cut, and the breaks come out identical on every
+platform because the algorithm is one Rust module rather than three browser
+engines.
 
-A PDF you imported can be opened beside your manuscript and read as its own
-pages, laid out the way its author set them. RefRain never writes back to that
-file — the import extracts text, so a save would overwrite the original with a
-partial model of it.
-
-Smaller things that matter daily: search results that show the sentence they
-matched with your query marked inside it — and clicking one puts the caret in
-that block, not at the top of the file; punctuation width suggestions, empty-paragraph
-cleanup, three-state inline formatting that never leaves `****` behind, headings
-and quotes and lists as three-state commands, annotations that ask to be
-re-anchored rather than guessing, and a failed save that tells you what to do
-next.
+**Where the rewrite stands.** RefRain is moving onto a native rendering path.
+The domain — manuscript bytes, block identity, verdicts, orchestration, PDF text
+extraction — carried over whole and is covered by tests. The screens are being
+rebuilt one at a time, so the features released in v0.2.4 (in-place Markdown
+rendering, tables, diagrams, PDF reading, annotations, search results, history)
+are **temporarily without a surface**: their rules and dependencies are still
+here, and each returns as its native screen lands. Nothing was dropped from the
+product; what changed is what draws it.
 
 ### Working with agents
 
@@ -137,13 +130,13 @@ Measured on the development machine, not estimated:
 
 ## Install
 
-Download the Windows installer from
-[Releases](https://github.com/kaile9/RefRain/releases/latest). WebView2 is
-installed by the bootstrapper when it is missing.
+RefRain has not been released yet. The application builds and runs for
+Windows, macOS and Linux from one manifest, but no platform has been through a
+real installer run, so nothing is offered for download.
 
-macOS and Linux are planned but not released: every measurement in this
-repository comes from Linux, and nothing will be claimed for a platform until it
-has been measured there.
+Every measurement in this repository comes from Linux. Nothing will be claimed
+for a platform until it has been measured there — in particular, the Windows
+and macOS input-method paths are written but not yet signed off on real hardware.
 
 ### Building from source
 
@@ -151,16 +144,19 @@ Requires the Rust toolchain and [Bun](https://bun.sh):
 
 ```sh
 bun install
-bun x tauri build
+cd apps/native && ./node_modules/.bin/native build . --yes
 ```
 
-Before committing, all four checks — the Rust ones are not inside `bun run gate`:
+Before committing, in this order — the order is load-bearing:
 
 ```sh
+bun install
+bun run scriptc:build    # the tier A gates run as compiled binaries
+bun run gate             # generates the corpora that the Rust tests read
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace --all-targets
-bun run gate
+mkdir -p .tmp
+TMPDIR="$PWD/.tmp" cargo test --workspace --all-targets
 ```
 
 ## Documentation
@@ -176,15 +172,17 @@ bun run gate
 | | |
 |---|---|
 | **Core** | [Rust](https://rust-lang.org) — the domain, storage, and agent orchestration |
-| **Desktop shell** | [Tauri](https://tauri.app) with [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) |
-| **Surface** | [SolidJS](https://solidjs.com), [TypeScript](https://www.typescriptlang.org) under `strict`, [Biome](https://biomejs.dev) |
+| **Application shell** | [Native SDK](https://native-sdk.dev) — native rendering. No WebView, and no JavaScript runtime in the shipped binary. |
+| **Surface** | `.native` markup, a restricted [TypeScript](https://www.typescriptlang.org) subset for interface state, and [Zig](https://ziglang.org) for platform events and drawing |
 | **Editor kernel** | Framework-free direct DOM; Rust owns the canonical bytes |
 | **Storage** | [SQLite](https://sqlite.org) via [rusqlite](https://github.com/rusqlite/rusqlite); FTS5 `unicode61` with an application-level bigram tokeniser |
 | **Identity** | [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) digests, [UUID](https://github.com/uuid-rs/uuid) v7 |
 | **Bindings** | [Serde](https://serde.rs) and [Specta](https://github.com/specta-rs/specta), which generates the TypeScript types |
-| **Highlighting** | [Shiki](https://shiki.style), entry points registered precisely so nothing reaches the network |
+| **Line breaking** | `refrain_core::typeset` — RefRain's own, because no engine breaks Chinese correctly (see below) |
+| **Highlighting** | The Native SDK's own `code` widget — 17 grammars compiled into the binary, so nothing is loaded at runtime and nothing reaches the network |
 | **Diagrams** | [nomnoml](https://github.com/skanaar/nomnoml) at 26 KB gzipped, with a translator that accepts Mermaid flowchart syntax |
-| **Imported sources** | [pdf.js](https://mozilla.github.io/pdf.js/) draws an imported PDF for reading; every remote entry point is left unset, and its worker is bundled and run from a blob URL |
+| **Imported sources** | Text is extracted by `lopdf` in Rust — no renderer, no browser engine. Each page's text carries a `<!-- p.N -->` anchor, so a quotation can name the page it came from and a reader can return to the original. |
+| **Build tooling** | [ScriptC](https://github.com/vercel-labs/scriptc) compiles the gates and release scripts to native binaries; [Bun](https://bun.sh) runs the rest. Neither ships. |
 | **Build and release** | [Bun](https://bun.sh) and [Node.js](https://nodejs.org), build-time only; [ScriptC](https://github.com/vercel-labs/scriptc) compiles the release policy into a native executable |
 
 Why the search index uses bigrams rather than trigrams or a tokeniser — with the
@@ -196,21 +194,6 @@ measurements that decided it — is in
 [MPL 2.0](LICENSE).
 
 ## Acknowledgements
-
-**[Shiki](https://shiki.style)** (MIT) for syntax highlighting. RefRain
-registers its entry points precisely so that highlighting never reaches the
-network — the library made that possible rather than fighting it.
-
-**[nomnoml](https://github.com/skanaar/nomnoml)** (MIT, Daniel Kallin) for
-diagrams. It draws a flowchart in 26 KB of pure JavaScript, with no WASM and no
-request — a diagram library that could be bundled whole into an application
-that never reaches the network. The nearest alternative was 36× larger.
-
-**[pdf.js](https://mozilla.github.io/pdf.js/)** (Apache-2.0, Mozilla) for
-reading an imported PDF as its own pages. Every entry point that would fetch a
-remote resource is optional rather than defaulted, so leaving them unset is
-what closes them — a library that lets an offline application stay offline
-without patching it.
 
 The bundled typefaces, all under the
 [SIL Open Font License 1.1](https://openfontlicense.org):

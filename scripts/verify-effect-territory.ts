@@ -15,9 +15,9 @@
  *   三、版本钉死：任何 package.json 声明 effect 都必须是精确版本，
  *       升级是一次显式提交，不是 ^ 范围里的一次静默安装。
  *
- * 注入证明（各自变红，见 done-when）：在 packages/typeset/src/spacing.ts
- * 写 `import { Effect } from "effect"`；在 apps/desktop/src/ui/StatusLine.tsx
- * 写同一句；把根 package.json 的 effect 版本改成 `^4.0.0`。
+ * 注入证明（各自变红）：在 scripts/ 或 apps/native/src/ 的任一文件写
+ * `import { Effect } from "effect"`；在同处写 `Effect.runPromise`；
+ * 把根 package.json 的 effect 版本改成 `^4.0.0`。
  */
 
 import { readFileSync } from "node:fs";
@@ -27,10 +27,17 @@ import { collect } from "./gate-lib.ts";
 const EFFECT_IMPORT = /from\s+["'](?:effect)(?:\/[^"']*)?["']/;
 const RUN_AT_EDGE = /\bEffect\.(?:runPromise|runSync|runFork|runPromiseExit|runSyncExit)\b/;
 
-/** ui 里唯一可以碰 effect 的文件：SubscriptionRef → Solid signal 的适配器。 */
-const ADAPTER = "apps/desktop/src/ui/effect-solid.ts";
-/** 运行时的启动点：应用入口与适配器，再无第三处。 */
-const RUN_EDGES = new Set(["apps/desktop/src/main.tsx", ADAPTER]);
+/**
+ * 步骤 10 之后，Effect 在这个仓库里没有消费者：会话层随 Solid 表面一起删了，
+ * 而 Native 的 TypeScript core 是同步 `update`（`native check --strict` 的受限
+ * 子集），运行时进不去。所以这道门禁现在守的是**禁区仍然是禁区**，
+ * 而不是「某个适配器是唯一例外」。
+ *
+ * 空集自检因此比以前更重要：它保证这几条 glob 里始终有文件被真扫到。
+ * 将来 TypeScript 会话层重新出现时，把它的目录从禁区里移出去，
+ * 并在这里恢复一个具名的运行时边缘——**不要**通过放宽空集自检来消红。
+ */
+const RUN_EDGES = new Set<string>();
 
 const failures: string[] = [];
 let scanned = 0;
@@ -59,28 +66,26 @@ const scan = (
 // 一、禁区不 import effect。
 scan(
   [
-    "packages/typeset/src/**/*.ts",
-    "packages/editor/src/**/*.ts",
+    // ScriptC 静态层：Effect 会把它们降级到动态档，理由与步骤 10 之前相同。
     "scripts/**/*.ts",
     "e2e/**/*.ts",
-    "apps/desktop/e2e/**/*.ts",
-    "apps/desktop/src/ui/**/*.{ts,tsx}",
+    // Native 的 core 与协议：受限子集，运行时进不去。
+    "apps/native/src/**/*.ts",
   ],
-  (file, line) =>
-    file !== ADAPTER && EFFECT_IMPORT.test(line)
-      ? "effect 进入了禁区（领地表见 docs/EFFECT.md）"
-      : null,
+  (_file, line) =>
+    EFFECT_IMPORT.test(line) ? "effect 进入了禁区（领地表见 docs/EFFECT.md）" : null,
 );
 
-// 二、运行时只在边缘启动。组合与执行分开，组件才能保持只读视图。
-scan(["apps/desktop/src/**/*.{ts,tsx}"], (file, line) =>
+// 二、运行时只在边缘启动。边缘集合现在是空的（见上），所以这条等价于
+// 「全仓不得启动 Effect 运行时」——一旦会话层回来，把它的入口加进 RUN_EDGES。
+scan(["apps/native/src/**/*.ts", "scripts/**/*.ts"], (file, line) =>
   !RUN_EDGES.has(file) && RUN_AT_EDGE.test(line)
-    ? "Effect 运行时在边缘之外启动（只准 main.tsx 与适配器执行）"
+    ? "Effect 运行时在边缘之外启动（当前没有声明任何边缘）"
     : null,
 );
 
 // 三、版本钉死。范围符号让「今天的绿」证明不了「明天的绿」。
-for (const manifestPath of collect(["package.json", "apps/desktop/package.json"])) {
+for (const manifestPath of collect(["package.json", "apps/native/package.json"])) {
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
     readonly dependencies?: Readonly<Record<string, string>>;
     readonly devDependencies?: Readonly<Record<string, string>>;

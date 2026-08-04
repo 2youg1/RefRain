@@ -1,4 +1,4 @@
-name: windows-ime
+name: native-ime
 
 on:
   schedule:
@@ -6,13 +6,16 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
+      - ".github/workflows/ime-gate.yml"
+      - "apps/native/**"
+      - "crates/refrain-app/**"
+      - "crates/refrain-core/**"
       - "e2e/ime/**"
-      - "packages/editor/**"
-      - "apps/desktop/src/**"
-      - "apps/desktop/src-tauri/**"
+      - "patches/@native-sdk%2Fcli@0.7.2.patch"
+      - "scripts/native-document-evidence-identity.ts"
 
 concurrency:
-  group: windows-ime-${{ github.ref }}
+  group: native-ime-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -21,9 +24,32 @@ permissions:
 env:
   BUN_VERSION: 1.3.14
   RUST_VERSION: "1.97.1"
+  ZIG_VERSION: "0.16.0"
 
 jobs:
-  ime:
+  policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - uses: mlugg/setup-zig@a67e68dc5c8281d9608136d3d7ca1b282213e4ac # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - run: bun install --frozen-lockfile
+      - run: bun test e2e/ime/native-evidence-policy.test.ts
+      - run: bun x tsc --noEmit -p tsconfig.json
+
+  windows-native-ime:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -33,55 +59,98 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
+      - uses: mlugg/setup-zig@a67e68dc5c8281d9608136d3d7ca1b282213e4ac # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
       - run: bun install --frozen-lockfile
 
-      - name: Require the migrated IME harness
-        shell: pwsh
-        run: |
-          $required = @(
-            "e2e/ime/scripts/prepare.ps1",
-            "e2e/ime/driver/drive.ps1",
-            "e2e/ime/driver/assert.ts"
-          )
-          $missing = @($required | Where-Object { -not (Test-Path $_) })
-          if ($missing.Count) { throw "Missing IME harness: $($missing -join ', ')" }
-
       - name: Install Chinese and Japanese input methods
         shell: pwsh
         run: |
           foreach ($tag in @("zh-Hans-CN", "ja-JP")) {
-            $list = Get-WinUserLanguageList
-            if (-not ($list | Where-Object LanguageTag -eq $tag)) {
+            $languages = Get-WinUserLanguageList
+            if (-not ($languages | Where-Object LanguageTag -eq $tag)) {
               Install-Language $tag
-              $list = Get-WinUserLanguageList
-              $list.Add($tag)
-              Set-WinUserLanguageList $list -Force
+              $languages = Get-WinUserLanguageList
+              $languages.Add($tag)
+              Set-WinUserLanguageList $languages -Force
             }
           }
 
-      - name: Build the Tauri shell
-        working-directory: apps/desktop
-        run: bun x tauri build --debug --no-bundle
+      # The IME target is the shipping binary, not a test harness. Composition
+      # goes through the real Win32 IMM32 path, so a fixture would prove
+      # nothing about what the author types.
+      - name: Build the shipping Native executable with automation evidence
+        working-directory: apps/native
+        run: bun x native build . --yes -Dplatform=windows -Dautomation=true -Doptimize=ReleaseFast
 
-      - name: Prepare the desktop
+      - name: Drive the Native GPU document surface with Microsoft Pinyin
         shell: pwsh
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File e2e/ime/scripts/prepare.ps1
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass `
+            -File e2e/ime/driver/drive-native-windows.ps1 `
+            -Shell native `
+            -Binary apps/native/zig-out/bin/refrain.exe
 
-      - name: Drive WebView2 with real input methods
-        shell: pwsh
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File e2e/ime/driver/drive.ps1 -Shell wv2
-
-      - name: Assert IME acceptance
-        run: bun e2e/ime/driver/assert.ts
+      # The driver already calls the assertion on its own exit path. Running it
+      # again here is the independent check: it reads the recorded manifest
+      # rather than the live window, so a driver that reported success without
+      # writing evidence fails at this step.
+      - name: Enforce Native IME acceptance from the recorded run
+        run: bun e2e/ime/assert-native.ts --manifest e2e/ime/results/native/windows/run.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
-          name: ime-results
-          path: e2e/ime/results/
+          name: native-ime-windows
+          path: e2e/ime/results/native/windows/
+          if-no-files-found: warn
+          retention-days: 30
+
+  macos-native-ime:
+    runs-on: [self-hosted, macOS, refrain-ime]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - uses: mlugg/setup-zig@a67e68dc5c8281d9608136d3d7ca1b282213e4ac # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - run: bun install --frozen-lockfile
+
+      - name: Require the configured Japanese input source and UI control permission
+        run: |
+          defaults read com.apple.HIToolbox AppleEnabledInputSources
+          osascript -e 'tell application "System Events" to get UI elements enabled'
+
+      - name: Build the shipping Native executable with automation evidence
+        working-directory: apps/native
+        run: bun x native build . --yes -Dplatform=macos -Dautomation=true -Doptimize=ReleaseFast
+
+      - name: Drive the Native GPU document surface with Kotoeri
+        run: bun e2e/ime/driver/drive-native-macos.ts
+
+      - name: Enforce Native IME acceptance from the recorded run
+        run: bun e2e/ime/assert-native.ts --manifest e2e/ime/results/native/macos/run.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: native-ime-macos
+          path: e2e/ime/results/native/macos/
           if-no-files-found: warn
           retention-days: 30

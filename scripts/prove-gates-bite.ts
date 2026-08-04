@@ -34,18 +34,36 @@ interface Injection {
 
 const INJECTIONS: readonly Injection[] = [
   {
+    // 菜单里写一个 core 不认识的命令：点下去毫无反应，而两边单看都自洽。
+    // 这正是四个入口共用一个 id 空间时唯一会静默的失败。
+    gate: "verify:command-space",
+    file: "apps/native/app.zon",
+    anchor: '.{ .id = "theme.next", .key = "t"',
+    replacement: '.{ .id = "theme.previous", .key = "t"',
+    expect: "theme.previous",
+  },
+  {
+    // Zig 把 `run_id` 写成 `runId`：编译得过，请求却被 serde 拒绝，界面上
+    // 只是「按钮没反应」。这是接线之后最难归因的一类失败。
+    gate: "verify:wire-shapes",
+    file: "apps/native/src/project_request.zig",
+    anchor: 'if (!writer.key("run_id")',
+    replacement: 'if (!writer.key("runId")',
+    expect: "runId",
+  },
+  {
     gate: "verify:no-network",
-    file: "apps/desktop/src/ui/StatusLine.tsx",
-    anchor: "export type StatusLineProps = {",
-    replacement: 'await fetch("https://example.com/telemetry");\nexport type StatusLineProps = {',
-    expect: "StatusLine.tsx",
+    file: "apps/native/src/roster.ts",
+    anchor: "export const NO_ROW = -1;",
+    replacement: 'await fetch("https://example.com/telemetry");\nexport const NO_ROW = -1;',
+    expect: "roster.ts",
   },
   {
     gate: "verify:bridge",
-    file: "apps/desktop/src/ui/StatusLine.tsx",
-    anchor: "export type StatusLineProps = {",
-    replacement: 'const raw = invoke("health", {});\nexport type StatusLineProps = {',
-    expect: "StatusLine.tsx",
+    file: "apps/native/src/roster.ts",
+    anchor: "export const NO_ROW = -1;",
+    replacement: 'const raw = invoke("health", {});\nexport const NO_ROW = -1;',
+    expect: "roster.ts",
   },
   {
     gate: "verify:core-purity",
@@ -64,15 +82,15 @@ const INJECTIONS: readonly Injection[] = [
   },
   {
     gate: "verify:write-path",
-    file: "apps/desktop/src-tauri/src/lib.rs",
-    anchor: "/// The single command registry.",
+    file: "crates/refrain-app/src/document.rs",
+    anchor: "pub(crate) fn persist_in_entry(",
     // 这个注入的命令必须真的调用写入函数。先前注入的是一个**空**函数
     // （`fn save_chapter(_text: String) {}`），门禁照样通过——它没有说谎：
     // 一个什么都不做的命令确实没有写任何字节。缺陷在注入样本，不在门禁。
     // 注入要造出的那个世界是「未授权的路径写入手稿」，空函数造不出它。
     replacement:
-      "#[tauri::command]\n#[specta::specta]\nfn save_chapter(entry: &mut Entry, text: String) {\n    persist_in_entry(entry, text);\n}\n\n/// The single command registry.",
-    expect: "save_chapter",
+      "pub(crate) fn scrub_chapter(entry: &mut ProjectEntry) {\n    let _ = entry.store.commit(&DocumentCommit::default());\n}\n\npub(crate) fn persist_in_entry(",
+    expect: "scrub_chapter",
   },
   {
     gate: "verify:roundtrip",
@@ -89,42 +107,11 @@ const INJECTIONS: readonly Injection[] = [
     expect: "review.rs",
   },
   {
-    gate: "verify:editor-kernel",
-    file: "packages/editor/src/injected-prosemirror.ts",
-    content: 'import "prosemirror-state";\n',
-    expect: "injected-prosemirror.ts",
-  },
-  {
-    gate: "verify:no-js",
-    file: "scripts/injected-helper.js",
-    content: "export const helper = () => 1;\n",
-    expect: "injected-helper.js",
-  },
-  {
-    gate: "verify:workflows",
-    file: ".github/workflows/gate.yml",
-    anchor: "      - run: bun run gate",
-    replacement: "      - run: bun run electron",
-    expect: "gate.yml",
-  },
-  {
-    gate: "verify:workflows",
-    file: "package.json",
-    anchor: '"packageManager": "bun@1.3.14"',
-    replacement: '"packageManager": "bun@1.3.13"',
-    expect: "package.json",
-  },
-  {
-    gate: "verify:legacy-parity",
-    file: "legacy/injected.test.ts",
-    content: "// A legacy behavior with no owner.\n",
-    expect: "legacy/injected.test.ts",
-  },
-  {
-    gate: "verify:text-surface",
-    file: "AI-NOTES.md",
-    content: "# Unapproved repository prose\n",
-    expect: "AI-NOTES.md",
+    gate: "verify:native-ime",
+    file: "patches/@native-sdk%2Fcli@0.7.2.patch",
+    anchor: "const bool queried = ImmGetCandidateWindow(imc, 0, &observed) != FALSE;",
+    replacement: "const bool queried = syntheticCandidate(imc, &observed) != FALSE;",
+    expect: "@native-sdk%2Fcli@0.7.2.patch",
   },
   {
     gate: "verify:gates-run",

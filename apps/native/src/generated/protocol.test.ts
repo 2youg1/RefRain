@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import * as protocol from "./protocol.ts";
 import {
+  ACTION_PROJECT,
   API_VERSION,
   CAPABILITY_MASK,
   dispatchResponseAction,
@@ -24,12 +25,28 @@ import {
 
 const MAGIC = new Uint8Array([82, 70, 82, 78]);
 
-test("generated protocol owns layout and errors, not product actions or request transport", () => {
+test("generated protocol owns layout, codes and offsets, not product semantics", () => {
   expect(VIRTUAL_BLOCK_HEIGHT).toBe(36);
+  // The generator never emits request transport or use-case behaviour: it
+  // publishes the wire vocabulary so TypeScript, Zig and Rust cannot drift,
+  // while `DocumentInput` in Rust remains the only place an action means
+  // something. A generated encoder or decoder would move semantics here.
   expect("encodeDispatchRequest" in protocol).toBe(false);
+  expect("applyInput" in protocol).toBe(false);
   expect(
-    Object.keys(protocol).some((name) => name.startsWith("ACTION_") || name.startsWith("INPUT_")),
-  ).toBe(false);
+    Object.entries(protocol).every(
+      ([name, value]) =>
+        typeof value !== "function" ||
+        name.startsWith("dispatchResponse") ||
+        name === "isDispatchResponse",
+    ),
+  ).toBe(true);
+  // Every action and input code is a distinct positive integer.
+  const codes = Object.entries(protocol)
+    .filter(([name]) => name.startsWith("ACTION_") || name.startsWith("INPUT_"))
+    .map(([, value]) => value);
+  expect(codes.length).toBeGreaterThan(0);
+  expect(codes.every((code) => typeof code === "number" && code > 0)).toBe(true);
 });
 
 test("generated response codec exposes projection metadata and typed failure", () => {
@@ -63,13 +80,15 @@ test("generated response codec exposes projection metadata and typed failure", (
 });
 
 test("generated response codec carries a bounded opaque use-case payload", () => {
-  const response = new Uint8Array(54);
+  // 头部长度从协议读，不写字面量：协议加字段时头部变长，写死的偏移
+  // 会让夹具构造出一个两侧都自洽的坏响应。
+  const response = new Uint8Array(protocol.RESPONSE_HEADER_BYTES + 2);
   response.set(MAGIC, 0);
   writeU16(response, 4, PROTOCOL_VERSION);
-  writeU16(response, 6, 106);
+  writeU16(response, 6, ACTION_PROJECT);
   writeU32(response, 48, 2);
-  response[52] = 123;
-  response[53] = 125;
+  response[protocol.RESPONSE_HEADER_BYTES] = 123;
+  response[protocol.RESPONSE_HEADER_BYTES + 1] = 125;
 
   expect(isDispatchResponse(response)).toBe(true);
   expect(dispatchResponseText(response)).toEqual(new Uint8Array([123, 125]));
@@ -80,13 +99,13 @@ test("generated response codec carries a bounded opaque use-case payload", () =>
 });
 
 test("protocol fingerprint is a generated SHA-256 identity", () => {
-  expect(PROTOCOL_VERSION).toBe(2);
+  expect(PROTOCOL_VERSION).toBeGreaterThan(0);
   expect(PROTOCOL_FINGERPRINT.length).toBe(64);
   expect(/^[0-9a-f]+$/.test(PROTOCOL_FINGERPRINT)).toBe(true);
 });
 
 function responseBytes(action: number, status: number): Uint8Array {
-  const response = new Uint8Array(52);
+  const response = new Uint8Array(protocol.RESPONSE_HEADER_BYTES);
   response.set(MAGIC, 0);
   writeU16(response, 4, PROTOCOL_VERSION);
   writeU16(response, 6, action);

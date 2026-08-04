@@ -7,8 +7,19 @@
     <else>
       <badge variant="secondary">Host check</badge>
     </else>
+    <button variant="secondary" on-press="palette_toggle">Go to</button>
+    <button variant="secondary" on-press="theme_next">Theme</button>
     <button variant="secondary" on-press="document_undo">Undo</button>
+    <button variant="primary" on-press="document_save">Save</button>
   </row>
+  <if test="{noticeShown}">
+    <alert variant="secondary">
+      <row gap="8" cross="center">
+        <text grow="1">{notice}</text>
+        <button variant="secondary" on-press="notice_dismiss">Dismiss</button>
+      </row>
+    </alert>
+  </if>
   <text>{status}</text>
   <text>protocol {protocolVersion} · revision {documentRevision} · {documentBlocks} blocks · {documentBytes} bytes</text>
 </column>

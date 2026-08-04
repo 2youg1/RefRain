@@ -333,6 +333,38 @@ fn undo_restores_the_exact_bytes_and_the_head_the_action_was_based_on() {
 }
 
 #[test]
+#[cfg_attr(
+    debug_assertions,
+    ignore = "release-only performance contract; debug instrumentation exceeds a frame"
+)]
+fn local_undo_over_one_hundred_thousand_blocks_stays_within_one_frame() {
+    let source = (0..100_000)
+        .map(|index| format!("{index:06} | 中文と日本語 | {}", "a".repeat(88)))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let mut manuscript = open(source.as_bytes());
+    let mut samples = Vec::with_capacity(20);
+
+    for _ in 0..20 {
+        manuscript
+            .replace_bytes(360..360, "x", "local performance probe")
+            .unwrap();
+        let started = std::time::Instant::now();
+        manuscript.undo_last().unwrap();
+        samples.push(started.elapsed());
+    }
+
+    samples.sort_unstable();
+    let p95 = samples[18];
+    eprintln!("100,000-block local undo p95={p95:?}; samples={samples:?}");
+    assert!(
+        p95 <= std::time::Duration::from_nanos(16_666_667),
+        "100,000-block local undo p95 {p95:?} exceeded one frame; samples={samples:?}"
+    );
+    assert_eq!(manuscript.materialize().unwrap(), source.as_bytes());
+}
+
+#[test]
 fn undo_after_undo_walks_the_history_backwards() {
     let source = b"a\n\nb\n\nc";
     let mut manuscript = open(source);

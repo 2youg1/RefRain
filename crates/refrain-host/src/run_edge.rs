@@ -41,7 +41,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Each variant earns its place with a case the design named, and each
 /// carries the invariant that makes it checkable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "kebab-case", tag = "kind", content = "value")]
 pub enum RunEdge {
     /// This Run may only be authorized once the upstream Run is terminal, and
@@ -244,7 +244,7 @@ pub fn alternates_of(edges: &[Option<RunEdge>], at: usize) -> Vec<usize> {
 /// separate from `RunEdge` so the type itself says whether it has been
 /// resolved: a position and an id are not interchangeable, and a bug that
 /// confused them would be silent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "kebab-case", tag = "kind", content = "value")]
 pub enum ResolvedEdge {
     Follows { upstream: Id },

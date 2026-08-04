@@ -114,6 +114,7 @@ fn dispatched_run_with_edge(
     edge: Option<RunEdge>,
 ) -> Id {
     let context = refrain_host::staging::DirectoryContext::new(store.layout().state_dir.clone());
+    let state_dir = store.layout().state_dir.clone();
     let mut host = AgentHost::open(refrain_app::journal::StoreJournal { store }, context).unwrap();
     let baseline = Id::new();
     host.execute(HostCommand::DraftTask {
@@ -137,6 +138,7 @@ fn dispatched_run_with_edge(
         edges,
         package: DispatchPackage {
             scopes: Vec::new(),
+            prefix_bytes: 0,
             request_md: String::new(),
             manifest: vec![],
             digest: "package".to_string(),
@@ -151,15 +153,29 @@ fn dispatched_run_with_edge(
     // 2-5 的前半，这里顺着它走，而不是绕过它。
     if edge.is_some() {
         let upstream = host.runs()[0].id;
+        let upstream_workspace = format!("{workspace}-upstream");
         host.execute(HostCommand::LaunchRun {
             run_id: upstream,
-            workspace: format!("{workspace}-upstream"),
+            workspace: upstream_workspace.clone(),
         })
         .unwrap();
         host.execute(HostCommand::CompleteDispatch {
             run_id: upstream,
             receipt: "upstream-receipt".to_string(),
         })
+        .unwrap();
+        // 顺序不是内容：终态之外，下游还要求上游真的留下了产出。夹具因此
+        // 把结果写进上游的 attempt 目录，与真实生产者落盘的位置相同——
+        // 少了它 host 会具名拒绝启动（`UpstreamWithoutArtifact`）。
+        let attempt = state_dir
+            .join(&upstream_workspace)
+            .join("attempts")
+            .join(upstream.to_string());
+        std::fs::create_dir_all(&attempt).unwrap();
+        std::fs::write(
+            attempt.join("result.md"),
+            "<agent-result version=\"2\"><memo topic=\"上游\">读过了。</memo></agent-result>",
+        )
         .unwrap();
         host.execute(HostCommand::FailRun {
             run_id: upstream,

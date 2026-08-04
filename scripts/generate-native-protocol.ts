@@ -7,6 +7,20 @@ interface ProtocolError {
   readonly code: number;
 }
 
+/** One named wire code shared by TypeScript, Zig, Rust and C. */
+type ProtocolCode = ProtocolError;
+
+/**
+ * The Native SDK packs a host record as f64 little-endian scalars in field-name
+ * order, then the byte array, then any scalar that sorts after it. Declaring the
+ * three groups here lets every consumer derive the same offsets.
+ */
+interface HostRecord {
+  readonly scalars: readonly string[];
+  readonly bytes: string;
+  readonly trailingScalars: readonly string[];
+}
+
 interface ProtocolSchema {
   readonly schemaVersion: number;
   readonly magic: string;
@@ -21,7 +35,41 @@ interface ProtocolSchema {
     readonly defaultViewportBlocks: number;
     readonly virtualBlockHeight: number;
   };
+  readonly hostRecord: HostRecord;
+  readonly actions: readonly ProtocolCode[];
+  readonly inputs: readonly ProtocolCode[];
+  readonly caretDirections: readonly ProtocolCode[];
   readonly errors: readonly ProtocolError[];
+}
+
+const scalarBytes = 8;
+
+/** Byte offset of one leading scalar inside the host record. */
+function scalarOffset(record: HostRecord, name: string): number {
+  const index = record.scalars.indexOf(name);
+  if (index < 0) throw new Error(`host record does not declare scalar ${name}`);
+  return index * scalarBytes;
+}
+
+/** Byte offset of the length prefix that precedes the record's byte array. */
+function bytesLengthOffset(record: HostRecord): number {
+  return record.scalars.length * scalarBytes;
+}
+
+/** Byte offset where the record's byte array itself starts. */
+function bytesOffset(record: HostRecord): number {
+  return bytesLengthOffset(record) + 4;
+}
+
+/** Trailing scalar offsets are relative to the end of the byte array. */
+function trailingOffset(record: HostRecord, name: string): number {
+  const index = record.trailingScalars.indexOf(name);
+  if (index < 0) throw new Error(`host record does not declare trailing scalar ${name}`);
+  return index * scalarBytes;
+}
+
+function trailingBytes(record: HostRecord): number {
+  return record.trailingScalars.length * scalarBytes;
 }
 
 interface Output {
@@ -72,12 +120,6 @@ function protocolSchema(value: unknown): ProtocolSchema {
   if (!isRecord(value) || !isRecord(value.layout) || !Array.isArray(value.errors)) {
     throw new Error("native protocol schema must declare layout and errors");
   }
-  const errors: ProtocolError[] = value.errors.map((error: unknown) => {
-    if (!isRecord(error) || typeof error.name !== "string" || typeof error.code !== "number") {
-      throw new Error("native protocol error entries require string name and numeric code");
-    }
-    return { name: error.name, code: integer(error.code, `error ${error.name}`) };
-  });
   const layout = value.layout;
   const result: ProtocolSchema = {
     schemaVersion: integer(value.schemaVersion, "schemaVersion"),
@@ -93,13 +135,55 @@ function protocolSchema(value: unknown): ProtocolSchema {
       defaultViewportBlocks: integer(layout.defaultViewportBlocks, "layout.defaultViewportBlocks"),
       virtualBlockHeight: integer(layout.virtualBlockHeight, "layout.virtualBlockHeight"),
     },
-    errors,
+    hostRecord: hostRecord(value.hostRecord),
+    actions: codes(value.actions, "actions"),
+    inputs: codes(value.inputs, "inputs"),
+    caretDirections: codes(value.caretDirections, "caretDirections"),
+    errors: codes(value.errors, "errors"),
   };
   if (result.magic.length !== 4) throw new Error("native protocol magic must be four ASCII bytes");
-  if (new Set(errors.map((error) => error.code)).size !== errors.length) {
-    throw new Error("native protocol error codes must be unique");
-  }
   return result;
+}
+
+/**
+ * Accept the record only when it matches the SDK's packing rule: every field
+ * name sorted, the byte array in its sorted position, trailing scalars after it.
+ * A schema that violates this would make every derived offset wrong.
+ */
+function hostRecord(value: unknown): HostRecord {
+  if (!isRecord(value) || !Array.isArray(value.scalars) || !Array.isArray(value.trailingScalars)) {
+    throw new Error("hostRecord must declare scalars, bytes and trailingScalars");
+  }
+  const scalars = value.scalars.map((name: unknown) => string(name, "hostRecord.scalars entry"));
+  const trailingScalars = value.trailingScalars.map((name: unknown) =>
+    string(name, "hostRecord.trailingScalars entry"),
+  );
+  const bytes = string(value.bytes, "hostRecord.bytes");
+  const ordered = [...scalars, bytes, ...trailingScalars];
+  const sorted = [...ordered].sort();
+  if (ordered.join("\u0000") !== sorted.join("\u0000")) {
+    throw new Error(
+      "hostRecord fields must be listed in field-name order; the Native SDK packs them sorted",
+    );
+  }
+  if (new Set(ordered).size !== ordered.length) {
+    throw new Error("hostRecord field names must be unique");
+  }
+  return { scalars, bytes, trailingScalars };
+}
+
+function codes(value: unknown, name: string): readonly ProtocolCode[] {
+  if (!Array.isArray(value)) throw new Error(`${name} must be an array`);
+  const parsed: ProtocolCode[] = value.map((entry: unknown) => {
+    if (!isRecord(entry) || typeof entry.name !== "string" || typeof entry.code !== "number") {
+      throw new Error(`${name} entries require string name and numeric code`);
+    }
+    return { name: entry.name, code: integer(entry.code, `${name} ${entry.name}`) };
+  });
+  if (new Set(parsed.map((entry) => entry.code)).size !== parsed.length) {
+    throw new Error(`${name} codes must be unique`);
+  }
+  return parsed;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -159,9 +243,14 @@ typedef struct RefrainNativeRequest {
   uint64_t focus;
   uint64_t cursor;
   uint64_t viewport_first_block;
+  /* Pixel scroll offset; Rust resolves it into a block index. */
+  double scroll_offset_y;
+  /* 字身 per line, measured from the real font; Rust returns 禁则 breaks. */
+  double columns_em;
   uint32_t viewport_block_count;
   uint32_t text_len;
-  uint8_t text[REFRAIN_EVENT_TEXT_BYTES];
+  /* Borrowed for the duration of the call only; the host never stores it. */
+  const uint8_t *text;
 } RefrainNativeRequest;
 typedef struct RefrainNativeResponse {
   uint32_t status;
@@ -179,14 +268,23 @@ typedef struct RefrainNativeResponse {
   uint32_t block_count;
   uint32_t text_len;
   uint32_t composition_len;
-  uint32_t projection_reserved;
+  /* Which grammar highlights this document, from Rust's DocumentFormat.
+     0 is Markdown prose; the rest follow the enum's declaration order. The
+     surface cannot infer it from the bytes: a fenced block inside Markdown
+     and a whole .rs file both look like code to a scanner, and only the
+     opening path knows which one this is. */
+  uint32_t document_format;
   uint64_t selection_anchor;
   uint64_t selection_focus;
   uint64_t composition_start;
   uint64_t composition_end;
-  uint64_t composition_cursor;
-  uint8_t text[REFRAIN_PROJECTION_BYTES];
-  uint8_t composition[REFRAIN_EVENT_TEXT_BYTES];
+  uint64_t document_selection_start;
+  uint64_t document_selection_end;
+  /* Owned by the Rust session and valid until its next dispatch. */
+  const uint8_t *text;
+  /* CLREQ line-start offsets into text; same owner, same lifetime. */
+  const uint32_t *line_starts;
+  uint32_t line_start_count;
 } RefrainNativeResponse;
 RefrainNativeResponse refrain_native_dispatch(RefrainNativeRequest request);
 #endif
@@ -205,10 +303,15 @@ pub const CAPABILITY_MASK: u32 = ${schema.capabilityMask};
 pub const PROJECTION_BYTES: usize = ${schema.layout.projectionBytes};
 pub const EVENT_TEXT_BYTES: usize = ${schema.layout.eventTextBytes};
 pub const DEFAULT_VIEWPORT_BLOCKS: u32 = ${schema.layout.defaultViewportBlocks};
+pub const VIRTUAL_BLOCK_HEIGHT: f64 = ${schema.layout.virtualBlockHeight}.0;
 #[allow(dead_code)]
 pub const PROTOCOL_FINGERPRINT: &str =
     "${hash}";
 ${errors}
+${rustCodes("ACTION", schema.actions)}
+${rustCodes("INPUT", schema.inputs)}
+${rustCodes("CARET", schema.caretDirections)}
+pub const CARET_EXTEND_FLAG: u16 = 0x100;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -224,9 +327,18 @@ pub struct RefrainNativeRequest {
     pub focus: u64,
     pub cursor: u64,
     pub viewport_first_block: u64,
+    /// Pixel scroll offset. Rust resolves it into a block index because only it
+    /// knows the manuscript's block count.
+    pub scroll_offset_y: f64,
+    /// 字身 per line, measured by the platform from the real font. Rust turns
+    /// it into 禁则-correct break offsets; zero means the caller wants no
+    /// breaking (a probe, or a viewport with no width yet).
+    pub columns_em: f64,
     pub viewport_block_count: u32,
     pub text_len: u32,
-    pub text: [u8; EVENT_TEXT_BYTES],
+    /// Borrowed input bytes, valid only for the duration of one dispatch call.
+    /// The host reads them once and never stores the pointer.
+    pub text: *const u8,
 }
 
 #[repr(C)]
@@ -247,14 +359,26 @@ pub struct RefrainNativeResponse {
     pub block_count: u32,
     pub text_len: u32,
     pub composition_len: u32,
-    pub projection_reserved: u32,
+    /// Which grammar highlights this document, from DocumentFormat.
+    /// The surface cannot infer it from the bytes — a fenced block inside
+    /// Markdown and a whole .rs file both scan as code — so the opening
+    /// path, which is the only place that knows, sends it across.
+    pub document_format: u32,
     pub selection_anchor: u64,
     pub selection_focus: u64,
     pub composition_start: u64,
     pub composition_end: u64,
-    pub composition_cursor: u64,
-    pub text: [u8; PROJECTION_BYTES],
-    pub composition: [u8; EVENT_TEXT_BYTES],
+    pub document_selection_start: u64,
+    pub document_selection_end: u64,
+    /// Projection bytes owned by the Rust session that produced them. Valid
+    /// until that session handles its next dispatch; consumers read, never store.
+    pub text: *const u8,
+    /// Line-start byte offsets into the projection text, computed under CLREQ
+    /// 禁则 by refrain_core::typeset. The SDK cannot wrap Chinese text — its
+    /// only break opportunities are space and tab — so the view draws these
+    /// rather than wrapping. Borrowed like the text: same owner and lifetime.
+    pub line_starts: *const u32,
+    pub line_start_count: u32,
 }
 
 impl RefrainNativeResponse {
@@ -275,22 +399,51 @@ impl RefrainNativeResponse {
             block_count: 0,
             text_len: 0,
             composition_len: 0,
-            projection_reserved: 0,
+            document_format: 0,
             selection_anchor: 0,
             selection_focus: 0,
             composition_start: 0,
             composition_end: 0,
-            composition_cursor: 0,
-            text: [0; PROJECTION_BYTES],
-            composition: [0; EVENT_TEXT_BYTES],
+            document_selection_start: 0,
+            document_selection_end: 0,
+            text: std::ptr::null(),
+            line_starts: std::ptr::null(),
+            line_start_count: 0,
         }
     }
 }
 `;
 }
 
+function zigEnum(name: string, codes: readonly ProtocolCode[]): string {
+  const members = codes.map((entry) => `${snake(entry.name)} = ${entry.code}`).join(", ");
+  return `pub const ${name} = enum(u16) { ${members} };`;
+}
+
+function tsCodes(prefix: string, codes: readonly ProtocolCode[]): string {
+  return codes
+    .map((entry) => `export const ${prefix}_${upperSnake(entry.name)} = ${entry.code};`)
+    .join("\n");
+}
+
+function rustCodes(prefix: string, codes: readonly ProtocolCode[]): string {
+  return codes
+    .map((entry) => `pub const ${prefix}_${upperSnake(entry.name)}: u16 = ${entry.code};`)
+    .join("\n");
+}
+
 function renderZig(schema: ProtocolSchema, hash: string): string {
   const errors = schema.errors.map((error) => `${snake(error.name)} = ${error.code}`).join(", ");
+  const record = schema.hostRecord;
+  const offsets = record.scalars
+    .map((name) => `pub const offset_${snake(name)}: usize = ${scalarOffset(record, name)};`)
+    .join("\n");
+  const trailing = record.trailingScalars
+    .map(
+      (name) =>
+        `pub const trailing_offset_${snake(name)}: usize = ${trailingOffset(record, name)};`,
+    )
+    .join("\n");
   return `// @generated by scripts/generate-native-protocol.ts; do not edit.
 const std = @import("std");
 
@@ -304,10 +457,28 @@ pub const default_viewport_blocks: u32 = ${schema.layout.defaultViewportBlocks};
 pub const virtual_block_height: f64 = ${schema.layout.virtualBlockHeight}.0;
 pub const protocol_fingerprint = "${hash}";
 pub const protocol_magic = [4]u8{ ${magicBytes(schema.magic)} };
-pub const response_header_bytes: usize = 52;
+pub const response_header_bytes: usize = 88;
 pub const response_bytes: usize = response_header_bytes + projection_bytes;
 
+/// The zero-length projection an empty response borrows.
+const empty_projection = [_]u8{};
+const empty_line_starts = [_]u32{};
+
 pub const ProtocolError = enum(u32) { ${errors} };
+${zigEnum("Action", schema.actions)}
+${zigEnum("Input", schema.inputs)}
+${zigEnum("CaretDirection", schema.caretDirections)}
+
+/// Host-record byte offsets derived from the SDK's field-name packing order.
+/// Hand-written offsets would drift silently when a field is renamed.
+${offsets}
+pub const offset_text_len: usize = ${bytesLengthOffset(record)};
+pub const offset_text: usize = ${bytesOffset(record)};
+${trailing}
+pub const trailing_bytes: usize = ${trailingBytes(record)};
+
+pub const caret_extend_flag: u16 = 0x100;
+pub const caret_direction_mask: u16 = 0xff;
 
 pub const RefrainNativeRequest = extern struct {
     protocol_version: u16,
@@ -321,9 +492,14 @@ pub const RefrainNativeRequest = extern struct {
     focus: u64,
     cursor: u64,
     viewport_first_block: u64,
+    /// Pixel scroll offset resolved by Rust into a block index.
+    scroll_offset_y: f64,
+    /// 字身 per line, measured from the real font; Rust returns 禁则 breaks.
+    columns_em: f64,
     viewport_block_count: u32,
     text_len: u32,
-    text: [event_text_bytes]u8,
+    /// Borrowed for one dispatch call: points into the SDK payload buffer.
+    text: [*]const u8,
 };
 
 pub const RefrainNativeResponse = extern struct {
@@ -342,14 +518,20 @@ pub const RefrainNativeResponse = extern struct {
     block_count: u32,
     text_len: u32,
     composition_len: u32,
-    projection_reserved: u32,
+    /// Which grammar highlights this document, from Rust's DocumentFormat.
+    /// 0 is Markdown prose; the rest follow the enum's declaration order.
+    document_format: u32,
     selection_anchor: u64,
     selection_focus: u64,
     composition_start: u64,
     composition_end: u64,
-    composition_cursor: u64,
-    text: [projection_bytes]u8,
-    composition: [event_text_bytes]u8,
+    document_selection_start: u64,
+    document_selection_end: u64,
+    /// Borrowed from the Rust session; read during this frame only.
+    text: [*]const u8,
+    /// CLREQ line-start offsets into the text; same owner and lifetime.
+    line_starts: [*]const u32,
+    line_start_count: u32,
 };
 
 pub fn encodeDispatchResponse(response: RefrainNativeResponse) [response_bytes]u8 {
@@ -379,6 +561,19 @@ pub fn encodeDispatchResponse(response: RefrainNativeResponse) [response_bytes]u
     std.mem.writeInt(u32, out[40..44], wireIndex(response.first_block), .little);
     std.mem.writeInt(u32, out[44..48], response.block_count, .little);
     std.mem.writeInt(u32, out[48..52], @intCast(text_len), .little);
+    // 投影的其余状态也要上线，否则录制会话回放时界面是空的：正稿此前只
+    // 经 host_bridge 的全局变量传给视图，而那条路绕开了效果通道，
+    // journal 里没有它，回放的可访问性树因此与录制时不同。
+    // 行首偏移数组不上线——视图只用它的计数 line_count。
+    std.mem.writeInt(u32, out[52..56], response.line_start_count, .little);
+    std.mem.writeInt(u32, out[56..60], response.document_format, .little);
+    std.mem.writeInt(u32, out[60..64], wireIndex(response.selection_anchor), .little);
+    std.mem.writeInt(u32, out[64..68], wireIndex(response.selection_focus), .little);
+    std.mem.writeInt(u32, out[68..72], wireIndex(response.composition_start), .little);
+    std.mem.writeInt(u32, out[72..76], wireIndex(response.composition_end), .little);
+    std.mem.writeInt(u32, out[76..80], @intCast(@min(response.composition_len, std.math.maxInt(u32))), .little);
+    std.mem.writeInt(u32, out[80..84], wireIndex(response.document_selection_start), .little);
+    std.mem.writeInt(u32, out[84..88], wireIndex(response.document_selection_end), .little);
     @memcpy(out[response_header_bytes..][0..text_len], response.text[0..text_len]);
     return out;
 }
@@ -415,15 +610,58 @@ pub fn emptyResponse(action: u16) RefrainNativeResponse {
         .block_count = 0,
         .text_len = 0,
         .composition_len = 0,
-        .projection_reserved = 0,
+        .document_format = 0,
         .selection_anchor = 0,
         .selection_focus = 0,
         .composition_start = 0,
         .composition_end = 0,
-        .composition_cursor = 0,
-        .text = @splat(0),
-        .composition = @splat(0),
+        .document_selection_start = 0,
+        .document_selection_end = 0,
+        .text = empty_projection[0..].ptr,
+        .line_starts = empty_line_starts[0..].ptr,
+        .line_start_count = 0,
     };
+}
+
+/// Rebuild a projection from the bytes that crossed the effect channel.
+///
+/// **接上哪个功能**：会话录制与回放。text 借用 bytes，所以调用方必须让
+/// 那段缓冲活得比投影久。
+///
+/// **在全局逻辑中负责什么**：回放时主机不被调用，投影只能从 journal 里的
+/// 响应字节重建。录制路径也走这里，两条路因此产生同一个投影——
+/// 一条路读线上字节、另一条读 FFI 返回值会静默漂移。
+///
+/// 行首偏移数组不在线上；计数够视图定行数，指针留空。
+pub fn decodeDispatchResponse(bytes: []const u8) ?RefrainNativeResponse {
+    if (bytes.len < response_header_bytes) return null;
+    if (!std.mem.eql(u8, bytes[0..4], &protocol_magic)) return null;
+    const text_len: usize = std.mem.readInt(u32, bytes[48..52], .little);
+    if (text_len > projection_bytes or bytes.len < response_header_bytes + text_len) return null;
+    var out = emptyResponse(std.mem.readInt(u16, bytes[6..8], .little));
+    out.protocol_version = std.mem.readInt(u16, bytes[4..6], .little);
+    out.status = std.mem.readInt(u32, bytes[8..12], .little);
+    out.api_version = std.mem.readInt(u16, bytes[12..14], .little);
+    out.capabilities = std.mem.readInt(u32, bytes[16..20], .little);
+    out.session = std.mem.readInt(u32, bytes[20..24], .little);
+    out.revision = std.mem.readInt(u32, bytes[24..28], .little);
+    out.total_bytes = std.mem.readInt(u32, bytes[28..32], .little);
+    out.total_blocks = std.mem.readInt(u32, bytes[32..36], .little);
+    out.window_start = std.mem.readInt(u32, bytes[36..40], .little);
+    out.first_block = std.mem.readInt(u32, bytes[40..44], .little);
+    out.block_count = std.mem.readInt(u32, bytes[44..48], .little);
+    out.text_len = @intCast(text_len);
+    out.line_start_count = std.mem.readInt(u32, bytes[52..56], .little);
+    out.document_format = std.mem.readInt(u32, bytes[56..60], .little);
+    out.selection_anchor = std.mem.readInt(u32, bytes[60..64], .little);
+    out.selection_focus = std.mem.readInt(u32, bytes[64..68], .little);
+    out.composition_start = std.mem.readInt(u32, bytes[68..72], .little);
+    out.composition_end = std.mem.readInt(u32, bytes[72..76], .little);
+    out.composition_len = std.mem.readInt(u32, bytes[76..80], .little);
+    out.document_selection_start = std.mem.readInt(u32, bytes[80..84], .little);
+    out.document_selection_end = std.mem.readInt(u32, bytes[84..88], .little);
+    if (text_len > 0) out.text = bytes[response_header_bytes..].ptr;
+    return out;
 }
 `;
 }
@@ -448,8 +686,12 @@ export const VIRTUAL_BLOCK_HEIGHT = ${schema.layout.virtualBlockHeight};
 export const PROTOCOL_FINGERPRINT =
   "${hash}";
 ${errors}
+${tsCodes("ACTION", schema.actions)}
+${tsCodes("INPUT", schema.inputs)}
+${tsCodes("CARET", schema.caretDirections)}
+export const CARET_EXTEND_FLAG = 0x100;
 
-const RESPONSE_HEADER_BYTES = 52;
+export const RESPONSE_HEADER_BYTES = 88;
 
 export function isDispatchResponse(bytes: Uint8Array): boolean {
   if (

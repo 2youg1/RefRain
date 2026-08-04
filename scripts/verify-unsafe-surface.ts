@@ -30,7 +30,7 @@ import { collect } from "./gate-lib.ts";
 const PURE_CRATE_ROOTS = ["crates/*/src/lib.rs"];
 
 /** 装配层：含平台 FFI 或固定 ABI 导出，故只能逐行扫描。 */
-const ASSEMBLY_SOURCES = ["apps/desktop/src-tauri/src/**/*.rs", "apps/native/host/src/**/*.rs"];
+const ASSEMBLY_SOURCES = ["apps/native/host/src/**/*.rs"];
 
 /**
  * 登记在册的 unsafe。
@@ -41,9 +41,10 @@ const ASSEMBLY_SOURCES = ["apps/desktop/src-tauri/src/**/*.rs", "apps/native/hos
 const ALLOWED: Readonly<Record<string, number>> = {
   // Win32 没有安全封装：两个 API 都要求调用方先填好结构体的 cbSize/dmSize，
   // 这个约束表达不进类型系统。已收敛在单个函数内，有 cfg 守卫与非 Windows 回退。
-  "apps/desktop/src-tauri/src/display.rs": 1,
-  // Rust 2024 要求覆盖链接符号名显式标为 unsafe；函数体不含裸指针或 unsafe 块。
-  "apps/native/host/src/staticlib.rs": 2,
+  // Rust 2024 要求覆盖链接符号名显式标为 unsafe；此外这里是唯一把固定 C ABI
+  // 的借用指针解成切片的地方：请求文本一处，测试读回响应投影一处。其后的
+  // 模块一律在 deny(unsafe_code) 下工作，拿到的都是普通借用。
+  "apps/native/host/src/staticlib.rs": 3,
 };
 
 const failures: string[] = [];

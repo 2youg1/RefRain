@@ -3,11 +3,79 @@
     .name = "refrain",
     .display_name = "RefRain",
     .description = "A local-first writing workbench.",
-    .version = "0.2.4",
+    .version = "0.2.5",
     .icons = .{"assets/icon.png"},
-    .platforms = .{"macos"},
+    .platforms = .{ "macos", "windows", "linux" },
     .permissions = .{ "view", "command" },
     .capabilities = .{ "native_views", "gpu_surfaces" },
+    // 快捷键：id 是 `commandMsg` 收到的那个名字，`primary` 在 macOS 是 ⌘、
+    // 在 Windows/Linux 是 Ctrl，所以一处声明三平台都对。
+    // 八个去处直达 + 面板开合 + 名录上下 + 保存撤销，与 `workbench.ts` 的
+    // 下标次序同源；新增一个去处要同时加一行这里和一行去处表。
+    .shortcuts = .{
+        .{ .id = "go.1", .key = "1", .modifiers = .{"primary"} },
+        .{ .id = "go.2", .key = "2", .modifiers = .{"primary"} },
+        .{ .id = "go.3", .key = "3", .modifiers = .{"primary"} },
+        .{ .id = "go.4", .key = "4", .modifiers = .{"primary"} },
+        .{ .id = "go.5", .key = "5", .modifiers = .{"primary"} },
+        .{ .id = "go.6", .key = "6", .modifiers = .{"primary"} },
+        .{ .id = "go.7", .key = "7", .modifiers = .{"primary"} },
+        .{ .id = "go.8", .key = "8", .modifiers = .{"primary"} },
+        .{ .id = "palette", .key = "k", .modifiers = .{"primary"} },
+        .{ .id = "roster.next", .key = "j", .modifiers = .{"primary"} },
+        .{ .id = "roster.previous", .key = "k", .modifiers = .{ "primary", "shift" } },
+        .{ .id = "document.save", .key = "s", .modifiers = .{"primary"} },
+        .{ .id = "document.undo", .key = "z", .modifiers = .{"primary"} },
+        .{ .id = "theme.next", .key = "t", .modifiers = .{ "primary", "shift" } },
+        // 退出：三平台的惯例键位（macOS ⌘Q、Windows/Linux Ctrl+Q）。
+        // 它同时是录制会话唯一的干净出口——`quitApp` 封口 journal，
+        // 被信号杀掉的进程留不下结束标记。
+        .{ .id = "app.quit", .key = "q", .modifiers = .{"primary"} },
+    },
+    // 系统菜单栏：与快捷键共用同一个 command id 空间，所以这一段不新增任何
+    // 分派代码——`commandMsg` 已经认识每一个 id。菜单里写出键位，作者因此
+    // 能从菜单学会快捷键，而不必去翻文档。
+    // 一个成熟的桌面应用必须有菜单栏：它是「这个软件能做什么」的完整清单，
+    // 也是 macOS 上唯一可被系统搜索到的入口。
+    .menus = .{
+        .{
+            .title = "文件",
+            .items = .{
+                .{ .label = "保存", .command = "document.save", .key = "s", .modifiers = .{"primary"} },
+                .{ .separator = true },
+                .{ .label = "文件树", .command = "go.2", .key = "2", .modifiers = .{"primary"} },
+                .{ .separator = true },
+                .{ .label = "退出", .command = "app.quit", .key = "q", .modifiers = .{"primary"} },
+            },
+        },
+        .{
+            .title = "编辑",
+            .items = .{
+                .{ .label = "撤销", .command = "document.undo", .key = "z", .modifiers = .{"primary"} },
+            },
+        },
+        .{
+            .title = "前往",
+            .items = .{
+                .{ .label = "正文", .command = "go.1", .key = "1", .modifiers = .{"primary"} },
+                .{ .label = "文件", .command = "go.2", .key = "2", .modifiers = .{"primary"} },
+                .{ .label = "裁决", .command = "go.3", .key = "3", .modifiers = .{"primary"} },
+                .{ .label = "派发", .command = "go.4", .key = "4", .modifiers = .{"primary"} },
+                .{ .label = "信箱", .command = "go.5", .key = "5", .modifiers = .{"primary"} },
+                .{ .label = "连接", .command = "go.6", .key = "6", .modifiers = .{"primary"} },
+                .{ .label = "历史", .command = "go.7", .key = "7", .modifiers = .{"primary"} },
+                .{ .label = "设置", .command = "go.8", .key = "8", .modifiers = .{"primary"} },
+                .{ .separator = true },
+                .{ .label = "命令面板", .command = "palette", .key = "k", .modifiers = .{"primary"} },
+            },
+        },
+        .{
+            .title = "外观",
+            .items = .{
+                .{ .label = "换主题", .command = "theme.next", .key = "t", .modifiers = .{ "primary", "shift" } },
+            },
+        },
+    },
     .shell = .{
         .windows = .{
             .{

@@ -112,20 +112,21 @@ impl ProcessHandle {
 
     /// Block until exit and drain whatever pipes remain. Output is decoded
     /// lossily: a harness emitting non-UTF-8 is reported, not crashed.
+    ///
+    /// Both pipes drain concurrently, one reader thread each. Draining them in
+    /// sequence deadlocks: a child that fills stderr before it speaks on stdout
+    /// blocks on the full stderr pipe, while this side blocks on a stdout EOF
+    /// that can never arrive. A harness logging progress to stderr while it
+    /// computes has exactly that shape, and the Run then stalls in Dispatched
+    /// with nothing left that can end it.
     pub fn wait(mut self) -> io::Result<ProcessOutcome> {
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
-        if let Some(mut pipe) = self.stdout() {
-            pipe.read_to_end(&mut stdout)?;
-        }
-        if let Some(mut pipe) = self.stderr() {
-            pipe.read_to_end(&mut stderr)?;
-        }
+        let stdout = drain(self.stdout());
+        let stderr = drain(self.stderr());
         let status = self.wait_without_holding_lock()?;
         Ok(ProcessOutcome {
             code: status.code(),
-            stdout: String::from_utf8_lossy(&stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            stdout: collect(stdout)?,
+            stderr: collect(stderr)?,
         })
     }
 
@@ -284,6 +285,37 @@ impl ProcessCancel {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
     }
+}
+
+/// Start one reader thread for a pipe, so both pipes drain concurrently.
+///
+/// Returns `None` when the pipe was already taken by a streaming adapter, which
+/// then owns that side's draining.
+fn drain<R: Read + Send + 'static>(
+    pipe: Option<R>,
+) -> Option<std::thread::JoinHandle<io::Result<Vec<u8>>>> {
+    pipe.map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            pipe.read_to_end(&mut bytes)?;
+            Ok(bytes)
+        })
+    })
+}
+
+/// Join one reader thread and decode its bytes.
+///
+/// A reader that panicked is an I/O failure, not a silent empty pipe: reporting
+/// the output as empty would let a caller record a producer's result from
+/// output that was never read.
+fn collect(reader: Option<std::thread::JoinHandle<io::Result<Vec<u8>>>>) -> io::Result<String> {
+    let Some(reader) = reader else {
+        return Ok(String::new());
+    };
+    let bytes = reader
+        .join()
+        .map_err(|_| io::Error::other("the pipe reader thread panicked"))??;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// Launch exactly, with a whitelisted environment.
@@ -465,5 +497,34 @@ mod tests {
         );
         let outcome = observer.join().unwrap().unwrap();
         assert_ne!(outcome.code, Some(0));
+    }
+
+    /// Both pipes must drain while the child runs, not one after the other.
+    ///
+    /// A child that fills stderr before it speaks on stdout deadlocks a parent
+    /// that reads stdout to EOF first: the child blocks writing to a full
+    /// stderr pipe and never reaches the stdout write, and the parent blocks
+    /// waiting for a stdout EOF that can never arrive. Neither side can move.
+    ///
+    /// A harness that logs progress to stderr while computing its answer has
+    /// this shape, so the Run stalls in Dispatched with no way for the author
+    /// to end it — polling the UI cannot help, because nothing is coming.
+    ///
+    /// Injecting the sequential order (drain stdout to EOF, then stderr) makes
+    /// this test hang until its timeout, which is the discriminating failure.
+    #[test]
+    fn both_pipes_drain_while_the_child_is_still_running() {
+        let handle = launch_fixture(&["--flood-stderr"]).unwrap();
+        let (done, waiting) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done.send(handle.wait());
+        });
+        let landed = waiting
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .expect("wait never returned: one pipe is drained only after the other reaches EOF");
+        let outcome = landed.unwrap();
+        assert_eq!(outcome.code, Some(0));
+        assert_eq!(outcome.stdout, "done");
+        assert_eq!(outcome.stderr.len(), 1024 * 1024);
     }
 }

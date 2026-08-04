@@ -5,15 +5,44 @@ the TypeScript session layer. This document is the authority for where Effect
 runs, which patterns are canonical, and which are forbidden. Read
 [AGENTS.md](AGENTS.md) first; every rule there still applies.
 
+## Type discipline
+
+These hold for every TypeScript file in this repository, Effect or not. AGENTS.md
+points here rather than repeating them.
+
+- Keep `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`,
+  `noImplicitOverride`, and `noFallthroughCasesInSwitch` enabled.
+- Do not use `any`. Accept `unknown` at a boundary and narrow it there.
+- Use a discriminated union instead of several independent Booleans. Two Booleans
+  can both be true; one tag cannot be two values at once.
+- Keep imports static and at the top level.
+- Model an exhaustive set so that a missing member fails to compile.
+
 ## Territory
 
 | Area | Effect | Reason |
 |---|---|---|
-| `apps/desktop/src/shell/` sessions, watchers, dispatch orchestration | **Required** for new async or concurrent state | This layer hand-writes epochs, cancel flags, and exclusive locks. Effect owns these invariants in the runtime. |
-| `apps/desktop/src/ui/` components | Forbidden, except the one adapter module | Components read views and call session methods. They do not compose effects. |
-| `packages/typeset/`, `packages/editor/` | **Forbidden** | Pure synchronous computation on the mount hot path. The performance gate budgets 50 ms; a runtime adds cost and no capability. |
-| `scripts/`, `e2e/` | **Forbidden** | Build scripts compile with ScriptC as fully static (roadmap D15). Effect demotes them to the dynamic tier. |
-| `src-tauri/` generated bindings | Untouched | Generated code stays generated. Wrap it once at the bridge. |
+| `scripts/`, `e2e/` | **Forbidden** | Build scripts compile with ScriptC as fully static. Effect demotes them to the dynamic tier. |
+| `apps/native/src/` | **Forbidden** | The Native core is a synchronous `update` compiled through a restricted subset (`native check --strict`). A runtime cannot enter it, and effects are the SDK's `Cmd`. |
+| A future TypeScript session layer | **Required** when it appears | Nothing occupies this row today. |
+
+**Effect currently has no consumer in this repository.** The session layer it
+governed lived in `apps/desktop/src/shell/` and was deleted with the Solid
+surface in step 10; the orchestration it managed (epochs, cancel flags,
+exclusive locks) now lives in Rust — `AgentHost` owns Run lifecycles, and
+`DocumentSurface` owns the document state machine. The dependency stays pinned
+and this document stays authoritative because the *next* TypeScript layer that
+needs concurrency must adopt these patterns rather than hand-write a second
+epoch scheme, which is exactly what the deleted one did.
+
+**The gate is coupled to these paths.** `scripts/verify-effect-territory.ts`
+fails when a scan matches no files at all — that self-check is deliberate,
+because a gate over an empty set proves nothing. Step 10 moved its scan set
+from `apps/desktop/**` to `apps/native/src/**` and `scripts/**`, and its
+run-time edge set is now empty (no file may start an Effect runtime). If a
+session layer returns, add its directory here, remove it from the forbidden
+globs, and name its entry point as a run edge — **do not** relax the empty-set
+check to make the gate quiet.
 
 ## The five load-bearing patterns
 
@@ -59,7 +88,7 @@ order, exactly once.
 - Do not write epoch counters to invalidate stale async answers. Interrupt the
   fiber instead; interruption cancels the in-flight request and the sleep with
   it. `shell/run-watch.ts` is the reference conversion.
-- One `ManagedRuntime` exists, created in `main.tsx` next to the Solid root.
+- One `ManagedRuntime` exists, created at the session layer's entry point.
   Components never call `Effect.runPromise`; the adapter does.
 
 ### 3. State: SubscriptionRef, views stay data
@@ -68,7 +97,7 @@ Observable session state lives in `SubscriptionRef`. Derived facts (for
 example "everything just settled") are derived from `changes` with `Stream`,
 not stored in a second mutable field that can disagree with the first.
 
-The single Solid adapter module converts `SubscriptionRef<A>` to a Solid
+An adapter module converts `SubscriptionRef<A>` to whatever the view layer
 signal. It is the only file that imports both `solid-js` and `effect`.
 
 ### 4. Operations: Effect.fn, exclusivity as a combinator
@@ -113,6 +142,7 @@ unsubscribe fields are deleted in the same change that introduces the scope.
 A half-converted module (Effect inside, promise-with-flags outside) is a
 review rejection.
 
-First consumers, in dependency order: `run-watch.ts` (M2), the M2 run
-lifecycle state machines, the M5 CONTEXT compiler, M6 relay and speculative
-prefetch (interruption is the prefetch-invalidation primitive).
+First consumers are named by the current plan's integer steps, not by the
+retired letter numbering: the Run lifecycle state machines (step 7), the
+CONTEXT compiler (step 8), and relay with speculative prefetch (step 8, where
+interruption is the prefetch-invalidation primitive).

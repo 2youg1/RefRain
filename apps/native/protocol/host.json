@@ -1,8 +1,8 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "magic": "RFRN",
   "service": "refrain.host",
-  "protocolVersion": 2,
+  "protocolVersion": 3,
   "apiVersion": 1,
   "capabilityMask": 1,
   "layout": {
@@ -11,12 +11,149 @@
     "defaultViewportBlocks": 96,
     "virtualBlockHeight": 36
   },
+  "hostRecord": {
+    "scalars": [
+      "action",
+      "anchor",
+      "columnsEm",
+      "cursor",
+      "flags",
+      "focus",
+      "input",
+      "protocolVersion",
+      "revision",
+      "scrollOffsetY",
+      "session"
+    ],
+    "bytes": "text",
+    "trailingScalars": ["viewportBlockCount", "viewportFirstBlock", "windowStart"]
+  },
+  "actions": [
+    {
+      "name": "health",
+      "code": 1
+    },
+    {
+      "name": "openManuscript",
+      "code": 2
+    },
+    {
+      "name": "applyInput",
+      "code": 3
+    },
+    {
+      "name": "obtainProjection",
+      "code": 4
+    },
+    {
+      "name": "project",
+      "code": 5
+    }
+  ],
+  "inputs": [
+    {
+      "name": "setSelection",
+      "code": 1
+    },
+    {
+      "name": "insertText",
+      "code": 2
+    },
+    {
+      "name": "deleteBackward",
+      "code": 3
+    },
+    {
+      "name": "deleteForward",
+      "code": 4
+    },
+    {
+      "name": "deleteWordBackward",
+      "code": 5
+    },
+    {
+      "name": "deleteWordForward",
+      "code": 6
+    },
+    {
+      "name": "clear",
+      "code": 7
+    },
+    {
+      "name": "moveCaret",
+      "code": 8
+    },
+    {
+      "name": "setComposition",
+      "code": 9
+    },
+    {
+      "name": "commitComposition",
+      "code": 10
+    },
+    {
+      "name": "cancelComposition",
+      "code": 11
+    },
+    {
+      "name": "undo",
+      "code": 12
+    },
+    {
+      "name": "save",
+      "code": 13
+    }
+  ],
+  "caretDirections": [
+    {
+      "name": "previous",
+      "code": 1
+    },
+    {
+      "name": "next",
+      "code": 2
+    },
+    {
+      "name": "previousWord",
+      "code": 3
+    },
+    {
+      "name": "nextWord",
+      "code": 4
+    },
+    {
+      "name": "start",
+      "code": 5
+    },
+    {
+      "name": "end",
+      "code": 6
+    }
+  ],
   "errors": [
-    { "name": "protocolMismatch", "code": 1 },
-    { "name": "invalidRequest", "code": 2 },
-    { "name": "unknownSession", "code": 3 },
-    { "name": "domainRefusal", "code": 4 },
-    { "name": "hostFailure", "code": 5 },
-    { "name": "staleRevision", "code": 6 }
+    {
+      "name": "protocolMismatch",
+      "code": 1
+    },
+    {
+      "name": "invalidRequest",
+      "code": 2
+    },
+    {
+      "name": "unknownSession",
+      "code": 3
+    },
+    {
+      "name": "domainRefusal",
+      "code": 4
+    },
+    {
+      "name": "hostFailure",
+      "code": 5
+    },
+    {
+      "name": "staleRevision",
+      "code": 6
+    }
   ]
 }

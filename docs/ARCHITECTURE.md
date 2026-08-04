@@ -32,11 +32,22 @@ has a gate that fails when it is broken:
 
 ```
                     ┌──────────────────────────────┐
-                    │  apps/desktop/src  (SolidJS) │   the surface
+                    │  apps/native/src/app.native  │   the surface
+                    │  markup: structure + events  │
                     └──────────────┬───────────────┘
-                                   │  typed commands (specta-generated)
+                                   │
                     ┌──────────────▼───────────────┐
-                    │  apps/desktop/src-tauri      │   the bridge
+                    │  apps/native/src/core.ts     │   interface state
+                    │  Model · Msg · update · Cmd  │   (restricted subset)
+                    └──────────────┬───────────────┘
+                                   │
+                    ┌──────────────▼───────────────┐
+                    │  apps/native/src/*.zig       │   platform + drawing
+                    │  events, projections, labels │
+                    └──────────────┬───────────────┘
+                                   │  one C ABI entry, generated protocol
+                    ┌──────────────▼───────────────┐
+                    │  apps/native/host            │   the bridge
                     └──────────────┬───────────────┘
                                    │
                     ┌──────────────▼───────────────┐
@@ -58,16 +69,27 @@ Dependencies point **downward only**. `refrain-core` depends on no other crate
 in this workspace, which is what makes it the place to put a rule you want to
 be true everywhere.
 
+The four layers above `refrain-app` each hold one thing and refuse the rest;
+[AGENTS.md](AGENTS.md) states the table that `native check . --strict` enforces.
+The single rule worth repeating here: **the manuscript lives in Rust**. Zig draws
+a borrowed projection, and the TypeScript core holds a revision number — neither
+holds the bytes.
+
 ### Scale, measured
 
 | Crate | Modules | Lines | Owns |
 |---|---:|---:|---|
-| `refrain-core` | 29 | 9,664 | The domain: manuscripts, blocks, document formats, the agent protocol, ranking |
-| `refrain-store` | 22 | 8,294 | SQLite, the file catalogue, ingestion, search indexes, action history |
-| `refrain-host` | 6 | 4,242 | Agents, Runs, orchestration edges, staging, harness adapters |
-| `refrain-app` | 8 | 1,464 | Use cases that need more than one of the above |
-| `apps/desktop/src-tauri` | — | 5,290 | The command bridge |
-| `apps/desktop/src`, `packages/editor`, `packages/typeset` | — | 20,988 | The surface |
+| `refrain-core` | 30 | 10,950 | The domain: manuscripts, blocks, document formats, line breaking, the agent protocol, ranking |
+| `refrain-store` | 23 | 8,545 | SQLite, the file catalogue, ingestion, search indexes, action history, the Config file |
+| `refrain-host` | 6 | 4,301 | Agents, Runs, orchestration edges, staging, harness adapters |
+| `refrain-app` | 12 | 4,195 | Use cases that need more than one of the above, and the one `Application` that holds them |
+| `apps/native/host` | 6 | 1,269 | The C ABI dispatch: one entry, generated protocol |
+| `apps/native/src` | 12 | 2,691 | Native core (TypeScript), markup, Zig bindings and drawing |
+
+The whole surface is 2,691 hand-written lines. The Tauri/Solid surface it
+replaced was 27,175 (22,642 frontend + 4,533 bridge), and every product rule
+survived the move because the rules were never in the surface: they live in
+`refrain-core` and `refrain-app`, which grew by consolidation, not by rewriting.
 
 ---
 
@@ -77,7 +99,9 @@ This table is the fastest path from a symptom to a module.
 
 | Symptom | Start here |
 |---|---|
-| Text renders wrong, cursor jumps, selection breaks | `packages/editor/src/virtual-manuscript-view.ts`, `projection.ts` |
+| Text renders wrong, cursor jumps, selection breaks | `refrain-core/src/native_document.rs` — the one document state machine |
+| A line breaks in the wrong place | `refrain-core/src/typeset.rs` — the CLREQ 禁则 authority |
+| A shortcut does nothing | `apps/native/app.zon` declares it, `core.ts::commandMsg` maps it |
 | A block's boundary is wrong | `refrain-core/src/manuscript/` — the byte scanner is the only authority |
 | Search returns nothing, or the wrong order | `refrain-store/src/project/search.rs`, `refrain-core/src/search_rank.rs` |
 | A file did not save, or saved to the wrong place | `refrain-store/src/atomic.rs`, `root.rs` |
@@ -86,7 +110,8 @@ This table is the fastest path from a symptom to a module.
 | A Run started too early, or not at all | `refrain-host/src/host.rs` — `LaunchRun` and the edge constraints |
 | A proposal could not be applied | `refrain-app/src/decide.rs`, `refrain-core/src/manuscript/review.rs` |
 | Orchestration state was lost | `refrain-app/src/journal.rs` — the entity/row translation |
-| A panel is in the wrong layer, or the light looks flat | `apps/desktop/src/shell/strata.ts`, `lamp.ts`, `quarters.ts` |
+| A colour is wrong, or a theme looks flat | `apps/native/src/generated/themes.zig` — generated from four anchors per theme |
+| A corner is the wrong shape | `apps/native/src/corners.zig` — the five scales and their G-continuity |
 
 ---
 
@@ -129,6 +154,35 @@ A Task may have several Runs. An edge says how one Run relates to another.
 `RunEdge` carries positions (the author points at "the second one"); `ResolvedEdge`
 carries ids, bound at authorization because that is when ids exist. Both survive
 a crash: the edge is part of the `Run` entity that the journal writes.
+
+---
+
+## One authority per fact
+
+Each of these exists exactly once. A second copy is a defect, not a convenience.
+
+| Fact | Sole authority | What that forbids |
+|---|---|---|
+| Manuscript bytes, selection, composition, undo | `DocumentSurface` — three operations: `open`, `apply`, `project` | A second document state machine. One was written and rejected in step 2 for exactly this reason; selection, word boundaries, revision and viewport are its implementation details, not a public surface |
+| Which output a project input produces | `ProjectOutput::into_opened` / `into_imported` | Rebuilding the mismatch error behind a catch-all arm at each call site, which also hides a new variant from review |
+| Line breaking | `refrain_core::typeset` | A second set of rules. The SDK breaks only at space and tab (`isTextBreakByte`), which no Chinese paragraph contains, so this is ours by necessity |
+| Settings | `ConfigStore::apply`, reached through `Application::apply_config` | A string key/value update path. The change set is an exhaustive enum |
+| Theme colours | The `THEMES` table in `scripts/generate-themes.ts` | A hand-kept copy. Four anchors per theme; everything else derives |
+| Corner geometry | `apps/native/src/corners.zig` | A bare radius number anywhere else |
+| Protocol layout | `apps/native/protocol/host.json` | A hand-edited offset in any generated file |
+
+### Persisted state is discarded when it cannot be trusted
+
+Undo history is keyed by `content_digest`. When a file changed outside RefRain,
+the stored head no longer describes those bytes, so the history is dropped
+rather than replayed onto text it was not written against.
+
+### The manuscript never crosses as data
+
+Text does not travel as JSON, as `number[]`, or through the 16 KiB response
+channel. The response lends a pointer into Rust memory with the projection's
+lifetime. Startup compares the schema fingerprint and refuses to run on a
+mismatch rather than continuing with drift.
 
 ---
 
@@ -213,20 +267,18 @@ only ever receive `Short`.
 
 | | |
 |---|---|
-| **Language** | [Rust](https://rust-lang.org) |
-| **Desktop shell** | [Tauri](https://tauri.app) with [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) |
-| **Frontend** | [SolidJS](https://solidjs.com), [TypeScript](https://www.typescriptlang.org), [Biome](https://biomejs.dev) |
-| **Build tooling** | [Bun](https://bun.sh) and [Node.js](https://nodejs.org); build-time only, not bundled |
-| **Release policy** | [ScriptC](https://github.com/vercel-labs/scriptc) compiles `scripts/release-assets.ts` into the native Windows asset validator. When ScriptC cannot compile on a runner, the workflow runs the same script on Bun; both paths were measured to produce a byte-identical manifest. |
+| **Language** | [Rust](https://rust-lang.org) for the domain; [Zig](https://ziglang.org) for platform and drawing; a restricted [TypeScript](https://www.typescriptlang.org) subset for interface state |
+| **Application shell** | [Native SDK](https://native-sdk.dev) — native rendering, no WebView, no JavaScript runtime in the shipped binary |
+| **Surface** | `.native` markup compiled against the model contract; [Biome](https://biomejs.dev) formats the TypeScript |
+| **Build tooling** | [ScriptC](https://github.com/vercel-labs/scriptc) compiles the tier A gates and release scripts to native binaries; [Bun](https://bun.sh) runs the rest. Build-time only — neither ships. |
 | **Storage** | [SQLite](https://sqlite.org) through [rusqlite](https://github.com/rusqlite/rusqlite), FTS5 `unicode61`, and an application-level bigram tokeniser |
 | **Hashing** | [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) |
 | **Ids** | [UUID](https://github.com/uuid-rs/uuid), v7 |
-| **Serialisation** | [Serde](https://serde.rs); [Specta](https://github.com/specta-rs/specta) generates TypeScript bindings |
+| **Serialisation** | [Serde](https://serde.rs); the cross-boundary protocol is generated from one schema into Rust, TypeScript, Zig and a C header |
 | **Scanning** | [memchr](https://github.com/BurntSushi/memchr) |
 | **Errors** | [thiserror](https://github.com/dtolnay/thiserror) |
-| **Highlighting** | [Shiki](https://shiki.style), with an explicit offline language and theme set |
-| **Diagrams** | [nomnoml](https://github.com/skanaar/nomnoml), with a thin translator that accepts the Mermaid flowchart subset |
-| **Imported sources** | [pdf.js](https://mozilla.github.io/pdf.js/) renders an imported PDF for reading only; RefRain never writes back to it |
+| **Line breaking** | `refrain_core::typeset` — see "Why RefRain breaks its own lines" |
+| **Imported sources** | An imported PDF is rendered for reading only; RefRain never writes back to it |
 
 ### Why RefRain breaks its own lines
 
@@ -285,81 +337,17 @@ tests:
   really do occupy the DOM. Trimming first produced identical `min-width` values
   on every row and columns that were still 80px against 96px apart on screen.
 
-### Why nomnoml, not Mermaid
+### 图与 PDF 阅读：裁定随实现一起等待
 
-Measured as bundled output, minified and gzipped — not as the size of the entry
-file:
+步骤 10 之前这里有两节裁定——为什么用 nomnoml 而不是 Mermaid、为什么导入的
+PDF 只读不回写。两条依赖（nomnoml、pdf.js）都随旧 DOM 前端一起删除，而 Native
+侧的图与多格式阅读属于步骤 5 尚未完成的部分。
 
-| Library | gzip | Note |
-|---|---|---|
-| `mermaid` | 952 KB | `mermaid.core.mjs` bundles to the same 3.49MB raw; core does not split by diagram type |
-| `@viz-js/viz` | 534 KB | Carries WASM |
-| `flowchart.js` | 42 KB | Flowcharts only |
-| **`nomnoml`** | **26 KB** | Pure JS, no WASM |
+**结论仍然成立、论证需要重做**：PDF 只读不回写是产品裁定（`.refrain-source/`
+永不写入），与渲染器是谁无关；图的选型判据则要换成原生渲染成本，而不是
+浏览器 bundle 体积。等 Native 侧真正接上它们时，在这里重写论证并附实测。
 
-A 36× difference. Because RefRain never reaches the network, a rendering
-library is bundled whole: those 952 KB are a resident cost for every user, not
-a cost paid by authors who draw diagrams.
-
-Mermaid syntax is still accepted. A translator maps the flowchart subset —
-nodes, directed edges, dashed edges, edge labels — onto nomnoml. **The dash
-notation is inverted between the two**: Mermaid writes a dashed edge `-.->`
-while nomnoml writes it `-->`. Copying the arrow through would silently invert
-what the diagram means.
-
-Anything the translator does not recognise — `sequenceDiagram`, `gantt`,
-`classDiagram` — keeps its fence and renders as source. A diagram that cannot
-be drawn must not make the author's text disappear.
-
-The SVG hangs **beside** the paragraph rather than replacing its content,
-because a dozen call sites read `paragraph.textContent` as the block text. It
-also passes through `DOMParser` and `importNode` rather than `innerHTML`: the
-author's words are inside those node labels, and `verify:no-html-sink` treats
-the manuscript as user input.
-
-### Why an imported PDF is rendered but never written back
-
-Importing a PDF already extracts its text into the materials shelf, so the
-author can quote and edit it. What was missing is the **page**: the layout,
-the figures, the table that only makes sense in its original grid.
-
-RefRain now draws that page beside the manuscript. It never writes to the file.
-The reason is that the import is lossy by construction — `ingest/pdf.rs`
-extracts text, while glyph positions, embedded fonts and page boxes never enter
-memory. Writing back would overwrite the original with a partial model of it.
-The same ruling covers DOCX and EPUB: a minimal two-paragraph DOCX **loses
-90.4% of its bytes** on extraction, so there is no honest way to tell an author
-what a save would discard.
-
-The bytes come from a clone made at import time, not from the path the author
-picked. `materials.rs` stores every imported file as `{digest}.{ext}`, written
-once and never modified, and `documents.source_digest` / `source_format` name
-it. Two guards stand between a stored row and a file read; deleting each one in
-turn shows which carries the load:
-
-| Guard removed | Result |
-|---|---|
-| The character allowlist | All tests still pass — the digest check catches it |
-| The digest comparison | One test fails |
-| Both | Two fail, including the traversal case |
-
-So the **digest comparison is load-bearing**: a traversal path reaches some
-other file, and that file does not hash to the name that was asked for.
-
-Reaching the network is the other risk, and pdf.js has four entry points that
-fetch remote resources: `cMapUrl`, `standardFontDataUrl`, `iccUrl`, `wasmUrl`.
-**None of them has a default** — `getFactoryUrlProp` returns null for a
-non-string, so not passing them is what closes them. Passing `""` instead reads
-like closing the door and in fact throws, which no PDF survives. The worker is
-required and cannot be disabled, so its source is bundled and wrapped in a blob
-URL: same-origin, no request. `verify:no-network` and a source-level test both
-hold this shape, because the render gate cannot: it measures inked pixels, and
-a machine without glyph rasterisation reports zero for reasons unrelated to the
-network.
-
-The renderer lives in `apps/desktop/src/ui/`, not in `packages/editor`, which
-`verify:typeset-purity` requires to have zero external dependencies. pdf.js is
-both an external dependency and a consumer of `DOMMatrix` and `canvas`.
+原始论证与当时的 gzip 读数保存在 `roadmap-pre-native-2026-08-03.md`。
 
 ### Why bigram, not trigram or a tokeniser
 

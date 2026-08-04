@@ -4,47 +4,32 @@ const protocol = @import("generated/protocol.zig");
 
 extern fn refrain_native_dispatch(request: protocol.RefrainNativeRequest) callconv(.c) protocol.RefrainNativeResponse;
 
-const rust_action_health: u16 = 1;
-const rust_action_open_manuscript: u16 = 2;
-const rust_action_apply_input: u16 = 3;
-const rust_action_obtain_projection: u16 = 4;
-const rust_action_project: u16 = 5;
-
-const bridge_action_health: u16 = 101;
-const bridge_action_open_manuscript: u16 = 102;
-const bridge_action_text_event: u16 = 103;
-const bridge_action_viewport: u16 = 104;
-const bridge_action_undo: u16 = 105;
-const bridge_action_project: u16 = 106;
-
-const rust_input_set_selection: u16 = 1;
-const rust_input_insert_text: u16 = 2;
-const rust_input_delete_backward: u16 = 3;
-const rust_input_delete_forward: u16 = 4;
-const rust_input_delete_word_backward: u16 = 5;
-const rust_input_delete_word_forward: u16 = 6;
-const rust_input_clear: u16 = 7;
-const rust_input_move_caret: u16 = 8;
-const rust_input_set_composition: u16 = 9;
-const rust_input_commit_composition: u16 = 10;
-const rust_input_cancel_composition: u16 = 11;
-const rust_input_undo: u16 = 12;
-
-const event_insert_text: u16 = 1;
-const event_delete_backward: u16 = 2;
-const event_delete_forward: u16 = 3;
-const event_delete_word_backward: u16 = 4;
-const event_delete_word_forward: u16 = 5;
-const event_clear: u16 = 6;
-const event_move_caret: u16 = 7;
-const event_set_selection: u16 = 8;
-const event_set_composition: u16 = 9;
-const event_commit_composition: u16 = 10;
-const event_cancel_composition: u16 = 11;
-
 var projection: protocol.RefrainNativeResponse = undefined;
 var has_projection = false;
-var composed_projection_text: [protocol.projection_bytes + protocol.event_text_bytes]u8 = undefined;
+
+/// 投影文本的落脚处。
+///
+/// **接上哪个功能**：正稿渲染。`RefrainNativeResponse.text` 是裸指针，
+/// 而它指向的线上字节住在调用栈上——出了 `request` 就悬空。
+///
+/// **在全局逻辑中负责什么**：把那段文本拷进模块生命周期的缓冲，让视图
+/// 在后续帧里仍能读到。协议已把正稿限在 `projection_bytes` 以内，
+/// 所以这块缓冲永远够用，不需要分配器。
+var projection_text: [protocol.projection_bytes]u8 = undefined;
+
+/// 收下一个从线上字节解出的投影，并把它的文本搬进 `projection_text`。
+/// `wire` 只在本次调用内有效，函数返回后 `projection.text` 指向本模块的缓冲。
+fn adoptProjection(decoded: protocol.RefrainNativeResponse, wire: []const u8) void {
+    projection = decoded;
+    const text_len = @min(@as(usize, decoded.text_len), protocol.projection_bytes);
+    if (text_len > 0 and wire.len >= protocol.response_header_bytes + text_len) {
+        @memcpy(projection_text[0..text_len], wire[protocol.response_header_bytes..][0..text_len]);
+        projection.text = projection_text[0..].ptr;
+    } else {
+        projection.text_len = 0;
+    }
+    has_projection = true;
+}
 
 pub const DocumentView = struct {
     text: []const u8,
@@ -52,8 +37,20 @@ pub const DocumentView = struct {
     window_end: u64,
     first_block: u64,
     block_count: u32,
+    /// The selection in manuscript coordinates, for reporting how much of the
+    /// whole document is selected. Rendering uses `selection` instead.
+    document_selection_start: u64,
+    document_selection_end: u64,
     selection: ?native_sdk.canvas.TextSelection,
     composition: ?native_sdk.canvas.TextRange,
+    /// How many lines the projection occupies once CLREQ 禁则 are applied.
+    /// Rust computed the break offsets; counting them is all the view needs to
+    /// size the column, and it replaces the old per-character estimate that
+    /// assumed every glyph was one column wide.
+    line_count: usize,
+    /// 这份稿子写的是哪一门语言，来自 Rust 的 `DocumentFormat`。
+    /// 翻成 SDK 语法的那张表在 `document_language.zig`；这里只搬数字。
+    format: u32,
 };
 
 /// Bind the one generated dispatch codec to Native SDK's typed effect channel.
@@ -66,68 +63,36 @@ pub fn bind(effects: anytype) void {
     });
 }
 
-/// Return the latest immutable Rust projection. Preedit bytes are materialized
-/// only for this render; commit is the only input that changes manuscript bytes.
+/// Return the latest Rust projection.
+///
+/// Rust already spliced any preedit into `text` and expressed both offsets
+/// against it, so this only bounds the borrowed slice for the current frame.
 pub fn documentView() DocumentView {
     if (!has_projection) return emptyDocumentView();
-    const source_len = @min(@as(usize, projection.text_len), projection.text.len);
-    const source = projection.text[0..source_len];
-    const window_start = projection.window_start;
-    const window_end = window_start +| @as(u64, @intCast(source.len));
-    const selection: native_sdk.canvas.TextSelection = .{
-        .anchor = localOffset(projection.selection_anchor, window_start, source.len),
-        .focus = localOffset(projection.selection_focus, window_start, source.len),
-    };
-    const base: DocumentView = .{
-        .text = source,
-        .window_start = window_start,
-        .window_end = window_end,
-        .first_block = projection.first_block,
-        .block_count = projection.block_count,
-        .selection = selection,
-        .composition = null,
-    };
-
-    const composition_len = @min(@as(usize, projection.composition_len), projection.composition.len);
-    if (composition_len == 0 or
-        projection.composition_start < window_start or
-        projection.composition_end < projection.composition_start or
-        projection.composition_end > window_end or
-        projection.composition_cursor > composition_len)
-    {
-        return base;
-    }
-
-    const range_start = localOffset(projection.composition_start, window_start, source.len);
-    const range_end = localOffset(projection.composition_end, window_start, source.len);
-    const composition = projection.composition[0..composition_len];
-    if (!std.unicode.utf8ValidateSlice(composition) or
-        !isUtf8Boundary(source, range_start) or
-        !isUtf8Boundary(source, range_end) or
-        !isUtf8Boundary(composition, @intCast(projection.composition_cursor)))
-    {
-        return base;
-    }
-
-    var cursor: usize = 0;
-    @memcpy(composed_projection_text[cursor .. cursor + range_start], source[0..range_start]);
-    cursor += range_start;
-    @memcpy(composed_projection_text[cursor .. cursor + composition.len], composition);
-    cursor += composition.len;
-    @memcpy(composed_projection_text[cursor .. cursor + source.len - range_end], source[range_end..]);
-    cursor += source.len - range_end;
-    const composition_start = range_start;
-    const composition_end = composition_start + composition.len;
+    const text_len = @min(@as(usize, projection.text_len), protocol.projection_bytes);
+    const source = projection.text[0..text_len];
+    const composition: ?native_sdk.canvas.TextRange = if (projection.composition_len == 0)
+        null
+    else
+        native_sdk.canvas.TextRange.init(
+            @min(@as(usize, @intCast(projection.composition_start)), text_len),
+            @min(@as(usize, @intCast(projection.composition_end)), text_len),
+        );
     return .{
-        .text = composed_projection_text[0..cursor],
-        .window_start = window_start,
-        .window_end = window_end,
+        .text = source,
+        .window_start = projection.window_start,
+        .window_end = projection.window_start +| @as(u64, @intCast(text_len)),
         .first_block = projection.first_block,
         .block_count = projection.block_count,
-        .selection = native_sdk.canvas.TextSelection.collapsed(
-            composition_start + @as(usize, @intCast(projection.composition_cursor)),
-        ),
-        .composition = native_sdk.canvas.TextRange.init(composition_start, composition_end),
+        .document_selection_start = projection.document_selection_start,
+        .document_selection_end = projection.document_selection_end,
+        .line_count = @max(1, @as(usize, projection.line_start_count)),
+        .selection = .{
+            .anchor = @min(@as(usize, @intCast(projection.selection_anchor)), text_len),
+            .focus = @min(@as(usize, @intCast(projection.selection_focus)), text_len),
+        },
+        .composition = composition,
+        .format = projection.document_format,
     };
 }
 
@@ -138,57 +103,54 @@ fn emptyDocumentView() DocumentView {
         .window_end = 0,
         .first_block = 0,
         .block_count = 0,
+        .document_selection_start = 0,
+        .document_selection_end = 0,
         .selection = null,
         .composition = null,
+        .line_count = 1,
+        // 还没有稿子时按散文算：空表面不该显示成一份代码文件。
+        .format = 0,
     };
 }
 
-fn localOffset(absolute: u64, window_start: u64, text_len: usize) usize {
-    if (absolute <= window_start) return 0;
-    const delta = std.math.cast(usize, absolute - window_start) orelse return text_len;
-    return @min(delta, text_len);
-}
-
-fn isUtf8Boundary(text: []const u8, offset: usize) bool {
-    return offset <= text.len and (offset == text.len or text[offset] & 0xc0 != 0x80);
-}
-
-const host_record_text_length_offset: usize = 80;
-const host_record_text_offset: usize = 84;
-const host_record_tail_bytes: usize = 24;
 const max_safe_integer: f64 = 9007199254740991.0;
 
-const DecodedBridgeRequest = struct {
-    request: protocol.RefrainNativeRequest,
-    scroll_offset_y: f64,
-};
-
-fn decodeBridgeRequest(bytes: []const u8) ?DecodedBridgeRequest {
-    if (bytes.len < host_record_text_offset + host_record_tail_bytes) return null;
-    const text_len: usize = @intCast(std.mem.readInt(u32, bytes[host_record_text_length_offset..host_record_text_offset], .little));
+/// Decode one SDK host record. The request's text is borrowed from `bytes`
+/// rather than copied, so the decoded value must not outlive this payload.
+fn decodeBridgeRequest(bytes: []const u8) ?protocol.RefrainNativeRequest {
+    if (bytes.len < protocol.offset_text + protocol.trailing_bytes) return null;
+    const text_len: usize = @intCast(std.mem.readInt(u32, bytes[protocol.offset_text_len..protocol.offset_text], .little));
     if (text_len > protocol.event_text_bytes) return null;
-    const tail = host_record_text_offset + text_len;
-    if (bytes.len != tail + host_record_tail_bytes) return null;
-    var request_value: protocol.RefrainNativeRequest = .{
-        .protocol_version = wholeU16(readF64(bytes, 48)) orelse return null,
-        .action = wholeU16(readF64(bytes, 0)) orelse return null,
-        .input = wholeU16(readF64(bytes, 40)) orelse return null,
-        .flags = wholeU16(readF64(bytes, 24)) orelse return null,
-        .session = wholeU64(readF64(bytes, 72)) orelse return null,
-        .revision = wholeU64(readF64(bytes, 56)) orelse return null,
-        .window_start = wholeU64(readF64(bytes, tail + 16)) orelse return null,
-        .anchor = wholeU64(readF64(bytes, 8)) orelse return null,
-        .focus = wholeU64(readF64(bytes, 32)) orelse return null,
-        .cursor = wholeU64(readF64(bytes, 16)) orelse return null,
-        .viewport_first_block = wholeU64(readF64(bytes, tail + 8)) orelse return null,
-        .viewport_block_count = wholeU32(readF64(bytes, tail)) orelse return null,
+    const tail = protocol.offset_text + text_len;
+    if (bytes.len != tail + protocol.trailing_bytes) return null;
+    const scroll_offset_y = readF64(bytes, protocol.offset_scroll_offset_y);
+    if (!std.math.isFinite(scroll_offset_y) or scroll_offset_y < 0) return null;
+    const request_value: protocol.RefrainNativeRequest = .{
+        .protocol_version = wholeU16(readF64(bytes, protocol.offset_protocol_version)) orelse return null,
+        .action = wholeU16(readF64(bytes, protocol.offset_action)) orelse return null,
+        .input = wholeU16(readF64(bytes, protocol.offset_input)) orelse return null,
+        .flags = wholeU16(readF64(bytes, protocol.offset_flags)) orelse return null,
+        .session = wholeU64(readF64(bytes, protocol.offset_session)) orelse return null,
+        .revision = wholeU64(readF64(bytes, protocol.offset_revision)) orelse return null,
+        .window_start = wholeU64(readF64(bytes, tail + protocol.trailing_offset_window_start)) orelse return null,
+        .anchor = wholeU64(readF64(bytes, protocol.offset_anchor)) orelse return null,
+        .focus = wholeU64(readF64(bytes, protocol.offset_focus)) orelse return null,
+        .cursor = wholeU64(readF64(bytes, protocol.offset_cursor)) orelse return null,
+        .viewport_first_block = wholeU64(readF64(bytes, tail + protocol.trailing_offset_viewport_first_block)) orelse return null,
+        .viewport_block_count = wholeU32(readF64(bytes, tail + protocol.trailing_offset_viewport_block_count)) orelse return null,
+        .scroll_offset_y = scroll_offset_y,
+        // 字身 per line, measured by the platform. Rust returns 禁则-correct
+        // break offsets for it; a non-finite or negative value means "no
+        // breaking" rather than a refusal, because a viewport can legitimately
+        // have no width yet on the first frame.
+        .columns_em = blk: {
+            const value = readF64(bytes, protocol.offset_columns_em);
+            break :blk if (std.math.isFinite(value) and value > 0) value else 0;
+        },
         .text_len = @intCast(text_len),
-        .text = @splat(0),
+        .text = bytes[protocol.offset_text..tail].ptr,
     };
-    @memcpy(request_value.text[0..text_len], bytes[host_record_text_offset..tail]);
-    const scroll_offset_y = readF64(bytes, 64);
-    if (!std.math.isFinite(scroll_offset_y)) return null;
-    return .{ .request = request_value, .scroll_offset_y = scroll_offset_y };
+    return request_value;
 }
 
 fn readF64(bytes: []const u8, offset: usize) f64 {
@@ -210,76 +172,37 @@ fn wholeU64(value: f64) ?u64 {
     return @intFromFloat(value);
 }
 
-fn viewportFirstBlock(scroll_offset_y: f64, block_count: u32) ?u64 {
-    if (scroll_offset_y < 0 or !has_projection) return 0;
-    if (projection.total_blocks > std.math.maxInt(u32)) return null;
-    const visible = @min(@as(u64, block_count), projection.total_blocks);
-    const max_first = projection.total_blocks - visible;
-    const projected = @floor(scroll_offset_y / protocol.virtual_block_height);
-    if (projected <= 0) return 0;
-    if (projected >= @as(f64, @floatFromInt(max_first))) return max_first;
-    return @intFromFloat(projected);
-}
-
-fn translateRequest(request_value: *protocol.RefrainNativeRequest, scroll_offset_y: f64) bool {
-    switch (request_value.action) {
-        bridge_action_health => {
-            if (request_value.input != 0 or request_value.text_len != 0) return false;
-            request_value.action = rust_action_health;
+/// Validate one decoded request against its action's shape.
+///
+/// TypeScript speaks the Rust action and input vocabulary directly, and the
+/// scroll offset rides through to Rust, so nothing is translated here.
+fn validateRequest(request_value: *const protocol.RefrainNativeRequest) bool {
+    const action = std.enums.fromInt(protocol.Action, request_value.action) orelse return false;
+    switch (action) {
+        .health, .open_manuscript => {
+            if (request_value.input != 0 or request_value.text_len != 0 or request_value.flags != 0) return false;
         },
-        bridge_action_open_manuscript => {
-            if (request_value.input != 0 or request_value.text_len != 0) return false;
-            request_value.action = rust_action_open_manuscript;
+        .obtain_projection => {
+            if (request_value.input != 0 or request_value.text_len != 0 or request_value.flags != 0) return false;
         },
-        bridge_action_viewport => {
-            if (request_value.input != 0 or request_value.text_len != 0) return false;
-            request_value.viewport_first_block = viewportFirstBlock(
-                scroll_offset_y,
-                request_value.viewport_block_count,
-            ) orelse return false;
-            request_value.action = rust_action_obtain_projection;
+        .project => {
+            if (request_value.input != 0 or request_value.flags != 0) return false;
         },
-        bridge_action_undo => {
-            if (request_value.input != 0 or request_value.text_len != 0) return false;
-            request_value.action = rust_action_apply_input;
-            request_value.input = rust_input_undo;
-        },
-        bridge_action_text_event => {
-            request_value.action = rust_action_apply_input;
-            request_value.input = switch (request_value.input) {
-                event_insert_text => rust_input_insert_text,
-                event_delete_backward => rust_input_delete_backward,
-                event_delete_forward => rust_input_delete_forward,
-                event_delete_word_backward => rust_input_delete_word_backward,
-                event_delete_word_forward => rust_input_delete_word_forward,
-                event_clear => rust_input_clear,
-                event_move_caret => rust_input_move_caret,
-                event_set_selection => rust_input_set_selection,
-                event_set_composition => rust_input_set_composition,
-                event_commit_composition => rust_input_commit_composition,
-                event_cancel_composition => rust_input_cancel_composition,
-                else => return false,
-            };
-            if (request_value.input != rust_input_insert_text and
-                request_value.input != rust_input_set_composition and
-                request_value.text_len != 0)
-            {
+        .apply_input => {
+            const input = std.enums.fromInt(protocol.Input, request_value.input) orelse return false;
+            if (input != .insert_text and input != .set_composition and request_value.text_len != 0) {
                 return false;
             }
-            if (request_value.input == rust_input_move_caret) {
-                const direction = request_value.flags & 0xff;
-                if (direction < 1 or direction > 6 or request_value.flags & ~@as(u16, 0x1ff) != 0) {
+            if (input == .move_caret) {
+                const direction = request_value.flags & protocol.caret_direction_mask;
+                if (std.enums.fromInt(protocol.CaretDirection, direction) == null) return false;
+                if (request_value.flags & ~(protocol.caret_direction_mask | protocol.caret_extend_flag) != 0) {
                     return false;
                 }
             } else if (request_value.flags != 0) {
                 return false;
             }
         },
-        bridge_action_project => {
-            if (request_value.input != 0 or request_value.flags != 0) return false;
-            request_value.action = rust_action_project;
-        },
-        else => return false,
     }
     return true;
 }
@@ -299,30 +222,32 @@ fn Callbacks(comptime Effects: type) type {
                 return;
             }
             const decoded = decodeBridgeRequest(payload) orelse {
-                const action = if (payload.len >= 8) wholeU16(readF64(payload, 0)) orelse 0 else 0;
+                const action = if (payload.len >= 8) wholeU16(readF64(payload, protocol.offset_action)) orelse 0 else 0;
                 feed(effects, key, false, &protocol.encodeProtocolError(.invalid_request, action));
                 return;
             };
-            var request_value = decoded.request;
-            const bridge_action = request_value.action;
-            if (!translateRequest(&request_value, decoded.scroll_offset_y)) {
-                feed(effects, key, false, &protocol.encodeProtocolError(.invalid_request, bridge_action));
+            const request_value = decoded;
+            const action = request_value.action;
+            if (!validateRequest(&request_value)) {
+                feed(effects, key, false, &protocol.encodeProtocolError(.invalid_request, action));
                 return;
             }
             var result = refrain_native_dispatch(request_value);
-            if (result.status == 0 and updatesDocumentProjection(bridge_action)) {
-                projection = result;
-                has_projection = true;
-            }
-            result.action = bridge_action;
-            if (bridge_action != bridge_action_project) result.text_len = 0;
+            // 线上只带两种文本：`project` 的不透明载荷，和三个投影动作的正稿。
+            // 其余动作（health）没有文本可带。正稿此前被这里清零——那让 journal
+            // 里没有它，录制会话回放时界面因此是空的。
+            if (!carriesWireText(action)) result.text_len = 0;
             const encoded = protocol.encodeDispatchResponse(result);
-            feed(
-                effects,
-                key,
-                result.status == 0,
-                encoded[0..protocol.encodedResponseLen(result)],
-            );
+            const wire = encoded[0..protocol.encodedResponseLen(result)];
+            // 投影从**线上字节**重建，不从 FFI 返回值取。回放时主机不被调用，
+            // 只有这些字节会被重放；两条路读同一份数据，界面因此在录制与
+            // 回放中一致（可访问性树的哈希正是回放的判据）。
+            if (result.status == 0 and updatesDocumentProjection(action)) {
+                if (protocol.decodeDispatchResponse(wire)) |projected| {
+                    adoptProjection(projected, wire);
+                }
+            }
+            feed(effects, key, result.status == 0, wire);
         }
 
         fn feed(effects: *Effects, key: u64, ok: bool, bytes: []const u8) void {
@@ -331,11 +256,29 @@ fn Callbacks(comptime Effects: type) type {
     };
 }
 
+/// Every action except the opaque project group replaces the document
+/// projection the view renders from.
 fn updatesDocumentProjection(action: u16) bool {
-    return action == bridge_action_open_manuscript or
-        action == bridge_action_text_event or
-        action == bridge_action_viewport or
-        action == bridge_action_undo;
+    const resolved = std.enums.fromInt(protocol.Action, action) orelse return false;
+    return switch (resolved) {
+        .open_manuscript, .apply_input, .obtain_projection => true,
+        .health, .project => false,
+    };
+}
+
+/// 哪些动作的响应带文本上线。
+///
+/// 两类：`project` 带 Rust 的不透明载荷（界面不解读它），三个投影动作带正稿
+/// （视图要画它，回放要重建它）。`health` 没有文本。
+///
+/// 这条判断决定 journal 里有没有正稿——漏掉投影动作，回放的界面就是空的，
+/// 而录制与回放两侧单看都自洽。
+fn carriesWireText(action: u16) bool {
+    const resolved = std.enums.fromInt(protocol.Action, action) orelse return false;
+    return switch (resolved) {
+        .project, .open_manuscript, .apply_input, .obtain_projection => true,
+        .health => false,
+    };
 }
 
 const StubEffects = struct {
@@ -364,13 +307,23 @@ fn call(effects: *StubEffects, key: u64, payload: []const u8) void {
     );
 }
 
-const empty_host_record_bytes: usize = host_record_text_offset + host_record_tail_bytes;
+const empty_host_record_bytes: usize = protocol.offset_text + protocol.trailing_bytes;
 
-fn request(action: u16) [empty_host_record_bytes]u8 {
+fn request(action: protocol.Action) [empty_host_record_bytes]u8 {
     var out: [empty_host_record_bytes]u8 = @splat(0);
-    writeF64(&out, 0, @floatFromInt(action));
-    writeF64(&out, 48, @floatFromInt(protocol.protocol_version));
-    writeF64(&out, host_record_text_offset, @floatFromInt(protocol.default_viewport_blocks));
+    writeF64(&out, protocol.offset_action, @floatFromInt(@intFromEnum(action)));
+    writeF64(&out, protocol.offset_protocol_version, @floatFromInt(protocol.protocol_version));
+    writeF64(
+        &out,
+        protocol.offset_text + protocol.trailing_offset_viewport_block_count,
+        @floatFromInt(protocol.default_viewport_blocks),
+    );
+    return out;
+}
+
+fn applyRequest(input: protocol.Input) [empty_host_record_bytes]u8 {
+    var out = request(.apply_input);
+    writeF64(&out, protocol.offset_input, @floatFromInt(@intFromEnum(input)));
     return out;
 }
 
@@ -381,7 +334,7 @@ fn writeF64(bytes: []u8, offset: usize, value: f64) void {
 test "one dispatch health request crosses the Rust ABI" {
     var effects: StubEffects = .{};
     bind(&effects);
-    const payload = request(bridge_action_health);
+    const payload = request(.health);
     call(&effects, 7, &payload);
 
     try std.testing.expect(effects.response_ok);
@@ -395,19 +348,19 @@ test "one dispatch health request crosses the Rust ABI" {
 test "one project-group request preserves its opaque Rust payload without replacing document authority" {
     var effects: StubEffects = .{};
     bind(&effects);
-    projection = protocol.emptyResponse(rust_action_obtain_projection);
+    projection = protocol.emptyResponse(@intFromEnum(protocol.Action.obtain_projection));
     projection.revision = 77;
     has_projection = true;
 
     const input = "{\"kind\":\"notAProjectInput\"}";
-    var payload: [host_record_text_offset + input.len + host_record_tail_bytes]u8 = @splat(0);
-    writeF64(&payload, 0, @floatFromInt(bridge_action_project));
-    writeF64(&payload, 48, @floatFromInt(protocol.protocol_version));
-    std.mem.writeInt(u32, payload[host_record_text_length_offset..host_record_text_offset], @intCast(input.len), .little);
-    @memcpy(payload[host_record_text_offset..][0..input.len], input);
+    var payload: [protocol.offset_text + input.len + protocol.trailing_bytes]u8 = @splat(0);
+    writeF64(&payload, protocol.offset_action, @floatFromInt(@intFromEnum(protocol.Action.project)));
+    writeF64(&payload, protocol.offset_protocol_version, @floatFromInt(protocol.protocol_version));
+    std.mem.writeInt(u32, payload[protocol.offset_text_len..protocol.offset_text], @intCast(input.len), .little);
+    @memcpy(payload[protocol.offset_text..][0..input.len], input);
     writeF64(
         &payload,
-        host_record_text_offset + input.len,
+        protocol.offset_text + input.len + protocol.trailing_offset_viewport_block_count,
         @floatFromInt(protocol.default_viewport_blocks),
     );
     call(&effects, 71, &payload);
@@ -415,7 +368,7 @@ test "one project-group request preserves its opaque Rust payload without replac
     try std.testing.expect(!effects.response_ok);
     const response = effects.response[0..effects.response_len];
     try std.testing.expect(response.len > protocol.response_header_bytes);
-    try std.testing.expectEqual(bridge_action_project, std.mem.readInt(u16, response[6..8], .little));
+    try std.testing.expectEqual(@intFromEnum(protocol.Action.project), std.mem.readInt(u16, response[6..8], .little));
     const text_len = std.mem.readInt(u32, response[48..52], .little);
     try std.testing.expectEqual(response.len, protocol.response_header_bytes + @as(usize, text_len));
     try std.testing.expect(std.mem.startsWith(u8, response[protocol.response_header_bytes..], "decode the project input"));
@@ -425,7 +378,7 @@ test "one project-group request preserves its opaque Rust payload without replac
 test "open keeps the 11.4 MiB source in Rust and returns the requested block viewport" {
     var effects: StubEffects = .{};
     bind(&effects);
-    const payload = request(bridge_action_open_manuscript);
+    const payload = request(.open_manuscript);
     call(&effects, 8, &payload);
 
     try std.testing.expect(effects.response_ok);
@@ -442,99 +395,137 @@ test "open keeps the 11.4 MiB source in Rust and returns the requested block vie
 test "scroll offset selects the bounded Rust block projection" {
     var effects: StubEffects = .{};
     bind(&effects);
-    var payload = request(bridge_action_open_manuscript);
+    var payload = request(.open_manuscript);
     call(&effects, 8, &payload);
     try std.testing.expect(effects.response_ok);
 
-    payload = request(bridge_action_viewport);
-    writeF64(&payload, 56, @floatFromInt(projection.revision));
-    writeF64(&payload, 64, 1_800_000);
-    writeF64(&payload, 72, @floatFromInt(projection.session));
+    payload = request(.obtain_projection);
+    writeF64(&payload, protocol.offset_revision, @floatFromInt(projection.revision));
+    writeF64(&payload, protocol.offset_scroll_offset_y, 1_800_000);
+    writeF64(&payload, protocol.offset_session, @floatFromInt(projection.session));
     call(&effects, 9, &payload);
     try std.testing.expect(effects.response_ok);
     try std.testing.expectEqual(@as(u64, 50_000), projection.first_block);
     try std.testing.expect(projection.window_start > 0);
 
-    writeF64(&payload, 64, 3_600_000);
+    writeF64(&payload, protocol.offset_scroll_offset_y, 3_600_000);
     call(&effects, 10, &payload);
     try std.testing.expect(effects.response_ok);
     try std.testing.expectEqual(@as(u64, 99_904), projection.first_block);
     try std.testing.expectEqual(@as(u32, 96), projection.block_count);
 }
 
-test "document view maps a reversed cross-block selection into projection offsets" {
-    projection = protocol.emptyResponse(rust_action_obtain_projection);
+test "document view borrows the Rust projection without copying or reinterpreting it" {
+    // Rust already spliced any preedit and expressed both offsets against the
+    // projected text, so the bridge only bounds the borrowed slice.
+    const source = "abc中文ghi";
+    projection = protocol.emptyResponse(@intFromEnum(protocol.Action.apply_input));
     projection.window_start = 100;
-    projection.first_block = 10;
-    projection.block_count = 2;
-    const source = "aa\n\nbb";
     projection.text_len = source.len;
-    @memcpy(projection.text[0..source.len], source);
-    projection.selection_anchor = 106;
-    projection.selection_focus = 101;
+    projection.text = source.ptr;
+    projection.selection_anchor = 3;
+    projection.selection_focus = 9;
+    projection.composition_start = 3;
+    projection.composition_end = 9;
+    projection.composition_len = 6;
     has_projection = true;
 
     const view = documentView();
     try std.testing.expectEqualStrings(source, view.text);
-    try std.testing.expectEqual(@as(u64, 10), view.first_block);
+    try std.testing.expectEqual(source.ptr, view.text.ptr);
+    try std.testing.expectEqual(@as(u64, 100), view.window_start);
+    try std.testing.expectEqual(@as(u64, 100 + source.len), view.window_end);
     try std.testing.expectEqualDeep(
-        native_sdk.canvas.TextSelection{ .anchor = 6, .focus = 1 },
+        native_sdk.canvas.TextSelection{ .anchor = 3, .focus = 9 },
         view.selection.?,
     );
-    try std.testing.expect(view.composition == null);
-}
-
-test "document view synthesizes bounded preedit bytes from the Rust composition" {
-    projection = protocol.emptyResponse(rust_action_apply_input);
-    projection.window_start = 100;
-    const source = "abcDEFghi";
-    projection.text_len = source.len;
-    @memcpy(projection.text[0..source.len], source);
-    const preedit = "中文";
-    projection.composition_len = preedit.len;
-    @memcpy(projection.composition[0..preedit.len], preedit);
-    projection.composition_start = 103;
-    projection.composition_end = 106;
-    projection.composition_cursor = 3;
-    has_projection = true;
-
-    const view = documentView();
-    try std.testing.expectEqualStrings("abc中文ghi", view.text);
-    try std.testing.expectEqualDeep(native_sdk.canvas.TextSelection.collapsed(6), view.selection.?);
     try std.testing.expectEqualDeep(native_sdk.canvas.TextRange.init(3, 9), view.composition.?);
-    try std.testing.expectEqual(@as(u64, 109), view.window_end);
+
+    // Offsets past the projected text are clamped rather than read out of range.
+    projection.selection_focus = 9_999;
+    projection.composition_end = 9_999;
+    const clamped = documentView();
+    try std.testing.expectEqual(source.len, clamped.selection.?.focus);
+    try std.testing.expectEqual(source.len, clamped.composition.?.end);
+
+    // No composition means the view reports none.
+    projection.composition_len = 0;
+    try std.testing.expect(documentView().composition == null);
 }
 
-test "bridge translates SDK event tags into the distinct Rust input vocabulary" {
-    var input = std.mem.zeroes(protocol.RefrainNativeRequest);
-    input.action = bridge_action_text_event;
-    input.input = event_set_selection;
-    try std.testing.expect(translateRequest(&input, 0.0));
-    try std.testing.expectEqual(rust_action_apply_input, input.action);
-    try std.testing.expectEqual(rust_input_set_selection, input.input);
-    try std.testing.expect(event_set_selection != rust_input_set_selection);
-
+test "the bridge rejects malformed shapes for each action without a second numbering" {
+    // A text payload on an action that carries no text is refused.
     var undo = std.mem.zeroes(protocol.RefrainNativeRequest);
-    undo.action = bridge_action_undo;
-    try std.testing.expect(translateRequest(&undo, 0.0));
-    try std.testing.expectEqual(rust_action_apply_input, undo.action);
-    try std.testing.expectEqual(rust_input_undo, undo.input);
+    undo.action = @intFromEnum(protocol.Action.apply_input);
+    undo.input = @intFromEnum(protocol.Input.undo);
+    undo.text_len = 1;
+    try std.testing.expect(!validateRequest(&undo));
+    undo.text_len = 0;
+    try std.testing.expect(validateRequest(&undo));
+    try std.testing.expect(updatesDocumentProjection(undo.action));
 
+    // Caret flags outside the generated direction set and extend bit are refused.
+    var caret = std.mem.zeroes(protocol.RefrainNativeRequest);
+    caret.action = @intFromEnum(protocol.Action.apply_input);
+    caret.input = @intFromEnum(protocol.Input.move_caret);
+    caret.flags = protocol.caret_direction_mask;
+    try std.testing.expect(!validateRequest(&caret));
+    caret.flags = @intFromEnum(protocol.CaretDirection.next_word) | protocol.caret_extend_flag;
+    try std.testing.expect(validateRequest(&caret));
+
+    // An unknown input code is refused rather than silently applied.
+    var unknown = std.mem.zeroes(protocol.RefrainNativeRequest);
+    unknown.action = @intFromEnum(protocol.Action.apply_input);
+    unknown.input = 250;
+    try std.testing.expect(!validateRequest(&unknown));
+
+    // The opaque project group carries text and never replaces the projection.
+    const project_bytes = "{}";
     var project_input = std.mem.zeroes(protocol.RefrainNativeRequest);
-    project_input.action = bridge_action_project;
-    project_input.text_len = 2;
-    project_input.text[0] = '{';
-    project_input.text[1] = '}';
-    try std.testing.expect(translateRequest(&project_input, 0.0));
-    try std.testing.expectEqual(rust_action_project, project_input.action);
-    try std.testing.expect(!updatesDocumentProjection(bridge_action_project));
+    project_input.action = @intFromEnum(protocol.Action.project);
+    project_input.text_len = project_bytes.len;
+    project_input.text = project_bytes.ptr;
+    try std.testing.expect(validateRequest(&project_input));
+    try std.testing.expect(!updatesDocumentProjection(project_input.action));
+}
+
+test "host record offsets stay derived from the generated field order" {
+    // The SDK packs leading scalars in field-name order as f64 values, so each
+    // generated offset must be a distinct multiple of eight below the length
+    // prefix. A hand-edited offset would break one of these relations.
+    const leading = [_]usize{
+        protocol.offset_action,           protocol.offset_anchor,
+        protocol.offset_columns_em,       protocol.offset_cursor,
+        protocol.offset_flags,            protocol.offset_focus,
+        protocol.offset_input,            protocol.offset_protocol_version,
+        protocol.offset_revision,         protocol.offset_scroll_offset_y,
+        protocol.offset_session,
+    };
+    for (leading, 0..) |offset, index| {
+        try std.testing.expectEqual(index * 8, offset);
+        try std.testing.expect(offset < protocol.offset_text_len);
+    }
+    try std.testing.expectEqual(leading.len * 8, protocol.offset_text_len);
+    try std.testing.expectEqual(protocol.offset_text_len + 4, protocol.offset_text);
+    try std.testing.expectEqual(@as(usize, 24), protocol.trailing_bytes);
+
+    // A decoded record round-trips the field a caller wrote at each offset.
+    var payload = request(.obtain_projection);
+    writeF64(&payload, protocol.offset_session, 9);
+    writeF64(&payload, protocol.offset_revision, 5);
+    writeF64(&payload, protocol.offset_anchor, 3);
+    const decoded = decodeBridgeRequest(&payload).?;
+    try std.testing.expectEqual(@as(u64, 9), decoded.session);
+    try std.testing.expectEqual(@as(u64, 5), decoded.revision);
+    try std.testing.expectEqual(@as(u64, 3), decoded.anchor);
+    try std.testing.expectEqual(@intFromEnum(protocol.Action.obtain_projection), decoded.action);
 }
 
 test "protocol mismatch, malformed, and unknown service requests remain typed failures" {
     var effects: StubEffects = .{};
     bind(&effects);
-    var payload = request(bridge_action_health);
-    writeF64(&payload, 48, @floatFromInt(protocol.protocol_version + 1));
+    var payload = request(.health);
+    writeF64(&payload, protocol.offset_protocol_version, @floatFromInt(protocol.protocol_version + 1));
     call(&effects, 9, &payload);
     try std.testing.expect(!effects.response_ok);
     try std.testing.expectEqual(

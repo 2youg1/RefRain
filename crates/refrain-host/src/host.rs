@@ -40,15 +40,30 @@ use serde::{Deserialize, Serialize};
 
 use crate::run_edge::{self, EdgeRefusal, ResolvedEdge, RunEdge};
 
-/// Pad or truncate an edge list to one entry per minted Run.
+/// Pad a short edge list to one entry per minted Run, and refuse a long one.
 ///
 /// A caller that does not orchestrate passes an empty vector, and every
 /// caller that predates edges does exactly that. Reading short as "no edges"
 /// rather than refusing keeps those callers correct without a migration.
-fn normalise_edges(edges: Vec<Option<RunEdge>>, runs: usize) -> Vec<Option<RunEdge>> {
+///
+/// Too many entries is a different fact: the caller described relations for
+/// Runs that will not exist, so one of the two lists is wrong. Silently
+/// dropping the tail used to hide that — the author authorised a shape the
+/// host never built, and nothing said so. Defaults and structural errors are
+/// separate answers.
+fn normalise_edges(
+    edges: Vec<Option<RunEdge>>,
+    runs: usize,
+) -> Result<Vec<Option<RunEdge>>, HostRefusal> {
+    if edges.len() > runs {
+        return Err(HostRefusal::EdgeCountExceedsRuns {
+            edges: edges.len(),
+            runs,
+        });
+    }
     let mut edges = edges;
     edges.resize(runs, None);
-    edges
+    Ok(edges)
 }
 
 /// Which Runs an authorization covers.
@@ -83,7 +98,7 @@ pub const AGENT_ID_PLACEHOLDER: &str = "<agent-id>";
 
 /// What a Task is: the author's one dispatched collaboration, baseline-pinned
 /// at enqueue (Q27). No agentId — a Task is shared by every Run of its round.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewTask {
     pub id: Id,
@@ -95,7 +110,7 @@ pub struct ReviewTask {
     pub progress: TaskProgress,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "kebab-case", tag = "kind", content = "value")]
 pub enum TaskProgress {
     Draft,
@@ -103,7 +118,7 @@ pub enum TaskProgress {
     Closed { reason: CloseReason, closed_at: u64 },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum CloseReason {
     RunsTerminal,
@@ -111,7 +126,7 @@ pub enum CloseReason {
 }
 
 /// A Run: one agent's one execution of one Task.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Run {
     pub id: Id,
@@ -131,7 +146,7 @@ pub struct Run {
     pub edge: Option<ResolvedEdge>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase", tag = "kind", content = "value")]
 pub enum RunProgress {
     Queued,
@@ -144,7 +159,7 @@ pub enum RunProgress {
 }
 
 /// The immutable authorization: what the author clicked, exactly (INV-14).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchAuthorization {
     pub id: Id,
@@ -215,11 +230,19 @@ pub trait FrozenContext {
     /// digest the authorization froze (§8.2-5: missing blocks; the host
     /// never rebuilds from current state).
     fn staged_request_matches(&self, run_id: Id, digest: &str) -> Result<bool, Self::Error>;
+    /// The artifact a terminal Run left behind, if any.
+    ///
+    /// The launch condition needs it: an edge that requires an upstream result
+    /// must refuse before the downstream changes state, not discover the empty
+    /// upstream after it is already `Launching`. `None` means the producer left
+    /// nothing — which a Failed or Cancelled Run usually did.
+    fn read_result(&self, workspace: &str, run_id: Id) -> Result<Option<Vec<u8>>, Self::Error>;
 }
 
 /// Every command the host takes. Timestamps arrive as payload: the host has
 /// no clock of its own, so its facts stay deterministic and replayable.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub enum HostCommand {
     DraftTask {
         baseline: Id,
@@ -333,6 +356,25 @@ pub enum HostRefusal {
     /// verify. Both are meaningless against a Run still in flight.
     #[error("run {run} waits on run {upstream}, which is not terminal")]
     UpstreamNotTerminal { run: Id, upstream: Id },
+    /// The upstream reached a terminal state without leaving an artifact.
+    ///
+    /// Order is not content: a `Failed` or `Cancelled` upstream is terminal, so
+    /// the order condition passes, yet a `Follows` Run has nothing to read and
+    /// a `Verifies` Run has nothing to verify. Launching anyway used to put the
+    /// downstream into `Launching` first and discover the empty upstream only
+    /// afterwards, leaving it stuck there and then reported as needing recovery
+    /// when no producer had ever started. Refusing before the state changes
+    /// keeps the Run authorized and retryable.
+    #[error("run {run} waits on run {upstream}, which left no result to read")]
+    UpstreamWithoutArtifact { run: Id, upstream: Id },
+    /// The authorization described more edges than it mints Runs.
+    ///
+    /// A short list is a default (callers that do not orchestrate pass none),
+    /// but a long one means the two lists disagree about how many Runs this
+    /// round has. Truncating used to drop the tail without a word, so the
+    /// author could authorise a shape the host never built.
+    #[error("the authorization carries {edges} edges for {runs} runs")]
+    EdgeCountExceedsRuns { edges: usize, runs: usize },
     /// A verifier proposed a rewrite.
     ///
     /// The whole meaning of `Verifies` is that this Run reads another's work
@@ -555,7 +597,7 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                 // never be withdrawn — only refused at every subsequent
                 // launch, which turns a statically decidable error into a
                 // permanent runtime one.
-                let edges = normalise_edges(edges, new_agents.len());
+                let edges = normalise_edges(edges, new_agents.len())?;
                 run_edge::resolve_order(&edges)?;
 
                 // §8.2-1: stage first — manifest snapshot and one frozen
@@ -695,6 +737,24 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                                 | RunProgress::Cancelled
                         ) {
                             return Err(HostRefusal::UpstreamNotTerminal {
+                                run: run_id,
+                                upstream,
+                            });
+                        }
+                        // Order is not content. A Failed or Cancelled upstream
+                        // is terminal but usually left no result, and both edge
+                        // kinds need one — Follows reads it, Verifies checks it.
+                        // The check belongs here, before the state changes: the
+                        // downstream used to reach Launching and only then
+                        // discover the empty upstream, which left it stranded
+                        // there and later reported as needing recovery though no
+                        // producer had ever run.
+                        let artifact = self
+                            .context
+                            .read_result(&self.runs[waited].workspace, upstream)
+                            .map_err(|error| HostRefusal::Context(error.to_string()))?;
+                        if artifact.is_none_or(|bytes| bytes.is_empty()) {
+                            return Err(HostRefusal::UpstreamWithoutArtifact {
                                 run: run_id,
                                 upstream,
                             });
@@ -937,6 +997,9 @@ mod tests {
         promoted: Vec<Id>,
         manifest_path: String,
         lost: bool,
+        /// Which Runs left a result. A Run absent from this map produced
+        /// nothing, which is what a Failed or Cancelled producer usually did.
+        results: std::collections::HashMap<Id, Vec<u8>>,
     }
 
     impl FrozenContext for MapContext {
@@ -975,6 +1038,9 @@ mod tests {
                 .get(&run_id)
                 .is_some_and(|request| content_hex(request.as_bytes()) == digest))
         }
+        fn read_result(&self, _workspace: &str, run_id: Id) -> Result<Option<Vec<u8>>, String> {
+            Ok(self.results.get(&run_id).cloned())
+        }
     }
 
     fn package() -> DispatchPackage {
@@ -983,6 +1049,7 @@ mod tests {
         );
         DispatchPackage {
             scopes: Vec::new(),
+            prefix_bytes: 0,
             digest: content_hex(request_md.as_bytes()),
             request_md,
             manifest: vec![ManifestEntry {
@@ -1133,6 +1200,7 @@ mod tests {
         );
         let package = DispatchPackage {
             scopes: Vec::new(),
+            prefix_bytes: 0,
             digest: content_hex(request_md.as_bytes()),
             request_md,
             manifest: vec![],
@@ -1187,6 +1255,7 @@ mod tests {
             format!("产出写进 agents/{AGENT_ID_PLACEHOLDER}/runs/{RUN_ID_PLACEHOLDER}/。");
         let package = DispatchPackage {
             scopes: Vec::new(),
+            prefix_bytes: 0,
             digest: content_hex(request_md.as_bytes()),
             request_md,
             manifest: vec![],
@@ -1251,6 +1320,11 @@ mod tests {
             at: 2_000,
         })
         .unwrap();
+        // 收取意味着产出真的落在工作区里；下游的内容条件读的正是它。
+        host.context.results.insert(
+            upstream,
+            b"<agent-result version=\"2\"></agent-result>".to_vec(),
+        );
 
         // 上游终态后下游解锁。
         host.execute(HostCommand::LaunchRun {
@@ -1258,6 +1332,93 @@ mod tests {
             workspace: "runs/two".to_string(),
         })
         .unwrap();
+    }
+
+    /// 判据：顺序不是内容。上游终态但没留下产出时，下游必须在进入
+    /// `Launching` 之前具名拒绝。
+    ///
+    /// 旧行为是先把下游写成 `Launching`、提升请求，随后才去读上游产出并失败；
+    /// 下游从此停在 `Launching`，重启后被列进「待恢复」，而其实根本没有进程
+    /// 需要恢复。把条件挪到状态改变之前，Run 留在 `Authorized`，仍可重试。
+    ///
+    /// 注入旧顺序（去掉这段检查）会让下面两条断言同时变红：拒绝消失，
+    /// 且 Run 落进 `Launching`。
+    #[test]
+    fn a_follower_refuses_when_its_terminal_upstream_left_no_result() {
+        let (mut host, _package, task_id) = host_with_draft();
+        let agents = vec![Id::new(), Id::new()];
+        authorize_with_edges(
+            &mut host,
+            task_id,
+            &agents,
+            vec![None, Some(RunEdge::Follows { upstream: 0 })],
+        );
+        let upstream = host.runs()[0].id;
+        let follower = host.runs()[1].id;
+
+        // 上游跑完但失败了——终态成立，产出不存在。
+        host.execute(HostCommand::LaunchRun {
+            run_id: upstream,
+            workspace: "runs/one".to_string(),
+        })
+        .unwrap();
+        host.execute(HostCommand::CompleteDispatch {
+            run_id: upstream,
+            receipt: "receipt".to_string(),
+        })
+        .unwrap();
+        host.execute(HostCommand::FailRun {
+            run_id: upstream,
+            failure: "producer exited 1".to_string(),
+            at: 2_000,
+        })
+        .unwrap();
+
+        let refusal = host
+            .execute(HostCommand::LaunchRun {
+                run_id: follower,
+                workspace: "runs/two".to_string(),
+            })
+            .unwrap_err();
+        assert_eq!(
+            refusal,
+            HostRefusal::UpstreamWithoutArtifact {
+                run: follower,
+                upstream
+            }
+        );
+        // 拒绝必须发生在状态改变之前：留在 Authorized 才能重试。
+        assert!(matches!(
+            host.runs()[1].progress,
+            RunProgress::Authorized { .. }
+        ));
+    }
+
+    /// 判据：授权携带的边比它铸造的 Run 还多时，必须具名拒绝。
+    ///
+    /// 短列表是默认值（不做编排的调用者一条都不传），长列表却说明两份清单
+    /// 对「这一轮有几个 Run」的看法不一致。旧行为是 `resize` 顺手把尾巴丢掉，
+    /// 作者于是授权了一个宿主根本没建的形状，而且没有任何一处说出来。
+    ///
+    /// 注入旧行为（把拒绝换回 `resize`）会让这条变红：授权会成功，
+    /// 而第二条边连同它描述的关系一起消失。
+    #[test]
+    fn an_authorization_with_more_edges_than_runs_is_refused_not_truncated() {
+        let (mut host, _package, task_id) = host_with_draft();
+        let refusal = try_authorize_with_edges(
+            &mut host,
+            task_id,
+            &[Id::new()],
+            // 一个 agent，两条边：多出来的那条描述的 Run 不会存在。
+            vec![None, Some(RunEdge::Follows { upstream: 0 })],
+        )
+        .unwrap_err();
+        assert_eq!(
+            refusal,
+            HostRefusal::EdgeCountExceedsRuns { edges: 2, runs: 1 }
+        );
+        // 拒绝先于写入：一个 Run 都没铸。
+        assert!(host.runs().is_empty());
     }
 
     /// 判据 2-7：星形不回归。并列的 Run 谁都不等谁。

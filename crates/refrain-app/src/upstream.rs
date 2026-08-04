@@ -10,7 +10,7 @@
 
 use refrain_core::upstream_work::{UpstreamRelation, UpstreamWork};
 use refrain_core::{ErrorCode, Id, RefrainError};
-use refrain_host::host::AgentHost;
+use refrain_host::host::{AgentHost, FrozenContext};
 use refrain_host::run_edge::ResolvedEdge;
 use refrain_host::staging::DirectoryContext;
 use refrain_store::project::ProjectStore;

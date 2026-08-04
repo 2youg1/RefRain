@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use refrain_core::Manuscript;
 use refrain_core::manuscript::{EditScope, Proposal};
 use refrain_core::{ErrorCode, Id, RefrainError, agent_protocol, digest::content_hex};
-use refrain_host::host::{AgentHost, HostCommand};
+use refrain_host::host::{AgentHost, FrozenContext, HostCommand};
 use refrain_host::run_edge::ResolvedEdge;
 use refrain_host::staging::DirectoryContext;
 use refrain_store::project::ProjectStore;

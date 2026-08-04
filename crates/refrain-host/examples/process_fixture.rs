@@ -58,7 +58,46 @@ fn main() {
                 std::process::exit(status.code().unwrap_or(0));
             }
         }
+        Some("--refuse-then-linger") => {
+            // Emit one Claude error frame, then keep running with the pipes
+            // open — a producer whose CLI reports a refusal on stdout while its
+            // own work is still winding down.
+            //
+            // This mode exists to expose the early return in `observe`: an
+            // adapter that returns the refusal without ending the process
+            // leaves it alive, and the parent that never waits leaves a zombie
+            // behind once it does exit.
+            println!(
+                "{{\"type\":\"result\",\"subtype\":\"error_max_turns\",\"errors\":[\"audit refusal\"]}}"
+            );
+            std::thread::sleep(std::time::Duration::from_secs(
+                args.get(1).and_then(|n| n.parse().ok()).unwrap_or(60),
+            ));
+        }
         Some("--argv-count") => print!("{}", args.len()),
+
+        // Fill stderr past the pipe buffer, then speak on stdout and exit.
+        //
+        // This mode exists to expose sequential draining. A parent that reads
+        // stdout to EOF *before* touching stderr deadlocks here: this child
+        // blocks writing to a full stderr pipe, so it never reaches the stdout
+        // write the parent is waiting for, and neither side can advance.
+        // A pipe buffer is 64 KiB on Linux and smaller elsewhere, so one MiB
+        // fills it on every platform the product ships to.
+        //
+        // A harness that logs progress to stderr while computing its answer has
+        // exactly this shape, which is why the deadlock is a product defect and
+        // not a test artefact.
+        Some("--flood-stderr") => {
+            use std::io::Write as _;
+            let line = "x".repeat(1023);
+            let mut err = std::io::stderr();
+            for _ in 0..1024 {
+                writeln!(err, "{line}").expect("stderr accepts the flood");
+            }
+            print!("done");
+        }
+
         // Act as a producer: read the promoted request, write an artifact.
         //
         // This is what makes an end-to-end edge test end-to-end. The Run's

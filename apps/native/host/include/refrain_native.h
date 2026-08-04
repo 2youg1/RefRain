@@ -2,14 +2,14 @@
 #ifndef REFRAIN_NATIVE_H
 #define REFRAIN_NATIVE_H
 #include <stdint.h>
-#define REFRAIN_PROTOCOL_VERSION 2
+#define REFRAIN_PROTOCOL_VERSION 3
 #define REFRAIN_API_VERSION 1
 #define REFRAIN_CAPABILITY_MASK 1
 #define REFRAIN_PROJECTION_BYTES 40960
 #define REFRAIN_EVENT_TEXT_BYTES 12000
 #define REFRAIN_DEFAULT_VIEWPORT_BLOCKS 96
 #define REFRAIN_VIRTUAL_BLOCK_HEIGHT 36
-#define REFRAIN_PROTOCOL_FINGERPRINT "f21e1dcfa20d362a6744371f720fa945b36cf508c772d639d5b7c6a53d672aa1"
+#define REFRAIN_PROTOCOL_FINGERPRINT "074a5037a9f96a6bbcc44ea4d21448d99f08ec995cda4862d06f4d8b917e62eb"
 #define REFRAIN_ERROR_PROTOCOL_MISMATCH 1
 #define REFRAIN_ERROR_INVALID_REQUEST 2
 #define REFRAIN_ERROR_UNKNOWN_SESSION 3
@@ -28,9 +28,14 @@ typedef struct RefrainNativeRequest {
   uint64_t focus;
   uint64_t cursor;
   uint64_t viewport_first_block;
+  /* Pixel scroll offset; Rust resolves it into a block index. */
+  double scroll_offset_y;
+  /* 字身 per line, measured from the real font; Rust returns 禁则 breaks. */
+  double columns_em;
   uint32_t viewport_block_count;
   uint32_t text_len;
-  uint8_t text[REFRAIN_EVENT_TEXT_BYTES];
+  /* Borrowed for the duration of the call only; the host never stores it. */
+  const uint8_t *text;
 } RefrainNativeRequest;
 typedef struct RefrainNativeResponse {
   uint32_t status;
@@ -48,14 +53,23 @@ typedef struct RefrainNativeResponse {
   uint32_t block_count;
   uint32_t text_len;
   uint32_t composition_len;
-  uint32_t projection_reserved;
+  /* Which grammar highlights this document, from Rust's DocumentFormat.
+     0 is Markdown prose; the rest follow the enum's declaration order. The
+     surface cannot infer it from the bytes: a fenced block inside Markdown
+     and a whole .rs file both look like code to a scanner, and only the
+     opening path knows which one this is. */
+  uint32_t document_format;
   uint64_t selection_anchor;
   uint64_t selection_focus;
   uint64_t composition_start;
   uint64_t composition_end;
-  uint64_t composition_cursor;
-  uint8_t text[REFRAIN_PROJECTION_BYTES];
-  uint8_t composition[REFRAIN_EVENT_TEXT_BYTES];
+  uint64_t document_selection_start;
+  uint64_t document_selection_end;
+  /* Owned by the Rust session and valid until its next dispatch. */
+  const uint8_t *text;
+  /* CLREQ line-start offsets into text; same owner, same lifetime. */
+  const uint32_t *line_starts;
+  uint32_t line_start_count;
 } RefrainNativeResponse;
 RefrainNativeResponse refrain_native_dispatch(RefrainNativeRequest request);
 #endif

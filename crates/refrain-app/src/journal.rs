@@ -88,6 +88,18 @@ pub fn into_domain_store(failure: refrain_store::schema::StoreError) -> RefrainE
     )
 }
 
+/// 读存储时失败的说法：动作由调用方给。
+///
+/// 与 `into_domain_store` 分开而不是给它加参数：那个函数的九个调用点
+/// 全在写路径上，「写账本」对它们都成立。读失败要说的是另一件事——
+/// 作者只是想看看这份稿子改过什么，而一句「写账本失败」会让他以为
+/// 自己刚才的动作破坏了什么。
+pub fn into_domain_read(
+    action: &'static str,
+) -> impl Fn(refrain_store::schema::StoreError) -> RefrainError {
+    move |failure| RefrainError::new(ErrorCode::StateUnavailable, action, failure.to_string())
+}
+
 /// 把存下来的 id 字符串读回 `Id`。
 ///
 /// 存储里的 id 是文本，领域里的是 `Id`。翻译失败时要说清是哪一类 id——

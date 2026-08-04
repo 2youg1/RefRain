@@ -166,14 +166,13 @@ impl<'a> ActionHistory<'a> {
     /// save — is marked undone, exactly when the state without it becomes
     /// durable.
     ///
-    /// The window starts at the oldest row the live chain names: rows below
-    /// it fell out of the hydrated depth and are still part of the chain.
+    /// The window starts at the oldest row the live chain names. When the
+    /// complete hydrated window was undone, the just-saved document head names
+    /// the base of its first row instead. Rows below that floor fell out of the
+    /// hydrated depth and are still part of the durable chain.
     /// The marks are idempotent, so a failure here is repaired by the next
     /// save rather than by a repair path.
     pub fn sync_chain(&self, document: &str, live: &[Id]) -> Result<(), StoreError> {
-        if live.is_empty() {
-            return Ok(());
-        }
         let live: std::collections::HashSet<String> = live.iter().map(Id::to_string).collect();
         let mut statement = self.db.prepare(
             "SELECT id, ordinal FROM text_actions
@@ -184,12 +183,27 @@ impl<'a> ActionHistory<'a> {
                 Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
             })?
             .collect::<Result<Vec<_>, _>>()?;
-        let Some(floor) = rows
-            .iter()
-            .filter(|(id, _)| live.contains(id))
-            .map(|(_, ordinal)| *ordinal)
-            .min()
-        else {
+        let floor = if live.is_empty() {
+            // Undoing the whole hydrated window leaves no live id to derive a
+            // floor from. The head this save just made durable names the base
+            // of the first undone row, which is that floor.
+            self.db.query_row(
+                "SELECT MIN(actions.ordinal)
+                 FROM text_actions AS actions
+                 JOIN documents ON documents.path = actions.document
+                 WHERE actions.document = ?1
+                   AND actions.undone_at IS NULL
+                   AND actions.base = documents.current_head",
+                params![document],
+                |row| row.get::<_, Option<i64>>(0),
+            )?
+        } else {
+            rows.iter()
+                .filter(|(id, _)| live.contains(id))
+                .map(|(_, ordinal)| *ordinal)
+                .min()
+        };
+        let Some(floor) = floor else {
             return Ok(());
         };
         let now = now_millis() as i64;

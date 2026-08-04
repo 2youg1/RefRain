@@ -16,15 +16,14 @@ import { readFileSync } from "node:fs";
 import { collect } from "./gate-lib.ts";
 
 /*
- * The commands allowed to put manuscript bytes on disk. Each reaches the writer
- * only behind a human action:
- *   apply_editor_action    the author typing
- *   commit_decision_batch  the author's verdicts, committed by a click
- *   persist_revision       Save — the author's own keystroke or button
- * `persist_revision` is listed because it genuinely is a third writer, not to
- * make the gate pass: the old name-pattern predicate never saw it at all.
+ * 允许把手稿字节落盘的函数。每一个都只在人类动作之后到达写者：
+ *   refresh_open_view      作者在打字（`TextCommand::Editor` 之后的投影刷新）
+ *   commit_decision_batch  作者的裁决，一次点击提交
+ *   persist_in_entry       Save 的共享写者——作者自己的按键或按钮
+ * `persist_in_entry` 列在这里是因为它**确实**是第三个写者，不是为了让门禁变绿：
+ * 旧版那条按名字匹配的谓词从来没看见过它（`persist_` 不在动词表里）。
  */
-const AUTHORISED = ["apply_editor_action", "commit_decision_batch", "persist_revision"] as const;
+const AUTHORISED = ["commit_decision_batch", "refresh_open_view", "persist_in_entry"] as const;
 
 /*
  * Root 之外的唯一写路径：install_skill 把生成的协议写进 harness 的 skill 目录
@@ -33,27 +32,13 @@ const AUTHORISED = ["apply_editor_action", "commit_decision_batch", "persist_rev
  * 曾经是默认事实，从它开始不再是了。
  */
 
-const files = collect(["apps/desktop/src-tauri/src/**/*.rs"]);
+// 步骤 10 之后写路径不再经过一层命令函数：它就住在用例里。
+// 扫 refrain-app 的生产源码（不含 tests/，那里的 commit 是夹具在造数据）。
+const files = collect(["crates/refrain-app/src/**/*.rs"]);
 if (files.length === 0) {
   console.error(
     "FAIL  verify:write-path: scanned 0 files — the scan is looking in the wrong place",
   );
-  process.exit(1);
-}
-
-// Every registered command, read from the source rather than from a list kept
-// by hand: a list kept by hand is exactly what stops matching reality.
-const commands: string[] = [];
-for (const file of files) {
-  const text = readFileSync(file, "utf8");
-  // 两种形态：`#[tauri::command]` 与 `#[tauri::command(async)]`。
-  for (const match of text.matchAll(/#\[tauri::command(?:\(async\))?\][\s\S]{0,200}?fn\s+(\w+)/g)) {
-    if (match[1] !== undefined) commands.push(match[1]);
-  }
-}
-
-if (commands.length === 0) {
-  console.error("FAIL  verify:write-path: found no registered commands — the pattern is stale");
   process.exit(1);
 }
 
@@ -111,38 +96,23 @@ if (writers.length === 0) {
 }
 
 /*
- * `persist_in_entry` is the shared body behind Save. The command exposing it is
- * `persist_revision`; the check is that no other command calls it.
+ * 步骤 10 之前还有一层「命令函数调用共享写者」的间接，需要单独检查；
+ * Native 之后没有那一层——写者就是用例本身，所以判据只剩一条：
+ * **谁的函数体里出现了 `Project::commit`**。这比按名字猜更准，
+ * 也正是旧版那条名字模式漏掉 `persist_revision` 的教训。
  */
-const WRITER_FNS = ["persist_in_entry"] as const;
-const isWriterFn = (name: string): boolean =>
-  WRITER_FNS.includes(name as (typeof WRITER_FNS)[number]);
 const isAuthorised = (name: string): boolean =>
   AUTHORISED.includes(name as (typeof AUTHORISED)[number]);
 
-const strays: string[] = [];
-for (const file of files) {
-  const text = readFileSync(file, "utf8");
-  for (const writer of WRITER_FNS) {
-    for (const call of text.matchAll(new RegExp(`\\b${writer}\\s*\\(`, "g"))) {
-      const owner = enclosing(text, call.index ?? 0);
-      if (owner !== writer && !isAuthorised(owner) && commands.includes(owner)) {
-        strays.push(owner);
-      }
-    }
-  }
-}
+const unexpected = writers.filter((writer) => !isAuthorised(writer.fn));
 
-const unexpected = writers.filter((writer) => !isWriterFn(writer.fn) && !isAuthorised(writer.fn));
-
-if (unexpected.length > 0 || strays.length > 0) {
+if (unexpected.length > 0) {
   console.error("FAIL  verify:write-path: an unauthorised path writes manuscript bytes");
   for (const writer of unexpected) console.error(`      ${writer.fn} commits in ${writer.file}`);
-  for (const stray of strays) console.error(`      command ${stray} calls the writer directly`);
-  console.error(`      authorised commands: ${AUTHORISED.join(", ")}`);
+  console.error(`      authorised: ${AUTHORISED.join(", ")}`);
   process.exit(1);
 }
 
 console.log(
-  `PASS  verify:write-path  (${files.length} files, ${commands.length} commands; ${writers.length} commit call(s), all behind ${AUTHORISED.join("/")})`,
+  `PASS  verify:write-path  (${files.length} files; ${writers.length} commit call(s), all behind ${AUTHORISED.join("/")})`,
 );

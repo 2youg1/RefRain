@@ -2,19 +2,49 @@
 const std = @import("std");
 
 pub const host_service = "refrain.host";
-pub const protocol_version: u16 = 2;
+pub const protocol_version: u16 = 3;
 pub const api_version: u16 = 1;
 pub const capability_mask: u32 = 1;
 pub const projection_bytes: usize = 40960;
 pub const event_text_bytes: usize = 12000;
 pub const default_viewport_blocks: u32 = 96;
 pub const virtual_block_height: f64 = 36.0;
-pub const protocol_fingerprint = "f21e1dcfa20d362a6744371f720fa945b36cf508c772d639d5b7c6a53d672aa1";
+pub const protocol_fingerprint = "074a5037a9f96a6bbcc44ea4d21448d99f08ec995cda4862d06f4d8b917e62eb";
 pub const protocol_magic = [4]u8{ 82, 70, 82, 78 };
-pub const response_header_bytes: usize = 52;
+pub const response_header_bytes: usize = 88;
 pub const response_bytes: usize = response_header_bytes + projection_bytes;
 
+/// The zero-length projection an empty response borrows.
+const empty_projection = [_]u8{};
+const empty_line_starts = [_]u32{};
+
 pub const ProtocolError = enum(u32) { protocol_mismatch = 1, invalid_request = 2, unknown_session = 3, domain_refusal = 4, host_failure = 5, stale_revision = 6 };
+pub const Action = enum(u16) { health = 1, open_manuscript = 2, apply_input = 3, obtain_projection = 4, project = 5 };
+pub const Input = enum(u16) { set_selection = 1, insert_text = 2, delete_backward = 3, delete_forward = 4, delete_word_backward = 5, delete_word_forward = 6, clear = 7, move_caret = 8, set_composition = 9, commit_composition = 10, cancel_composition = 11, undo = 12, save = 13 };
+pub const CaretDirection = enum(u16) { previous = 1, next = 2, previous_word = 3, next_word = 4, start = 5, end = 6 };
+
+/// Host-record byte offsets derived from the SDK's field-name packing order.
+/// Hand-written offsets would drift silently when a field is renamed.
+pub const offset_action: usize = 0;
+pub const offset_anchor: usize = 8;
+pub const offset_columns_em: usize = 16;
+pub const offset_cursor: usize = 24;
+pub const offset_flags: usize = 32;
+pub const offset_focus: usize = 40;
+pub const offset_input: usize = 48;
+pub const offset_protocol_version: usize = 56;
+pub const offset_revision: usize = 64;
+pub const offset_scroll_offset_y: usize = 72;
+pub const offset_session: usize = 80;
+pub const offset_text_len: usize = 88;
+pub const offset_text: usize = 92;
+pub const trailing_offset_viewport_block_count: usize = 0;
+pub const trailing_offset_viewport_first_block: usize = 8;
+pub const trailing_offset_window_start: usize = 16;
+pub const trailing_bytes: usize = 24;
+
+pub const caret_extend_flag: u16 = 0x100;
+pub const caret_direction_mask: u16 = 0xff;
 
 pub const RefrainNativeRequest = extern struct {
     protocol_version: u16,
@@ -28,9 +58,14 @@ pub const RefrainNativeRequest = extern struct {
     focus: u64,
     cursor: u64,
     viewport_first_block: u64,
+    /// Pixel scroll offset resolved by Rust into a block index.
+    scroll_offset_y: f64,
+    /// 字身 per line, measured from the real font; Rust returns 禁则 breaks.
+    columns_em: f64,
     viewport_block_count: u32,
     text_len: u32,
-    text: [event_text_bytes]u8,
+    /// Borrowed for one dispatch call: points into the SDK payload buffer.
+    text: [*]const u8,
 };
 
 pub const RefrainNativeResponse = extern struct {
@@ -49,14 +84,20 @@ pub const RefrainNativeResponse = extern struct {
     block_count: u32,
     text_len: u32,
     composition_len: u32,
-    projection_reserved: u32,
+    /// Which grammar highlights this document, from Rust's DocumentFormat.
+    /// 0 is Markdown prose; the rest follow the enum's declaration order.
+    document_format: u32,
     selection_anchor: u64,
     selection_focus: u64,
     composition_start: u64,
     composition_end: u64,
-    composition_cursor: u64,
-    text: [projection_bytes]u8,
-    composition: [event_text_bytes]u8,
+    document_selection_start: u64,
+    document_selection_end: u64,
+    /// Borrowed from the Rust session; read during this frame only.
+    text: [*]const u8,
+    /// CLREQ line-start offsets into the text; same owner and lifetime.
+    line_starts: [*]const u32,
+    line_start_count: u32,
 };
 
 pub fn encodeDispatchResponse(response: RefrainNativeResponse) [response_bytes]u8 {
@@ -86,6 +127,19 @@ pub fn encodeDispatchResponse(response: RefrainNativeResponse) [response_bytes]u
     std.mem.writeInt(u32, out[40..44], wireIndex(response.first_block), .little);
     std.mem.writeInt(u32, out[44..48], response.block_count, .little);
     std.mem.writeInt(u32, out[48..52], @intCast(text_len), .little);
+    // 投影的其余状态也要上线，否则录制会话回放时界面是空的：正稿此前只
+    // 经 host_bridge 的全局变量传给视图，而那条路绕开了效果通道，
+    // journal 里没有它，回放的可访问性树因此与录制时不同。
+    // 行首偏移数组不上线——视图只用它的计数 line_count。
+    std.mem.writeInt(u32, out[52..56], response.line_start_count, .little);
+    std.mem.writeInt(u32, out[56..60], response.document_format, .little);
+    std.mem.writeInt(u32, out[60..64], wireIndex(response.selection_anchor), .little);
+    std.mem.writeInt(u32, out[64..68], wireIndex(response.selection_focus), .little);
+    std.mem.writeInt(u32, out[68..72], wireIndex(response.composition_start), .little);
+    std.mem.writeInt(u32, out[72..76], wireIndex(response.composition_end), .little);
+    std.mem.writeInt(u32, out[76..80], @intCast(@min(response.composition_len, std.math.maxInt(u32))), .little);
+    std.mem.writeInt(u32, out[80..84], wireIndex(response.document_selection_start), .little);
+    std.mem.writeInt(u32, out[84..88], wireIndex(response.document_selection_end), .little);
     @memcpy(out[response_header_bytes..][0..text_len], response.text[0..text_len]);
     return out;
 }
@@ -122,13 +176,56 @@ pub fn emptyResponse(action: u16) RefrainNativeResponse {
         .block_count = 0,
         .text_len = 0,
         .composition_len = 0,
-        .projection_reserved = 0,
+        .document_format = 0,
         .selection_anchor = 0,
         .selection_focus = 0,
         .composition_start = 0,
         .composition_end = 0,
-        .composition_cursor = 0,
-        .text = @splat(0),
-        .composition = @splat(0),
+        .document_selection_start = 0,
+        .document_selection_end = 0,
+        .text = empty_projection[0..].ptr,
+        .line_starts = empty_line_starts[0..].ptr,
+        .line_start_count = 0,
     };
+}
+
+/// Rebuild a projection from the bytes that crossed the effect channel.
+///
+/// **接上哪个功能**：会话录制与回放。text 借用 bytes，所以调用方必须让
+/// 那段缓冲活得比投影久。
+///
+/// **在全局逻辑中负责什么**：回放时主机不被调用，投影只能从 journal 里的
+/// 响应字节重建。录制路径也走这里，两条路因此产生同一个投影——
+/// 一条路读线上字节、另一条读 FFI 返回值会静默漂移。
+///
+/// 行首偏移数组不在线上；计数够视图定行数，指针留空。
+pub fn decodeDispatchResponse(bytes: []const u8) ?RefrainNativeResponse {
+    if (bytes.len < response_header_bytes) return null;
+    if (!std.mem.eql(u8, bytes[0..4], &protocol_magic)) return null;
+    const text_len: usize = std.mem.readInt(u32, bytes[48..52], .little);
+    if (text_len > projection_bytes or bytes.len < response_header_bytes + text_len) return null;
+    var out = emptyResponse(std.mem.readInt(u16, bytes[6..8], .little));
+    out.protocol_version = std.mem.readInt(u16, bytes[4..6], .little);
+    out.status = std.mem.readInt(u32, bytes[8..12], .little);
+    out.api_version = std.mem.readInt(u16, bytes[12..14], .little);
+    out.capabilities = std.mem.readInt(u32, bytes[16..20], .little);
+    out.session = std.mem.readInt(u32, bytes[20..24], .little);
+    out.revision = std.mem.readInt(u32, bytes[24..28], .little);
+    out.total_bytes = std.mem.readInt(u32, bytes[28..32], .little);
+    out.total_blocks = std.mem.readInt(u32, bytes[32..36], .little);
+    out.window_start = std.mem.readInt(u32, bytes[36..40], .little);
+    out.first_block = std.mem.readInt(u32, bytes[40..44], .little);
+    out.block_count = std.mem.readInt(u32, bytes[44..48], .little);
+    out.text_len = @intCast(text_len);
+    out.line_start_count = std.mem.readInt(u32, bytes[52..56], .little);
+    out.document_format = std.mem.readInt(u32, bytes[56..60], .little);
+    out.selection_anchor = std.mem.readInt(u32, bytes[60..64], .little);
+    out.selection_focus = std.mem.readInt(u32, bytes[64..68], .little);
+    out.composition_start = std.mem.readInt(u32, bytes[68..72], .little);
+    out.composition_end = std.mem.readInt(u32, bytes[72..76], .little);
+    out.composition_len = std.mem.readInt(u32, bytes[76..80], .little);
+    out.document_selection_start = std.mem.readInt(u32, bytes[80..84], .little);
+    out.document_selection_end = std.mem.readInt(u32, bytes[84..88], .little);
+    if (text_len > 0) out.text = bytes[response_header_bytes..].ptr;
+    return out;
 }

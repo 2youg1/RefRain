@@ -531,6 +531,17 @@ impl ProjectStore {
         Ok(path)
     }
 
+    /// Where the Native document surface opens and saves one document.
+    ///
+    /// Connects `ProjectInput::OpenDocument` to `DocumentSurface::open`: the
+    /// view names a Root id and a relative path, never an absolute one, so a
+    /// chosen path never crosses the Native or TypeScript boundary. Reuses
+    /// [`Self::resolve_mutable`], which carries the containment check and the
+    /// INV-4 guard that keeps `.refrain-source/` unwritable.
+    pub fn document_file(&self, relative: &str) -> Result<PathBuf, ProjectFailure> {
+        self.resolve_mutable(relative)
+    }
+
     fn resolve_mutable(&self, relative: &str) -> Result<PathBuf, ProjectFailure> {
         let path = self.resolve(relative)?;
         assert_mutable_path(&path)?;
@@ -727,14 +738,29 @@ impl ProjectStore {
         stamp: &FileStamp,
     ) -> Result<DocumentRow, ProjectFailure> {
         if let Some(row) = self.find_document(relative)? {
+            let continuity_matches = row.digest.as_deref() == Some(stamp.digest.as_str());
             self.db
                 .execute(
-                    "UPDATE documents SET digest = ?1 WHERE id = ?2",
+                    "UPDATE documents
+                     SET digest = ?1,
+                         current_head = CASE WHEN digest = ?1 THEN current_head ELSE NULL END,
+                         head_block_ids = CASE WHEN digest = ?1 THEN head_block_ids ELSE NULL END
+                     WHERE id = ?2",
                     params![stamp.digest, row.id.to_string()],
                 )
                 .map_err(crate::schema::StoreError::from)?;
             return Ok(DocumentRow {
                 digest: Some(stamp.digest.clone()),
+                current_head: if continuity_matches {
+                    row.current_head.clone()
+                } else {
+                    None
+                },
+                head_block_ids: if continuity_matches {
+                    row.head_block_ids.clone()
+                } else {
+                    None
+                },
                 ..row
             });
         }

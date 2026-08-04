@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" shape-rendering="crispEdges" role="img" aria-label="RefRain">
-  <rect x="2" y="2" width="2" height="12" fill="currentColor"/>
-  <rect x="4.6" y="2" width="1" height="12" fill="currentColor"/>
-  <path d="M9.5 5L8.5 9M13 5L12 9" stroke="currentColor" stroke-width="1.6" fill="none"/>
-  <rect x="8" y="11" width="6" height="1.4" fill="currentColor"/>
-</svg>

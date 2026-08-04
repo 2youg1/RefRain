@@ -1,14 +1,22 @@
 //! Native document state: one Rust authority for bytes, selection, IME, undo,
 //! and bounded block projections consumed by the platform view.
 
-use refrain_core::{Lineage, Manuscript, SourceSnapshot, TextRefusal};
+use refrain_core::manuscript::{PersistedRegion, Verdict};
+use refrain_core::{
+    DocumentFormat, Id, Lineage, Manuscript, SourceSnapshot, TextAction, TextRefusal, digest,
+};
+use refrain_store::atomic::{replace_file_atomically, replace_state_file_atomically};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::io;
 use std::ops::Range;
+use std::path::PathBuf;
 use thiserror::Error;
 
 pub const DOCUMENT_FIXTURE_BLOCKS: usize = 100_000;
 pub const DOCUMENT_FIXTURE_BYTES: usize = 11_953_766;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ByteSelection {
     pub anchor: usize,
     pub focus: usize,
@@ -28,6 +36,7 @@ pub enum CaretDirection {
 pub enum DocumentOpen {
     Bytes(Vec<u8>),
     ScaleFixture,
+    Persistent { path: PathBuf, state_path: PathBuf },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,13 +59,30 @@ pub enum DocumentInput {
     CommitComposition,
     CancelComposition,
     Undo,
+    Save,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Which part of the manuscript a caller wants projected.
+///
+/// A platform reports where the reader scrolled to; resolving that into a block
+/// index needs the manuscript's block count, which only this module holds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DocumentAnchor {
+    /// Start at this block index, clamped to the document.
+    Block(usize),
+    /// Start at the block under this pixel offset in a uniform-height track.
+    Scroll { offset: f64, block_height: f64 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DocumentViewport {
-    pub first_block: usize,
+    pub anchor: DocumentAnchor,
     pub block_count: usize,
     pub max_bytes: usize,
+    /// How many 字身 fit on one line. The platform measures the real font and
+    /// sends this; Rust turns it into break offsets so the 禁则 live with the
+    /// text authority rather than in the view. Zero means "do not break".
+    pub columns_em: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +92,12 @@ pub struct Composition {
     pub cursor: usize,
 }
 
+/// The visible text of one viewport plus the offsets a renderer needs.
+///
+/// `text` is what the reader sees: the manuscript window with any in-flight IME
+/// preedit already spliced in. Selection and composition are byte offsets into
+/// that same string, so a consumer renders it without knowing the manuscript's
+/// global coordinates or reconstructing the preedit itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentProjection {
     pub revision: u64,
@@ -75,8 +107,26 @@ pub struct DocumentProjection {
     pub block_count: usize,
     pub window_start: usize,
     pub text: String,
-    pub selection: ByteSelection,
-    pub composition: Option<Composition>,
+    /// Selection within `text`. Collapsed at the preedit cursor while composing.
+    pub selection: Range<usize>,
+    /// The same selection in manuscript coordinates, so a caller can report how
+    /// much of the whole document is selected without holding the byte range.
+    pub document_selection: Range<usize>,
+    /// The preedit's range within `text`, present only while composing.
+    pub composition: Option<Range<usize>>,
+    /// Byte offsets into `text` where each line starts, first entry always 0.
+    ///
+    /// Computed by `refrain_core::typeset` under CLREQ 禁则: a closing bracket
+    /// or a full stop never starts a line, an opening bracket never ends one,
+    /// and a western word is not split. The SDK cannot do this — its only break
+    /// opportunities are space and tab — so the view draws these offsets rather
+    /// than wrapping the text itself.
+    pub line_starts: Vec<usize>,
+    /// Which grammar highlights this document. Decided at open from the file
+    /// name and carried here because the view cannot recover it: a projection
+    /// is a window of bytes, and a window into a `.rs` file looks exactly like
+    /// a fenced block inside Markdown.
+    pub format: DocumentFormat,
 }
 
 #[derive(Debug, Error)]
@@ -89,6 +139,67 @@ pub enum DocumentError {
     InvalidCompositionBoundary { cursor: usize },
     #[error("document bytes are not UTF-8")]
     InvalidProjection,
+    #[error("the document has no durable target")]
+    NotPersistent,
+    #[error("cannot {action} {path}: {source}")]
+    Persistence {
+        action: &'static str,
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("cannot decode document state {path}: {source}")]
+    StateDecode {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("document state {path} is invalid: {detail}")]
+    InvalidState { path: PathBuf, detail: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Persistence {
+    path: PathBuf,
+    state_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PersistedAction {
+    id: Id,
+    base: Id,
+    cause: String,
+    regions: Vec<PersistedRegion>,
+    verdicts: Vec<Verdict>,
+}
+
+impl PersistedAction {
+    fn from_action(action: &TextAction) -> Self {
+        Self {
+            id: action.id(),
+            base: action.base(),
+            cause: action.cause().to_owned(),
+            regions: action.persisted_regions(),
+            verdicts: action.verdicts().to_vec(),
+        }
+    }
+
+    fn into_action(self) -> TextAction {
+        TextAction::from_persisted(self.id, self.base, self.cause, self.regions, self.verdicts)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedDocumentState {
+    schema_version: u32,
+    content_digest: String,
+    revision: u64,
+    selection: ByteSelection,
+    selection_history: Vec<ByteSelection>,
+    head: Id,
+    lineage: Vec<Id>,
+    actions: Vec<PersistedAction>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,25 +216,74 @@ pub struct DocumentSurface {
     composition: Option<Composition>,
     selection_history: Vec<ByteSelection>,
     revision: u64,
+    persistence: Option<Persistence>,
+    /// Which grammar this document is written in, decided once at open from
+    /// the file name. The surface cannot re-derive it later: the projection is
+    /// a window of bytes, and a window into a `.rs` file is indistinguishable
+    /// from a fenced block inside Markdown.
+    format: DocumentFormat,
 }
 
 impl DocumentSurface {
     /// Open one manuscript. This is the only constructor exposed by the module.
     pub fn open(source: DocumentOpen) -> Result<Self, DocumentError> {
-        let bytes = match source {
-            DocumentOpen::Bytes(bytes) => bytes,
-            DocumentOpen::ScaleFixture => document_fixture(),
+        let (bytes, persistence, format) = match source {
+            DocumentOpen::Bytes(bytes) => (bytes, None, DocumentFormat::Markdown),
+            DocumentOpen::ScaleFixture => (document_fixture(), None, DocumentFormat::Markdown),
+            DocumentOpen::Persistent { path, state_path } => {
+                let bytes =
+                    fs::read(&path).map_err(|source| persistence_error("read", &path, source))?;
+                let format = DocumentFormat::of_path(&path.to_string_lossy());
+                (bytes, Some(Persistence { path, state_path }), format)
+            }
         };
+        let persisted = persistence
+            .as_ref()
+            .map(|target| read_persisted_state(&target.state_path, &bytes))
+            .transpose()?
+            .flatten();
         let source =
             SourceSnapshot::read_checked(bytes).map_err(|_| DocumentError::InvalidProjection)?;
-        let lineage = Lineage::fresh(source.block_count());
-        Ok(Self {
-            manuscript: Manuscript::open(source, lineage)?,
-            selection: collapsed(0),
+        let (manuscript, selection, selection_history, revision) = match persisted {
+            Some(state) => {
+                let history = state
+                    .actions
+                    .into_iter()
+                    .map(PersistedAction::into_action)
+                    .collect();
+                (
+                    Manuscript::open_at(
+                        source,
+                        Lineage::from_ids(state.lineage),
+                        state.head,
+                        history,
+                    )?,
+                    state.selection,
+                    state.selection_history,
+                    state.revision,
+                )
+            }
+            None => {
+                let lineage = Lineage::fresh(source.block_count());
+                (
+                    Manuscript::open(source, lineage)?,
+                    collapsed(0),
+                    Vec::new(),
+                    0,
+                )
+            }
+        };
+        let document = Self {
+            manuscript,
+            selection,
             composition: None,
-            selection_history: Vec::new(),
-            revision: 0,
-        })
+            selection_history,
+            revision,
+            persistence,
+            format,
+        };
+        document.validate_persisted_state()?;
+        Ok(document)
     }
 
     /// Apply one exhaustive document input over the authoritative state.
@@ -151,13 +311,18 @@ impl DocumentSurface {
                 Ok(())
             }
             DocumentInput::Undo => self.undo(),
+            DocumentInput::Save => self.save(),
         }
     }
 
     /// Return one bounded projection resolved from a block viewport.
+    ///
+    /// The returned text already contains any in-flight preedit, and both
+    /// offsets are relative to it, so a platform consumer renders the string
+    /// directly instead of splicing bytes or translating coordinates.
     pub fn project(&self, viewport: DocumentViewport) -> Result<DocumentProjection, DocumentError> {
         let total_blocks = self.manuscript.head().blocks().len();
-        let first_block = viewport.first_block.min(total_blocks);
+        let first_block = self.anchor_block(viewport.anchor, viewport.block_count, total_blocks);
         let requested_end = first_block
             .saturating_add(viewport.block_count)
             .min(total_blocks);
@@ -170,19 +335,85 @@ impl DocumentSurface {
         while end > byte_range.start && !self.manuscript.is_byte_boundary(end) {
             end -= 1;
         }
-        let text = String::from_utf8(self.manuscript.read_bytes(byte_range.start..end)?)
+        let window = byte_range.start..end;
+        let mut text = String::from_utf8(self.manuscript.read_bytes(window.clone())?)
             .map_err(|_| DocumentError::InvalidProjection)?;
+        let mut selection = self.window_range(selection_range(self.selection), &window);
+        let composition = self
+            .composition
+            .as_ref()
+            .filter(|composition| {
+                composition.range.start >= window.start && composition.range.end <= window.end
+            })
+            .map(|composition| {
+                let local = self.window_range(composition.range.clone(), &window);
+                text.replace_range(local.clone(), &composition.text);
+                let range = local.start..local.start + composition.text.len();
+                selection = range.start + composition.cursor..range.start + composition.cursor;
+                range
+            });
+        let line_starts = if viewport.columns_em > 0.0 {
+            // 预设暂时固定简中：文档尚未携带语言字段。它决定行尾标点压不压
+            // （GB/T 15834 压半字 vs JLREQ 保留后置空白）与混排间距值，
+            // 所以接上文档语言之前，日文正文的行尾会按中文规矩排。
+            refrain_core::typeset::line_starts(
+                &text,
+                viewport.columns_em,
+                &refrain_core::typeset::ZH_HANS,
+            )
+        } else {
+            vec![0]
+        };
         Ok(DocumentProjection {
             revision: self.revision,
             total_bytes: self.manuscript.byte_len(),
             total_blocks,
             first_block,
             block_count: end_block - first_block,
-            window_start: byte_range.start,
+            window_start: window.start,
             text,
-            selection: self.selection,
-            composition: self.composition.clone(),
+            selection,
+            document_selection: selection_range(self.selection),
+            composition,
+            line_starts,
+            format: self.format,
         })
+    }
+
+    /// Resolve one anchor into the first block a projection starts at.
+    ///
+    /// A scroll anchor maps pixels to blocks over a uniform-height track and
+    /// stops at the last full window, so scrolling past the end still shows the
+    /// document's tail rather than an empty projection.
+    fn anchor_block(&self, anchor: DocumentAnchor, block_count: usize, total: usize) -> usize {
+        match anchor {
+            DocumentAnchor::Block(index) => index.min(total),
+            DocumentAnchor::Scroll {
+                offset,
+                block_height,
+            } => {
+                let last_window = total.saturating_sub(block_count.min(total));
+                if offset.is_nan() || block_height <= 0.0 {
+                    return 0;
+                }
+                let projected = (offset / block_height).floor();
+                if projected <= 0.0 {
+                    return 0;
+                }
+                if projected >= last_window as f64 {
+                    return last_window;
+                }
+                (projected as usize).min(last_window)
+            }
+        }
+    }
+
+    /// Clamp one manuscript range into offsets inside the projected window.
+    fn window_range(&self, range: Range<usize>, window: &Range<usize>) -> Range<usize> {
+        let length = window.end - window.start;
+        let start = range.start.saturating_sub(window.start).min(length);
+        let end = range.end.saturating_sub(window.start).min(length);
+        start..end.max(start)
     }
 
     fn bounded_end_block(
@@ -334,6 +565,70 @@ impl DocumentSurface {
         Ok(())
     }
 
+    fn save(&mut self) -> Result<(), DocumentError> {
+        let persistence = self
+            .persistence
+            .as_ref()
+            .ok_or(DocumentError::NotPersistent)?;
+        let bytes = self
+            .manuscript
+            .materialize()
+            .map_err(TextRefusal::SourceDrift)?;
+        let state = PersistedDocumentState {
+            schema_version: 1,
+            content_digest: digest::content_hex(&bytes),
+            revision: self.revision,
+            selection: self.selection,
+            selection_history: self.selection_history.clone(),
+            head: self.manuscript.head().id(),
+            lineage: self.manuscript.lineage_ids(),
+            actions: self
+                .manuscript
+                .actions()
+                .iter()
+                .map(PersistedAction::from_action)
+                .collect(),
+        };
+        let encoded = serde_json::to_vec(&state).map_err(|source| DocumentError::StateDecode {
+            path: persistence.state_path.clone(),
+            source,
+        })?;
+        replace_file_atomically(&persistence.path, &bytes, |_| Ok(()))
+            .map_err(|source| persistence_error("save", &persistence.path, source))?;
+        replace_state_file_atomically(&persistence.state_path, &encoded)
+            .map_err(|source| persistence_error("save state", &persistence.state_path, source))?;
+        Ok(())
+    }
+
+    fn validate_persisted_state(&self) -> Result<(), DocumentError> {
+        let Some(persistence) = &self.persistence else {
+            return Ok(());
+        };
+        if self.selection_history.len() != self.manuscript.actions().len() {
+            return Err(DocumentError::InvalidState {
+                path: persistence.state_path.clone(),
+                detail: format!(
+                    "{} selection snapshots for {} actions",
+                    self.selection_history.len(),
+                    self.manuscript.actions().len()
+                ),
+            });
+        }
+        self.validate_range(selection_range(self.selection))
+            .map_err(|error| DocumentError::InvalidState {
+                path: persistence.state_path.clone(),
+                detail: error.to_string(),
+            })?;
+        for selection in &self.selection_history {
+            self.validate_range(selection_range(*selection))
+                .map_err(|error| DocumentError::InvalidState {
+                    path: persistence.state_path.clone(),
+                    detail: error.to_string(),
+                })?;
+        }
+        Ok(())
+    }
+
     fn replace_range(
         &mut self,
         range: Range<usize>,
@@ -454,6 +749,54 @@ impl DocumentSurface {
     }
 }
 
+fn persistence_error(
+    action: &'static str,
+    path: &std::path::Path,
+    source: io::Error,
+) -> DocumentError {
+    DocumentError::Persistence {
+        action,
+        path: path.to_path_buf(),
+        source,
+    }
+}
+
+fn read_persisted_state(
+    state_path: &std::path::Path,
+    bytes: &[u8],
+) -> Result<Option<PersistedDocumentState>, DocumentError> {
+    let encoded = match fs::read(state_path) {
+        Ok(encoded) => encoded,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(persistence_error("read state", state_path, source)),
+    };
+    let state: PersistedDocumentState =
+        serde_json::from_slice(&encoded).map_err(|source| DocumentError::StateDecode {
+            path: state_path.to_path_buf(),
+            source,
+        })?;
+    if state.schema_version != 1 {
+        return Err(DocumentError::InvalidState {
+            path: state_path.to_path_buf(),
+            detail: format!("unsupported schema version {}", state.schema_version),
+        });
+    }
+    if state.content_digest != digest::content_hex(bytes) {
+        return Ok(None);
+    }
+    if state.selection_history.len() != state.actions.len() {
+        return Err(DocumentError::InvalidState {
+            path: state_path.to_path_buf(),
+            detail: format!(
+                "{} selection snapshots for {} actions",
+                state.selection_history.len(),
+                state.actions.len()
+            ),
+        });
+    }
+    Ok(Some(state))
+}
+
 const fn collapsed(offset: usize) -> ByteSelection {
     ByteSelection {
         anchor: offset,
@@ -500,9 +843,10 @@ mod tests {
 
     fn viewport(first_block: usize, block_count: usize) -> DocumentViewport {
         DocumentViewport {
-            first_block,
+            anchor: DocumentAnchor::Block(first_block),
             block_count,
             max_bytes: 40_960,
+            columns_em: 0.0,
         }
     }
 
@@ -516,6 +860,51 @@ mod tests {
             DOCUMENT_FIXTURE_BLOCKS
         );
         assert_eq!(fixture_digest(&document_fixture()), first);
+    }
+
+    #[test]
+    fn a_scroll_offset_resolves_against_the_documents_own_block_count() {
+        let document = DocumentSurface::open(DocumentOpen::ScaleFixture).unwrap();
+        let scrolled = |offset: f64| DocumentViewport {
+            anchor: DocumentAnchor::Scroll {
+                offset,
+                block_height: 36.0,
+            },
+            block_count: 96,
+            max_bytes: 40_960,
+            columns_em: 0.0,
+        };
+
+        // The top of the track is the first block, whatever the offset's sign.
+        assert_eq!(document.project(scrolled(0.0)).unwrap().first_block, 0);
+        assert_eq!(document.project(scrolled(-10.0)).unwrap().first_block, 0);
+
+        // A pixel offset maps to the block at that height.
+        assert_eq!(
+            document
+                .project(scrolled(36.0 * 50_000.0))
+                .unwrap()
+                .first_block,
+            50_000
+        );
+
+        // Scrolling past the end stops at the last full window instead of
+        // projecting an empty tail — the block count is a Rust-side fact.
+        let last_window = DOCUMENT_FIXTURE_BLOCKS - 96;
+        let past_end = document.project(scrolled(36.0 * 1_000_000.0)).unwrap();
+        assert_eq!(past_end.first_block, last_window);
+        assert_eq!(past_end.block_count, 96);
+
+        // NaN has no position so it stays at the head; infinity means the reader
+        // dragged to the very bottom, which is the last window.
+        assert_eq!(document.project(scrolled(f64::NAN)).unwrap().first_block, 0);
+        assert_eq!(
+            document
+                .project(scrolled(f64::INFINITY))
+                .unwrap()
+                .first_block,
+            last_window
+        );
     }
 
     #[test]
@@ -557,15 +946,14 @@ mod tests {
                 cursor: 6,
             })
             .unwrap();
-        assert_eq!(
-            document
-                .project(viewport(1, 1))
-                .unwrap()
-                .composition
-                .unwrap()
-                .text,
-            "输入中"
-        );
+        // The projection carries the preedit already spliced into the visible
+        // text, with the composition range and caret expressed against it.
+        let composing = document.project(viewport(0, 3)).unwrap();
+        let range = composing.composition.clone().unwrap();
+        assert_eq!(&composing.text[range.clone()], "输入中");
+        // The caret sits at the preedit's own cursor, six bytes in, not at its end.
+        assert_eq!(composing.selection, range.start + 6..range.start + 6);
+        assert!(composing.selection.end < range.end);
         document.apply(DocumentInput::CancelComposition).unwrap();
         assert_eq!(document.project(viewport(0, 3)).unwrap().text, source);
 
@@ -583,7 +971,157 @@ mod tests {
         document.apply(DocumentInput::Undo).unwrap();
         let restored = document.project(viewport(0, 3)).unwrap();
         assert_eq!(restored.text, source);
-        assert_eq!(restored.selection, selection);
+        assert_eq!(restored.selection, selection_range(selection));
+    }
+
+    #[test]
+    fn the_projection_carries_the_grammar_the_file_name_declares() {
+        use std::fs;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let directory = std::env::temp_dir().join(format!(
+            "refrain-native-document-format-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed),
+        ));
+        fs::create_dir_all(&directory).unwrap();
+
+        // 同样的字节，两个扩展名。这是判别条件：格式必须来自文件名，
+        // 不能从内容猜——`fn main` 在 Markdown 里是一段围栏代码的内容，
+        // 在 `.rs` 里是整份稿子的语法。
+        let bytes = "fn main() {}\n";
+        let mut opened = Vec::new();
+        for (name, expected) in [
+            ("draft.rs", DocumentFormat::Rust),
+            ("draft.md", DocumentFormat::Markdown),
+            ("draft.py", DocumentFormat::Python),
+        ] {
+            let path = directory.join(name);
+            let state_path = directory.join(format!("{name}.state.json"));
+            fs::write(&path, bytes).unwrap();
+            let document =
+                DocumentSurface::open(DocumentOpen::Persistent { path, state_path }).unwrap();
+            let projection = document.project(viewport(0, 4)).unwrap();
+            assert_eq!(
+                projection.format, expected,
+                "{name} projected as {:?}",
+                projection.format
+            );
+            opened.push(projection.format.wire_code());
+        }
+        // 三个号必须互不相同，否则「格式过界了」这句话是空的：
+        // 全部返回 0 也能让上面三条断言之一通过。
+        opened.sort_unstable();
+        opened.dedup();
+        assert_eq!(
+            opened.len(),
+            3,
+            "the formats collapsed to the same wire code"
+        );
+    }
+
+    #[test]
+    fn persistent_surface_reopens_bytes_revision_selection_and_undo_history() {
+        use std::fs;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let directory = std::env::temp_dir().join(format!(
+            "refrain-native-document-persistence-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed),
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("draft.md");
+        let state_path = directory.join("draft.state.json");
+        let original = "alpha\n\nbeta";
+        fs::write(&path, original).unwrap();
+
+        let mut document = DocumentSurface::open(DocumentOpen::Persistent {
+            path: path.clone(),
+            state_path: state_path.clone(),
+        })
+        .unwrap();
+        document
+            .apply(DocumentInput::SetSelection(collapsed(2)))
+            .unwrap();
+        document
+            .apply(DocumentInput::InsertText("中".to_owned()))
+            .unwrap();
+        document.apply(DocumentInput::Save).unwrap();
+        let saved = document.project(viewport(0, 2)).unwrap();
+        assert_eq!(saved.text, "al中pha\n\nbeta");
+        assert_eq!(saved.revision, 2);
+        assert_eq!(saved.selection, 5..5);
+        drop(document);
+
+        let mut reopened = DocumentSurface::open(DocumentOpen::Persistent {
+            path: path.clone(),
+            state_path: state_path.clone(),
+        })
+        .unwrap();
+        let restored = reopened.project(viewport(0, 2)).unwrap();
+        assert_eq!(restored.text, "al中pha\n\nbeta");
+        assert_eq!(restored.revision, 2);
+        assert_eq!(restored.selection, 5..5);
+        reopened.apply(DocumentInput::Undo).unwrap();
+        let undone = reopened.project(viewport(0, 2)).unwrap();
+        assert_eq!(undone.text, original);
+        assert_eq!(undone.revision, 3);
+        assert_eq!(undone.selection, 2..2);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// An editor outside RefRain rewrote the file between sessions. The saved
+    /// state describes bytes that no longer exist, so replaying its undo
+    /// history would restore text the author never wrote. `read_persisted_state`
+    /// compares the content digest and drops the state; this pins that the
+    /// reopened surface shows the new bytes and offers no undo.
+    #[test]
+    fn external_bytes_drop_the_saved_undo_history_instead_of_replaying_it() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let directory = std::env::temp_dir().join(format!(
+            "refrain-native-document-external-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed),
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("draft.md");
+        let state_path = directory.join("draft.state.json");
+        fs::write(&path, "原文").unwrap();
+
+        let mut document = DocumentSurface::open(DocumentOpen::Persistent {
+            path: path.clone(),
+            state_path: state_path.clone(),
+        })
+        .unwrap();
+        document
+            .apply(DocumentInput::SetSelection(collapsed("原".len())))
+            .unwrap();
+        document
+            .apply(DocumentInput::InsertText("新".to_owned()))
+            .unwrap();
+        document.apply(DocumentInput::Save).unwrap();
+        drop(document);
+
+        fs::write(&path, "外部改写").unwrap();
+        let mut reopened = DocumentSurface::open(DocumentOpen::Persistent {
+            path: path.clone(),
+            state_path,
+        })
+        .unwrap();
+        let projection = reopened.project(viewport(0, 1)).unwrap();
+        assert_eq!(projection.text, "外部改写");
+        assert!(matches!(
+            reopened.apply(DocumentInput::Undo),
+            Err(DocumentError::Text(TextRefusal::NothingToUndo))
+        ));
+
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
@@ -603,9 +1141,16 @@ mod tests {
                 extend: true,
             })
             .unwrap();
+        // A selection anchored before the window clamps to its start, so the
+        // offsets a renderer receives always index the projected text.
         let projected = document.project(viewport(50_000, 24)).unwrap();
-        assert_eq!(projected.selection.anchor, 0);
-        assert!(projected.selection.focus > first.text.len());
+        assert_eq!(projected.selection, 0..0);
         assert_eq!(projected.first_block, 50_000);
+        assert!(projected.window_start > first.text.len());
+
+        // Back at the head, the same selection reads as a real range.
+        let head = document.project(viewport(0, 24)).unwrap();
+        assert_eq!(head.selection.start, 0);
+        assert!(head.selection.end > 0);
     }
 }

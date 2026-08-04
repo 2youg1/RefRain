@@ -212,6 +212,57 @@ fn a_save_marks_the_rows_the_live_chain_no_longer_names() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// Undoing the complete hydrated window leaves no live action id from which
+/// `sync_chain` can derive its floor. The continuity saved immediately before
+/// reconciliation names that floor: rows based on it and above are undone,
+/// while older history outside the hydrated window stays live.
+#[test]
+fn a_save_marks_an_entire_undone_hydration_window_without_touching_older_history() {
+    let (root, _app, mut store, path) = adopted_chapter();
+    let mut manuscript = manuscript_of(&mut store, &path);
+    let blocks = manuscript.head().block_ids();
+    let first = type_over(&store, &mut manuscript, &path, blocks[0], "壹")
+        .action()
+        .id();
+    let second = type_over(&store, &mut manuscript, &path, blocks[1], "贰")
+        .action()
+        .id();
+    let third = type_over(&store, &mut manuscript, &path, blocks[2], "叁")
+        .action()
+        .id();
+    save(&mut store, &manuscript, &path);
+
+    let opened = store.open_registered_document(&path).unwrap();
+    let head: Id = opened.row.current_head.unwrap().parse().unwrap();
+    let lineage: Vec<Id> = serde_json::from_str(&opened.row.head_block_ids.unwrap()).unwrap();
+    let history = store.action_history().chain(&path, head, 2).unwrap();
+    let mut reopened = Manuscript::open_at(
+        SourceSnapshot::read(opened.bytes),
+        Lineage::from_ids(lineage),
+        head,
+        history,
+    )
+    .unwrap();
+    reopened.undo_last().unwrap();
+    reopened.undo_last().unwrap();
+    assert!(reopened.actions().is_empty());
+
+    save(&mut store, &reopened, &path);
+    store.action_history().sync_chain(&path, &[]).unwrap();
+
+    let rows = store.action_history().list_recent(&path, 10).unwrap();
+    let undone_of = |id: Id| rows.iter().find(|row| row.id == id).unwrap().undone;
+    assert!(
+        !undone_of(first),
+        "history below the hydrated window stays live"
+    );
+    assert!(undone_of(second));
+    assert!(undone_of(third));
+
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
 /// A kill between execute and the journal clear leaves a history row whose
 /// head nothing saved. The walk must never reach it, and the replay that
 /// follows must extend the chain, not corrupt it.

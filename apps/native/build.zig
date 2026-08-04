@@ -7,7 +7,14 @@ pub fn build(b: *std.Build) void {
         .name = "refrain",
         .main = "src/app_main.zig",
     });
-    const manuscript_font = b.path("assets/fonts/NotoSansSC-Variable.ttf");
+    // 界面与正文共用的 CJK 字面。它是**编译输入**而不是运行时资产：
+    // `addAnonymousImport` 把字节嵌进可执行文件，运行时从不读这个路径。
+    // 放在 `fonts/` 而不是 `assets/` 是有硬理由的——`native package` 的资产
+    // 打包器逐个 slurp 每份资产，单文件上限 16 MiB，而这份字面 17.7 MiB，
+    // 放在 assets 下会让打包以 `StreamTooLong` 失败；而且它已经在二进制里，
+    // 再拷一份进安装包等于凭空多 17 MiB。分发许可 `assets/fonts/OFL.txt`
+    // 仍随包走（OFL 要求许可与字面同行）。
+    const manuscript_font = b.path("fonts/NotoSansSC-Variable.ttf");
     artifacts.exe.root_module.addAnonymousImport("manuscript_font", .{ .root_source_file = manuscript_font });
     artifacts.tests.root_module.addAnonymousImport("manuscript_font", .{ .root_source_file = manuscript_font });
 

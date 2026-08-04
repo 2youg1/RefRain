@@ -1,4 +1,12 @@
 {
   "extends": "./tsconfig.base.json",
-  "include": ["scripts/**/*.ts", "packages/*/src/**/*.ts"]
+  "include": [
+    "scripts/**/*.ts",
+    "e2e/ime/assert-native.ts",
+    "e2e/ime/capture-native-identity.ts",
+    "e2e/ime/driver/drive-native-macos.ts",
+    "e2e/ime/native-evidence-policy.ts",
+    "e2e/ime/native-evidence-policy.test.ts",
+    "e2e/ime/run-native.ts"
+  ]
 }

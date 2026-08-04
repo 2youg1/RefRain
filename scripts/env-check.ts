@@ -242,29 +242,22 @@ probes.push(
 
 // ------------------------------------------------------------ bundle targets
 
-// Plan §4.1 asks for macOS bundle targets. Which ones are configured is a fact
-// about the repo, not about this machine, so it is reported on every platform.
-const tauriConf = await Bun.file("apps/desktop/src-tauri/tauri.conf.json").json();
-const targets: readonly string[] = tauriConf.bundle?.targets ?? [];
-const targetsForHost = isMac
-  ? targets.filter((t) => t === "dmg" || t === "app")
-  : isWindows
-    ? targets.filter((t) => t === "nsis" || t === "msi")
-    : targets;
+// 步骤 10 之后打包由 Native SDK 的 `native build` 负责，三平台目标写在
+// `app.zon` 的 `platforms` 里，不再有 tauri.conf.json。
+const appZon = await Bun.file("apps/native/app.zon").text();
+const declared = [...appZon.matchAll(/"(macos|windows|linux)"/g)].map((m) => m[1]);
 probes.push(
-  isLinux || targetsForHost.length > 0
+  declared.length === 3
     ? {
         name: "bundle targets",
         health: "ok",
-        detail: `tauri.conf.json declares [${targets.join(", ")}]`,
+        detail: `app.zon declares [${declared.join(", ")}]`,
       }
     : {
         name: "bundle targets",
         health: "missing",
-        detail: `tauri.conf.json declares [${targets.join(", ")}], none of which this platform can produce`,
-        fix: isMac
-          ? 'add "dmg" and "app" to bundle.targets in apps/desktop/src-tauri/tauri.conf.json'
-          : 'add "nsis" to bundle.targets in apps/desktop/src-tauri/tauri.conf.json',
+        detail: `app.zon declares [${declared.join(", ")}]`,
+        fix: 'set .platforms = .{ "macos", "windows", "linux" } in apps/native/app.zon',
       },
 );
 

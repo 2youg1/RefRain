@@ -15,6 +15,7 @@
 //!   [`crate::atomic`], so a crash mid-save never exposes half a Config.
 
 use refrain_core::Id;
+use refrain_core::persona::Persona;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::io;
@@ -69,6 +70,13 @@ pub struct AppearanceConfig {
     /// remains authoritative; a preset changes nothing until the author applies it.
     #[serde(default)]
     pub typography_presets: Vec<TypographyPreset>,
+    /// 全局一份的 Cosplay 演法预设（D13）。
+    ///
+    /// 只有一份，不做每 Agent 的第二份覆盖：两份配置会让「现在到底发了
+    /// 哪段」重新分裂，而那正是 `Persona` 这个类型要消除的。清空它，
+    /// Cosplay 就退回 Work 的形状——空预设是一个状态，不是一次失败。
+    #[serde(default = "default_cosplay_preset")]
+    pub cosplay_preset: String,
     /// The manuscript sheet's edge: none / hairline / paper.
     #[serde(default)]
     pub paper: PaperMode,
@@ -131,6 +139,7 @@ impl Default for AppearanceConfig {
             theme: "tou".to_string(),
             typography: TypographyConfig::default(),
             typography_presets: Vec::new(),
+            cosplay_preset: default_cosplay_preset(),
             paper: PaperMode::default(),
             panel_material: PanelMaterial::default(),
             code_theme: None,
@@ -513,9 +522,12 @@ pub struct AgentProfile {
     /// The connection this agent runs on; `None` is the L0 file channel.
     #[serde(default)]
     pub connection_id: Option<Id>,
-    /// The identity text, injected into the request after the contract.
+    /// 作者给这个 Agent 的身份，以及它进入 `AGENTS.md` 的方式（D13）。
+    ///
+    /// 判别联合而不是「一段文字 + 一个布尔」：布尔会让「空身份但选了
+    /// 扮演」这种没有意义的状态可表示。规则住在 `refrain_core::persona`。
     #[serde(default)]
-    pub persona: Option<String>,
+    pub persona: Option<Persona>,
     /// Extra argv handed to the harness at launch, after the connection's
     /// own. Model and effort settings are argv by nature — naming them one by
     /// one would enum-chase every CLI flag. Validated against a denylist at
@@ -567,9 +579,50 @@ pub enum AdapterKind {
     Hermes,
 }
 
+/// 全局 Cosplay 预设的默认值：`refrain_core` 里那一份。
+///
+/// 默认值住在 core 而不是这里：它是领域内容（一套演法），而这个模块
+/// 只负责把它存下来。两处各写一份，改进预设就要改两个地方。
+fn default_cosplay_preset() -> String {
+    refrain_core::persona::DEFAULT_COSPLAY_PRESET.to_string()
+}
+
+/// 排版里可以单独调的那几项。
+///
+/// 只列三项而不是全部 14 项：这三项决定一行有多少字、字有多大、行与行
+/// 隔多远，是作者真正会反复调的。其余（首行缩进、基线网格、页边距）
+/// 定下来就不动，走 `SetTypography` 整份替换即可。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub enum TypographyField {
+    /// 正文字号，单位十分之一像素。默认 170（17.0px）。
+    TextSize,
+    /// 行高，百分点。默认 190（1.9 倍）。
+    LineHeight,
+    /// 行长，单位十分之一 em。默认 650（65 个字身）——这一项决定一行有
+    /// 多少字，是三项里最影响阅读速度的。
+    Measure,
+}
+
+impl TypographyField {
+    /// 这个字段允许的范围。
+    ///
+    /// 上下界不是审美选择，是可读性的边界：字号小于 10px 在多数屏幕上
+    /// 认不出汉字笔画，行高低于 1.2 倍会让上下行的字挤在一起，行长
+    /// 短于 20 个字身则每行放不下一个完整句子。
+    const fn bounds(self) -> (i32, i32) {
+        match self {
+            Self::TextSize => (100, 400),
+            Self::LineHeight => (120, 300),
+            Self::Measure => (200, 1200),
+        }
+    }
+}
+
 /// Every change the interface may apply, as an exhaustive enum: there is no
 /// string key/value update path (SPEC 10.1).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub enum ConfigChange {
     KaraAutoEnter(bool),
     SetTheme(String),
@@ -585,6 +638,20 @@ pub enum ConfigChange {
     SetRailWidth(RailWidth),
     SetPanelAnimation(bool),
     SetTypography(TypographyConfig),
+    /// 改排版里的一项，其余保持不变。
+    ///
+    /// 与 `SetTypography` 分开是因为界面改的是一项。让它送整份，界面就得
+    /// 先持有另外 13 项的当前值——那是把这个结构的形状复制到界面里，而
+    /// 每加一个排版项都要改两处。更坏的是并发：作者调字号的那一刻若有
+    /// 另一处改过行高，整份替换会把行高改回界面读到的旧值。
+    ///
+    /// 钳位在这里而不在界面：范围是这些字段自己的性质。
+    AdjustTypography {
+        field: TypographyField,
+        /// 相对当前值的增量，单位与那个字段相同（十分之一像素、百分点、
+        /// 十分之一 em）。用增量而不是绝对值，是因为按钮做的就是「大一点」。
+        delta: i32,
+    },
     SaveTypographyPreset(String),
     RemoveTypographyPreset(Id),
     SetIconDigest(Option<String>),
@@ -595,6 +662,14 @@ pub enum ConfigChange {
     RemoveHarnessConnection(Id),
     UpsertAgent(AgentProfile),
     RemoveAgent(Id),
+    /// 改写全局的 Cosplay 演法预设。空字符串让 Cosplay 退回 Work 的形状。
+    SetCosplayPreset(String),
+    /// 把一个 Agent 的身份在 Work 与 Cosplay 之间切换，原文原样带过去。
+    ///
+    /// 与 `UpsertAgent` 分开：那条要整份 profile，而界面上作者按的是一个
+    /// 开关。让它送整份，就得先持有 argv、connection_id 与身份原文——
+    /// 与排版微调同一条理由。
+    ToggleAgentPersona(Id),
 }
 
 #[derive(Deserialize)]
@@ -663,6 +738,8 @@ impl ConfigV1 {
                 theme: self.appearance.theme,
                 typography,
                 typography_presets: Vec::new(),
+                // v1 没有 Cosplay：迁移过来的配置拿到默认演法预设。
+                cosplay_preset: default_cosplay_preset(),
                 paper: self.appearance.paper,
                 // v1 没有面板栈，迁移过来的配置落在默认值上：左侧、有动画、
                 // 实心面板、不点灯。
@@ -864,8 +941,47 @@ impl ConfigStore {
             ConfigChange::SetPanelAnimation(animated) => {
                 snapshot.config.appearance.panel_animation = animated;
             }
+            ConfigChange::ToggleAgentPersona(agent_id) => {
+                let Some(agent) = snapshot
+                    .config
+                    .agents
+                    .iter_mut()
+                    .find(|agent| agent.id == agent_id)
+                else {
+                    return Err(ConfigFailure::Invalid {
+                        detail: format!("agent {agent_id} does not exist"),
+                    });
+                };
+                // 没有身份就没有可切换的模式：切换会凭空造出一个空的
+                // Cosplay 身份，而作者什么也没写。
+                if let Some(persona) = &agent.persona {
+                    agent.persona = Some(persona.toggled());
+                }
+            }
+            ConfigChange::SetCosplayPreset(preset) => {
+                snapshot.config.appearance.cosplay_preset = preset;
+            }
             ConfigChange::SetTypography(typography) => {
                 snapshot.config.appearance.typography = typography;
+            }
+            ConfigChange::AdjustTypography { field, delta } => {
+                let typography = &mut snapshot.config.appearance.typography;
+                let (low, high) = field.bounds();
+                // 钳在这里而不在界面：范围是这些字段自己的性质，界面上
+                // 只是一个「大一点」的按钮。撞到边界就停在边界，不绕回——
+                // 绕回会让按住按钮的作者突然从最大跳到最小。
+                let current = match field {
+                    TypographyField::TextSize => i32::from(typography.text_size_tenths_px),
+                    TypographyField::LineHeight => i32::from(typography.line_height_percent),
+                    TypographyField::Measure => i32::from(typography.measure_tenths_em),
+                };
+                let next = current.saturating_add(delta).clamp(low, high);
+                let next = u16::try_from(next).unwrap_or(u16::MAX);
+                match field {
+                    TypographyField::TextSize => typography.text_size_tenths_px = next,
+                    TypographyField::LineHeight => typography.line_height_percent = next,
+                    TypographyField::Measure => typography.measure_tenths_em = next,
+                }
             }
             ConfigChange::SaveTypographyPreset(name) => {
                 let name = name.trim().to_string();

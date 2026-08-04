@@ -1,6 +1,30 @@
 # Agent rules
 
-Read [ARCHITECTURE.md](ARCHITECTURE.md) before editing. Use its glossary; do not invent a second term for an existing concept.
+Read [ARCHITECTURE.md](ARCHITECTURE.md) before editing. Use its glossary; do not
+invent a second term for an existing concept.
+
+## Be strategic
+
+You are spending someone else's token budget. Spend it on understanding, not on
+producing.
+
+1. **Read the code before you write any.** Find what already exists, what owns
+   the invariant you care about, and what the surrounding code looks like. Most
+   requested features are already half-built somewhere in this repository.
+2. **Run a few probes.** A ten-line probe that measures the real behaviour beats
+   an hour of reasoning about it. Two measured examples from this repository: the
+   line-break cost fell 92% because someone timed it instead of guessing; the
+   request cache-prefix rose from 1.1% to 53% because someone counted the shared
+   bytes instead of trusting a comment that said "stable order".
+3. **Work the logic until it is clear, then find the smallest change.** The best
+   change is often deleting a second authority, moving three lines, or reordering
+   an existing sequence. If your plan adds a module, say which invariant it owns.
+4. **Write code that reads like the code around it, or write no code at all.**
+   Match the surrounding naming, error handling, and comment style. New code that
+   looks foreign is a maintenance cost even when it is correct.
+5. **Do not add tests that cannot fail.** One discriminating test beats five
+   restatements of the implementation. Prove a new gate can go red before you
+   claim it guards anything.
 
 ## Ownership
 
@@ -10,17 +34,59 @@ Read [ARCHITECTURE.md](ARCHITECTURE.md) before editing. Use its glossary; do not
 - Do not create `utils`, `helpers`, or `common` modules.
 - Complete a migration in one semantic change. Remove the old authority and temporary adapters.
 
+## Reuse before writing
+
+Find the existing authority before you add one. Checked by review, not by a gate.
+
+1. **Search this repository first.** A rule, a guard, or a derivation usually
+   exists already. `ConfigChange` is the whole settings vocabulary;
+   `ProjectStore::document_file` already owns containment and INV-4;
+   `refrain_core::typeset` already owns line breaking.
+2. **Search the Native SDK second.** It ships 70 markup elements
+   (`primitives/canvas/ui_schema.zig`) and a design-token theme system. Use the
+   library composite and theme it; `native eject component <name>` transfers
+   ownership only when you must own the shape. Engine controls — button, text
+   field, tabs — never eject: change them through tokens.
+3. **Read the vendor's source, not its documentation.** Two measured cases:
+   the SDK draws only circular corners, so RefRain keeps its own superellipse;
+   the SDK already flips and clamps anchored surfaces, so RefRain deleted its
+   own placement code. Documentation answered neither question.
+4. **Design a new capability for more than its first caller.** State which
+   invariant it owns and which callers compose it. A capability with one call
+   site and no invariant is a rename, not a module.
+
+## Comments
+
+Required on new features and on interface code. Checked by review, not by a gate.
+
+A comment states three things and stops:
+
+- **what it connects to** — which feature this serves;
+- **what it owns globally** — the invariant or decision that lives here;
+- **what can be reused** — what a caller may build on.
+
+Keep it readable at a glance. Do not narrate syntax. Record a measurement or a
+correction that the code cannot state itself — `corners.zig` keeps
+"n = 4.2 is G3.2, not G4" because rewriting the module would lose it.
+
 ## Verification
 
-Run all four checks in this order:
+Run these in order. The order is load-bearing; see below.
 
 ```sh
 bun install
+bun run scriptc:build    # tier A gates run as compiled binaries
 bun run gate
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace --all-targets
+mkdir -p .tmp
+TMPDIR="$PWD/.tmp" cargo test --workspace --all-targets
 ```
+
+`bun run scriptc:build` must run before `gate`: the tier A gates execute the
+compiled artifact, so a source change that is not rebuilt leaves the gate
+testing the previous binary. A missing artifact fails the gate; it never falls
+back to the interpreter.
 
 `bun run gate` must run before cargo. The roundtrip corpora under `tests/corpora`
 are generated, not committed; `crates/refrain-core/tests/source_layout.rs` reads
@@ -53,13 +119,51 @@ Measure performance through the production path. Keep platform-specific claims o
 
 ## TypeScript
 
-- Keep `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`, and `noFallthroughCasesInSwitch` enabled.
-- Do not use `any`; accept `unknown` at a boundary and narrow it.
-- Use discriminated unions instead of independent Boolean state.
-- Keep imports static and at the top level.
-- Async and concurrent session code uses Effect. Read [EFFECT.md](EFFECT.md) for the territory map and the five canonical patterns before writing or reviewing it.
+**Read [EFFECT.md](EFFECT.md) before you write or review any TypeScript.** It
+holds the compiler settings, the type discipline, the territory map, and the five
+canonical patterns. This file does not repeat them.
+
+Two rules live here because they are not Effect's business:
+
+- The Native core subset (`apps/native/src/core.ts`) is not ordinary TypeScript.
+  See "The Native layers" below for what it can and cannot express.
+- Do not write JavaScript by hand.
+
+## The Native layers, and what each may hold
+
+Enforced by `native check . --strict` and by review.
+
+| Layer | Holds | Never holds |
+|---|---|---|
+| Rust (`refrain-app`, `refrain-core`) | Manuscript bytes, block identity, revision, config, every product rule | — |
+| C ABI + generated protocol | Memory layout, offsets, error codes, fingerprint | Product action semantics; those are Rust enums |
+| Zig (`apps/native/src/*.zig`) | Platform events, immutable projections, drawing, non-ASCII labels | A second copy of the text, selection, composition, or undo state |
+| TypeScript core (`core.ts`) | Interface state, stable identifiers, revision | Manuscript bytes; a document state machine |
+| Markup (`app.native`) | Structure and event bindings | Logic |
+
+Two limits the checker enforces, both of which move code to its right owner:
+
+- The core subset folds numbers, strings, `asciiBytes` literals, array tables
+  and interface-annotated record tables. An `as const` string table fails
+  `NS9001`; a Chinese label belongs in a Zig table beside the theme colours.
+- The core subset has no `Number()`. Parsing a key name into an ordinal is the
+  platform event layer's work, so the core receives the ordinal.
+
+A model field or `Msg` that only Zig reads must be listed in `viewUnbound`
+with the reason. The checker fails on an unlisted one.
 
 ## Generated and published files
+
+Generated by a script; edit the template, never the output:
+
+| File | Generator |
+|---|---|
+| `apps/native/src/generated/protocol.{ts,zig}`, `crates/.../protocol.rs`, `refrain_native.h` | `scripts/generate-native-protocol.ts` |
+| `apps/native/src/generated/themes.zig` | `scripts/generate-themes.ts` |
+| `docs/SKILL.md` | `refrain_core::agent_protocol::skill_doc()` |
+
+`bun run fmt` reorders generated files and drifts the protocol. Re-run the
+generator after formatting, then `bun scripts/generate-native-protocol.ts --check`.
 
 `docs/SKILL.md` is generated from `refrain_core::agent_protocol::skill_doc()`:
 

@@ -16,22 +16,26 @@ env:
   BUN_VERSION: 1.3.14
   SCRIPTC_VERSION: "0.0.21"
   RUST_VERSION: "1.97.1"
+  ZIG_VERSION: "0.16.0"
 
 jobs:
   quality:
-    name: quality (${{ matrix.name }})
+    name: quality (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: linux
+          - platform: linux
             os: ubuntu-latest
-          - name: windows
+            binary: zig-out/bin/refrain
+          - platform: windows
             os: windows-latest
-          - name: macos
+            binary: zig-out/bin/refrain.exe
+          - platform: macos
             os: macos-latest
+            binary: zig-out/bin/refrain
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -40,6 +44,13 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
+      # The Native SDK compiles the product surface. An unpinned Zig changes
+      # the binary under us, so the version is declared once and used by all
+      # three workflows.
+      - uses: mlugg/setup-zig@a67e68dc5c8281d9608136d3d7ca1b282213e4ac # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
@@ -47,21 +58,16 @@ jobs:
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
-      - name: Install Tauri libraries
+      # GTK4 is the Linux window host for the Native SDK. This is the whole
+      # platform dependency list now: no embedded browser, no app indicator,
+      # no SVG rasteriser.
+      - name: Install the Linux window libraries
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install --yes libgtk-4-dev
 
       - run: bun install --frozen-lockfile
-
-      - name: Install Playwright Chromium with Linux libraries
-        if: runner.os == 'Linux'
-        run: bun x playwright install --with-deps chromium
-
-      - name: Install Playwright Chromium
-        if: runner.os != 'Linux'
-        run: bun x playwright install chromium
 
       # Tier A gates run as compiled executables with no Bun fallback (D15),
       # so the gate cannot start until they exist.
@@ -86,50 +92,30 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace --all-targets
 
-      - name: Generated bindings are current
+      # The cross-boundary protocol is generated from one schema. Drift here is
+      # a silently rejected request at runtime, so it is checked, not trusted.
+      - name: Generated protocol is current
         if: runner.os == 'Linux'
         run: |
-          bun run generate
-          git diff --exit-code -- apps/desktop/src/generated
+          bun scripts/generate-native-protocol.ts --check
+          bun scripts/generate-themes.ts --check
+          git diff --exit-code -- apps/native/src/generated
 
-      - run: bun run build:web
+      - name: Build the Native platform binary
+        working-directory: apps/native
+        run: bun x native build . --yes -Dplatform=${{ matrix.platform }}
 
-      - name: Build the Windows shell
-        if: runner.os == 'Windows'
-        working-directory: apps/desktop
-        run: bun x tauri build --debug --no-bundle
-
-      - name: Start the debug frontend server
-        if: runner.os == 'Windows'
-        working-directory: apps/desktop
-        shell: pwsh
+      # Null platform has no GPU view, so it proves compilation and core logic
+      # on every runner while the real-window paths below prove the product.
+      - name: Native strict checks on the built contract
+        working-directory: apps/native
         run: |
-          # A debug binary does not embed the frontend; it loads it from the
-          # vite dev server, and without one the window is a blank error page.
-          Start-Process bun -ArgumentList "run","dev:web"
-          $deadline = (Get-Date).AddSeconds(90)
-          do {
-            Start-Sleep -Seconds 2
-            $ok = (Invoke-WebRequest -Uri "http://localhost:5173" -UseBasicParsing -TimeoutSec 2 -ErrorAction SilentlyContinue).StatusCode -eq 200
-          } until ($ok -or (Get-Date) -gt $deadline)
-          if (-not $ok) { throw "vite dev server did not answer 5173" }
+          bun run test:null
+          bun run check
 
-      - name: Install tauri-driver and a matching msedgedriver
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          cargo install tauri-driver --locked
-          # The runner's evergreen runtime lags the stable channel (150 vs
-          # 151+) and its browser process dies before DevToolsActivePort;
-          # bring it current first, then match the driver to it.
-          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $env:TEMP\wv2boot.exe
-          Start-Process -FilePath $env:TEMP\wv2boot.exe -ArgumentList "/silent", "/install" -Wait
-          $pv = (Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}').pv
-          "WebView2 runtime pv=$pv"
-          Invoke-WebRequest -Uri "https://msedgedriver.microsoft.com/$pv/edgedriver_win64.zip" -OutFile $env:TEMP\edgedriver.zip
-          Expand-Archive -Force $env:TEMP\edgedriver.zip $env:TEMP\edgedriver
-          "REFRAIN_MSEDGEDRIVER=$env:TEMP\edgedriver\msedgedriver.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
-
+      # Native automation replays a recorded journal against the real window.
+      # This replaces the embedded-browser drivers entirely: there is no
+      # browser in the product, so there is no browser in the gate.
       - name: Writing slice against the real window
         if: runner.os == 'Windows'
         run: bun run e2e:app
@@ -154,24 +140,9 @@ jobs:
         if: runner.os == 'Windows'
         with:
           name: refrain-windows-debug
-          path: target/debug/refrain-desktop.exe
+          path: apps/native/${{ matrix.binary }}
           if-no-files-found: error
           retention-days: 3
-
-  # Headless browser probes are evidence; the Windows real-window paths above remain blocking.
-  headless-evidence:
-    name: non-blocking headless evidence
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-      - run: bun install --frozen-lockfile
-      - run: bun x playwright install --with-deps chromium
-      - run: bun run evidence:headless
 
   # Shared-runner wall-clock results are non-blocking Windows evidence.
   performance-evidence:
@@ -184,6 +155,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - uses: mlugg/setup-zig@a67e68dc5c8281d9608136d3d7ca1b282213e4ac # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: ${{ env.RUST_VERSION }}

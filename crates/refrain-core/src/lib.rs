@@ -20,10 +20,12 @@ pub mod inline_span;
 pub mod kara;
 pub mod manuscript;
 pub mod material_listing;
+pub mod persona;
 pub mod role;
 pub mod search_rank;
 pub mod searchable_block;
 pub mod source_layout;
+pub mod typeset;
 pub mod upstream_work;
 
 pub use agent_protocol::{

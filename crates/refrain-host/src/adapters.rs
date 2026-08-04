@@ -505,6 +505,82 @@ mod tests {
         }
     }
 
+    /// The fixture child, built by the process module's test support.
+    fn fixture_program() -> PathBuf {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let workspace = manifest.parent().and_then(|path| path.parent()).unwrap();
+        let built = workspace
+            .join("target/debug/examples")
+            .join(format!("process_fixture{}", std::env::consts::EXE_SUFFIX));
+        if !built.exists() {
+            let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+            let status = std::process::Command::new(cargo)
+                .args([
+                    "build",
+                    "-p",
+                    "refrain-host",
+                    "--example",
+                    "process_fixture",
+                    "--offline",
+                ])
+                .current_dir(workspace)
+                .status()
+                .unwrap();
+            assert!(status.success(), "building the process fixture failed");
+        }
+        built
+    }
+
+    /// A refusal reported to the host must leave no producer still running.
+    ///
+    /// `observe` used to return the error frame the moment it read one, without
+    /// waiting for or cancelling the child. The producer stayed alive with the
+    /// host believing the Run had ended, and once it did exit nobody had
+    /// reaped it, so it became a zombie. The adapter reports what the producer
+    /// said; ending the process is the process module's job, and no return
+    /// path may skip it.
+    ///
+    /// Injecting the early return (return the error before `cancel_tree`)
+    /// leaves the fixture alive for its full sleep and turns this red.
+    #[test]
+    fn a_refused_frame_still_ends_the_producer_process() {
+        let adapter = ClaudePrint {
+            program: fixture_program(),
+            version: "fixture".to_string(),
+            env: Vec::new(),
+        };
+        let handle = process::launch(&LaunchSpec {
+            program: fixture_program(),
+            args: vec!["--refuse-then-linger".to_string(), "60".to_string()],
+            env: Vec::new(),
+            cwd: std::env::temp_dir(),
+        })
+        .unwrap();
+        let pid = handle.pid();
+        let receipt = DispatchReceipt {
+            receipt: format!("fixture:pid={pid}"),
+            handle,
+        };
+
+        let started = std::time::Instant::now();
+        let error = adapter
+            .observe(receipt)
+            .expect_err("the error frame is still reported to the host");
+        assert!(error.to_string().contains("audit refusal"));
+        assert!(
+            started.elapsed().as_secs() < 30,
+            "observe returned only after the producer finished on its own",
+        );
+
+        // The process must be gone, not merely un-waited: a zombie still holds
+        // a table entry, so the author's next dispatch competes with it.
+        #[cfg(unix)]
+        {
+            let alive = std::path::Path::new(&format!("/proc/{pid}")).exists();
+            assert!(!alive, "the refused producer is still in the process table");
+        }
+    }
+
     #[test]
     fn connection_environment_is_explicitly_selected() {
         let names = vec![
@@ -933,19 +1009,40 @@ impl HarnessAdapter for ClaudePrint {
         let DispatchReceipt { mut handle, .. } = receipt;
         let mut reply = String::new();
         let mut final_result: Option<(String, ProducerUsage)> = None;
+        let mut refusal: Option<io::Error> = None;
         if let Some(stdout) = handle.stdout() {
             for line in BufReader::new(stdout).lines() {
-                match claude_frame(&line?) {
+                let line = match line {
+                    Ok(line) => line,
+                    Err(error) => {
+                        refusal = Some(error);
+                        break;
+                    }
+                };
+                match claude_frame(&line) {
                     ClaudeFrame::Assistant(text) => reply.push_str(&text),
                     ClaudeFrame::Result { reply: text, usage } => {
                         final_result = Some((text, usage));
                     }
+                    // The refusal is reported, but not before the producer is
+                    // ended: returning here used to leave it running with the
+                    // host believing the Run had finished, and unreaped once it
+                    // did exit. The adapter says what the producer said; ending
+                    // the process stays with the process module.
                     ClaudeFrame::Refused(reason) => {
-                        return Err(io::Error::new(io::ErrorKind::InvalidData, reason));
+                        refusal = Some(io::Error::new(io::ErrorKind::InvalidData, reason));
+                        break;
                     }
                     ClaudeFrame::Other => {}
                 }
             }
+        }
+        if let Some(error) = refusal {
+            // The producer is still running and has stopped being useful, so
+            // stop the tree rather than waiting out a child that may never
+            // exit. A cancel that itself fails is reported instead of hidden.
+            handle.cancel_tree()?;
+            return Err(error);
         }
         let ProcessOutcome { code, .. } = handle.wait()?;
         let (reply_text, usage) = match final_result {

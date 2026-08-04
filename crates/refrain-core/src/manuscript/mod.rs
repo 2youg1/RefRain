@@ -624,6 +624,14 @@ pub struct Manuscript {
     scan: BlockScan,
 }
 
+struct LocalUndoPlan {
+    restored: TextHead,
+    materialized: ByteSequence,
+    byte_patch: BytePatch,
+    block_index: usize,
+    restored_block_len: usize,
+}
+
 fn local_replacement(
     editor: &EditorAction,
     at: &HashMap<Id, usize>,
@@ -640,6 +648,28 @@ fn local_replacement(
         return None;
     }
     at.get(block).copied()
+}
+
+fn undo_record(current_head: Id, restored: &TextHead, action: &TextAction) -> TextAction {
+    let inverted: Vec<AppliedRegion> = action
+        .regions
+        .iter()
+        .map(|region| AppliedRegion {
+            before: region.after.clone(),
+            after: region.before.clone(),
+            left: region.left,
+            right: region.right,
+        })
+        .collect();
+    TextAction {
+        id: Id::new(),
+        base: current_head,
+        cause: restored.cause.clone(),
+        touched: action.touched.clone(),
+        edits: edits_from_regions(&inverted),
+        regions: inverted.into_boxed_slice(),
+        verdicts: Box::default(),
+    }
 }
 
 impl Manuscript {
@@ -764,6 +794,75 @@ impl Manuscript {
         &self.actions
     }
 
+    fn local_undo_plan(&self, action: &TextAction) -> Result<Option<LocalUndoPlan>, TextRefusal> {
+        let [region] = action.regions.as_ref() else {
+            return Ok(None);
+        };
+        let ([before], [after]) = (region.before.as_ref(), region.after.as_ref()) else {
+            return Ok(None);
+        };
+        if before.id != after.id {
+            return Ok(None);
+        }
+        let index = self
+            .block_at
+            .get(&after.id)
+            .copied()
+            .ok_or(TextRefusal::NotInvertible { action: action.id })?;
+        if self.head.blocks.get(index) != Some(after) {
+            return Err(TextRefusal::NotInvertible { action: action.id });
+        }
+        let span = self
+            .offsets
+            .span(index)
+            .ok_or(TextRefusal::SourceDrift(SourceDrift))?;
+        let replacement = before.text.as_str().as_bytes();
+        let byte_patch = BytePatch::at(&self.materialized, span.start, span.end, replacement);
+        let materialized = self
+            .materialized
+            .replace(span.start..span.end, replacement)
+            .ok_or(TextRefusal::SourceDrift(SourceDrift))?;
+        Ok(Some(LocalUndoPlan {
+            restored: TextHead {
+                id: action.base,
+                blocks: self.head.blocks.replace(index, before.clone()),
+                cause: format!("undo: {}", action.cause),
+            },
+            materialized,
+            byte_patch,
+            block_index: index,
+            restored_block_len: replacement.len(),
+        }))
+    }
+
+    fn finish_undo(
+        &mut self,
+        restored: TextHead,
+        byte_patch: BytePatch,
+        undo: TextAction,
+    ) -> TextTransition {
+        self.head = restored.clone();
+        let done = self
+            .actions
+            .pop()
+            .expect("an undo plan saw the last action");
+        self.action_at.remove(&done.id);
+        // A block has no back-pointer to its earlier actions, so a pop cannot
+        // repair `last_touched` selectively: rebuild walks the remaining
+        // history once, which an interactive undo affords.
+        self.last_touched = self
+            .actions
+            .iter()
+            .enumerate()
+            .flat_map(|(index, action)| action.touched.iter().map(move |block| (*block, index)))
+            .collect();
+        TextTransition {
+            action: undo,
+            head: restored,
+            byte_patch,
+        }
+    }
+
     /// Revert the most recent Text Action, restoring the head it was based on.
     ///
     /// The inverse comes out of the action's own regions: every region records
@@ -780,38 +879,37 @@ impl Manuscript {
     ///   inverse exists, but reverting merged text would falsify the Verdict
     ///   Ledger, which already recorded those decisions.
     pub fn undo_last(&mut self) -> Result<TextTransition, TextRefusal> {
-        let action = self.actions.last().ok_or(TextRefusal::NothingToUndo)?;
-        if !action.verdicts.is_empty() {
-            return Err(TextRefusal::NotInvertible { action: action.id });
-        }
-        let restored = TextHead {
-            id: action.base,
-            blocks: BlockSequence::from_vec(action::invert(&self.head, action)?),
-            cause: format!("undo: {}", action.cause),
+        let local = {
+            let action = self.actions.last().ok_or(TextRefusal::NothingToUndo)?;
+            if !action.verdicts.is_empty() {
+                return Err(TextRefusal::NotInvertible { action: action.id });
+            }
+            self.local_undo_plan(action)?
         };
-        let after = materialize::blocks(&self.source, &self.original_ids, restored.blocks())?;
-        let byte_patch = BytePatch::between(&self.materialized, &after);
-        // The undo is itself reported as a transition, so the caller learns
-        // what moved exactly as it does for a forward action. The record is
-        // not pushed: undo consumes the action it reverts, it does not add one.
-        let inverted: Vec<AppliedRegion> = action
-            .regions
-            .iter()
-            .map(|region| AppliedRegion {
-                before: region.after.clone(),
-                after: region.before.clone(),
-                left: region.left,
-                right: region.right,
-            })
-            .collect();
-        let undo = TextAction {
-            id: Id::new(),
-            base: self.head.id,
-            cause: restored.cause.clone(),
-            touched: action.touched.clone(),
-            edits: edits_from_regions(&inverted),
-            regions: inverted.into_boxed_slice(),
-            verdicts: Box::default(),
+        if let Some(plan) = local {
+            let undo = undo_record(
+                self.head.id,
+                &plan.restored,
+                self.actions.last().expect("the local plan saw an action"),
+            );
+            self.offsets
+                .replace(plan.block_index, plan.restored_block_len)
+                .ok_or(TextRefusal::SourceDrift(SourceDrift))?;
+            self.materialized = plan.materialized;
+            return Ok(self.finish_undo(plan.restored, plan.byte_patch, undo));
+        }
+
+        let (restored, after, byte_patch, undo) = {
+            let action = self.actions.last().expect("the local plan saw an action");
+            let restored = TextHead {
+                id: action.base,
+                blocks: BlockSequence::from_vec(action::invert(&self.head, action)?),
+                cause: format!("undo: {}", action.cause),
+            };
+            let after = materialize::blocks(&self.source, &self.original_ids, restored.blocks())?;
+            let byte_patch = BytePatch::between(&self.materialized, &after);
+            let undo = undo_record(self.head.id, &restored, action);
+            (restored, after, byte_patch, undo)
         };
         self.offsets = BlockOffsets::from_spans(self.scan.layout(&after).blocks().to_vec());
         self.materialized = ByteSequence::from_vec(after);
@@ -821,23 +919,7 @@ impl Manuscript {
             .enumerate()
             .map(|(index, block)| (block.id, index))
             .collect();
-        self.head = restored.clone();
-        let done = self.actions.pop().expect("last() saw an action");
-        self.action_at.remove(&done.id);
-        // A block has no back-pointer to its earlier actions, so a pop cannot
-        // repair `last_touched` selectively: rebuild walks the remaining
-        // history once, which an interactive undo affords.
-        self.last_touched = self
-            .actions
-            .iter()
-            .enumerate()
-            .flat_map(|(index, action)| action.touched.iter().map(move |block| (*block, index)))
-            .collect();
-        Ok(TextTransition {
-            action: undo,
-            head: restored,
-            byte_patch,
-        })
+        Ok(self.finish_undo(restored, byte_patch, undo))
     }
 
     /// Revert to just after `target`: undo every action newer than it.
@@ -986,22 +1068,10 @@ impl Manuscript {
             }
         }
 
-        let block_count = self.head.blocks.len();
-        let first = (0..block_count)
-            .rev()
-            .find(|index| {
-                self.offsets
-                    .span(*index)
-                    .is_some_and(|span| span.start <= range.start)
-            })
-            .unwrap_or(0);
-        let last = (first..block_count)
-            .find(|index| {
-                self.offsets
-                    .span(*index)
-                    .is_some_and(|span| span.end >= range.end)
-            })
-            .unwrap_or(block_count.saturating_sub(1));
+        let (first, last) = self
+            .offsets
+            .envelope(range.start, range.end)
+            .ok_or(TextRefusal::SourceDrift(SourceDrift))?;
         let first_span = self
             .offsets
             .span(first)

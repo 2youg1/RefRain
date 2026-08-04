@@ -41,6 +41,7 @@ fn store_at(root: &Path) -> (Connection, ProjectStore) {
 fn package() -> DispatchPackage {
     DispatchPackage {
         scopes: Vec::new(),
+        prefix_bytes: 0,
         request_md: format!(
             "# Before\n\n<!-- scope ch01:b1 -->\n{FIRST}\n\n# Request\n\n改克制些。\n"
         ),

@@ -1,12 +1,12 @@
 {
   "name": "@refrain/native",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "private": true,
   "type": "module",
   "scripts": {
     "check": "native check . --strict",
     "build:null": "native build . --yes -Dplatform=null",
-    "test:null": "native test . --yes -Dplatform=null",
+    "test:null": "REFRAIN_NATIVE_SCALE_FIXTURE=1 native test . --yes -Dplatform=null",
     "core": "native dev . --core"
   },
   "dependencies": {

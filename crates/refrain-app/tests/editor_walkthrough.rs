@@ -77,6 +77,7 @@ fn manuscripts(root: &Path) -> HashMap<String, Manuscript> {
 fn package_for(scope_text: &str) -> DispatchPackage {
     DispatchPackage {
         scopes: Vec::new(),
+        prefix_bytes: 0,
         request_md: format!(
             "# Before\n\n<!-- scope ch01:b1 -->\n{scope_text}\n\n# Request\n\n这一段改得克制些。\n"
         ),

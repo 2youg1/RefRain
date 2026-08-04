@@ -66,18 +66,19 @@ Markdown 不是唯一可编辑的格式。LaTeX、TypeScript、Rust、Python、G
 HTML、XML、TOML、YAML 都能以纯文本打开、编辑、逐字节存回原格式——内嵌高亮按扩展名
 选语法，Markdown 的分块与排版机制一律不碰源码。
 
-Markdown 就地渲染，不在旁边另开一块预览。断行由 RefRain 自己算而不是交给浏览器，
-所以行尾的全角标点会压掉半个字身、日文预设下还会悬到版心外，而且断在哪里在三个
-平台上完全一致。强调、加粗、行内代码、删除线都画出来，
-而标记符仍然留在原处、画淡——你看到的仍然是文件里的东西。GFM 表格的列会对齐，
-而源文本一个空格都没有多。`mermaid` 或 `nomnoml` 围栏会在它自己的源码旁画成一张
-图；渲染器不认识的图种保留围栏、按文本显示——画不出的图不该让你的文字消失。
+断行由 RefRain 自己算——因为没有哪个引擎能把中文断对：被它取代的那个只认空格和
+制表符，而中文段落两样都没有。RefRain 按 CLREQ 的断行规则来：行尾的全角标点压掉
+半个字身，不可分的单元宁可溢出也不硬切，而且断在哪里在三个平台上逐字节一致，
+因为算法是一个 Rust 模块，不是三个浏览器引擎。
 
-导入的 PDF 可以在稿子旁边打开，按它原本的版面一页页读。RefRain 永远不往那个文件
-写回去——导入抽的是文本，写回等于用一份残缺的模型覆盖原件。
+**换栈进行到哪一步。** RefRain 正在迁到原生渲染路径上。领域层——正文字节、块身份、
+裁决、编排、PDF 文本抽取——整体带了过来，且有测试守着。界面按屏重建，所以 v0.2.4
+已发布的那些功能（就地渲染、表格、图表、PDF 阅读、批注、搜索结果、历史）
+**暂时没有界面**：它们的规则与依赖都还在，每接上一屏就回来一项。
+产品没有删掉任何功能，变的是画它的那一层。
 
-还有些每天都会碰到的小事：搜索结果会把命中的那句话显示出来、查询词标在里面——
-点一条就把光标放进那一块，而不是落在文件开头；标点宽度建议、空段清理、不会留下
+还有些每天都会碰到的小事（同样规则还在、界面待接）：搜索结果会把命中的那句话
+显示出来、查询词标在里面；标点宽度建议、空段清理、不会留下
 `****` 残渣的三态行内
 格式、标题引用列表的三态命令、宁可请你重新锚定也不乱猜的批注，以及保存失败时告诉
 你下一步该做什么。
@@ -108,11 +109,11 @@ Markdown 就地渲染，不在旁边另开一块预览。断行由 RefRain 自�
 
 ## 安装
 
-到 [Releases](https://github.com/kaile9/RefRain/releases/latest) 下载 Windows
-安装包。缺 WebView2 时由引导程序装上。
+RefRain 还没有发布。应用能从同一份清单构建并运行在 Windows、macOS 与 Linux 上，
+但没有任何一个平台走过真实的安装流程，所以不提供下载。
 
-macOS 与 Linux 在计划内但尚未发布：本仓库里的每个数字都出自 Linux，而在某个平台上
-实测之前，不会替那个平台作任何声称。
+本仓库里的每个数字都出自 Linux。在某个平台上实测之前，不会替那个平台作任何声称
+——尤其是 Windows 与 macOS 的输入法链路，代码写好了但还没有在真机上签字。
 
 ### 从源码构建
 
@@ -120,16 +121,19 @@ macOS 与 Linux 在计划内但尚未发布：本仓库里的每个数字都出�
 
 ```sh
 bun install
-bun x tauri build
+cd apps/native && ./node_modules/.bin/native build . --yes
 ```
 
-提交前跑齐四道检查——Rust 那三道不在 `bun run gate` 里面：
+提交前按这个顺序跑——顺序是承重的：
 
 ```sh
+bun install
+bun run scriptc:build    # tier A 门禁跑的是编译产物
+bun run gate             # 它生成 Rust 测试要读的语料
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace --all-targets
-bun run gate
+mkdir -p .tmp
+TMPDIR="$PWD/.tmp" cargo test --workspace --all-targets
 ```
 
 ## 文档
@@ -145,15 +149,17 @@ bun run gate
 | | |
 |---|---|
 | **内核** | [Rust](https://rust-lang.org) — 领域模型、存储、智能体编排 |
-| **桌面外壳** | [Tauri](https://tauri.app) + [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) |
-| **界面** | [SolidJS](https://solidjs.com)、`strict` 下的 [TypeScript](https://www.typescriptlang.org)、[Biome](https://biomejs.dev) |
+| **应用外壳** | [Native SDK](https://native-sdk.dev)——原生渲染。交付的二进制里没有 WebView，也没有 JavaScript 运行时。 |
+| **界面** | `.native` 标记、受限的 [TypeScript](https://www.typescriptlang.org) 子集（只管界面状态）、[Zig](https://ziglang.org)（平台事件与绘制） |
 | **编辑器内核** | 无框架直接操作 DOM；正本字节归 Rust 所有 |
 | **存储** | [SQLite](https://sqlite.org)（经 [rusqlite](https://github.com/rusqlite/rusqlite)）；FTS5 `unicode61` 配应用层 bigram 分词 |
 | **标识** | [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) 摘要、[UUID](https://github.com/uuid-rs/uuid) v7 |
 | **类型桥** | [Serde](https://serde.rs) 与 [Specta](https://github.com/specta-rs/specta)，TypeScript 类型由后者生成 |
-| **高亮** | [Shiki](https://shiki.style)，入口精确注册，运行期不触网 |
+| **断行** | `refrain_core::typeset`——自研，因为没有引擎能把中文断对（见上） |
+| **高亮** | Native SDK 自带的 `code` 部件——17 门语法编译进二进制，运行期不加载任何语法包，也不触网 |
 | **图表** | [nomnoml](https://github.com/skanaar/nomnoml)，gzip 后 26 KB，另有一层转换接受 Mermaid 流程图语法 |
-| **导入的原件** | [pdf.js](https://mozilla.github.io/pdf.js/) 把导入的 PDF 画出来供阅读；四个取远程资源的入口一个都不传，worker 打进产物并从 blob URL 运行 |
+| **导入的原件** | 文本由 Rust 侧的 `lopdf` 抽取——无渲染器、无浏览器引擎。每页的字带一个 `<!-- p.N -->` 页锚，所以一句引文说得出它出自第几页，读者也回得到原件 |
+| **构建工具** | [ScriptC](https://github.com/vercel-labs/scriptc) 把门禁与发布脚本编译成原生二进制，其余由 [Bun](https://bun.sh) 跑。两者都不进产物。 |
 | **构建与发布** | [Bun](https://bun.sh) 与 [Node.js](https://nodejs.org)，仅构建期使用；[ScriptC](https://github.com/vercel-labs/scriptc) 把发布策略编译成原生可执行文件 |
 
 搜索索引为什么用 bigram 而不是 trigram 或分词器——连同定下这件事的实测数据——写在
@@ -164,17 +170,6 @@ bun run gate
 [MPL 2.0](LICENSE)。
 
 ## 致谢
-
-**[Shiki](https://shiki.style)**（MIT）提供语法高亮。RefRain 精确注册它的入口，使
-高亮永不触网——这一点是这个库让我们做到的，而不是我们跟它较劲得来的。
-
-**[nomnoml](https://github.com/skanaar/nomnoml)**（MIT，Daniel Kallin）提供图表
-渲染。它用 26 KB 纯 JavaScript 画出一张流程图，不带 WASM，不发一个请求——一个
-可以整个打进「永不触网」的应用里的图表库。次近的备选比它大 36 倍。
-
-**[pdf.js](https://mozilla.github.io/pdf.js/)**（Apache-2.0，Mozilla）把导入的
-PDF 按它原本的页面画出来。四个会取远程资源的入口都是可选而非带默认值的，因此
-不传就等于关上——一个不需要打补丁就能让离线应用保持离线的库。
 
 内嵌的字体，均遵循
 [SIL 开放字体许可 1.1](https://openfontlicense.org)：
