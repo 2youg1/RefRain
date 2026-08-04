@@ -37,7 +37,7 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - uses: mlugg/setup-zig@a67e68dc5c8281d9608136d3d7ca1b282213e4ac # v2
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: ${{ env.ZIG_VERSION }}
 
@@ -59,7 +59,7 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - uses: mlugg/setup-zig@a67e68dc5c8281d9608136d3d7ca1b282213e4ac # v2
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: ${{ env.ZIG_VERSION }}
 
@@ -122,7 +122,7 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - uses: mlugg/setup-zig@a67e68dc5c8281d9608136d3d7ca1b282213e4ac # v2
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: ${{ env.ZIG_VERSION }}
 

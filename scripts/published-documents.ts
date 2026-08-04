@@ -24,6 +24,7 @@ export const PUBLISHED = {
   "docs/ROADMAP.md": "what is planned",
   "docs/AGENTS.md": "working discipline for agents",
   "docs/SKILL.md": "the agent protocol (generated)",
+  "e2e/native/README.md": "how to record and replay the session E2E journals",
 } as const satisfies Record<string, string>;
 
 /** The published paths, for a gate that only needs membership. */
