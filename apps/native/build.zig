@@ -41,15 +41,21 @@ pub fn build(b: *std.Build) void {
     rust_host.addArgs(&.{ "-p", "refrain-native-host", "--release" });
     rust_host.addFileInput(b.path("../../Cargo.lock"));
 
-    // Cargo names a staticlib after the target's own convention: MSVC emits
-    // `refrain_native_host.lib`, every other target `librefrain_native_host.a`.
-    // A single hard-coded name builds on Linux and fails on Windows with
-    // `file_hash FileNotFound` AFTER cargo has already succeeded — the archive
-    // is there, under the other name.
+    // Cargo names a staticlib the way ITS toolchain does, which is not the
+    // same axis as zig's target. On Windows the Rust toolchain is the MSVC
+    // one (`x86_64-pc-windows-msvc`), so cargo writes
+    // `refrain_native_host.lib` — no lib prefix, different extension — while
+    // zig's own default ABI there is gnu. Keying off zig's ABI therefore
+    // reads `gnu` and looks for the POSIX name that will never exist; key off
+    // the OS, which is what decides cargo's naming here.
+    //
+    // The failure this prevents is misleading: cargo succeeds, and the build
+    // dies afterwards in the copy step with `file_hash FileNotFound`.
     const host_os = artifacts.exe.root_module.resolved_target.?.result.os.tag;
-    const host_abi = artifacts.exe.root_module.resolved_target.?.result.abi;
-    const msvc = host_os == .windows and host_abi == .msvc;
-    const archive_name = if (msvc) "refrain_native_host.lib" else "librefrain_native_host.a";
+    const archive_name = if (host_os == .windows)
+        "refrain_native_host.lib"
+    else
+        "librefrain_native_host.a";
 
     const stage_host = b.addSystemCommand(&.{"cp"});
     stage_host.step.dependOn(&rust_host.step);
