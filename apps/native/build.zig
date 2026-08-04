@@ -62,9 +62,17 @@ pub fn build(b: *std.Build) void {
     stage_host.addFileArg(b.path(b.fmt("../../target/release/{s}", .{archive_name})));
     const archive = stage_host.addOutputFileArg(archive_name);
     artifacts.exe.root_module.addObjectFile(archive);
-    artifacts.tests.root_module.addObjectFile(archive);
     linkRustRuntime(artifacts.exe.root_module);
-    linkRustRuntime(artifacts.tests.root_module);
+    // `native build -Doptimize=ReleaseFast` reuses the executable module as
+    // the test module (SDK build/app.zig:609). Adding the archive and runtime
+    // libraries to both then puts the same staticlib on ONE link line twice;
+    // lld extracts Rust's compiler_builtins twice and reports duplicate
+    // __udivti3/__divti3. Only configure the second module when it is actually
+    // distinct (Debug `native test` is the common case).
+    if (artifacts.tests.root_module != artifacts.exe.root_module) {
+        artifacts.tests.root_module.addObjectFile(archive);
+        linkRustRuntime(artifacts.tests.root_module);
+    }
 }
 
 /// Cargo reports these Linux native-static-libs for the stateful Rust archive.

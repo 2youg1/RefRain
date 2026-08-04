@@ -52,6 +52,8 @@ describe("Native portable release workflows", () => {
     const all = `${release}\n${gate}\n${ime}`;
 
     expect(release).toContain("bun x native package --target windows");
+    expect(release).toContain("-Dtarget=x86_64-windows-msvc");
+    expect(release).toContain("--binary zig-out/bin/refrain.exe");
     expect(release).toContain("target/scriptc/release-assets.exe");
     expect(release).toContain("release-assets/refrain-windows-x64.zip");
     expect(release).toContain("python3 -m zipfile -t");
@@ -125,5 +127,25 @@ describe("Native portable release workflows", () => {
     const result = verify(root);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("upload only the portable ZIP");
+  });
+
+  test("rejects a Windows build that differs only by falling back to Zig's GNU ABI", () => {
+    const root = fixture();
+    rewrite(root, ".github/workflows/release.yml", (source) =>
+      source.replace(" -Dtarget=x86_64-windows-msvc", ""),
+    );
+    const result = verify(root);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("match Zig to Cargo's Windows MSVC archive");
+  });
+
+  test("rejects packaging that can rebuild instead of consuming the proven executable", () => {
+    const root = fixture();
+    rewrite(root, ".github/workflows/release.yml", (source) =>
+      source.replace("            --binary zig-out/bin/refrain.exe `\n", ""),
+    );
+    const result = verify(root);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("package the binary already proven by the MSVC build");
   });
 });

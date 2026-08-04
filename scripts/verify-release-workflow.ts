@@ -35,8 +35,10 @@ function forbidPattern(file: string, text: string, pattern: RegExp, meaning: str
 
 const releaseRequirements: ReadonlyArray<readonly [string, string]> = [
   ["bun x native build . --yes -Dplatform=windows", "build the Native Windows binary"],
+  ["-Dtarget=x86_64-windows-msvc", "match Zig to Cargo's Windows MSVC archive"],
   ["bun x native package --target windows", "obtain the Native application directory"],
   ["--output ../../target/native/refrain-windows-x64", "write one closed application directory"],
+  ["--binary zig-out/bin/refrain.exe", "package the binary already proven by the MSVC build"],
   ["--web-layer exclude", "exclude the legacy web layer"],
   ["--signing none", "declare the unsigned portable-package boundary"],
   ["scriptc build scripts/verify-release-version.ts", "compile the release version gate"],
@@ -86,6 +88,7 @@ const gateRequirements: ReadonlyArray<readonly [string, string]> = [
   ["platform: linux", "define the Native Linux build"],
   ["platform: windows", "define the Native Windows build"],
   ["platform: macos", "define the Native macOS build"],
+  ["target_arg: -Dtarget=x86_64-windows-msvc", "match the Windows Zig and Cargo ABIs"],
   [
     "bun x native build . --yes -Dplatform=$" + "{{ matrix.platform }}",
     "build the Native platform binary",
@@ -105,6 +108,7 @@ for (const [literal, meaning] of gateRequirements) {
 // non-zero exit. The old WebView2 analyzer pair went out with the web layer.
 const imeRequirements: ReadonlyArray<readonly [string, string]> = [
   ["bun x native build . --yes -Dplatform=windows", "build the Native Windows IME target"],
+  ["-Dtarget=x86_64-windows-msvc", "match the IME binary's Zig and Cargo ABIs"],
   ["-Shell native", "drive the Native IME harness"],
   ["-Binary apps/native/zig-out/bin/refrain.exe", "name the real Native IME binary"],
   ["bun e2e/ime/assert-native.ts", "enforce Native IME acceptance"],

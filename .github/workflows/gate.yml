@@ -38,12 +38,15 @@ jobs:
           - platform: linux
             os: ubuntu-latest
             binary: zig-out/bin/refrain
+            target_arg: ""
           - platform: windows
             os: windows-latest
             binary: zig-out/bin/refrain.exe
+            target_arg: -Dtarget=x86_64-windows-msvc
           - platform: macos
             os: macos-latest
             binary: zig-out/bin/refrain
+            target_arg: ""
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -111,7 +114,7 @@ jobs:
 
       - name: Build the Native platform binary
         working-directory: apps/native
-        run: bun x native build . --yes -Dplatform=${{ matrix.platform }}
+        run: bun x native build . --yes -Dplatform=${{ matrix.platform }} ${{ matrix.target_arg }}
 
       # Null platform has no GPU view, so it proves compilation and core logic
       # on every runner while the real-window paths below prove the product.

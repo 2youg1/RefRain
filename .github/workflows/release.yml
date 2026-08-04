@@ -93,7 +93,7 @@ jobs:
 
       - name: Build the Native Windows binary
         working-directory: apps/native
-        run: bun x native build . --yes -Dplatform=windows -Doptimize=ReleaseFast
+        run: bun x native build . --yes -Dplatform=windows -Dtarget=x86_64-windows-msvc -Doptimize=ReleaseFast
 
       # `native package` produces the application directory. It does not produce
       # the public asset: ScriptC owns the archive so the bytes are ours and
@@ -103,6 +103,7 @@ jobs:
         run: |
           bun x native package --target windows `
             --output ../../target/native/refrain-windows-x64 `
+            --binary zig-out/bin/refrain.exe `
             --web-layer exclude `
             --signing none
 
