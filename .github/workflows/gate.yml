@@ -38,15 +38,12 @@ jobs:
           - platform: linux
             os: ubuntu-latest
             binary: zig-out/bin/refrain
-            target_arg: ""
           - platform: windows
             os: windows-latest
             binary: zig-out/bin/refrain.exe
-            target_arg: -Dtarget=x86_64-windows-msvc
           - platform: macos
             os: macos-latest
             binary: zig-out/bin/refrain
-            target_arg: ""
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -62,10 +59,26 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
 
+      - name: Expose Zig's dlltool to Rust GNU target
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $shim = Join-Path $env:RUNNER_TEMP "refrain-zig-shims"
+          New-Item -ItemType Directory -Force $shim | Out-Null
+          foreach ($name in @("dlltool.cmd", "x86_64-w64-mingw32-dlltool.cmd")) {
+            Set-Content -Path (Join-Path $shim $name) `
+              -Value "@echo off`r`nzig dlltool %*" -Encoding Ascii
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $shim
+
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
           components: rustfmt, clippy
+
+      - name: Match Cargo to the Native SDK Windows ABI
+        if: runner.os == 'Windows'
+        run: rustup target add x86_64-pc-windows-gnu
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
@@ -114,7 +127,7 @@ jobs:
 
       - name: Build the Native platform binary
         working-directory: apps/native
-        run: bun x native build . --yes -Dplatform=${{ matrix.platform }} ${{ matrix.target_arg }}
+        run: bun x native build . --yes -Dplatform=${{ matrix.platform }}
 
       # Null platform has no GPU view, so it proves compilation and core logic
       # on every runner while the real-window paths below prove the product.

@@ -52,7 +52,8 @@ describe("Native portable release workflows", () => {
     const all = `${release}\n${gate}\n${ime}`;
 
     expect(release).toContain("bun x native package --target windows");
-    expect(release).toContain("-Dtarget=x86_64-windows-msvc");
+    expect(release).toContain("rustup target add x86_64-pc-windows-gnu");
+    expect(release).toContain("zig dlltool %*");
     expect(release).toContain("--binary zig-out/bin/refrain.exe");
     expect(release).toContain("target/scriptc/release-assets.exe");
     expect(release).toContain("release-assets/refrain-windows-x64.zip");
@@ -129,14 +130,24 @@ describe("Native portable release workflows", () => {
     expect(result.stderr).toContain("upload only the portable ZIP");
   });
 
-  test("rejects a Windows build that differs only by falling back to Zig's GNU ABI", () => {
+  test("rejects a Windows build that omits Cargo's matching GNU target", () => {
     const root = fixture();
     rewrite(root, ".github/workflows/release.yml", (source) =>
-      source.replace(" -Dtarget=x86_64-windows-msvc", ""),
+      source.replace("rustup target add x86_64-pc-windows-gnu", "rustup show"),
     );
     const result = verify(root);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("match Zig to Cargo's Windows MSVC archive");
+    expect(result.stderr).toContain("match Cargo to the Native SDK Windows ABI");
+  });
+
+  test("rejects a GNU Rust build without the pinned Zig dlltool shim", () => {
+    const root = fixture();
+    rewrite(root, ".github/workflows/release.yml", (source) =>
+      source.replace("zig dlltool %*", "echo missing dlltool"),
+    );
+    const result = verify(root);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("expose pinned Zig as Rust GNU dlltool");
   });
 
   test("rejects packaging that can rebuild instead of consuming the proven executable", () => {
@@ -146,6 +157,6 @@ describe("Native portable release workflows", () => {
     );
     const result = verify(root);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("package the binary already proven by the MSVC build");
+    expect(result.stderr).toContain("package the binary already proven by the ABI-aligned build");
   });
 });

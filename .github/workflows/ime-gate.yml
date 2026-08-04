@@ -63,9 +63,23 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
 
+      - name: Expose Zig's dlltool to Rust GNU target
+        shell: pwsh
+        run: |
+          $shim = Join-Path $env:RUNNER_TEMP "refrain-zig-shims"
+          New-Item -ItemType Directory -Force $shim | Out-Null
+          foreach ($name in @("dlltool.cmd", "x86_64-w64-mingw32-dlltool.cmd")) {
+            Set-Content -Path (Join-Path $shim $name) `
+              -Value "@echo off`r`nzig dlltool %*" -Encoding Ascii
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $shim
+
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Match Cargo to the Native SDK Windows ABI
+        run: rustup target add x86_64-pc-windows-gnu
 
       - run: bun install --frozen-lockfile
 
@@ -87,7 +101,7 @@ jobs:
       # nothing about what the author types.
       - name: Build the shipping Native executable with automation evidence
         working-directory: apps/native
-        run: bun x native build . --yes -Dplatform=windows -Dtarget=x86_64-windows-msvc -Dautomation=true -Doptimize=ReleaseFast
+        run: bun x native build . --yes -Dplatform=windows -Dautomation=true -Doptimize=ReleaseFast
 
       - name: Drive the Native GPU document surface with Microsoft Pinyin
         shell: pwsh

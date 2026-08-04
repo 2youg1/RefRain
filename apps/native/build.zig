@@ -36,30 +36,30 @@ pub fn build(b: *std.Build) void {
     const test_runner = artifacts.tests.root_module.import_table.get("runner").?;
     artifacts.tests.root_module.addImport("app_manifest_zon", test_runner.import_table.get("app_manifest_zon").?);
 
+    const host_os = artifacts.exe.root_module.resolved_target.?.result.os.tag;
     const rust_host = b.addSystemCommand(&.{ "cargo", "build", "--manifest-path" });
     rust_host.addFileArg(b.path("../../Cargo.toml"));
     rust_host.addArgs(&.{ "-p", "refrain-native-host", "--release" });
+    // Native SDK's Windows host is a Zig/MinGW C++ graph. Cargo must emit the
+    // matching GNU COFF archive instead of the runner's default MSVC archive;
+    // mixing them either requests MSVCRT import archives that Zig does not own
+    // or mixes MSVC headers with Zig libc++.
+    const rust_target: ?[]const u8 = if (host_os == .windows)
+        "x86_64-pc-windows-gnu"
+    else
+        null;
+    if (rust_target) |target| rust_host.addArgs(&.{ "--target", target });
     rust_host.addFileInput(b.path("../../Cargo.lock"));
 
-    // Cargo names a staticlib the way ITS toolchain does, which is not the
-    // same axis as zig's target. On Windows the Rust toolchain is the MSVC
-    // one (`x86_64-pc-windows-msvc`), so cargo writes
-    // `refrain_native_host.lib` — no lib prefix, different extension — while
-    // zig's own default ABI there is gnu. Keying off zig's ABI therefore
-    // reads `gnu` and looks for the POSIX name that will never exist; key off
-    // the OS, which is what decides cargo's naming here.
-    //
-    // The failure this prevents is misleading: cargo succeeds, and the build
-    // dies afterwards in the copy step with `file_hash FileNotFound`.
-    const host_os = artifacts.exe.root_module.resolved_target.?.result.os.tag;
-    const archive_name = if (host_os == .windows)
-        "refrain_native_host.lib"
+    const archive_name = "librefrain_native_host.a";
+    const archive_path = if (rust_target) |target|
+        b.fmt("../../target/{s}/release/{s}", .{ target, archive_name })
     else
-        "librefrain_native_host.a";
+        b.fmt("../../target/release/{s}", .{archive_name});
 
     const stage_host = b.addSystemCommand(&.{"cp"});
     stage_host.step.dependOn(&rust_host.step);
-    stage_host.addFileArg(b.path(b.fmt("../../target/release/{s}", .{archive_name})));
+    stage_host.addFileArg(b.path(archive_path));
     const archive = stage_host.addOutputFileArg(archive_name);
     artifacts.exe.root_module.addObjectFile(archive);
     linkRustRuntime(artifacts.exe.root_module);

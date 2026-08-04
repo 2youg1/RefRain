@@ -53,10 +53,24 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
 
+      - name: Expose Zig's dlltool to Rust GNU target
+        shell: pwsh
+        run: |
+          $shim = Join-Path $env:RUNNER_TEMP "refrain-zig-shims"
+          New-Item -ItemType Directory -Force $shim | Out-Null
+          foreach ($name in @("dlltool.cmd", "x86_64-w64-mingw32-dlltool.cmd")) {
+            Set-Content -Path (Join-Path $shim $name) `
+              -Value "@echo off`r`nzig dlltool %*" -Encoding Ascii
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $shim
+
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
           components: rustfmt, clippy
+
+      - name: Match Cargo to the Native SDK Windows ABI
+        run: rustup target add x86_64-pc-windows-gnu
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
@@ -93,7 +107,7 @@ jobs:
 
       - name: Build the Native Windows binary
         working-directory: apps/native
-        run: bun x native build . --yes -Dplatform=windows -Dtarget=x86_64-windows-msvc -Doptimize=ReleaseFast
+        run: bun x native build . --yes -Dplatform=windows -Doptimize=ReleaseFast
 
       # `native package` produces the application directory. It does not produce
       # the public asset: ScriptC owns the archive so the bytes are ours and
