@@ -41,10 +41,20 @@ pub fn build(b: *std.Build) void {
     rust_host.addArgs(&.{ "-p", "refrain-native-host", "--release" });
     rust_host.addFileInput(b.path("../../Cargo.lock"));
 
+    // Cargo names a staticlib after the target's own convention: MSVC emits
+    // `refrain_native_host.lib`, every other target `librefrain_native_host.a`.
+    // A single hard-coded name builds on Linux and fails on Windows with
+    // `file_hash FileNotFound` AFTER cargo has already succeeded — the archive
+    // is there, under the other name.
+    const host_os = artifacts.exe.root_module.resolved_target.?.result.os.tag;
+    const host_abi = artifacts.exe.root_module.resolved_target.?.result.abi;
+    const msvc = host_os == .windows and host_abi == .msvc;
+    const archive_name = if (msvc) "refrain_native_host.lib" else "librefrain_native_host.a";
+
     const stage_host = b.addSystemCommand(&.{"cp"});
     stage_host.step.dependOn(&rust_host.step);
-    stage_host.addFileArg(b.path("../../target/release/librefrain_native_host.a"));
-    const archive = stage_host.addOutputFileArg("librefrain_native_host.a");
+    stage_host.addFileArg(b.path(b.fmt("../../target/release/{s}", .{archive_name})));
+    const archive = stage_host.addOutputFileArg(archive_name);
     artifacts.exe.root_module.addObjectFile(archive);
     artifacts.tests.root_module.addObjectFile(archive);
     linkRustRuntime(artifacts.exe.root_module);
