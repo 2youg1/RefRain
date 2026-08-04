@@ -23,6 +23,14 @@ jobs:
     name: quality (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    # One C driver on every platform. The runner's own clang differs per OS —
+    # on Windows it defaults to MSVC mode, whose <sys/types.h> lacks the
+    # `ssize_t` the ScriptC runtime declares its transport ops with, so every
+    # Windows ScriptC build failed inside scr_runtime.h. zig ships the mingw
+    # headers and is already required by this job, and ScriptC supports the
+    # driver natively (SCRIPTC_CC=zigcc).
+    env:
+      SCRIPTC_CC: zigcc
     strategy:
       fail-fast: false
       matrix:

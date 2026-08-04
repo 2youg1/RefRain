@@ -22,6 +22,20 @@ jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 60
+    # Compile through `zig cc`, not the runner's LLVM clang.
+    #
+    # The ScriptC runtime declares its transport ops with `ssize_t` and states
+    # it targets the mingw-w64 CRT. The runner's clang defaults to MSVC mode,
+    # whose <sys/types.h> has no such type, so every ScriptC build on Windows
+    # failed at scr_runtime.h with "type name requires a specifier or
+    # qualifier". zig ships the mingw headers, and ScriptC supports this
+    # driver natively (SCRIPTC_CC=zigcc, see @scriptc/compiler resolveCc).
+    #
+    # This is the step that makes the compiled artefact authoritative on
+    # Windows. Before it, the failure was swallowed by continue-on-error and
+    # the release fell back to Bun — the fallback D15 forbids.
+    env:
+      SCRIPTC_CC: zigcc
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -52,7 +66,7 @@ jobs:
         run: |
           bun install --global scriptc@${{ env.SCRIPTC_VERSION }}
           scriptc --version
-          Get-Command clang
+          zig version
 
       # The version gate is ScriptC-owned. Running it through Bun here would
       # mean the compiled artefact was never the authority (D15), so the gate
