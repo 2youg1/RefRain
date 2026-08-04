@@ -19,6 +19,8 @@ function fixture(): string {
     ".github/workflows/gate.yml",
     ".github/workflows/ime-gate.yml",
     "package.json",
+    "apps/native/build.zig",
+    "apps/native/build-inputs/windows/runtimeobject.def",
   ]) {
     const destination = join(root, ...relative.split("/"));
     mkdirSync(dirname(destination), { recursive: true });
@@ -148,6 +150,26 @@ describe("Native portable release workflows", () => {
     const result = verify(root);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("expose pinned Zig as Rust GNU dlltool");
+  });
+
+  test("rejects a RuntimeObject import that differs by one symbol", () => {
+    const root = fixture();
+    rewrite(root, "apps/native/build-inputs/windows/runtimeobject.def", (source) =>
+      source.replace("RoGetActivationFactory", "RoGetActivationFactor"),
+    );
+    const result = verify(root);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("import the one RuntimeObject symbol Rust requires");
+  });
+
+  test("rejects a Windows link that drops the Propsys conversion library", () => {
+    const root = fixture();
+    rewrite(root, "apps/native/build.zig", (source) =>
+      source.replace('            "propsys",\n', ""),
+    );
+    const result = verify(root);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("resolve the PROPVARIANT conversion functions");
   });
 
   test("rejects packaging that can rebuild instead of consuming the proven executable", () => {

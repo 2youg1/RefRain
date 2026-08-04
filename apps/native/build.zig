@@ -73,6 +73,21 @@ pub fn build(b: *std.Build) void {
         artifacts.tests.root_module.addObjectFile(archive);
         linkRustRuntime(artifacts.tests.root_module);
     }
+
+    if (host_os == .windows) {
+        // Zig 0.16 ships Propsys/OleAut32/DbgHelp import libraries but not
+        // RuntimeObject. Generate its one required import from the stable OS
+        // export instead of coupling this build to Cargo's registry layout.
+        const runtimeobject = b.addSystemCommand(&.{ "zig", "dlltool", "-d" });
+        runtimeobject.addFileArg(b.path("build-inputs/windows/runtimeobject.def"));
+        runtimeobject.addArg("-l");
+        const runtimeobject_archive = runtimeobject.addOutputFileArg("libruntimeobject.a");
+        runtimeobject.addArgs(&.{ "-m", "i386:x86-64" });
+        artifacts.exe.root_module.addObjectFile(runtimeobject_archive);
+        if (artifacts.tests.root_module != artifacts.exe.root_module) {
+            artifacts.tests.root_module.addObjectFile(runtimeobject_archive);
+        }
+    }
 }
 
 /// Cargo reports these Linux native-static-libs for the stateful Rust archive.
@@ -86,7 +101,17 @@ fn linkRustRuntime(module: *std.Build.Module) void {
         .macos => inline for ([_][]const u8{ "System", "resolv", "m" }) |library| {
             module.linkSystemLibrary(library, .{ .use_pkg_config = .no });
         },
-        .windows => inline for ([_][]const u8{ "advapi32", "bcrypt", "kernel32", "ntdll", "userenv", "ws2_32" }) |library| {
+        .windows => inline for ([_][]const u8{
+            "advapi32",
+            "bcrypt",
+            "dbghelp",
+            "kernel32",
+            "ntdll",
+            "oleaut32",
+            "propsys",
+            "userenv",
+            "ws2_32",
+        }) |library| {
             module.linkSystemLibrary(library, .{ .use_pkg_config = .no });
         },
         else => @panic("RefRain's stateful Native host does not support this target"),

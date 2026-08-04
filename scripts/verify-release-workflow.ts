@@ -7,6 +7,8 @@ const releaseFile = ".github/workflows/release.yml";
 const gateFile = ".github/workflows/gate.yml";
 const imeFile = ".github/workflows/ime-gate.yml";
 const packageFile = "package.json";
+const nativeBuildFile = "apps/native/build.zig";
+const runtimeObjectFile = "apps/native/build-inputs/windows/runtimeobject.def";
 const failures: string[] = [];
 
 function read(relative: string): string {
@@ -22,6 +24,8 @@ const release = read(releaseFile);
 const gate = read(gateFile);
 const ime = read(imeFile);
 const packageJson = read(packageFile);
+const nativeBuild = read(nativeBuildFile);
+const runtimeObject = read(runtimeObjectFile);
 const workflows = `${release}\n${gate}\n${ime}`;
 
 function requireLiteral(file: string, text: string, literal: string, meaning: string): void {
@@ -163,6 +167,30 @@ const forbiddenWorkflowPatterns: ReadonlyArray<readonly [RegExp, string]> = [
 for (const [pattern, meaning] of forbiddenWorkflowPatterns) {
   forbidPattern("release/gate/IME workflows", workflows, pattern, meaning);
 }
+
+const nativeBuildRequirements: ReadonlyArray<readonly [string, string]> = [
+  ["x86_64-pc-windows-gnu", "compile the Rust host for the Native SDK Windows ABI"],
+  ['&.{ "zig", "dlltool", "-d" }', "generate the missing RuntimeObject import with Zig"],
+  ["build-inputs/windows/runtimeobject.def", "bind the stable RuntimeObject export declaration"],
+  ['"dbghelp"', "link Rust's DbgHelp native dependency"],
+  ['"oleaut32"', "resolve the VARIANT automation functions"],
+  ['"propsys"', "resolve the PROPVARIANT conversion functions"],
+];
+for (const [literal, meaning] of nativeBuildRequirements) {
+  requireLiteral(nativeBuildFile, nativeBuild, literal, meaning);
+}
+requireLiteral(
+  runtimeObjectFile,
+  runtimeObject,
+  "LIBRARY runtimeobject.dll",
+  "name the OS library",
+);
+requireLiteral(
+  runtimeObjectFile,
+  runtimeObject,
+  "RoGetActivationFactory",
+  "import the one RuntimeObject symbol Rust requires",
+);
 
 const packageRequirements: ReadonlyArray<readonly [string, string]> = [
   // 三条 journal 走 `--no-verify`：回放本身已验（三条都报
