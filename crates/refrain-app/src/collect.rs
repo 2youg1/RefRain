@@ -313,6 +313,66 @@ pub fn collect_attempt(
             ));
         }
 
+        // 批注（M9）：「只留话、不改正文」的产出——验证者的全部工作方式——
+        // 此前被解析出来又悄悄丢掉。落在与手写批注同一个面（annotations
+        // 表）：目标是本轮冻结 scope 的，锚在那个 scope 的块上，quote 是
+        // 冻结的原文（agent 当初读到的那段字，与手写批注存选中文同一条
+        // 理由）；目标对不上本轮 scope 的，锚在文稿首块并把目标词写进
+        // 正文——批注一条都不丢，但锚错了位置要看得出来。
+        let mut comments: Vec<refrain_store::annotations::AnnotationRow> = Vec::new();
+        for comment in &artifact.comments {
+            let before = before_by_scope.get(&comment.target);
+            // 与提案同一条定位（身份优先、原文回落），但不核字节：批注什么
+            // 都不改，作者在派发后动过那一段不是丢批注的理由。
+            let anchored = before.and_then(|before| {
+                identities
+                    .get(&comment.target)
+                    .filter(|blocks| !blocks.is_empty())
+                    .and_then(|frozen| locate_scope_by_identity(manuscript, frozen))
+                    .or_else(|| match locate_scope(manuscript, before) {
+                        ScopeLocation::Unique(blocks) => Some(blocks),
+                        ScopeLocation::Moved | ScopeLocation::Ambiguous(_) => None,
+                    })
+            });
+            let fallback = || manuscript.head().blocks().get(0).map(|block| block.id());
+            let Some((block_id, quote, body)) = (match (anchored, before) {
+                (Some(blocks), Some(before)) => blocks
+                    .first()
+                    .map(|id| (*id, before.clone(), comment.text.clone())),
+                (None, Some(before)) => {
+                    fallback().map(|id| (id, before.clone(), comment.text.clone()))
+                }
+                (None, None) => fallback().map(|id| {
+                    (
+                        id,
+                        String::new(),
+                        format!("[{}] {}", comment.target, comment.text),
+                    )
+                }),
+                // 定位到块却对不上冻结 scope 不可能（anchored 蕴含 before 在
+                // 场），但编译器要知道这条臂有名字。
+                (Some(blocks), None) => blocks
+                    .first()
+                    .map(|id| (*id, String::new(), comment.text.clone())),
+            }) else {
+                // 空文稿没有块可锚。有产出又对不回块的文稿本来走不到这里
+                // （scope 校验先拒），批注不构成新的失败源。
+                continue;
+            };
+            comments.push(refrain_store::annotations::AnnotationRow {
+                id: Id::new().to_string(),
+                document: task.document.clone(),
+                block_id: block_id.to_string(),
+                start: 0,
+                end: u32::try_from(quote.len()).unwrap_or(u32::MAX),
+                quote,
+                kind: refrain_store::annotations::AnnotationKind::Comment,
+                body: Some(body),
+                created_at: now as i64,
+                updated_at: now as i64,
+            });
+        }
+
         // SPEC 8.4b：先校验，再完成，最后冻结提案。顺序是规则的一部分——提案若
         // 先于完成落盘，一次中断会留下没有归属的提案。
         host.execute(HostCommand::CollectAttempt {
@@ -327,6 +387,7 @@ pub fn collect_attempt(
             proposals,
             memos: artifact.memos.len() as u32,
             drafts: artifact.material_drafts,
+            comments,
         }
     };
 
@@ -343,6 +404,12 @@ pub fn collect_attempt(
                 created_at: now,
             })
             .map_err(into_domain)?;
+    }
+
+    // 批注与提案同批落盘：收取成功的那一刻，「只留话」的那部分产出也是
+    // 持久事实，不是只在这次调用的返回值里活过。
+    for row in &outcome.comments {
+        store.annotation_upsert(row).map_err(into_domain)?;
     }
 
     // Material 草稿只作为草稿入世（SPEC 8.7）：只有一次人的 Material Action
@@ -375,6 +442,7 @@ struct Frozen {
     proposals: Vec<(Proposal, Vec<Id>)>,
     memos: u32,
     drafts: Vec<refrain_core::agent_protocol::MaterialDraft>,
+    comments: Vec<refrain_store::annotations::AnnotationRow>,
 }
 
 /// 记下这一次失败，并把同一个原因交回调用方。

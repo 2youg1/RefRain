@@ -708,3 +708,71 @@ fn a_refused_verifier_leaves_no_memo_either() {
         "改写不该留下"
     );
 }
+
+/// M9：批注不再被解析后丢弃——它落在与手写批注同一个面上。
+///
+/// 「只留话、不改正文」是验证者的全部工作方式（也是任何 Run 的合法产出）。
+/// 此前 `AgentComment` 解析出来就进了计数器，作者永远读不到。现在它成为
+/// annotations 表的一行：锚在目标 scope 的块上，quote 是冻结的原文——
+/// agent 当初读到的那段字，与手写批注存选中文同一条理由。
+#[test]
+fn comments_land_as_annotations_instead_of_being_dropped() {
+    let root = scratch();
+    let (_app, mut store) = store_at(&root);
+    let state_dir = store.layout().state_dir.clone();
+    let run_id = dispatched_run(&mut store, "runs/one");
+    stage(
+        &state_dir,
+        "runs/one",
+        run_id,
+        FIRST,
+        "<agent-result version=\"2\"><comments><comment target=\"ch01:b1\"><![CDATA[这段的节奏偏慢。]]></comment></comments></agent-result>",
+    );
+    let manuscripts = [(CHAPTER.to_string(), manuscript_of(&root))]
+        .into_iter()
+        .collect();
+
+    let collected = collect_attempt(&mut store, &manuscripts, run_id, 10).unwrap();
+
+    assert!(
+        matches!(collected, Collected::Completed { .. }),
+        "{collected:?}"
+    );
+    let annotations = store.annotations(CHAPTER).unwrap();
+    assert_eq!(annotations.len(), 1, "{annotations:?}");
+    assert_eq!(annotations[0].body.as_deref(), Some("这段的节奏偏慢。"));
+    assert_eq!(annotations[0].quote, FIRST);
+}
+
+/// 目标对不上本轮 scope 的批注也一条不丢：锚在文稿首块，目标词写进正文——
+/// 锚错了位置要看得出来，而不是悄悄消失。
+#[test]
+fn a_comment_naming_an_unknown_scope_is_kept_where_it_can_be_seen() {
+    let root = scratch();
+    let (_app, mut store) = store_at(&root);
+    let state_dir = store.layout().state_dir.clone();
+    let run_id = dispatched_run(&mut store, "runs/one");
+    stage(
+        &state_dir,
+        "runs/one",
+        run_id,
+        FIRST,
+        "<agent-result version=\"2\"><comments><comment target=\"ch99:nope\"><![CDATA[指错了地方。]]></comment></comments></agent-result>",
+    );
+    let manuscripts = [(CHAPTER.to_string(), manuscript_of(&root))]
+        .into_iter()
+        .collect();
+
+    let collected = collect_attempt(&mut store, &manuscripts, run_id, 10).unwrap();
+
+    assert!(
+        matches!(collected, Collected::Completed { .. }),
+        "{collected:?}"
+    );
+    let annotations = store.annotations(CHAPTER).unwrap();
+    assert_eq!(annotations.len(), 1, "{annotations:?}");
+    assert_eq!(
+        annotations[0].body.as_deref(),
+        Some("[ch99:nope] 指错了地方。")
+    );
+}

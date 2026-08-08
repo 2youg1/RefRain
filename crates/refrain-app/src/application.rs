@@ -742,7 +742,11 @@ fn carry_changes(
 /// 如实上抛。没发射成的 Run 留在 awaiting（host 只 retain 成功的）。
 /// 发射成功的 Run 还要喂上游产出（与 `HostCommand` 路径同一个后续动作，
 /// 无边的 Run 在 `feed_upstream` 里原样返回）。
-fn launch_awaiting_runs(entry: &mut ProjectEntry) -> Result<(), RefrainError> {
+///
+/// 返回这一批发射出去的 Run：runner 据此分辨哪些 `Launching` 是本会话自己
+/// 提升的。host 每开一次都把账上的 `Launching` 全数放进恢复名单（§8.2-5），
+/// 没有这份返回，runner 刚提升的 Run 会被当成上一会话留下的残骸而不敢派发。
+pub(crate) fn launch_awaiting_runs(entry: &mut ProjectEntry) -> Result<Vec<Id>, RefrainError> {
     let launched = {
         let context = DirectoryContext::new(entry.store.layout().state_dir.clone());
         let mut host = AgentHost::open(
@@ -781,10 +785,10 @@ fn launch_awaiting_runs(entry: &mut ProjectEntry) -> Result<(), RefrainError> {
     };
     // host 先放掉（它借着 &mut store）：喂上游会自己再开一份 host 来读边
     // 与工作区——与 HostCommand 路径同一条次序纪律，锁不嵌套。
-    for run_id in launched {
-        crate::upstream::feed_upstream(&mut entry.store, run_id)?;
+    for run_id in &launched {
+        crate::upstream::feed_upstream(&mut entry.store, *run_id)?;
     }
-    Ok(())
+    Ok(launched)
 }
 
 /// 对一条提案下裁决：记进账本，并把这些账本行暂存进这份文档的批次。
@@ -1020,6 +1024,9 @@ pub struct Application {
     /// 放在 `Application` 之后两个宿主读的是同一份，步骤 10 删掉 Tauri
     /// 也不会带走设置权威。
     config: Mutex<(ConfigStore, Config)>,
+    /// 生产者 runner（M9）的活动表：本机握着句柄的 Run。泵在 `ReadHost`
+    /// 里跑——轮询链本来就在那里，零新机制。
+    runner: Mutex<crate::runner::Runner>,
 }
 
 impl Application {
@@ -1041,6 +1048,7 @@ impl Application {
                 })?;
                 (store, snapshot.config)
             }),
+            runner: Mutex::new(crate::runner::Runner::default()),
         })
     }
 
@@ -1093,6 +1101,22 @@ impl Application {
     pub fn kara_state(&self) -> Result<KaraMachine, RefrainError> {
         self.kara.lock().map(|kara| kara.clone()).map_err(|_| {
             RefrainError::new(ErrorCode::StateUnavailable, "lock the KARA machine", "kara")
+        })
+    }
+
+    /// 推进这个 Root 的生产者 runner 一步（M9）。泵的全部规则在 `runner`
+    /// 模块；这里只把三样东西交到同一个作用域：活动表、项目、设置。
+    fn pump_runs(&self, root_id: &str) -> Result<crate::runner::PumpReport, RefrainError> {
+        let config = self.config()?;
+        let mut runner = self.runner.lock().map_err(|_| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "lock the producer runner",
+                "runner",
+            )
+        })?;
+        self.with_project(root_id, |entry| {
+            crate::runner::pump(root_id, entry, &mut runner, &config, now())
         })
     }
 
@@ -1283,9 +1307,21 @@ impl Application {
             ProjectInput::KaraStep(event) => self
                 .kara_step(event)
                 .map(|transition| ProjectOutput::Kara(Box::new(transition))),
-            ProjectInput::ReadHost { root_id } => self
-                .with_host(&root_id, |_| Ok(()))
-                .map(|snapshot| ProjectOutput::Host(Box::new(snapshot))),
+            ProjectInput::ReadHost { root_id } => {
+                // M9：泵先于快照。轮询链（runs_tick → readHost）因此把全部
+                // 活动 Run 推进一步，答复里就是最新的编排事实。
+                let report = self.pump_runs(&root_id)?;
+                // 与 CollectRun 同一条事件纪律：Run 完成记 AgentCompleted，
+                // 带来提案再记 ProposalArrived——runner 收的还是那条收取。
+                for (_run, proposals) in &report.completed {
+                    self.kara_step(KaraEvent::Quiet(QuietEvent::AgentCompleted))?;
+                    if *proposals > 0 {
+                        self.kara_step(KaraEvent::Quiet(QuietEvent::ProposalArrived))?;
+                    }
+                }
+                self.with_host(&root_id, |_| Ok(()))
+                    .map(|snapshot| ProjectOutput::Host(Box::new(snapshot)))
+            }
             ProjectInput::ReadMaterialDrafts { root_id } => self
                 .material_draft_views(&root_id)
                 .map(ProjectOutput::MaterialDrafts),

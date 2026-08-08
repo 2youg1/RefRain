@@ -386,6 +386,32 @@ impl PrintAdapter {
         })
     }
 
+    /// Build the adapter for a configured connection, without a version probe.
+    ///
+    /// The runner pays one process per dispatch already; probing `--version`
+    /// at every launch would double that cost on the pump's synchronous
+    /// thread. The connection names an exact executable, so detection has
+    /// nothing to answer here — the version stays empty, and a binary that
+    /// cannot start fails at `dispatch` with the spawn error, which the
+    /// runner records on the Run.
+    #[must_use]
+    pub fn for_connection(
+        channel: &'static PrintChannel,
+        program: PathBuf,
+        env_allow: &[String],
+    ) -> Self {
+        let program = match program.canonicalize() {
+            Ok(canonical) => canonical,
+            Err(_) => program,
+        };
+        Self {
+            channel,
+            program,
+            version: String::new(),
+            env: allowed_env(env_allow),
+        }
+    }
+
     #[must_use]
     pub fn program(&self) -> &PathBuf {
         &self.program

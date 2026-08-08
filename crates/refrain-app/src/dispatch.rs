@@ -404,19 +404,25 @@ fn installed_skill_for(
 /// 字节。没有适配器的连接种类没有装载处——它们的 `skill_digest` 因此
 /// 也总是 `None`。
 fn skill_surface(kind: &AdapterKind, home: &Path) -> Option<(PathBuf, Vec<u8>)> {
-    // 适配器种类 → 注册通道：新通道在 adapters 注册表加一行，这里自动跟随。
-    let id = match kind {
-        AdapterKind::KimiCode => "kimi-print",
-        AdapterKind::ClaudeCode => "claude-print",
-        AdapterKind::Pi => "pi-print",
-        // L0 没有 skill 目录；Codex／Hermes 还没有通道。
-        AdapterKind::L0 | AdapterKind::Codex | AdapterKind::Hermes => return None,
-    };
-    let channel = channel(id)?;
+    let channel = channel(adapter_channel_id(kind)?)?;
     Some((
         channel_skill_path(home, channel),
         channel_skill_bytes(channel),
     ))
+}
+
+/// 适配器种类 → 注册通道 id：新通道在 adapters 注册表加一行，这里自动跟随。
+///
+/// 派发（skill 装载）与 runner（启动生产者）共用这一份映射——两处各写一份，
+/// 新种类就要在两个地方同时想起它。L0 没有 skill 目录；Codex／Hermes 还没有
+/// 通道。
+pub(crate) fn adapter_channel_id(kind: &AdapterKind) -> Option<&'static str> {
+    match kind {
+        AdapterKind::KimiCode => Some("kimi-print"),
+        AdapterKind::ClaudeCode => Some("claude-print"),
+        AdapterKind::Pi => Some("pi-print"),
+        AdapterKind::L0 | AdapterKind::Codex | AdapterKind::Hermes => None,
+    }
 }
 
 /// 派发一次改写请求。

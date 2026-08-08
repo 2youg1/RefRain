@@ -991,6 +991,32 @@ mod tests {
         }
     }
 
+    /// The wire shape of a Run's progress is an ABI fact: the Zig surface's
+    /// `progressLabel` and core.ts's in-flight count parse exactly this JSON.
+    /// Pin it here — whoever changes the serde attributes must change the
+    /// surface in the same commit.
+    #[test]
+    fn run_progress_crosses_the_abi_adjacently_tagged() {
+        let dispatched = RunProgress::Dispatched {
+            receipt: "r".to_string(),
+        };
+        assert_eq!(
+            serde_json::to_value(&dispatched).unwrap(),
+            serde_json::json!({"kind": "dispatched", "value": {"receipt": "r"}})
+        );
+        assert_eq!(
+            serde_json::to_value(&RunProgress::Cancelled).unwrap(),
+            serde_json::json!({"kind": "cancelled"})
+        );
+        assert_eq!(
+            serde_json::to_value(&RunProgress::Failed {
+                failure: "f".to_string()
+            })
+            .unwrap(),
+            serde_json::json!({"kind": "failed", "value": {"failure": "f"}})
+        );
+    }
+
     #[derive(Default)]
     struct MapContext {
         staged: std::collections::HashMap<Id, String>,
