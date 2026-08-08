@@ -105,9 +105,26 @@ pub fn commit_decision_batch(
         .review_session_set(path, 0, "[]")
         .map_err(into_domain)?;
 
-    // 裁决即落盘（D1）。合并已经发生在内存里，账本也已经记下「已接受」——
-    // 此刻磁盘还是旧正文，正是 F-01 那个可实测的分裂。落盘用与手工保存同一个
-    // compare-and-swap：裁决没有比作者按保存更多的权力去覆盖别人的改动。
+    // 裁决即落盘（D1）：账本说「已接受」的那一刻磁盘必须同真（F-01）。
+    persist_manuscript(store, manuscript, path, expected, transition)
+}
+
+/// 把改动后的稿子按同一个 compare-and-swap 落盘，并同步派生状态。
+///
+/// commit 与 countermand 共用这一条：两条路都是账本先记了事实，所以磁盘
+/// 必须同真——F-01 的分裂对两个方向同样成立。落盘用与手工保存同一个
+/// compare-and-swap，因为裁决没有比作者按保存更多的权力去覆盖别人的改动。
+///
+/// 派生状态失败时正文**已经在盘上**了，所以报 `BodyDurable` 而不是
+/// 「保存失败」——那会让作者重来，而重来会拿旧戳比对自己刚写下的字节，
+/// 把自己判成外部冲突（F-03）。
+fn persist_manuscript(
+    store: &mut ProjectStore,
+    manuscript: &Manuscript,
+    path: &str,
+    expected: Option<FileStamp>,
+    transition: TextTransition,
+) -> Result<DecisionOutcome, RefrainError> {
     let bytes = manuscript.materialize().map_err(|error| {
         RefrainError::new(ErrorCode::Io, "materialise a manuscript", path.to_owned())
             .with_detail(error.to_string())
@@ -127,10 +144,7 @@ pub fn commit_decision_batch(
         Err(other) => return Err(into_domain(other)),
     };
 
-    // 派生状态跟在正文后面。它失败时正文**已经在盘上**了，所以不能报「保存
-    // 失败」——那会让作者以为要重来，而重来会拿旧戳比对自己刚写的字节，把
-    // 自己判成外部冲突（F-03）。带上新 stamp 说清楚：正文已 durable，待修的
-    // 是别的东西。
+    // 派生状态跟在正文后面。
     let live: Vec<Id> = manuscript
         .actions()
         .iter()
@@ -371,6 +385,11 @@ fn countermand_slice_id(proposal: &str) -> String {
 /// 全部锚定核对在任何文本移动之前完成：任何一个提案找不到当初合并进去
 /// 的字节，整批拒绝，账本也不写——半个冲销既丢审计也丢文本的一致性。
 ///
+/// 落盘与 commit 同一条纪律（D1）：账本记下「已冲销」的那一刻磁盘必须
+/// 同真，否则重载后正文带着一笔已冲销的合并，而账本说它已经不在——
+/// 那是同一个 F-01，只是方向相反。`expected` 是作者盖过戳的磁盘状态，
+/// 走同一个 compare-and-swap。
+///
 /// `decided_at` 由调用方给（与 host 同一纪律：这里没有钟）。
 ///
 /// # Errors
@@ -382,8 +401,9 @@ pub fn countermand_proposals(
     manuscript: &mut Manuscript,
     path: &str,
     proposal_ids: &[String],
+    expected: Option<FileStamp>,
     decided_at: u64,
-) -> Result<TextTransition, RefrainError> {
+) -> Result<DecisionOutcome, RefrainError> {
     if proposal_ids.is_empty() {
         return Err(RefrainError::new(
             ErrorCode::StateUnavailable,
@@ -542,7 +562,8 @@ pub fn countermand_proposals(
             })
             .map_err(crate::journal::into_domain_store)?;
     }
-    Ok(transition)
+    // 账本已记下「已冲销」，磁盘必须同真（D1／F-01，方向相反，同一个分裂）。
+    persist_manuscript(store, manuscript, path, expected, transition)
 }
 
 #[cfg(test)]

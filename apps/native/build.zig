@@ -14,25 +14,43 @@ pub fn build(b: *std.Build) void {
     // 放在 assets 下会让打包以 `StreamTooLong` 失败；而且它已经在二进制里，
     // 再拷一份进安装包等于凭空多 17 MiB。分发许可 `assets/fonts/OFL.txt`
     // 仍随包走（OFL 要求许可与字面同行）。
-    const manuscript_font = b.path("fonts/NotoSansSC-Variable.ttf");
+    const manuscript_font = b.path("fonts/NotoSansSC-Subset.ttf");
     artifacts.exe.root_module.addAnonymousImport("manuscript_font", .{ .root_source_file = manuscript_font });
     artifacts.tests.root_module.addAnonymousImport("manuscript_font", .{ .root_source_file = manuscript_font });
+    // 三槽的另外两张：Latin 用 Antic Didone，日文用 Zen Kaku Gothic New。
+    // 嵌入即注册（app_main.zig 的 fonts 表），SDK 一个文本节点一张字面，
+    // 逐字回退要 SDK 支持后才能在正稿上生效——目前它们是已注册的可用面。
+    const latin_font = b.path("fonts/AnticDidone-Regular.ttf");
+    const japanese_font = b.path("fonts/ZenKakuGothicNew-Regular.ttf");
+    artifacts.exe.root_module.addAnonymousImport("latin_font", .{ .root_source_file = latin_font });
+    artifacts.exe.root_module.addAnonymousImport("japanese_font", .{ .root_source_file = japanese_font });
+    artifacts.tests.root_module.addAnonymousImport("latin_font", .{ .root_source_file = latin_font });
+    artifacts.tests.root_module.addAnonymousImport("japanese_font", .{ .root_source_file = japanese_font });
 
-    const core_root = transpileCore(b, dep);
+    // TS 核心的编译归 SDK 的 tsCoreStage（0.8 起唯一通道：前端检查、
+    // corewire 镜像、外部编译器归档）。RefRain 的入口是手写 Zig 壳
+    // （app_main.zig 的自绘视图），addAppArtifacts 因此把这棵树按 Zig
+    // 核心处理、不登台——这里显式登台，把镜像模块与编译归档接进 exe 与
+    // tests。对 app_main 而言 core 的拼写不变：
+    // `pub const core = @import("refrain_core")`——换的是编译通道，不是
+    // core 的表面。
+    const core_stage = native_sdk.tsCoreStage(b, dep, ".", "refrain");
+    const mirror_root = core_stage.main_root.dirname().path(b, "core.zig");
     const exe_core = b.createModule(.{
-        .root_source_file = core_root,
+        .root_source_file = mirror_root,
         .target = artifacts.exe.root_module.resolved_target.?,
         .optimize = artifacts.exe.root_module.optimize.?,
     });
+    artifacts.exe.root_module.addImport("refrain_core", exe_core);
+    artifacts.exe.root_module.addObjectFile(core_stage.archive);
     const test_core = b.createModule(.{
-        .root_source_file = core_root,
+        .root_source_file = mirror_root,
         .target = artifacts.tests.root_module.resolved_target.?,
         .optimize = artifacts.tests.root_module.optimize.?,
     });
-    artifacts.exe.root_module.addImport("refrain_core", exe_core);
+    artifacts.tests.root_module.addImport("refrain_core", test_core);
     const exe_runner = artifacts.exe.root_module.import_table.get("runner").?;
     artifacts.exe.root_module.addImport("app_manifest_zon", exe_runner.import_table.get("app_manifest_zon").?);
-    artifacts.tests.root_module.addImport("refrain_core", test_core);
     const test_runner = artifacts.tests.root_module.import_table.get("runner").?;
     artifacts.tests.root_module.addImport("app_manifest_zon", test_runner.import_table.get("app_manifest_zon").?);
 
@@ -57,10 +75,12 @@ pub fn build(b: *std.Build) void {
     else
         b.fmt("../../target/release/{s}", .{archive_name});
 
-    const stage_host = b.addSystemCommand(&.{"cp"});
+    // 用 zig 自己的 WriteFiles 拷归档而不是 system 的 `cp`：Windows 的
+    // 构建环境里没有 coreutils，归档一旦过期（协议变更触发 cargo 重建）
+    // cp 就找不到，整个链接链断在一个与代码无关的地方。
+    const stage_host = b.addWriteFiles();
     stage_host.step.dependOn(&rust_host.step);
-    stage_host.addFileArg(b.path(archive_path));
-    const archive = stage_host.addOutputFileArg(archive_name);
+    const archive = stage_host.addCopyFile(b.path(archive_path), archive_name);
     artifacts.exe.root_module.addObjectFile(archive);
     linkRustRuntime(artifacts.exe.root_module);
     // `native build -Doptimize=ReleaseFast` reuses the executable module as
@@ -71,13 +91,16 @@ pub fn build(b: *std.Build) void {
     // distinct (Debug `native test` is the common case).
     if (artifacts.tests.root_module != artifacts.exe.root_module) {
         artifacts.tests.root_module.addObjectFile(archive);
+        artifacts.tests.root_module.addObjectFile(core_stage.archive);
         linkRustRuntime(artifacts.tests.root_module);
     }
 
     if (host_os == .windows) {
         // Zig 0.16 ships Propsys/OleAut32/DbgHelp import libraries but not
-        // RuntimeObject. Generate its one required import from the stable OS
-        // export instead of coupling this build to Cargo's registry layout.
+        // RuntimeObject. Rust std needs one symbol, RoGetActivationFactory,
+        // whose implementation lives in combase.dll (RuntimeObject.dll only
+        // forwards there and is absent on some installs), so the import
+        // library names combase directly.
         const runtimeobject = b.addSystemCommand(&.{ "zig", "dlltool", "-d" });
         runtimeobject.addFileArg(b.path("build-inputs/windows/runtimeobject.def"));
         runtimeobject.addArg("-l");
@@ -105,8 +128,12 @@ fn linkRustRuntime(module: *std.Build.Module) void {
             "advapi32",
             "bcrypt",
             "dbghelp",
+            // 编译核心归档带 scriptc 运行时：scr_os_ifaddrs 引用
+            // GetAdaptersAddresses，它住在 iphlpapi。
+            "iphlpapi",
             "kernel32",
             "ntdll",
+            "ole32",
             "oleaut32",
             "propsys",
             "userenv",
@@ -116,24 +143,10 @@ fn linkRustRuntime(module: *std.Build.Module) void {
         },
         else => @panic("RefRain's stateful Native host does not support this target"),
     }
-}
-
-/// Reuse the SDK's pinned transpiler while retaining an app-owned runner for
-/// the Rust host binding. JavaScript exists only in this build step.
-fn transpileCore(b: *std.Build, dep: *std.Build.Dependency) std.Build.LazyPath {
-    const node = b.findProgram(&.{"node"}, &.{}) catch @panic(
-        "building RefRain's native core needs Node.js 22.15+ at build time",
-    );
-    const transpile = b.addSystemCommand(&.{node});
-    transpile.addFileArg(dep.path("build/ts_run.mjs"));
-    transpile.addFileArg(dep.path("packages/core/src/cli.ts"));
-    transpile.addFileArg(b.path("src/core.ts"));
-    transpile.addArg("-o");
-    const emitted = transpile.addOutputFileArg("core.zig");
-    transpile.addFileInput(b.path("src/generated/protocol.ts"));
-
-    const staged = b.addWriteFiles();
-    const core_root = staged.addCopyFile(emitted, "core.zig");
-    _ = staged.addCopyFile(dep.path("packages/core/rt/rt.zig"), "rt.zig");
-    return core_root;
+    if (module.resolved_target.?.result.os.tag == .windows) {
+        // Rust 的 GNU 静态库引用 libgcc 的 SEH unwinding（_Unwind_* 与
+        // _GCC_specific_handler）。它不是 Windows 系统库而是 toolchain 运行时，
+        // 由 Zig 自带的 libunwind 提供。
+        module.linkSystemLibrary("unwind", .{ .use_pkg_config = .no });
+    }
 }

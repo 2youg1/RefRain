@@ -17,9 +17,91 @@
 //! 不写配置。作者在 Config 里声明的连接指向一个确切的可执行文件
 //! （`KimiPrint::at`），那条路径优先于 PATH 查找——这里只报告 PATH 上
 //! 找得到什么，是「你还可以连这些」而不是「你连的是这些」。
+//!
+//! # 探测成本
+//!
+//! 探测是版本探针：`kimi --version` 每次要起一个 2 秒级的子进程
+//! （Windows 实测 2.3-2.6 s），而版本在会话内几乎不变。结果按 TTL 缓存，
+//! 「重新探测」按钮走 `probe_harnesses_forced` 绕过缓存。
 
+use refrain_core::context_compiler::SkillStatus;
 use refrain_host::Tier;
-use refrain_host::adapters::{ClaudePrint, HarnessAdapter, KimiPrint, find_on_path};
+use refrain_host::adapters::{
+    CHANNELS, HarnessAdapter, PrintAdapter, channel_skill_bytes, channel_skill_path, find_on_path,
+};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+/// 探测结果多久视为新鲜。版本变化（升级/卸载）在秒级内不会发生；
+/// 手动刷新按钮会绕过它。
+const PROBE_TTL: Duration = Duration::from_secs(15);
+
+static PROBE_CACHE: Mutex<Option<(Instant, Vec<HarnessStatus>)>> = Mutex::new(None);
+
+/// 探测本机 Harness，命中 15 秒内的缓存则直接用。
+pub fn probe_harnesses() -> Vec<HarnessStatus> {
+    probe_harnesses_impl(false)
+}
+
+/// 绕过缓存重新探测，供显式的「重新探测」按钮。
+pub fn probe_harnesses_forced() -> Vec<HarnessStatus> {
+    probe_harnesses_impl(true)
+}
+
+fn probe_harnesses_impl(force: bool) -> Vec<HarnessStatus> {
+    if !force
+        && let Ok(cache) = PROBE_CACHE.lock()
+        && let Some((at, statuses)) = cache.as_ref()
+        && at.elapsed() < PROBE_TTL
+    {
+        return statuses.clone();
+    }
+    // 名单来自注册表：新 harness = adapters 注册表加一行，这里自动跟随。
+    let home = home_dir();
+    let statuses: Vec<HarnessStatus> = CHANNELS
+        .iter()
+        .map(|channel| {
+            let detected = PrintAdapter::detect(channel).map(probe_of);
+            let skill = home.as_deref().map(|home| {
+                refrain_host::adapters::skill_status_at(
+                    &channel_skill_path(home, channel),
+                    &channel_skill_bytes(channel),
+                )
+            });
+            status_of(channel.id, channel.program, detected, skill)
+        })
+        .collect();
+    if let Ok(mut cache) = PROBE_CACHE.lock() {
+        *cache = Some((Instant::now(), statuses.clone()));
+    }
+    statuses
+}
+
+/// 作者的 home 目录：harness 的 skill 目录都挂在它下面
+/// （`~/.kimi-code/skills/…`、`~/.claude/skills/…`）。Windows 上是
+/// `USERPROFILE`，其余平台 `HOME`。探不到就是没有可读的协议状态——
+/// 徽章画「未装」而不是失败。
+fn home_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(std::path::PathBuf::from)
+}
+
+/// 把生成的协议装进一个 harness 的 skill 目录（作者显式点击；这是
+/// Root 之外的唯一写路径，verify-write-path 注释已登记）。装完返回
+/// 刷新后的整份名单——徽章不需要第二次探测。
+pub fn install_skill(harness_id: &str) -> Result<Vec<HarnessStatus>, String> {
+    let home = home_dir().ok_or_else(|| "no home directory to install into".to_string())?;
+    let channel = refrain_host::adapters::channel(harness_id)
+        .ok_or_else(|| format!("no adapter named {harness_id}"))?;
+    refrain_host::adapters::install_skill_at(
+        &channel_skill_path(&home, channel),
+        &channel_skill_bytes(channel),
+    )
+    .map_err(|error| format!("install the protocol: {error}"))?;
+    // 刚写下的那份必然与本次构建一致；刷新探测会读到 `Current`。
+    Ok(probe_harnesses_forced())
+}
 
 /// 一个 Harness 在这台机器上的状况。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -35,6 +117,10 @@ pub struct HarnessStatus {
     pub version: String,
     /// 这个 Harness 能做到哪一层，探不到时按最低算。
     pub tier: HarnessTier,
+    /// 协议装载状态：本机会话的 `skill_digest` 之外的第二个事实来源。
+    /// 读文件本身——`Current` 是「装了且与本次构建逐字一致」，`Stale`
+    /// 是「有一份但不是现在的协议」，`None` 是没装。徽章据此画。
+    pub skill: SkillStatus,
 }
 
 /// 探测的三种结果。
@@ -81,18 +167,9 @@ impl From<Tier> for HarnessTier {
 ///
 /// 顺序固定，不按探测结果排序：作者记住的是「第二行是 Claude」，而按
 /// 「装了的排前面」会让这一行在装上另一个之后跳到别处。
-#[must_use]
-pub fn probe_harnesses() -> Vec<HarnessStatus> {
-    vec![
-        status_of("kimi-print", "kimi", KimiPrint::detect().map(probe_of)),
-        status_of(
-            "claude-print",
-            "claude",
-            ClaudePrint::detect().map(probe_of),
-        ),
-    ]
-}
-
+///
+/// 缓存与强制刷新在 `probe_harnesses_impl`：这里保留旧签名，供测试与
+/// 无界面调用点直接拿现成实现。
 fn probe_of<A: HarnessAdapter>(adapter: A) -> (String, Tier) {
     adapter
         .probe()
@@ -100,7 +177,12 @@ fn probe_of<A: HarnessAdapter>(adapter: A) -> (String, Tier) {
         .unwrap_or_else(|| (String::new(), adapter.tier()))
 }
 
-fn status_of(id: &str, program: &str, detected: Option<(String, Tier)>) -> HarnessStatus {
+fn status_of(
+    id: &str,
+    program: &str,
+    detected: Option<(String, Tier)>,
+    skill: Option<SkillStatus>,
+) -> HarnessStatus {
     match detected {
         Some((version, tier)) => HarnessStatus {
             id: id.to_string(),
@@ -108,6 +190,7 @@ fn status_of(id: &str, program: &str, detected: Option<(String, Tier)>) -> Harne
             state: HarnessState::Ready,
             version,
             tier: tier.into(),
+            skill: skill.unwrap_or(SkillStatus::None),
         },
         // 探测失败分两种：PATH 上根本没有，与 PATH 上有但版本读不出来。
         // 后者是作者最需要知道的那一种——他装过了，坏的是别的东西。
@@ -121,6 +204,7 @@ fn status_of(id: &str, program: &str, detected: Option<(String, Tier)>) -> Harne
             },
             version: String::new(),
             tier: HarnessTier::File,
+            skill: skill.unwrap_or(SkillStatus::None),
         },
     }
 }
@@ -128,16 +212,61 @@ fn status_of(id: &str, program: &str, detected: Option<(String, Tier)>) -> Harne
 #[cfg(test)]
 mod tests {
     use super::*;
+    use refrain_core::context_compiler::SkillStatus;
+
+    fn scratch_home(label: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "refrain-harness-home-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos()),
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    /// 装协议 → Current；改一个字节 → Stale；删掉 → None。三态都从文件
+    /// 本身读，不信任任何人的记录。
+    #[test]
+    fn the_skill_badge_reads_the_file_itself() {
+        use refrain_host::adapters::{
+            channel_skill_bytes, channel_skill_path, install_skill_at, skill_status_at,
+        };
+        let channel = refrain_host::adapters::channel("kimi-print").expect("registered");
+        let home = scratch_home("badge");
+        let path = channel_skill_path(&home, channel);
+        let bytes = channel_skill_bytes(channel);
+        assert_eq!(skill_status_at(&path, &bytes), SkillStatus::None);
+        let (_path, digest) = install_skill_at(&path, &bytes).unwrap();
+        assert!(!digest.is_empty());
+        assert_eq!(skill_status_at(&path, &bytes), SkillStatus::Current);
+        // 弄坏它：追加一个字节。哈希不同 → Stale。
+        let mut mutated = std::fs::read(&path).unwrap();
+        mutated.push(b'x');
+        std::fs::write(&path, mutated).unwrap();
+        assert_eq!(skill_status_at(&path, &bytes), SkillStatus::Stale);
+        // 删掉 → None。
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(skill_status_at(&path, &bytes), SkillStatus::None);
+        std::fs::remove_dir_all(&home).unwrap();
+    }
 
     #[test]
     fn every_known_harness_is_reported_whether_or_not_it_is_installed() {
         // 名单固定：一台没装任何 Harness 的机器上，作者仍要看见「可以连
-        // 这两个」。只报装了的，那个界面在全新机器上是空的，而空界面
-        // 读起来与「这个功能坏了」一样。
+        // 这些」。只报装了的，那个界面在全新机器上是空的，而空界面
+        // 读起来与「这个功能坏了」一样。名单来自注册表——新通道加进
+        // 注册表，这里自动跟随，但至少要有那三家。
         let statuses = probe_harnesses();
-        assert_eq!(statuses.len(), 2);
+        assert!(
+            statuses.len() >= 3,
+            "expected at least kimi/claude/pi, got {}",
+            statuses.len()
+        );
         assert_eq!(statuses[0].id, "kimi-print");
         assert_eq!(statuses[1].id, "claude-print");
+        assert_eq!(statuses[2].id, "pi-print");
     }
 
     #[test]

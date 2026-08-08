@@ -3,7 +3,7 @@
     .name = "refrain",
     .display_name = "RefRain",
     .description = "A local-first writing workbench.",
-    .version = "0.2.5",
+    .version = "0.3.0",
     .icons = .{"assets/icon.png"},
     .platforms = .{ "macos", "windows", "linux" },
     .permissions = .{ "view", "command" },
@@ -26,7 +26,16 @@
         .{ .id = "roster.previous", .key = "k", .modifiers = .{ "primary", "shift" } },
         .{ .id = "document.save", .key = "s", .modifiers = .{"primary"} },
         .{ .id = "document.undo", .key = "z", .modifiers = .{"primary"} },
+        // 搜索框住在文件树的顶部（同一个去处）：直达即去文件树，
+        // 不新开一个去处。
+        .{ .id = "search", .key = "f", .modifiers = .{"primary"} },
+        // 面板退层：Escape 与 Ctrl+[ 同义（旧版 shortcuts 同一条：不想
+        // 离开主键区的手用方括号）。Escape 无修饰符，三平台同一个键。
+        .{ .id = "panel.back", .key = "escape" },
+        .{ .id = "panel.back.bracket", .key = "[", .modifiers = .{"primary"} },
         .{ .id = "theme.next", .key = "t", .modifiers = .{ "primary", "shift" } },
+        // KARA 专注写作的手动开关：Ctrl+Enter（与设置页按钮同一条消息）。
+        .{ .id = "kara.toggle", .key = "enter", .modifiers = .{"primary"} },
         // 退出：三平台的惯例键位（macOS ⌘Q、Windows/Linux Ctrl+Q）。
         // 它同时是录制会话唯一的干净出口——`quitApp` 封口 journal，
         // 被信号杀掉的进程留不下结束标记。
@@ -51,22 +60,29 @@
         .{
             .title = "编辑",
             .items = .{
+                .{ .label = "查找", .command = "search", .key = "f", .modifiers = .{"primary"} },
+                .{ .separator = true },
                 .{ .label = "撤销", .command = "document.undo", .key = "z", .modifiers = .{"primary"} },
             },
         },
         .{
             .title = "前往",
             .items = .{
-                .{ .label = "正文", .command = "go.1", .key = "1", .modifiers = .{"primary"} },
+                // 键位语义与 v0.2.4 的四区同源（settings/files/editing/agent，
+                // quarters.ts）：1 设置、2 文件、3 稿子、4 Agent（记住上次的
+                // Agent 层去处）、5..7 直达信箱/连接/历史。菜单与键位同路——
+                // 作者从菜单学会键位，所以标签必须说键真正去的地方。
+                .{ .label = "设置", .command = "go.1", .key = "1", .modifiers = .{"primary"} },
                 .{ .label = "文件", .command = "go.2", .key = "2", .modifiers = .{"primary"} },
-                .{ .label = "裁决", .command = "go.3", .key = "3", .modifiers = .{"primary"} },
-                .{ .label = "派发", .command = "go.4", .key = "4", .modifiers = .{"primary"} },
+                .{ .label = "稿子", .command = "go.3", .key = "3", .modifiers = .{"primary"} },
+                .{ .label = "Agent", .command = "go.4", .key = "4", .modifiers = .{"primary"} },
                 .{ .label = "信箱", .command = "go.5", .key = "5", .modifiers = .{"primary"} },
                 .{ .label = "连接", .command = "go.6", .key = "6", .modifiers = .{"primary"} },
                 .{ .label = "历史", .command = "go.7", .key = "7", .modifiers = .{"primary"} },
-                .{ .label = "设置", .command = "go.8", .key = "8", .modifiers = .{"primary"} },
                 .{ .separator = true },
                 .{ .label = "命令面板", .command = "palette", .key = "k", .modifiers = .{"primary"} },
+                // KARA 专注写作：Ctrl+Enter 开合（与设置页的开关同一条消息）。
+                .{ .label = "专注写作", .command = "kara.toggle", .key = "enter", .modifiers = .{"primary"} },
             },
         },
         .{

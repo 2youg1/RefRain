@@ -17,6 +17,16 @@ var has_projection = false;
 /// 所以这块缓冲永远够用，不需要分配器。
 var projection_text: [protocol.projection_bytes]u8 = undefined;
 
+/// 锚定区间的落脚处：与 `projection_text` 同一条纪律——线上字节活在
+/// 调用栈上，区间（窗口坐标）搬进模块缓冲，容量即协议上界。
+var projection_ranges: [protocol.anchor_range_capacity]protocol.AnchorRangeWire = undefined;
+var projection_range_count: usize = 0;
+
+/// 行首偏移的落脚处：同一条纪律。视图按它们断行（SDK 只认 space/tab，
+/// 断不了中文），行数不超投影字节数（理论极值，每字节一个换行）。
+var projection_line_starts: [protocol.projection_bytes]u32 = undefined;
+var projection_line_start_count: usize = 0;
+
 /// 收下一个从线上字节解出的投影，并把它的文本搬进 `projection_text`。
 /// `wire` 只在本次调用内有效，函数返回后 `projection.text` 指向本模块的缓冲。
 fn adoptProjection(decoded: protocol.RefrainNativeResponse, wire: []const u8) void {
@@ -28,7 +38,45 @@ fn adoptProjection(decoded: protocol.RefrainNativeResponse, wire: []const u8) vo
     } else {
         projection.text_len = 0;
     }
+    // 行首与区间两段挂在文本之后；旧录制（v3）两段都没有，回放出空表
+    // 而不是错位。
+    adoptSections(wire, text_len, projection.line_start_count);
     has_projection = true;
+}
+
+/// 从线上字节解出行首偏移与锚定区间。逐字段 readInt——两段都不对齐
+/// （文本长度任意），按 extern 结构借指针会在未对齐的地址上炸掉。
+fn adoptSections(wire: []const u8, text_len: usize, line_count: u32) void {
+    projection_line_start_count = 0;
+    projection_range_count = 0;
+    var section = protocol.response_header_bytes + text_len;
+    if (line_count > 0) {
+        const wanted: usize = @min(line_count, protocol.projection_bytes);
+        if (wire.len < section + wanted * 4) return;
+        var index: usize = 0;
+        while (index < wanted) : (index += 1) {
+            projection_line_starts[index] = std.mem.readInt(u32, wire[section + index * 4 ..][0..4], .little);
+        }
+        projection_line_start_count = wanted;
+        section += wanted * 4;
+    }
+    if (wire.len < section + 4) return;
+    const count = std.mem.readInt(u32, wire[section..][0..4], .little);
+    const available = (wire.len - section - 4) / protocol.anchor_range_wire_bytes;
+    const bounded = @min(@min(count, available), protocol.anchor_range_capacity);
+    var index: usize = 0;
+    while (index < bounded) : (index += 1) {
+        const at = section + 4 + index * protocol.anchor_range_wire_bytes;
+        var id: [36]u8 = undefined;
+        @memcpy(&id, wire[at + 12 ..][0..36]);
+        projection_ranges[index] = .{
+            .start = std.mem.readInt(u32, wire[at..][0..4], .little),
+            .end = std.mem.readInt(u32, wire[at + 4 ..][0..4], .little),
+            .kind = std.mem.readInt(u32, wire[at + 8 ..][0..4], .little),
+            .id = id,
+        };
+    }
+    projection_range_count = bounded;
 }
 
 pub const DocumentView = struct {
@@ -51,6 +99,13 @@ pub const DocumentView = struct {
     /// 这份稿子写的是哪一门语言，来自 Rust 的 `DocumentFormat`。
     /// 翻成 SDK 语法的那张表在 `document_language.zig`；这里只搬数字。
     format: u32,
+    /// 这一窗里的锚定区间（窗口字节坐标）：批注（1=高亮 2=评论）与未裁决
+    /// 提案（3）。Rust 按当前稿子解析，锚不上的不在表里——视图按 kind
+    /// 分层画印点，缺席就是它「锚不上」的全部表示。
+    ranges: []const protocol.AnchorRangeWire,
+    /// CLREQ 禁则断出的行首偏移（窗口字节坐标）：视图按它断行——SDK 的
+    /// 换行搜索只认 space/tab，断不了中文。第一行恒从 0 开始。
+    line_starts: []const u32,
 };
 
 /// Bind the one generated dispatch codec to Native SDK's typed effect channel.
@@ -93,6 +148,8 @@ pub fn documentView() DocumentView {
         },
         .composition = composition,
         .format = projection.document_format,
+        .ranges = projection_ranges[0..projection_range_count],
+        .line_starts = projection_line_starts[0..projection_line_start_count],
     };
 }
 
@@ -110,6 +167,8 @@ fn emptyDocumentView() DocumentView {
         .line_count = 1,
         // 还没有稿子时按散文算：空表面不该显示成一份代码文件。
         .format = 0,
+        .ranges = &.{},
+        .line_starts = &.{},
     };
 }
 
@@ -179,8 +238,16 @@ fn wholeU64(value: f64) ?u64 {
 fn validateRequest(request_value: *const protocol.RefrainNativeRequest) bool {
     const action = std.enums.fromInt(protocol.Action, request_value.action) orelse return false;
     switch (action) {
-        .health, .open_manuscript => {
+        // health 不带文本；open_manuscript 的文本段正是要打开的引用
+        // （rootId + 换行 + path，core 的 document_open 分支构造）。把
+        // open 与 health 一起要求 text_len == 0，真实打开文档永远被拒——
+        // journal 回放绕过这条校验所以没暴露（e2e 仿真抓出）。
+        .health => {
             if (request_value.input != 0 or request_value.text_len != 0 or request_value.flags != 0) return false;
+        },
+        .open_manuscript => {
+            if (request_value.input != 0 or request_value.flags != 0) return false;
+            if (request_value.text_len > protocol.event_text_bytes) return false;
         },
         .obtain_projection => {
             if (request_value.input != 0 or request_value.text_len != 0 or request_value.flags != 0) return false;
@@ -190,7 +257,9 @@ fn validateRequest(request_value: *const protocol.RefrainNativeRequest) bool {
         },
         .apply_input => {
             const input = std.enums.fromInt(protocol.Input, request_value.input) orelse return false;
-            if (input != .insert_text and input != .set_composition and request_value.text_len != 0) {
+            // 只有三种输入带文本：插入、预编辑、回档（动作 id）。其余带文本是
+            // 形状错误。
+            if (input != .insert_text and input != .set_composition and input != .revert_to and request_value.text_len != 0) {
                 return false;
             }
             if (input == .move_caret) {
@@ -453,6 +522,55 @@ test "document view borrows the Rust projection without copying or reinterpretin
     try std.testing.expect(documentView().composition == null);
 }
 
+test "anchor ranges cross the wire and land in the document view in window coordinates" {
+    const source = "alpha one\n\nbeta two gamma";
+    const backing = [_]protocol.AnchorRangeWire{
+        .{ .start = 5, .end = 8, .kind = 1, .id = @splat('p') },
+        .{ .start = 15, .end = 20, .kind = 3, .id = @splat('q') },
+    };
+    const lines = [_]u32{ 0, 10 };
+    var response = protocol.emptyResponse(@intFromEnum(protocol.Action.obtain_projection));
+    response.text_len = source.len;
+    response.text = source.ptr;
+    response.anchor_ranges = &backing;
+    response.anchor_range_count = backing.len;
+    response.line_starts = &lines;
+    response.line_start_count = lines.len;
+
+    const encoded = protocol.encodeDispatchResponse(response);
+    const wire = encoded[0..protocol.encodedResponseLen(response)];
+    const decoded = protocol.decodeDispatchResponse(wire) orelse return error.DecodeFailed;
+    adoptProjection(decoded, wire);
+    defer {
+        has_projection = false;
+        projection_range_count = 0;
+        projection_line_start_count = 0;
+    }
+
+    const view = documentView();
+    try std.testing.expectEqualStrings(source, view.text);
+    try std.testing.expectEqual(@as(usize, 2), view.ranges.len);
+    try std.testing.expectEqualDeep(
+        protocol.AnchorRangeWire{ .start = 5, .end = 8, .kind = 1, .id = @splat('p') },
+        view.ranges[0],
+    );
+    try std.testing.expectEqualDeep(
+        protocol.AnchorRangeWire{ .start = 15, .end = 20, .kind = 3, .id = @splat('q') },
+        view.ranges[1],
+    );
+    // 行首随同一窗字节过界：视图按它断行（禁则），不按 SDK 的空格搜索。
+    try std.testing.expectEqualSlices(u32, &lines, view.line_starts);
+
+    // 旧录制（v3，文本之后没有区间段）回放出空表而不是错位。
+    const legacy = protocol.emptyResponse(@intFromEnum(protocol.Action.obtain_projection));
+    const legacy_encoded = protocol.encodeDispatchResponse(legacy);
+    const legacy_wire = legacy_encoded[0 .. protocol.response_header_bytes + legacy.text_len];
+    const legacy_decoded = protocol.decodeDispatchResponse(legacy_wire) orelse return error.DecodeFailed;
+    adoptProjection(legacy_decoded, legacy_wire);
+    try std.testing.expectEqual(@as(usize, 0), documentView().ranges.len);
+    try std.testing.expectEqual(@as(usize, 0), documentView().line_starts.len);
+}
+
 test "the bridge rejects malformed shapes for each action without a second numbering" {
     // A text payload on an action that carries no text is refused.
     var undo = std.mem.zeroes(protocol.RefrainNativeRequest);
@@ -479,6 +597,13 @@ test "the bridge rejects malformed shapes for each action without a second numbe
     unknown.input = 250;
     try std.testing.expect(!validateRequest(&unknown));
 
+    // 回档带动作 id 文本，与插入同属带文本的输入。
+    var revert = std.mem.zeroes(protocol.RefrainNativeRequest);
+    revert.action = @intFromEnum(protocol.Action.apply_input);
+    revert.input = @intFromEnum(protocol.Input.revert_to);
+    revert.text_len = 1;
+    try std.testing.expect(validateRequest(&revert));
+
     // The opaque project group carries text and never replaces the projection.
     const project_bytes = "{}";
     var project_input = std.mem.zeroes(protocol.RefrainNativeRequest);
@@ -494,11 +619,11 @@ test "host record offsets stay derived from the generated field order" {
     // generated offset must be a distinct multiple of eight below the length
     // prefix. A hand-edited offset would break one of these relations.
     const leading = [_]usize{
-        protocol.offset_action,           protocol.offset_anchor,
-        protocol.offset_columns_em,       protocol.offset_cursor,
-        protocol.offset_flags,            protocol.offset_focus,
-        protocol.offset_input,            protocol.offset_protocol_version,
-        protocol.offset_revision,         protocol.offset_scroll_offset_y,
+        protocol.offset_action,     protocol.offset_anchor,
+        protocol.offset_columns_em, protocol.offset_cursor,
+        protocol.offset_flags,      protocol.offset_focus,
+        protocol.offset_input,      protocol.offset_protocol_version,
+        protocol.offset_revision,   protocol.offset_scroll_offset_y,
         protocol.offset_session,
     };
     for (leading, 0..) |offset, index| {

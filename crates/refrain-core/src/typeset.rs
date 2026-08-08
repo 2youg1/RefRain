@@ -15,6 +15,59 @@
 //! 处理顺序按 CLREQ 固定，不可颠倒：
 //! 判类 → 不可分单元 → 挤压与混排间距 → 候选断点（禁则）→ 排行。
 //! 第 3 步早于第 5 步是硬约束：挤压会改变换行位置。
+//!
+//! ────────────────────────────────────────────────────────────────
+//! 本模块的权威与不可动摇的规则（作者设计，2026-08-06 立誓保护）
+//! ────────────────────────────────────────────────────────────────
+//!
+//! 这是 RefRain 的中西混排断行设计，是产品视觉质量的核心：中文整段没有
+//! 空格，断行只能靠这里的规则——它是 SDK 不做的、属于这个产品自己的那一
+//! 半排印能力。目标是把中文正稿的版面做到行业 SOTA：行首不挂句读、行尾不
+//! 落开括号、连续标点压缩、混排间距这些 CJK 禁则是通用排版器不给的。
+//! **改这里等于改产品定义。**
+//!
+//! 每一条都有人付过代价（Chromium 实测或规范条文）。改动前先读懂，改动后
+//! 必须过掉对应的测试——它们不是实现细节，是本模块的契约：
+//!
+//! 1. **字节不变量**：断行是渲染派生物，永不写回 `.md`。磁盘字节是唯一
+//!    正本，作者没打的空格不应出现在文件里。
+//! 2. **处理顺序不可颠倒**：判类 → 不可分单元 → 挤压与混排 → 候选断点 →
+//!    排行。挤压必须先于排行——压缩半个字身会改变一行放不放得下。
+//! 3. **结构层禁令先于字符类禁令**：URL、路径、行内代码、带单位的数值内部
+//!    不可断，无论两侧字符是什么类。逐字规则看不见这个层级（`/` 与 `.`
+//!    单看都是普通标点），所以它是一道独立的门槛。
+//! 4. **两地预设相反，不可合并**：GB/T 15834 §5.1.10 行尾标点压半个字身；
+//!    JLREQ §3.1.9 保留行尾空白。这是简中与日文不能共用一个预设的根本理由。
+//! 5. **数值对着实测，不是品味**：`，，` 为 24px（第二字 0.5em，Chromium
+//!    默认就在做挤压）；混排间距简中取 1/8 ic（CSS Text 4 §8.4.1）而非常见
+//!    的 1/4——后者是 CLREQ §6.3.3 的上界；日文按 JIS 取 1/4 em；悬挂默认
+//!    关（CLREQ §6.1.3 说中文多数出版物不用）。
+//! 6. **排行是贪心 + 可接受阈值**（`ACCEPTABLE_PENALTY = 20`），不是
+//!    Knuth-Plass 全局最优：后者要一并接管光标、选区、输入法，代价远超
+//!    收益。
+//! 7. **超长不可分单元让它溢出**，从单元结束处起新行；不就地硬断（会切出
+//!    两个不存在的词），不把后续正文一起推出版心（CSS `overflow-wrap:
+//!    normal` 的语义）。
+//! 8. **跨平台断点必须一致**：同一文本同一预设，任何平台给出相同的断点。
+//!    不得引入平台相关的宽度或字体度量——断行自研的理由之一就是浏览器
+//!    换行不保证平台一致。
+//!
+//! 改动门禁（每一条都见过红）：
+//! - 行首禁则：`full_width_punctuation_never_starts_a_line`
+//! - 行尾禁则：`an_opening_bracket_never_ends_a_line`
+//! - URL 不拆：`a_url_is_never_split_across_lines`（灾难语料 4-F）
+//! - 溢出语义：`an_overlong_western_word_overflows_instead_of_splitting`
+//! - 严格档可见不同：`the_strict_tier_breaks_differently_from_the_others`
+//! - 字符边界：`every_line_start_is_a_character_boundary`
+//!
+//! 已知待裁项（从 TS 迁移时原样保留，不属缺陷，改前先与作者裁决）：
+//! - loose 档与 normal 档在贪心排行下断行完全相同（代价 1 对 40 读不出）；
+//! - `-273.15°C` 的度数符号后不再吃字母（与 TS 原版逐字对齐的边界瑕疵）。
+//!
+//! **性能附注**：`line_starts` 在每次投影的热路径上。优化它时不得改变
+//! 断点本身——正确的方向是缓存与增量（按块缓存断点、编辑只重算受影响
+//! 块），而不是改规则。任何声称「更快但断点略有不同」的优化都是对契约
+//! 的破坏。
 
 use std::ops::Range;
 
@@ -317,12 +370,30 @@ fn ends_url(character: char) -> bool {
 
 /// 带协议的 URL：`scheme://…`。要求带协议，不认裸域名——`例如 example.com
 /// 这样` 里的域名与句子里的普通词无法可靠区分。
+///
+/// scheme 的查找限制在 128 字节窗口内：`find("://")` 从每个 ASCII 字母
+/// 字符出发时会扫到文本结尾，而英文密度高的真实书稿（实测 81% 的字符是
+/// ASCII 字母）会让每次投影变成 O(n²)——450 KB 文本断行 80.9 秒。任何
+/// 真实 scheme（http/https/ftp/mailto…）都远短于 128 字节；一个 scheme
+/// 长过 128 字节的「URL」现实中不存在，把它当普通文本断开不损失任何
+/// 真实版面（原行为本身是性能灾难，见模块头性能附注）。
 fn scan_scheme_url(text: &str, start: usize) -> Option<Range<usize>> {
     let rest = &text[start..];
     if !rest.starts_with(|c: char| c.is_ascii_alphabetic()) {
         return None;
     }
-    let scheme_end = rest.find("://")?;
+    // 128 字节窗口必须落在字符边界上：`min(128)` 会把一个 UTF-8 字符
+    // 切成两半，而随后的 `window.find("://")` 在切坏的切片上直接 panic
+    // （端字节 128 不是字符边界）——真实长文档必崩（作者实测闪退），
+    // 短 fixture 永远不会截断所以测试没抓到。退到上一个边界即可：
+    // 窗口短几字节不影响「URL 有没有 ://」的判断。
+    let window_end = rest.len().min(128);
+    let window_end = (0..=window_end)
+        .rev()
+        .find(|&offset| rest.is_char_boundary(offset))
+        .unwrap_or(0);
+    let window = &rest[..window_end];
+    let scheme_end = window.find("://")?;
     if !rest[..scheme_end]
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '.' || c == '-')
@@ -368,12 +439,16 @@ fn scan_path(text: &str, start: usize) -> Option<Range<usize>> {
 }
 
 /// 行内代码：反引号成对界定。
+///
+/// 配对查找限制在 4096 字节内：从反引号出发的 `find('`')` 同样会在无
+/// 配对时扫到文本结尾。行内代码不跨段；长代码块走围栏，不属行内。
 fn scan_inline_code(text: &str, start: usize) -> Option<Range<usize>> {
     let rest = &text[start..];
     if !rest.starts_with('`') {
         return None;
     }
-    let close = rest[1..].find('`')?;
+    let window = &rest[..rest.len().min(4096)];
+    let close = window[1..].find('`')?;
     Some(start..start + close + 2)
 }
 
@@ -574,6 +649,39 @@ fn unbreakable_end(
     line_start
 }
 
+/// 代码文件的断行：等宽硬切，无禁则、无行尾调整。
+///
+/// **接上哪个功能**：代码格式的投影（P3.7 断行分流）。散文断行要压半字、
+/// 要禁则候选，而代码行是等宽排的：禁则表（`！`不占行首之类）会打断
+/// 结构性的缩进与续行，行尾调整会改动 ASCII 行的度量——代码作者看见的
+/// 应该是「够宽就整行」，不是排版器替它重断。
+///
+/// **在全局逻辑中负责什么**：只做宽度累计。`is_half_width` 是唯一度量
+/// 规则（与 `measure` 共用），`columns_em` 的换算仍归调用者；这里不重复
+/// 候选断点、禁则与语言预设——代码没有这些。
+#[must_use]
+pub fn line_starts_code(text: &str, columns_em: f32) -> Vec<usize> {
+    let mut starts = vec![0usize];
+    if columns_em <= 0.0 || text.is_empty() {
+        return starts;
+    }
+    let mut width = 0.0f32;
+    for (index, character) in text.char_indices() {
+        if character == '\n' {
+            starts.push(index + 1);
+            width = 0.0;
+            continue;
+        }
+        let advance = if is_half_width(character) { 0.5 } else { 1.0 };
+        if width + advance > columns_em && width > 0.0 {
+            starts.push(index);
+            width = 0.0;
+        }
+        width += advance;
+    }
+    starts
+}
+
 /// 一行的起点，按**字节**偏移。第一项恒为 0。
 ///
 /// `columns_em` 是一行能放下的字身数，由调用者按真实字体度量算出——本模块不
@@ -719,6 +827,65 @@ mod tests {
         assert_eq!(
             squeeze_between(CharClass::Ideograph, CharClass::Ideograph),
             0.0
+        );
+    }
+
+    /// 防回归（作者实测闪退）：长中文文档的第 128 字节落在多字节字符
+    /// 中间，128 字节扫描窗口切在非字符边界上会让 `scan_scheme_url` 直接
+    /// panic——整个投影线程崩溃、应用闪退。短 fixture 永不截断所以
+    /// 测试没抓到；这一条用恰好跨边界的文本钉住。
+    #[test]
+    fn the_128_byte_window_never_splits_a_character() {
+        // 130+ 个「剧」（3 字节/字）：第 128 字节必然落进某个字符中间。
+        let mut text = String::new();
+        while text.len() < 130 {
+            text.push('剧');
+        }
+        // 前面加 ASCII 开头，让 scheme 扫描真正进入 128 字节窗口。
+        let text = format!("abc{text}");
+        // 投影热路径（散文 + 代码两路）都不得 panic。
+        let starts = line_starts(&text, 40.0, &ZH_HANS);
+        assert!(!starts.is_empty());
+        let code = line_starts_code(&text, 40.0);
+        assert!(!code.is_empty());
+    }
+
+    /// 代码硬切：ASCII 半个字身、CJK 一个字身，超宽即断；`\n` 恒为断点。
+    /// 与散文的差别必须可红——把硬切换成散文断行，这个测试会失败。
+    #[test]
+    fn code_lines_break_hard_without_forbidden_rules() {
+        // 4 列宽：4 个全角字符 = 4 em。第 5 个全角字符放不下，从它断。
+        // 字节偏移（每字 3 字节）：一二三四 到「五」断。
+        let text = "一二三四五六七八";
+        let starts = line_starts_code(text, 4.0);
+        assert_eq!(starts, vec![0, 12]);
+
+        // 半角是半个字身：24 个 ASCII = 12 em，8 em 一行断两次。
+        let ascii = "abcdefghijklmnopqrstuvwx";
+        let starts = line_starts_code(ascii, 8.0);
+        assert_eq!(starts, vec![0, 16]);
+
+        // `\n` 恒为断点，不参与宽度累计。一二三=9 字节，`\n` 在偏移 9。
+        let text = "一二三\n四";
+        assert_eq!(line_starts_code(text, 2.0), vec![0, 6, 10]);
+    }
+
+    /// 近失手：把代码行首的禁则（如 `)` 不该在行首）套进代码断行，会打断
+    /// 缩进与续行——代码的「这一行成不成」由语法决定，不由标点规则。
+    /// 这一条钉住：`line_starts_code` 从不去看候选断点。
+    #[test]
+    fn code_breaking_ignores_the_prose_candidate_set() {
+        // 散文的候选是空格：硬切点若落在 Latin 单词中间，散文会推到词尾
+        // （断在 9，i 之后），硬切在 10 断（j 中间）。两者必须不同。
+        let text = "abcdefgh ijklmnop qrstuvwx";
+        let columns = 5.0;
+        let code = line_starts_code(text, columns);
+        let prose = line_starts(text, columns, &ZH_HANS);
+        assert_eq!(code, vec![0, 10, 20]);
+        assert_eq!(prose, vec![0, 9, 18]);
+        assert_ne!(
+            code, prose,
+            "代码硬切与散文候选断行必须不同，否则分流没意义"
         );
     }
 

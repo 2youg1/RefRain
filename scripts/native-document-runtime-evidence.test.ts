@@ -138,12 +138,17 @@ describe("Native runtime evidence", () => {
     expect(assessment.passed).toBe(false);
   });
 
-  test("binds every sample to the expected process executable", () => {
-    expect(() => assertNativeRuntimeExecutable(process.pid, process.execPath)).not.toThrow();
-    expect(() => assertNativeRuntimeExecutable(process.pid, "/bin/false")).toThrow(
-      "does not run expected executable",
-    );
-  });
+  // /proc/<pid>/exe 是 Linux 专有的机制：Windows 上没有这个文件系统，
+  // 该断言的命题在那边不成立。Windows 的 CI 与本地跑跳过它，Linux CI 照跑。
+  test.skipIf(process.platform === "win32")(
+    "binds every sample to the expected process executable",
+    () => {
+      expect(() => assertNativeRuntimeExecutable(process.pid, process.execPath)).not.toThrow();
+      expect(() => assertNativeRuntimeExecutable(process.pid, "/bin/false")).toThrow(
+        "does not run expected executable",
+      );
+    },
+  );
 
   test("binds a snapshot to its spawned process and fixture", () => {
     const snapshot = `ready=true publisher_pid=73 gpu_nonblank=true dispatch_errors=0

@@ -1,0 +1,23 @@
+diff --git a/package.json b/package.json
+index 87039c0212a5e21db8862e00a60f38a7bd110d19..963950d664a59f3c71256fff70535580f372e9a1 100644
+--- a/package.json
++++ b/package.json
+@@ -16,15 +16,15 @@
+   ],
+   "exports": {
+     ".": {
+-      "types": "./sdk/core.ts",
++      "types": "./sdk/core.d.ts",
+       "default": "./sdk/core.ts"
+     },
+     "./text": {
+-      "types": "./sdk/text.ts",
++      "types": "./sdk/text.d.ts",
+       "default": "./sdk/text.ts"
+     },
+     "./events": {
+-      "types": "./sdk/events.ts",
++      "types": "./sdk/events.d.ts",
+       "default": "./sdk/events.ts"
+     }
+   },

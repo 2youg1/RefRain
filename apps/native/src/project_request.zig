@@ -19,21 +19,39 @@ const std = @import("std");
 /// 一条编好的请求，连同它借用的缓冲。
 ///
 /// 定长缓冲而不是分配：请求受 ABI 上限约束（`event_text_bytes`），而视图每帧
-/// 都可能编一条。缓冲住在调用者的栈上，请求出不了那一帧——正是它的寿命。
+/// 都可能编一条。**缓冲是模块级静态的**：`Msg` 携带的 `bytes` 要活到 core
+/// 收到它、把它编进宿主请求的那一步——栈 buffer 在函数返回后失效，实测
+/// 内容被复用帧覆盖成 NUL（e2e 仿真抓出：adopt 请求 55 字节全零，宿主
+/// 具名拒绝）。单线程 UI 帧内消费，静态缓冲因此安全；一次只编一条请求，
+/// 没有嵌套。
 pub const Request = struct {
     bytes: []const u8,
 };
 
-/// 编码用的定长缓冲。
+/// 编码用的定长缓冲池。
 ///
 /// 12 KiB 与协议的 `event_text_bytes` 同源：超过它 Rust 会具名拒绝，所以这里
 /// 装不下就交出 null，让调用方显示一条拒绝，而不是送一条会被截断的请求。
+///
+/// **为什么是 64 槽的池而不是一块静态 buffer**：`Msg` 携带的 `bytes` 要活到
+/// SDK 在点击时把它派发给 core（`on_press` 存储的是渲染时的值）。一帧渲染
+/// 会构造许多个带请求的按钮（文件树、邮箱行、裁决行、设置面板），单块
+/// buffer 会被后渲染的按钮覆盖——e2e 仿真抓到过：55 字节的 adopt 请求被
+/// 后一个按钮的字节覆盖，宿主收到 `file` 请求加 `}}` 尾巴，具名拒绝。
+/// 池按渲染顺序轮换分配，同帧的借用互不覆盖；滚动后旧行的 Msg 随行一起
+/// 废弃（不可点击），所以跨帧覆盖无害。
+const REQUEST_SLOTS: usize = 64;
+var request_pool: [REQUEST_SLOTS][12000]u8 = undefined;
+var request_slot: usize = 0;
+
 pub const Writer = struct {
-    buffer: [12000]u8 = undefined,
+    buffer: []u8 = undefined,
     len: usize = 0,
 
-    /// 重新开始编一条请求。
+    /// 重新开始编一条请求：轮换到下一个槽。
     pub fn reset(self: *Writer) void {
+        request_slot = (request_slot + 1) % REQUEST_SLOTS;
+        self.buffer = request_pool[request_slot][0..];
         self.len = 0;
     }
 
@@ -238,6 +256,49 @@ pub fn readConfig(writer: *Writer) ?Request {
     return writer.finish();
 }
 
+/// 读材料草稿的名录：Agent 交来的草稿，等待成稿或退回。
+///
+/// **接上哪个功能**：派发台的材料草稿行。答复与成稿/退回共用同一份
+/// 名录——动作之后界面不必再发一次读。
+pub fn readMaterialDrafts(writer: *Writer, root_id: []const u8) ?Request {
+    writer.reset();
+    if (!writer.put("{\"kind\":\"readMaterialDrafts\",\"value\":{")) return null;
+    if (!writer.key("rootId") or !writer.putString(root_id)) return null;
+    if (!writer.put("}}")) return null;
+    return writer.finish();
+}
+
+/// 成稿或退回一条材料草稿。`edited_body` 是作者改后的版本（null 用草稿
+/// 原文）；`dismiss` 退回；`as_chapter` 直接提拔成正文（否则进资料区）。
+///
+/// **接上哪个功能**：派发台材料草稿行的三个按钮：收进资料区 / 收成正文 /
+/// 退回。行内编辑把改后的文字经 `edited_body` 送过去。形状由
+/// `examples/wire_shapes.rs` 的 commitMaterialDraft 条目守着（editedBody
+/// 的 None 写成 null——省略键与显式 null 在 serde 里不是一回事）。
+pub fn commitMaterialDraft(
+    writer: *Writer,
+    root_id: []const u8,
+    draft_id: []const u8,
+    edited_body: ?[]const u8,
+    dismiss: bool,
+    as_chapter: bool,
+) ?Request {
+    writer.reset();
+    if (!writer.put("{\"kind\":\"commitMaterialDraft\",\"value\":{")) return null;
+    if (!writer.key("rootId") or !writer.putString(root_id)) return null;
+    if (!writer.comma() or !writer.key("draftId") or !writer.putString(draft_id)) return null;
+    if (!writer.comma() or !writer.key("editedBody")) return null;
+    if (edited_body) |body| {
+        if (!writer.putString(body)) return null;
+    } else if (!writer.put("null")) return null;
+    if (!writer.comma() or !writer.key("dismiss")) return null;
+    if (!writer.put(if (dismiss) "true" else "false")) return null;
+    if (!writer.comma() or !writer.key("asChapter")) return null;
+    if (!writer.put(if (as_chapter) "true" else "false")) return null;
+    if (!writer.put("}}")) return null;
+    return writer.finish();
+}
+
 /// 在选中的一段正文上留一条批注。
 ///
 /// **接上哪个功能**：正文右键菜单的「高亮」。送原文而不是块 id——块身份
@@ -281,6 +342,56 @@ pub fn annotate(
 /// `adjustTypography`（`ConfigChange` 的变体名）、`textSize`（字段枚举的
 /// 变体名）全是 camelCase，而 `field`／`delta` 是结构字段。实测自
 /// `wire_shapes.rs`，不是按规律推的。
+/// 把一段正文在全角与半角之间转换：选区块或整篇，方向二选一。
+///
+/// **接上哪个功能**：正文右键菜单的「转全角／转半角」（选区级）与命令
+/// 面板的同名项（全文级）。转换在 Rust（`text_width` 是唯一权威），这里
+/// 只把选区原文、作用域与方向送过去——送块 id 等于要求界面先知道块怎么切。
+///
+/// **口径**：`wholeDocument` 是 camelCase 结构字段，`direction` 是两个
+/// kebab-case 词（`to-full`／`to-half`）。实测自 `wire_shapes.rs`。
+pub fn convertWidth(
+    writer: *Writer,
+    root_id: []const u8,
+    path: []const u8,
+    selected: []const u8,
+    whole_document: bool,
+    direction: []const u8,
+) ?Request {
+    writer.reset();
+    if (!writer.open("convertWidth")) return null;
+    if (!writer.key("rootId") or !writer.putString(root_id)) return null;
+    if (!writer.comma() or !writer.key("path") or !writer.putString(path)) return null;
+    if (!writer.comma() or !writer.key("selected") or !writer.putString(selected)) return null;
+    if (!writer.comma() or !writer.key("wholeDocument")) return null;
+    if (whole_document) {
+        if (!writer.put("true")) return null;
+    } else {
+        if (!writer.put("false")) return null;
+    }
+    if (!writer.comma() or !writer.key("direction") or !writer.putString(direction)) return null;
+    if (!writer.close()) return null;
+    return writer.finish();
+}
+
+test "a scope conversion names the direction and the scope" {
+    var writer = Writer{};
+    try std.testing.expectEqualStrings(
+        "{\"kind\":\"convertWidth\",\"value\":{\"rootId\":\"r1\",\"path\":\"章一.md\"," ++
+            "\"selected\":\"abc\",\"wholeDocument\":false,\"direction\":\"to-full\"}}",
+        convertWidth(&writer, "r1", "章一.md", "abc", false, "to-full").?.bytes,
+    );
+}
+
+test "a whole-document conversion carries no selection text" {
+    var writer = Writer{};
+    try std.testing.expectEqualStrings(
+        "{\"kind\":\"convertWidth\",\"value\":{\"rootId\":\"r1\",\"path\":\"章一.md\"," ++
+            "\"selected\":\"\",\"wholeDocument\":true,\"direction\":\"to-half\"}}",
+        convertWidth(&writer, "r1", "章一.md", "", true, "to-half").?.bytes,
+    );
+}
+
 pub fn adjustTypography(writer: *Writer, field: []const u8, delta: i64) ?Request {
     writer.reset();
     if (!writer.put("{\"kind\":\"changeConfig\",\"value\":{\"adjustTypography\":{")) return null;
@@ -294,6 +405,132 @@ pub fn adjustTypography(writer: *Writer, field: []const u8, delta: i64) ?Request
     }
     if (!writer.put("}}}")) return null;
     return writer.finish();
+}
+
+/// 换面板材质：实心 / 亚克力 / 液态玻璃。
+///
+/// **接上哪个功能**：设置面板的材质三选行（2.10）。选哪一种界面立刻换肤
+/// （Model 先记下标），这里是落盘的那一份——重开不回弹。
+///
+/// **口径**：`{"kind":"changeConfig","value":{"setPanelMaterial":"acrylic"}}`——
+/// `PanelMaterial` 是 kebab-case 裸字符串（config.rs 的 serde 标注），
+/// 与 toggleAgentPersona 同形。词汇以 Rust 为准（solid/acrylic/liquid），
+/// 调用方只传这三个词。
+pub fn setPanelMaterial(writer: *Writer, material: []const u8) ?Request {
+    writer.reset();
+    if (!writer.put("{\"kind\":\"changeConfig\",\"value\":{\"setPanelMaterial\":")) return null;
+    if (!writer.putString(material)) return null;
+    if (!writer.put("}}")) return null;
+    return writer.finish();
+}
+
+/// 切换一个 Agent 的角色二态：干活 ↔ 扮演，身份原文带过去。
+///
+/// **接上哪个功能**：设置面板 Agent 行上的切换按钮。没有身份的 Agent
+/// 切无可切（Rust 侧 no-op），界面不给出按钮。
+///
+/// **口径**：`{"kind":"changeConfig","value":{"toggleAgentPersona":"<id>"}}`——
+/// `Id` 是 serde transparent，序列化成裸字符串。实测自 `wire_shapes.rs`。
+pub fn toggleAgentPersona(writer: *Writer, agent_id: []const u8) ?Request {
+    writer.reset();
+    if (!writer.put("{\"kind\":\"changeConfig\",\"value\":{\"toggleAgentPersona\":")) return null;
+    if (!writer.putString(agent_id)) return null;
+    if (!writer.put("}}")) return null;
+    return writer.finish();
+}
+
+/// 整份更新一个 Agent：名字、身份、专属 argv 一次落盘。
+///
+/// **接上哪个功能**：设置面板的伙伴编辑（argv 与身份说明）。`UpsertAgent`
+/// 是整份替换（upsert 语义：同 id 覆盖，无 id 新建），所以调用方必须持有
+/// 整份 profile——编辑 argv 时，名字与身份从 Rust 快照读回来原样回填。
+///
+/// **口径**：persona 是两层嵌套（`{"work":{"body":…}}`／`{"cosplay":…}`／
+/// `null`），argv 是字符串数组。空 persona 写 `null` 而不是省略键——
+/// 省略会被 serde 具名拒绝，而界面上作者看到的只是「保存没反应」。
+/// `mode` 用 `"work"`／`"cosplay"`／空（无身份）；`connection_id` 原样
+/// 回填快照值（空写 `null`）——界面不编辑它，但写死 null 会把作者
+/// 手绑的连接静默抹掉（数据丢失型坏味道，审计项）。
+pub fn upsertAgent(
+    writer: *Writer,
+    agent_id: []const u8,
+    name: []const u8,
+    connection_id: []const u8,
+    persona_mode: []const u8,
+    persona_body: []const u8,
+    argv: []const u8,
+) ?Request {
+    writer.reset();
+    if (!writer.put("{\"kind\":\"changeConfig\",\"value\":{\"upsertAgent\":{\"id\":")) return null;
+    if (!writer.putString(agent_id)) return null;
+    if (!writer.put(",\"name\":") or !writer.putString(name)) return null;
+    if (!writer.put(",\"connection_id\":")) return null;
+    if (connection_id.len == 0) {
+        if (!writer.put("null")) return null;
+    } else {
+        if (!writer.putString(connection_id)) return null;
+    }
+    if (!writer.put(",\"persona\":")) return null;
+    if (persona_mode.len == 0) {
+        if (!writer.put("null")) return null;
+    } else {
+        if (!writer.put("{\"")) return null;
+        if (!writer.put(persona_mode)) return null;
+        if (!writer.put("\":{\"body\":") or !writer.putString(persona_body)) return null;
+        if (!writer.put("}}")) return null;
+    }
+    if (!writer.put(",\"argv\":[")) return null;
+    var rest = argv;
+    var first = true;
+    while (rest.len > 0) {
+        const end = std.mem.indexOfScalar(u8, rest, ' ') orelse rest.len;
+        const piece = rest[0..end];
+        if (piece.len > 0) {
+            if (!first) {
+                if (!writer.put(",")) return null;
+            }
+            if (!writer.putString(piece)) return null;
+            first = false;
+        }
+        if (end == rest.len) break;
+        rest = rest[end + 1 ..];
+    }
+    if (!writer.put("]}}}")) return null;
+    return writer.finish();
+}
+
+test "an agent upsert carries the persona branch and the argv list" {
+    var writer = Writer{};
+    try std.testing.expectEqualStrings(
+        "{\"kind\":\"changeConfig\",\"value\":{\"upsertAgent\":{\"id\":\"a1\",\"name\":\"编辑\"," ++
+            "\"connection_id\":\"c9\",\"persona\":{\"work\":{\"body\":\"改稿\"}},\"argv\":[\"--model\",\"max\"]}}}",
+        upsertAgent(&writer, "a1", "编辑", "c9", "work", "改稿", "--model max").?.bytes,
+    );
+}
+
+test "an agent without a persona writes a null branch" {
+    var writer = Writer{};
+    try std.testing.expectEqualStrings(
+        "{\"kind\":\"changeConfig\",\"value\":{\"upsertAgent\":{\"id\":\"a3\",\"name\":\"裸机\"," ++
+            "\"connection_id\":null,\"persona\":null,\"argv\":[]}}}",
+        upsertAgent(&writer, "a3", "裸机", "", "", "", "").?.bytes,
+    );
+}
+
+test "a panel material change names the kebab word serde expects" {
+    var writer = Writer{};
+    try std.testing.expectEqualStrings(
+        "{\"kind\":\"changeConfig\",\"value\":{\"setPanelMaterial\":\"acrylic\"}}",
+        setPanelMaterial(&writer, "acrylic").?.bytes,
+    );
+}
+
+test "a run launch names the Root and the run, never a workspace" {
+    var writer = Writer{};
+    try std.testing.expectEqualStrings(
+        "{\"kind\":\"launchRun\",\"value\":{\"rootId\":\"r1\",\"runId\":\"run-9\"}}",
+        launchRun(&writer, "r1", "run-9").?.bytes,
+    );
 }
 
 /// 读一份文档改过什么：落盘的改动记录，重启之后仍在。
@@ -324,9 +561,24 @@ pub fn readAnnotations(writer: *Writer, root_id: []const u8, path: []const u8) ?
 /// 不带 Root：它问的是这台机器，不是这个项目。作者在「连接」那个去处
 /// 看见的是「我能连什么」，与他打开了哪个项目无关——所以这条请求在
 /// 一个项目也没开的时候同样发得出去。
-pub fn readHarnesses(writer: *Writer) ?Request {
+/// 把生成的协议装进一个 harness 的 skill 目录。作者显式点击——这是
+/// Root 之外的唯一写路径。
+pub fn installSkill(writer: *Writer, harness_id: []const u8) ?Request {
     writer.reset();
-    if (!writer.put("{\"kind\":\"readHarnesses\"}")) return null;
+    if (!writer.open("installSkill")) return null;
+    if (!writer.key("harnessId") or !writer.putString(harness_id)) return null;
+    if (!writer.close()) return null;
+    return writer.finish();
+}
+
+pub fn readHarnesses(writer: *Writer, force: bool) ?Request {
+    writer.reset();
+    if (!writer.open("readHarnesses")) return null;
+    if (!writer.key("force")) return null;
+    if (force) {
+        if (!writer.put("true")) return null;
+    } else if (!writer.put("false")) return null;
+    if (!writer.close()) return null;
     return writer.finish();
 }
 
@@ -335,6 +587,131 @@ pub fn readHost(writer: *Writer, root_id: []const u8) ?Request {
     writer.reset();
     if (!writer.open("readHost")) return null;
     if (!writer.key("rootId") or !writer.putString(root_id)) return null;
+    if (!writer.close()) return null;
+    return writer.finish();
+}
+
+/// 读信箱：全部文档的提案与作者的安排合成的一屏。
+///
+/// **接上哪个功能**：`refrain_app::mailbox::entries`（默认）或
+/// `refrain_app::mailbox::discarded`（回收站）。答复是刷新后的整屏，
+/// 所以每个安排动作之后界面不必再发一条读——动作的答复就是新信箱。
+pub fn readMailbox(writer: *Writer, root_id: []const u8, discarded: bool) ?Request {
+    writer.reset();
+    if (!writer.open("readMailbox")) return null;
+    if (!writer.key("rootId") or !writer.putString(root_id)) return null;
+    if (!writer.comma() or !writer.key("discarded")) return null;
+    if (discarded) {
+        if (!writer.put("true")) return null;
+    } else if (!writer.put("false")) return null;
+    if (!writer.close()) return null;
+    return writer.finish();
+}
+
+/// 置顶或取消置顶一单。`box_name` 是这一单现在所在的格（kebab-case）——
+/// 安排表按格+id 点名，界面上它来自行本身，不让作者填。
+pub fn mailboxPin(
+    writer: *Writer,
+    root_id: []const u8,
+    entry_id: []const u8,
+    box_name: []const u8,
+    pinned: bool,
+) ?Request {
+    writer.reset();
+    if (!writer.open("mailboxPin")) return null;
+    if (!writer.key("rootId") or !writer.putString(root_id)) return null;
+    if (!writer.comma() or !writer.key("entryId") or !writer.putString(entry_id)) return null;
+    if (!writer.comma() or !writer.key("boxName") or !writer.putString(box_name)) return null;
+    if (!writer.comma() or !writer.key("pinned")) return null;
+    if (!writer.put(if (pinned) "true" else "false")) return null;
+    if (!writer.close()) return null;
+    return writer.finish();
+}
+
+/// 弃置一单：软删除，单进回收站，提案行与账本原封不动（INV-4）。
+pub fn mailboxDiscard(
+    writer: *Writer,
+    root_id: []const u8,
+    entry_id: []const u8,
+    box_name: []const u8,
+) ?Request {
+    writer.reset();
+    if (!writer.open("mailboxDiscard")) return null;
+    if (!writer.key("rootId") or !writer.putString(root_id)) return null;
+    if (!writer.comma() or !writer.key("entryId") or !writer.putString(entry_id)) return null;
+    if (!writer.comma() or !writer.key("boxName") or !writer.putString(box_name)) return null;
+    if (!writer.close()) return null;
+    return writer.finish();
+}
+
+/// 取回一弃置的单：软删除可逆，这就是回收站的那一半。单回它被弃置时
+/// 所在的那一格。没弃置过的是空操作不是错误。
+pub fn mailboxRestore(
+    writer: *Writer,
+    root_id: []const u8,
+    entry_id: []const u8,
+) ?Request {
+    writer.reset();
+    if (!writer.open("mailboxRestore")) return null;
+    if (!writer.key("rootId") or !writer.putString(root_id)) return null;
+    if (!writer.comma() or !writer.key("entryId") or !writer.putString(entry_id)) return null;
+    if (!writer.close()) return null;
+    return writer.finish();
+}
+
+/// 排一单在那一格里的位次。位次是绝对下标；相邻交换是原子的
+/// `mailboxSwap`，界面不拼两条。
+pub fn mailboxRank(
+    writer: *Writer,
+    root_id: []const u8,
+    entry_id: []const u8,
+    box_name: []const u8,
+    rank: u32,
+) ?Request {
+    writer.reset();
+    if (!writer.open("mailboxRank")) return null;
+    if (!writer.key("rootId") or !writer.putString(root_id)) return null;
+    if (!writer.comma() or !writer.key("entryId") or !writer.putString(entry_id)) return null;
+    if (!writer.comma() or !writer.key("boxName") or !writer.putString(box_name)) return null;
+    if (!writer.comma() or !writer.key("rank")) return null;
+    if (!writer.putNumber(rank)) return null;
+    if (!writer.close()) return null;
+    return writer.finish();
+}
+
+/// 与另一单交换位次，一次事务。相邻交换是界面唯一需要的移动语义，
+/// 两条 `mailboxRank` 拼不出原子交换。
+pub fn mailboxSwap(
+    writer: *Writer,
+    root_id: []const u8,
+    entry_id: []const u8,
+    other_id: []const u8,
+) ?Request {
+    writer.reset();
+    if (!writer.open("mailboxSwap")) return null;
+    if (!writer.key("rootId") or !writer.putString(root_id)) return null;
+    if (!writer.comma() or !writer.key("entryId") or !writer.putString(entry_id)) return null;
+    if (!writer.comma() or !writer.key("otherId") or !writer.putString(other_id)) return null;
+    if (!writer.close()) return null;
+    return writer.finish();
+}
+
+/// 冲销一单已裁决的提案：把它的裁决行从账本退回。
+///
+/// 界面一次冲销一单——行就是作者指着的那一封。`proposalIds` 仍是数组，
+/// 因为 `Countermand` 的领域形状是「一批」；这里只收一个 id，装成一元数组。
+pub fn countermand(
+    writer: *Writer,
+    root_id: []const u8,
+    path: []const u8,
+    entry_id: []const u8,
+) ?Request {
+    writer.reset();
+    if (!writer.open("countermand")) return null;
+    if (!writer.key("rootId") or !writer.putString(root_id)) return null;
+    if (!writer.comma() or !writer.key("path") or !writer.putString(path)) return null;
+    if (!writer.comma() or !writer.key("proposalIds")) return null;
+    if (!writer.put("[") or !writer.putString(entry_id) or !writer.put("]")) return null;
     if (!writer.close()) return null;
     return writer.finish();
 }
@@ -368,54 +745,140 @@ pub fn hostRunCommand(
     return writer.finish();
 }
 
-/// 派发一次改写请求：选中的范围 → 冻结的请求 → 若干个就绪的 Run。
+/// 读一份打开着的稿子的块清单：派发台块段的行来自这一条。
 ///
-/// **接上哪个功能**：派发去处的「送出去」。三步（起任务、授权、铸 Run）
-/// 收在 Rust 的 `refrain_app::dispatch` 里——中间两步各要上一步生成的东西，
-/// 这边拼不出来，拼了也只是把领域顺序复制一份。
+/// `after` 是翻页游标（上一页末行的 ordinal），没有就写 `null`——serde 的
+/// `Option<u32>` 只认数字与 null 两种，省略键会被具名拒绝。`count` 由 Rust
+/// 夹到 1..=100，这里照送。
+pub fn readBlocks(
+    writer: *Writer,
+    root_id: []const u8,
+    path: []const u8,
+    after: ?u64,
+    count: u64,
+) ?Request {
+    writer.reset();
+    if (!writer.open("readBlocks")) return null;
+    if (!writer.key("rootId") or !writer.putString(root_id)) return null;
+    if (!writer.comma() or !writer.key("path") or !writer.putString(path)) return null;
+    if (!writer.comma() or !writer.key("after")) return null;
+    if (after) |ordinal| {
+        if (!writer.putNumber(ordinal)) return null;
+    } else if (!writer.put("null")) return null;
+    if (!writer.comma() or !writer.key("count") or !writer.putNumber(count)) return null;
+    if (!writer.close()) return null;
+    return writer.finish();
+}
+
+/// 读这个项目的资料名录：派发台「这轮给 agent 读什么」的勾选行来自
+/// 这一条。
+pub fn readMaterials(writer: *Writer, root_id: []const u8) ?Request {
+    writer.reset();
+    if (!writer.open("readMaterials")) return null;
+    if (!writer.key("rootId") or !writer.putString(root_id)) return null;
+    if (!writer.close()) return null;
+    return writer.finish();
+}
+
+/// 派发台的送出/预览：块段、攒段与选区合成 scopes 的请求。
 ///
-/// **口径**：外层 `ProjectInput` 是 camelCase，`DispatchRequest` 自己也标了
-/// camelCase，所以 `resultPath`／`maxBytes` 两个词都要驼峰——与相邻的
-/// `hostCommand`（字段保持 Rust 拼写 `run_id`）**正好相反**。这不是可以按
-/// 规律推的，`verify:wire-shapes` 逐字节守着它。
+/// **接上哪个功能**：2.2 的派发台（`Dispatch`／`PreviewDispatch` 共用，只差
+/// `kind` 与送前核对的 digest）。
 ///
-/// 一次只送一个范围：多范围要作者能在界面上框出好几段，而那要先有就地
-/// 多选。少一个参数好过留一个永远只传一个元素的数组。
-pub fn dispatchScope(
+/// **scope 合成规则**：`span` 在场时是 s1（块段，`before` 送空串——原文由
+/// Rust 按块 id 取回拼接）；`stash` 按 NUL 逐段，每段一个文本 scope，标签
+/// 顺着排（块段在时是 s2、s3……，不在时从 s1 起）。两者可以同在。**选区
+/// 也走这里**：位图与攒段都空时，调用方把选区文本放进 stash 槽位（一段
+/// 文本 scope）——委托/带稿/资料三个闸对三种范围来源同价（审计 #7）。
+///
+/// **能复用什么**：装不下 12KB 槽就交出 null——「装不下不送」的截断纪律，
+/// 调用方据此把按钮灰掉。
+pub fn dispatchDesk(
     writer: *Writer,
     root_id: []const u8,
     document: []const u8,
     prompt: []const u8,
-    label: []const u8,
-    before: []const u8,
+    span: ?struct { from: u64, count: u64 },
+    stash: []const u8,
     agents: u64,
     orchestration: []const u8,
-    result_path: []const u8,
-    max_bytes: u64,
+    carry: []const u8,
+    materials: []const []const u8,
+    agent_id: []const u8,
+    channel: []const u8,
+    expected_digest: ?[]const u8,
+    comptime kind: []const u8,
 ) ?Request {
     writer.reset();
-    if (!writer.open("dispatch")) return null;
+    if (!writer.open(kind)) return null;
     if (!writer.key("rootId") or !writer.putString(root_id)) return null;
     if (!writer.comma() or !writer.key("request")) return null;
     if (!writer.put("{")) return null;
     if (!writer.key("document") or !writer.putString(document)) return null;
     if (!writer.comma() or !writer.key("prompt") or !writer.putString(prompt)) return null;
-    if (!writer.comma() or !writer.key("scopes") or !writer.put("[{")) return null;
-    if (!writer.key("label") or !writer.putString(label)) return null;
-    if (!writer.comma() or !writer.key("before") or !writer.putString(before)) return null;
-    if (!writer.put("}]")) return null;
+    if (!writer.comma() or !writer.key("scopes") or !writer.put("[")) return null;
+    var label: u64 = 1;
+    var first = true;
+    if (span) |blocks| {
+        // 块段 scope：from 是起始 ordinal，before 恒空串（以块为准）。
+        if (!writer.put("{")) return null;
+        if (!writer.key("label") or !writer.putString("s1")) return null;
+        if (!writer.comma() or !writer.key("before") or !writer.putString("")) return null;
+        if (!writer.comma() or !writer.key("blocks") or !writer.put("{")) return null;
+        if (!writer.key("from") or !writer.putNumber(blocks.from)) return null;
+        if (!writer.comma() or !writer.key("count") or !writer.putNumber(blocks.count)) return null;
+        if (!writer.put("}}")) return null;
+        label += 1;
+        first = false;
+    }
+    var rest = stash;
+    while (rest.len > 0) {
+        const at = std.mem.indexOfScalar(u8, rest, 0) orelse rest.len;
+        const segment = rest[0..at];
+        rest = if (at < rest.len) rest[at + 1 ..] else rest[0..0];
+        // 空段（连着的 NUL）不成 scope：一个空 scope 会被 Rust 具名拒绝。
+        if (segment.len == 0) continue;
+        if (!first and !writer.comma()) return null;
+        first = false;
+        var label_buf: [16]u8 = undefined;
+        const label_text = std.fmt.bufPrint(&label_buf, "s{d}", .{label}) catch return null;
+        label += 1;
+        if (!writer.put("{")) return null;
+        if (!writer.key("label") or !writer.putString(label_text)) return null;
+        if (!writer.comma() or !writer.key("before") or !writer.putString(segment)) return null;
+        if (!writer.put("}")) return null;
+    }
+    if (!writer.put("]")) return null;
     if (!writer.comma() or !writer.key("agents") or !writer.putNumber(agents)) return null;
-    // 排法是 kebab-case（`alternates`／`follows`／`verifies`）——同一份请求里
-    // 相邻的键是 camelCase，两种口径并存，`verify:wire-shapes` 守着它。
+    // 排法名是 kebab-case（`alternates`／`follows`／`verifies`），由调用方给。
     if (!writer.comma() or !writer.key("orchestration") or !writer.putString(orchestration)) return null;
-    // persona 与 channel：身份由 `AGENTS.md` 承载（D14），所以这里写
-    // `null` 并声明走 harness 通道——两条路同时携带身份全文，会让同一份
-    // 身份投递两次，此后各自漂移。写死 `null` 而不是省略这个键：serde
-    // 要求它在场，省略会被静默拒绝，界面上表现为「派发按钮没反应」。
+    // persona 恒 null（D14：harness 通道的身份由 AGENTS.md 承载），channel
+    // 由调用方按委托行给——手动往返是 "manual"，具名伙伴是 "harness"。
     if (!writer.comma() or !writer.key("persona") or !writer.put("null")) return null;
-    if (!writer.comma() or !writer.key("channel") or !writer.putString("harness")) return null;
-    if (!writer.comma() or !writer.key("resultPath") or !writer.putString(result_path)) return null;
-    if (!writer.comma() or !writer.key("maxBytes") or !writer.putNumber(max_bytes)) return null;
+    if (!writer.comma() or !writer.key("channel") or !writer.putString(channel)) return null;
+    if (!writer.comma() or !writer.key("resultPath") or !writer.putString("result.md")) return null;
+    if (!writer.comma() or !writer.key("maxBytes") or !writer.putNumber(64 * 1024)) return null;
+    // carry／materials／agent／expectedDigest 在场才写：serde 的 default + skip
+    // 纪律认缺席为默认（旧载荷 = 旧行为），多写一个默认值反而改变字节。
+    // 顺序是 serde 的声明序（carry、materials、agent、expectedDigest）。
+    if (carry.len > 0) {
+        if (!writer.comma() or !writer.key("carry") or !writer.putString(carry)) return null;
+    }
+    if (materials.len > 0) {
+        // 勾选的资料：只有路径过河，档位权威在名录（SetDisclosure）。
+        if (!writer.comma() or !writer.key("materials") or !writer.put("[")) return null;
+        for (materials, 0..) |path, index| {
+            if (index > 0 and !writer.comma()) return null;
+            if (!writer.putString(path)) return null;
+        }
+        if (!writer.put("]")) return null;
+    }
+    if (agent_id.len > 0) {
+        if (!writer.comma() or !writer.key("agent") or !writer.putString(agent_id)) return null;
+    }
+    if (expected_digest) |digest| {
+        if (!writer.comma() or !writer.key("expectedDigest") or !writer.putString(digest)) return null;
+    }
     if (!writer.put("}")) return null;
     if (!writer.close()) return null;
     return writer.finish();
@@ -475,10 +938,61 @@ pub fn commitVerdicts(writer: *Writer, root_id: []const u8, path: []const u8) ?R
     return writer.finish();
 }
 
+/// 判了就落盘：记账与提交一次完成（`JudgeVerdict`）。
+///
+/// **接上哪个功能**：饭盒的 接受/退回/改后接受——判完即落盘，作者回到
+/// 写作。与裁决台的 `stageVerdict` + `commitVerdicts` 两步分开：那是
+/// 「先看看再一起落」，这是「判完就走」。
+pub fn judgeVerdict(
+    writer: *Writer,
+    root_id: []const u8,
+    path: []const u8,
+    proposal_id: []const u8,
+    kind: []const u8,
+    final_text: []const u8,
+    reason: []const u8,
+) ?Request {
+    writer.reset();
+    if (!writer.open("judgeVerdict")) return null;
+    if (!writer.key("rootId") or !writer.putString(root_id)) return null;
+    if (!writer.comma() or !writer.key("path") or !writer.putString(path)) return null;
+    if (!writer.comma() or !writer.key("proposalId") or !writer.putString(proposal_id)) return null;
+    if (!writer.comma() or !writer.key("kind") or !writer.putString(kind)) return null;
+    if (!writer.comma() or !writer.key("finalText")) return null;
+    if (final_text.len == 0) {
+        if (!writer.put("null")) return null;
+    } else if (!writer.putString(final_text)) return null;
+    if (!writer.comma() or !writer.key("reason")) return null;
+    if (reason.len == 0) {
+        if (!writer.put("null")) return null;
+    } else if (!writer.putString(reason)) return null;
+    if (!writer.close()) return null;
+    return writer.finish();
+}
+
 /// 收取一次派发的结果。产出还没出现时是 `waiting`，不是错误。
 pub fn collectRun(writer: *Writer, root_id: []const u8, run_id: []const u8) ?Request {
     writer.reset();
     if (!writer.open("collectRun")) return null;
+    if (!writer.key("rootId") or !writer.putString(root_id)) return null;
+    if (!writer.comma() or !writer.key("runId") or !writer.putString(run_id)) return null;
+    if (!writer.close()) return null;
+    return writer.finish();
+}
+
+/// 发射一条已授权的 Run（2.11）。
+///
+/// **接上哪个功能**：派发台与信箱 Run 行上的「开始」按钮——Run 铸成
+/// （authorized）之后等的就是这一声发令枪。手动往返（L0）与接力/校验的
+/// 第一棒都经它；工作区的组成归 Rust（`staging::run_workspace` 唯一权威），
+/// 界面只点名 run，不拼路径。
+///
+/// **在全局逻辑中负责什么**：只派 Msg。「现在能不能发射」的状态门在
+/// `project_view.runActions`（仅 authorized 显示按钮），合不合法归 host
+/// 的具名拒绝（等上游、未授权）——两边不各判一次。
+pub fn launchRun(writer: *Writer, root_id: []const u8, run_id: []const u8) ?Request {
+    writer.reset();
+    if (!writer.open("launchRun")) return null;
     if (!writer.key("rootId") or !writer.putString(root_id)) return null;
     if (!writer.comma() or !writer.key("runId") or !writer.putString(run_id)) return null;
     if (!writer.close()) return null;
@@ -625,23 +1139,58 @@ test "a dispatch matches the two-layer camelCase serde asks for" {
     // 这条是逐字节对着 `wire_shapes.rs` 的实测输出写的，不是按规律推的。
     // 相邻的 `hostCommand` 字段保持 Rust 拼写（`run_id`），而这里两层都是
     // camelCase——按同一种规律猜，两处必有一处被静默拒绝。
+    // 选区/攒段走 stash 槽位成一个文本 scope；委托的具名伙伴随请求过河
+    // （审计 #7 修复后agent 字段在场），channel 由委托行定。
     var writer = Writer{};
     try std.testing.expectEqualStrings(
         "{\"kind\":\"dispatch\",\"value\":{\"rootId\":\"r1\",\"request\":{" ++
             "\"document\":\"章一.md\",\"prompt\":\"改克制些。\"," ++
             "\"scopes\":[{\"label\":\"s1\",\"before\":\"剑一直握在他手里。\"}]," ++
-            "\"agents\":2,\"orchestration\":\"alternates\",\"persona\":null,\"channel\":\"harness\",\"resultPath\":\"result.md\",\"maxBytes\":65536}}}",
-        dispatchScope(
+            "\"agents\":2,\"orchestration\":\"alternates\",\"persona\":null,\"channel\":\"harness\",\"resultPath\":\"result.md\",\"maxBytes\":65536," ++
+            "\"agent\":\"a1\"}}}",
+        dispatchDesk(
             &writer,
             "r1",
             "章一.md",
             "改克制些。",
-            "s1",
+            null,
             "剑一直握在他手里。",
             2,
             "alternates",
-            "result.md",
-            65536,
+            "",
+            &.{},
+            "a1",
+            "harness",
+            null,
+            "dispatch",
+        ).?.bytes,
+    );
+}
+
+test "a manual dispatch carries no agent and the manual channel" {
+    // 手动往返（L0）：没有具名伙伴时 channel 是 manual、agent 字段缺席——
+    // 身份随请求走，不点名。
+    var writer = Writer{};
+    try std.testing.expectEqualStrings(
+        "{\"kind\":\"previewDispatch\",\"value\":{\"rootId\":\"r1\",\"request\":{" ++
+            "\"document\":\"章一.md\",\"prompt\":\"改。\"," ++
+            "\"scopes\":[{\"label\":\"s1\",\"before\":\"一段。\"}]," ++
+            "\"agents\":1,\"orchestration\":\"alternates\",\"persona\":null,\"channel\":\"manual\",\"resultPath\":\"result.md\",\"maxBytes\":65536}}}",
+        dispatchDesk(
+            &writer,
+            "r1",
+            "章一.md",
+            "改。",
+            null,
+            "一段。",
+            1,
+            "alternates",
+            "",
+            &.{},
+            "",
+            "manual",
+            null,
+            "previewDispatch",
         ).?.bytes,
     );
 }
@@ -650,17 +1199,21 @@ test "a scope carrying a quotation mark is escaped, not truncated" {
     // 作者选的正文里有引号是常事（对话）。不转义会让 JSON 在那里断掉，
     // 而 Rust 那边收到的是一个语法错误——界面上表现为「派发没反应」。
     var writer = Writer{};
-    const request = dispatchScope(
+    const request = dispatchDesk(
         &writer,
         "r1",
         "章一.md",
         "改。",
-        "s1",
+        null,
         "他说「走」，然后\"停\"了。",
         1,
         "alternates",
-        "result.md",
-        1024,
+        "",
+        &.{},
+        "",
+        "manual",
+        null,
+        "dispatch",
     ).?;
     try std.testing.expect(std.mem.indexOf(u8, request.bytes, "\\\"停\\\"") != null);
 }
@@ -671,6 +1224,15 @@ test "a typographic adjustment matches the three nested camelCase layers" {
     try std.testing.expectEqualStrings(
         "{\"kind\":\"changeConfig\",\"value\":{\"adjustTypography\":{\"field\":\"textSize\",\"delta\":10}}}",
         adjustTypography(&writer, "textSize", 10).?.bytes,
+    );
+}
+
+test "a persona toggle names the agent by a bare id string" {
+    // `Id` 是 serde transparent：裸字符串，不是 `{"0": "..."}`。
+    var writer = Writer{};
+    try std.testing.expectEqualStrings(
+        "{\"kind\":\"changeConfig\",\"value\":{\"toggleAgentPersona\":\"00000000-0000-0000-0000-000000000001\"}}",
+        toggleAgentPersona(&writer, "00000000-0000-0000-0000-000000000001").?.bytes,
     );
 }
 
@@ -711,5 +1273,46 @@ test "a kara event names the camelCase variant serde expects" {
     try std.testing.expectEqualStrings(
         "{\"kind\":\"karaStep\",\"value\":{\"kind\":\"manualToggle\"}}",
         karaStep(&writer, "manualToggle").?.bytes,
+    );
+}
+
+test "a mailbox read names the Root and the page" {
+    // `discarded` 是结构字段：false 也写进 value——省略键会被 serde
+    // 具名拒绝，而界面上作者看到的只是「回收站页签读不出来」。
+    var writer = Writer{};
+    try std.testing.expectEqualStrings(
+        "{\"kind\":\"readMailbox\",\"value\":{\"rootId\":\"r1\",\"discarded\":false}}",
+        readMailbox(&writer, "r1", false).?.bytes,
+    );
+    try std.testing.expectEqualStrings(
+        "{\"kind\":\"readMailbox\",\"value\":{\"rootId\":\"r1\",\"discarded\":true}}",
+        readMailbox(&writer, "r1", true).?.bytes,
+    );
+}
+
+test "a mailbox pin carries the entry's own box in kebab-case" {
+    // 格名是 kebab-case（`MailboxBoxName` 的口径），与相邻 camelCase 的
+    // `boxName` 键并排——写成 `unRead` 会得到一条被具名拒绝的请求。
+    var writer = Writer{};
+    try std.testing.expectEqualStrings(
+        "{\"kind\":\"mailboxPin\",\"value\":{\"rootId\":\"r1\",\"entryId\":\"p1\",\"boxName\":\"unread\",\"pinned\":true}}",
+        mailboxPin(&writer, "r1", "p1", "unread", true).?.bytes,
+    );
+}
+
+test "a mailbox discard names the entry and its box" {
+    var writer = Writer{};
+    try std.testing.expectEqualStrings(
+        "{\"kind\":\"mailboxDiscard\",\"value\":{\"rootId\":\"r1\",\"entryId\":\"p1\",\"boxName\":\"done\"}}",
+        mailboxDiscard(&writer, "r1", "p1", "done").?.bytes,
+    );
+}
+
+test "a countermand wraps the one pointed entry in an array" {
+    // 领域形状是「一批」，界面一次指着一封——一元数组是两边的合约。
+    var writer = Writer{};
+    try std.testing.expectEqualStrings(
+        "{\"kind\":\"countermand\",\"value\":{\"rootId\":\"r1\",\"path\":\"章.md\",\"proposalIds\":[\"p1\"]}}",
+        countermand(&writer, "r1", "章.md", "p1").?.bytes,
     );
 }

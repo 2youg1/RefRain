@@ -49,14 +49,17 @@ RefRain 取第三种立场：**智能体提议，你裁决，而谁裁决了什�
 ### 写作
 
 整份手稿是一个编辑面，所以选区能跨段落——这本来就是你预期的行为。十万个块里同时
-挂载的约六十个，帧调度跟随你显示器的刷新率。
+挂载的是一份有界的 96 块投影，帧调度跟随你显示器的刷新率。
 
-对中日文作者尤其要紧的几点：输入法组合过程绝不被打断，保存会等 `compositionend`；
-三个字体槽（拉丁、中文、日文）按优先级决定汉字由谁来渲染，而不是碰运气。
+对中日文作者尤其要紧的几点：输入法组合过程绝不被打断，保存会等 `compositionend`。
+三张字体打包进二进制并注册进渲染器——正稿用 Noto Sans SC，拉丁用 Antic Didone，
+日文用 Zen Kaku Gothic New。一条如实标注的边界：Native SDK 的排印目前只有全局正文体
+与全局等宽体两个槽，逐字回退还不存在，所以正稿由 Noto Sans SC 一张画出——它一张
+就盖住了汉字与假名。
 
-排版归你控制——字重、字距、词距、行宽、缩进、段距、对齐、基线网格、显示缩放——中、
-日、英各有预设，也留了你自己的位置。围栏代码块支持三十四种语言六套配色，全部在构建期
-内嵌，所以高亮永远不会去联网取任何东西。
+排版设置按作者持久化。字号、行高、行长今天在设置面板里就能调；更全的那组（缩进、
+对齐、基线网格等）照常被存储、被携带，但原生渲染还不消费它们——这是换栈的一条
+已知边界，写在这里，而不是悄悄丢掉。
 
 编辑是可以回头的。Ctrl+Z 撤销上一步，侧栏的「历史」面板能回档到任意一步——记录跨
 重启存活。对智能体合并进正文的提案，反悔走另一条路：在邮箱里做一次逆向裁决，冲销
@@ -71,17 +74,17 @@ HTML、XML、TOML、YAML 都能以纯文本打开、编辑、逐字节存回原�
 半个字身，不可分的单元宁可溢出也不硬切，而且断在哪里在三个平台上逐字节一致，
 因为算法是一个 Rust 模块，不是三个浏览器引擎。
 
-**换栈进行到哪一步。** RefRain 正在迁到原生渲染路径上。领域层——正文字节、块身份、
-裁决、编排、PDF 文本抽取——整体带了过来，且有测试守着。界面按屏重建，所以 v0.2.4
-已发布的那些功能（就地渲染、表格、图表、PDF 阅读、批注、搜索结果、历史）
-**暂时没有界面**：它们的规则与依赖都还在，每接上一屏就回来一项。
-产品没有删掉任何功能，变的是画它的那一层。
+**换栈进行到哪一步。** RefRain 已经迁到原生渲染路径上。领域层——正文字节、块身份、
+裁决、编排、PDF 文本抽取——整体带了过来，且有测试守着。界面按屏重建。已经回到
+原生表面的：可撤销的编辑、「历史」面板与任意一步回档、信箱（置顶/弃置/冲销）、
+批注的读取、点一条搜索命中直接跳到那一块、干活/扮演的角色二态开关、内嵌字体。
+还没有原生表面的：就地 Markdown 渲染、表格、图表、PDF 阅读、批注的写入、渲染端
+消费的排版、多轮接力编排的界面。它们的规则与依赖都还在，每接上一屏就回来一项。
 
-还有些每天都会碰到的小事（同样规则还在、界面待接）：搜索结果会把命中的那句话
-显示出来、查询词标在里面；标点宽度建议、空段清理、不会留下
-`****` 残渣的三态行内
-格式、标题引用列表的三态命令、宁可请你重新锚定也不乱猜的批注，以及保存失败时告诉
-你下一步该做什么。
+还有些每天都会碰到的小事：搜索命中会带上那句话、点一条直接跳到那一块（这项已经
+回来）；标点宽度建议、空段清理、不会留下 `****` 残渣的三态行内格式、标题引用
+列表的三态命令、宁可请你重新锚定也不乱猜的批注，以及保存失败时告诉你下一步该做
+什么——规则还在，界面待接。
 
 ### 与智能体协作
 
@@ -109,15 +112,21 @@ HTML、XML、TOML、YAML 都能以纯文本打开、编辑、逐字节存回原�
 
 ## 安装
 
-RefRain 还没有发布。应用能从同一份清单构建并运行在 Windows、macOS 与 Linux 上，
-但没有任何一个平台走过真实的安装流程，所以不提供下载。
+发布在 [GitHub Releases](https://github.com/kaile9/RefRain/releases) 上。当前版本是
+v0.2.5。下一版 v0.3.0 是第一个带原生表面的构建，等作者在自己的 Windows 机器上签字
+之后提供 Windows 下载。
 
-本仓库里的每个数字都出自 Linux。在某个平台上实测之前，不会替那个平台作任何声称
-——尤其是 Windows 与 macOS 的输入法链路，代码写好了但还没有在真机上签字。
+本仓库里的实测数字大多出自 Linux；在某个平台上实测之前，不替那个平台作任何声称。
+现在的例外是 Windows 构建本身：它在真实 Windows 硬件上编译通过、测试全绿。Windows
+与 macOS 的输入法链路代码写好了，但还没有签字。
 
 ### 从源码构建
 
-需要 Rust 工具链与 [Bun](https://bun.sh)：
+需要 Rust 工具链、[Bun](https://bun.sh)，以及跑 Native 工具链用的 Node.js ≥ 22.15。
+在 Windows 上还要加上 GNU target（`rustup target add x86_64-pc-windows-gnu`）并让
+`PATH` 上有一个 `dlltool`（CI 用的是 Zig 自带的）。RuntimeObject 导入绑定的是
+`combase.dll`——真正导出那个符号的库；同名家族的那个转发 DLL 在一些剪裁版 Windows
+上并不存在。
 
 ```sh
 bun install
@@ -151,16 +160,13 @@ TMPDIR="$PWD/.tmp" cargo test --workspace --all-targets
 | **内核** | [Rust](https://rust-lang.org) — 领域模型、存储、智能体编排 |
 | **应用外壳** | [Native SDK](https://native-sdk.dev)——原生渲染。交付的二进制里没有 WebView，也没有 JavaScript 运行时。 |
 | **界面** | `.native` 标记、受限的 [TypeScript](https://www.typescriptlang.org) 子集（只管界面状态）、[Zig](https://ziglang.org)（平台事件与绘制） |
-| **编辑器内核** | 无框架直接操作 DOM；正本字节归 Rust 所有 |
 | **存储** | [SQLite](https://sqlite.org)（经 [rusqlite](https://github.com/rusqlite/rusqlite)）；FTS5 `unicode61` 配应用层 bigram 分词 |
 | **标识** | [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) 摘要、[UUID](https://github.com/uuid-rs/uuid) v7 |
 | **类型桥** | [Serde](https://serde.rs) 与 [Specta](https://github.com/specta-rs/specta)，TypeScript 类型由后者生成 |
 | **断行** | `refrain_core::typeset`——自研，因为没有引擎能把中文断对（见上） |
 | **高亮** | Native SDK 自带的 `code` 部件——17 门语法编译进二进制，运行期不加载任何语法包，也不触网 |
-| **图表** | [nomnoml](https://github.com/skanaar/nomnoml)，gzip 后 26 KB，另有一层转换接受 Mermaid 流程图语法 |
 | **导入的原件** | 文本由 Rust 侧的 `lopdf` 抽取——无渲染器、无浏览器引擎。每页的字带一个 `<!-- p.N -->` 页锚，所以一句引文说得出它出自第几页，读者也回得到原件 |
-| **构建工具** | [ScriptC](https://github.com/vercel-labs/scriptc) 把门禁与发布脚本编译成原生二进制，其余由 [Bun](https://bun.sh) 跑。两者都不进产物。 |
-| **构建与发布** | [Bun](https://bun.sh) 与 [Node.js](https://nodejs.org)，仅构建期使用；[ScriptC](https://github.com/vercel-labs/scriptc) 把发布策略编译成原生可执行文件 |
+| **构建工具** | [ScriptC](https://github.com/vercel-labs/scriptc) 把 tier A 门禁与发布程序编译成原生二进制；其余由 [Bun](https://bun.sh) 与 [Node.js](https://nodejs.org) 跑。三者都不进产物。 |
 
 搜索索引为什么用 bigram 而不是 trigram 或分词器——连同定下这件事的实测数据——写在
 [ARCHITECTURE.md](docs/ARCHITECTURE.md#why-bigram-not-trigram-or-a-tokeniser)。
@@ -174,10 +180,8 @@ TMPDIR="$PWD/.tmp" cargo test --workspace --all-targets
 内嵌的字体，均遵循
 [SIL 开放字体许可 1.1](https://openfontlicense.org)：
 
-- **[Noto Sans SC](https://fonts.google.com/noto/specimen/Noto+Sans+SC)** — 20,976 个汉字外加假名，中文稿不出豆腐块靠它
-- **[Zen Kaku Gothic New](https://fonts.google.com/specimen/Zen+Kaku+Gothic+New)** — 6,682 个汉字，用于日文
-- **[Antic Didone](https://fonts.google.com/specimen/Antic+Didone)**
-- **[Jost](https://indestructibletype.com/Jost.html)**
-- **[Courier Prime](https://quoteunquoteapps.com/courierprime/)**
+- **[Noto Sans SC](https://fonts.google.com/noto/specimen/Noto+Sans+SC)** — 20,976 个汉字外加假名，正稿用的就是它，中文稿不出豆腐块靠它
+- **[Zen Kaku Gothic New](https://fonts.google.com/specimen/Zen+Kaku+Gothic+New)** — 6,682 个汉字，日文槽
+- **[Antic Didone](https://fonts.google.com/specimen/Antic+Didone)** — 拉丁衬线槽
 
 第三方完整条款在 [LICENSE-THIRD-PARTY](LICENSE-THIRD-PARTY)。

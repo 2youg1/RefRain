@@ -1,11 +1,11 @@
 /**
- * Generate `apps/desktop/src/renderer/themes.css`.
+ * Generate `apps/native/src/generated/themes.zig`.
  *
- * Eight themes, each defined by four anchor colours. Everything else — the
+ * Seven themes, each defined by four anchor colours. Everything else — the
  * raised and sunken surfaces, the rules, the whole rail, the four semantic
  * roles — is derived here, so adding a theme is four colours rather than
  * forty, and a relation like "the rail follows the paper" cannot hold in six
- * themes and quietly break in the eighth.
+ * themes and quietly break in the seventh.
  *
  * Run it after changing an anchor:
  *
@@ -58,7 +58,7 @@ interface Theme {
  * Day and night are not one palette and its inverse.
  *
  * A theme belongs to a time and is drawn for it. The five day themes and the
- * three night themes each stand on their own; inverting a day palette gives you
+ * two night themes each stand on their own; inverting a day palette gives you
  * a screen turned inside out, not a page under a lamp.
  */
 const THEMES: readonly Theme[] = [
@@ -486,11 +486,10 @@ console.log(
 //
 // **在全局逻辑中负责什么**：把同一份锚点数据翻成 SDK 的 `ColorTokens`，外加
 // 文档表面自己要用的几个语义色（印、代理、裁决三态）。**不是第二权威**——
-// 色值仍然只在上面那张 THEMES 表里定义一次，这里只是第四个消费者，
-// 与 `themes.css`、`themes.gen.json`、审阅色表同源。
+// 色值仍然只在上面那张 THEMES 表里定义一次，这里与审阅色表是它的两个消费者。
 //
-// **能复用什么**：`derive()` 与 `srgb()` 原样复用，所以 Zig 侧的颜色与 CSS
-// 侧逐字节相同；APCA 门槛在上面已经拦过一次，不达标的主题根本走不到这里。
+// **能复用什么**：`derive()` 与 `srgb()` 原样复用；APCA 门槛在上面已经拦过
+// 一次，不达标的主题根本走不到这里。
 
 const zigColor = (c: Oklch): string => {
   const [r, g, b] = srgb(c);
@@ -562,8 +561,8 @@ ${extra}
 const zigTable = `// RefRain — ${THEMES.length} 套主题的原生色表。
 // 由 scripts/generate-themes.ts 生成，勿手改；改锚点后重跑该脚本。
 //
-// 色值与 apps/desktop/src/themes.css 同一份锚点推导而来，逐字节相同：
-// 两侧都走 derive() → srgb()。APCA 门槛（正文 |75|、界面与强调 |45|）在生成时
+// 色值由 THEMES 表的锚点推导而来：
+// 推导走 derive() → srgb()。APCA 门槛（正文 |75|、界面与强调 |45|）在生成时
 // 已经拦过，不达标的主题不会出现在这里。
 //
 // 每套只由四个锚点定义（纸・墨・印・副强调），其余全部推导。
@@ -606,7 +605,7 @@ console.log(`PASS  ${THEMES.length} themes → ${zigTarget}`);
 
 // ── the signing preview (SPEC D12: 预览页先入库再签) ───────────────────────
 //
-// The preview page is emitted from the same theme data as themes.css. A
+// The preview page is emitted from the same theme data as the Zig table. A
 // hand-maintained copy of these numbers was the reason the previously
 // approved palette was lost; the page people sign must be the page the
 // generator measured.
@@ -690,7 +689,7 @@ const preview = `# RefRain · ${THEMES.length} 套主题
 由 \`scripts/generate-themes.ts\` 生成，勿手改。改锚点后重跑该脚本。
 
 日间 ${THEMES.filter((t) => t.mode === "day").length} 套（${named("day")}）与夜间 ${THEMES.filter((t) => t.mode === "night").length} 套（${named("night")}）各自成立；昼夜互不反相。
-本表与 \`themes.css\` 同一份数据生成，Lc 是生成时实测值：正文门槛 |75|，界面与强调 |45|。
+本表与原生色表同一份数据生成，Lc 是生成时实测值：正文门槛 |75|，界面与强调 |45|。
 
 每套主题只由四个锚点定义（纸・墨・印・副强调），其余全部推导。
 
@@ -701,7 +700,7 @@ ${THEMES.map(previewSection).join("\n\n---\n\n")}
  * 色表是审阅件，写到仓库之外。
  *
  * 它是给人看的审阅件，不是发布内容——留在仓库里就成了第二权威：色值的唯一来源是
- * themes.css，而一份跟着漂的表只会让下一个人不知道该信哪份。
+ * 这张 THEMES 表，而一份跟着漂的表只会让下一个人不知道该信哪份。
  */
 const previewOut = process.env.REFRAIN_REVIEW_DIR ?? join(here, "..", "..", "review");
 mkdirSync(previewOut, { recursive: true });

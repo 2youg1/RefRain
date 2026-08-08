@@ -6,16 +6,38 @@ use directories::ProjectDirs;
 use refrain_app::{
     Application, ProjectImport, ProjectInput, ProjectOutput, ProjectPlatform, RootKind,
 };
-use refrain_core::{DocumentFormat, RefrainError};
+use refrain_core::{DocumentFormat, ErrorCode, RefrainError};
+use std::cell::RefCell;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 pub const ACTION_PROJECT: u16 = 5;
 
-struct NativeProjectPlatform;
+struct NativeProjectPlatform {
+    /// 自动化通道：非空时所有选择器直接返回它。
+    ///
+    /// rfd 的系统对话框在自动化会话（automation 构建 + 命令脚本）下无法点击，
+    /// 而 e2e 仿真要真实拉起应用走完整条作者流程——这是产品级的验证通道，
+    /// 不是测试后门：发布回归与人工使用走同一条 `ChooseAndAdoptRoot`，
+    /// 只有「选哪个路径」这一步由 `REFRAIN_AUTOMATION_ROOT` 替作者回答。
+    /// 构造时读一次 env（进程启动后不变），测试直接给值——`deny(unsafe_code)`
+    /// 下测试进程改不了 env，注入点在这里。
+    automation_root: Option<PathBuf>,
+}
+
+impl NativeProjectPlatform {
+    fn production() -> Self {
+        Self {
+            automation_root: std::env::var_os("REFRAIN_AUTOMATION_ROOT").map(PathBuf::from),
+        }
+    }
+}
 
 impl ProjectPlatform for NativeProjectPlatform {
     fn choose_root(&self, kind: RootKind) -> Result<Option<PathBuf>, RefrainError> {
+        if let Some(path) = &self.automation_root {
+            return Ok(Some(path.clone()));
+        }
         let dialog = rfd::FileDialog::new().set_title(match kind {
             RootKind::Folder => "选择项目文件夹",
             RootKind::File => "选择一份手稿",
@@ -29,12 +51,18 @@ impl ProjectPlatform for NativeProjectPlatform {
     }
 
     fn choose_project_parent(&self) -> Result<Option<PathBuf>, RefrainError> {
+        if let Some(path) = &self.automation_root {
+            return Ok(Some(path.clone()));
+        }
         Ok(rfd::FileDialog::new()
             .set_title("选择项目的父目录")
             .pick_folder())
     }
 
     fn choose_import(&self, kind: ProjectImport) -> Result<Option<PathBuf>, RefrainError> {
+        if let Some(path) = &self.automation_root {
+            return Ok(Some(path.clone()));
+        }
         let dialog = rfd::FileDialog::new();
         Ok(match kind {
             ProjectImport::Material => dialog
@@ -57,7 +85,12 @@ pub fn dispatch(request: &RefrainNativeRequest, text: &[u8]) -> RefrainNativeRes
         Ok(application) => application,
         Err(error) => return failure(ERROR_HOST_FAILURE, &error),
     };
-    dispatch_with(application, &NativeProjectPlatform, request, text)
+    dispatch_with(
+        application,
+        &NativeProjectPlatform::production(),
+        request,
+        text,
+    )
 }
 
 fn dispatch_with(
@@ -70,12 +103,30 @@ fn dispatch_with(
         .and_then(|text| serde_json::from_str::<ProjectInput>(text).map_err(invalid_json))
     {
         Ok(input) => input,
-        Err(error) => return failure(ERROR_INVALID_REQUEST, &error),
+        Err(error) => {
+            return failure(ERROR_INVALID_REQUEST, &error);
+        }
     };
     match application.project(platform, input) {
         Ok(output) => success(&output),
-        Err(_error) => failure(ERROR_DOMAIN_REFUSAL, "Rust refused the project input."),
+        Err(error) => failure(ERROR_DOMAIN_REFUSAL, &refusal_json(&error)),
     }
+}
+
+/// 领域拒绝跨界的形状：code/action/subject/recovery 是领域事实（SPEC 6.5），
+/// 界面按码行动、按步骤出恢复文案。
+///
+/// **`detail` 的边界纪律**：它默认是运维细节，可能带着磁盘路径——「不泄露
+/// 选定路径」的测试守着这条线。唯一的例外是过期提案：它的 detail 是 Agent
+/// 当时读到的冻结原文，作者要拿它对照现在的文字（SPEC 7.4），不出界作者
+/// 就只剩一句读不懂的拒绝。
+fn refusal_json(error: &RefrainError) -> String {
+    let mut boundary = error.clone();
+    if boundary.code != ErrorCode::StaleProposal {
+        boundary.detail = None;
+    }
+    serde_json::to_string(&boundary)
+        .unwrap_or_else(|_| "Rust refused the project input.".to_owned())
 }
 
 /// Decode the project group's opaque input from the borrowed payload slice.
@@ -96,23 +147,26 @@ fn invalid_json(error: serde_json::Error) -> String {
     format!("decode the project input: {error}")
 }
 
-/// The bytes the most recent project response lent to its caller.
-///
-/// The project group has no session, so its one reply buffer lives here and
-/// stays valid until the next project dispatch replaces it. Access is guarded
-/// by the same lock the dispatch already holds.
-static REPLY: Mutex<String> = Mutex::new(String::new());
+// The bytes the most recent project response lent to its caller.
+//
+// The project group has no session, so its reply buffer lives here and stays
+// valid until the same thread's next project dispatch replaces it. One buffer
+// per thread: the ABI caller reads the lent bytes on the dispatching thread,
+// and a process-wide buffer let parallel test dispatches rewrite each other's
+// replies (single-threaded runs went 10/10 green while parallel runs raced).
+thread_local! {
+    static REPLY: RefCell<String> = const { RefCell::new(String::new()) };
+}
 
 /// Store `bytes` as the current reply and point `response` at them.
 fn lend_reply(response: &mut RefrainNativeResponse, bytes: &[u8]) {
-    let Ok(mut reply) = REPLY.lock() else {
-        response.text_len = 0;
-        return;
-    };
-    reply.clear();
-    reply.push_str(&String::from_utf8_lossy(bytes));
-    response.text_len = reply.len() as u32;
-    response.text = reply.as_ptr();
+    REPLY.with(|reply| {
+        let mut reply = reply.borrow_mut();
+        reply.clear();
+        reply.push_str(&String::from_utf8_lossy(bytes));
+        response.text_len = reply.len() as u32;
+        response.text = reply.as_ptr();
+    });
 }
 
 fn success(output: &ProjectOutput) -> RefrainNativeResponse {
@@ -174,6 +228,15 @@ fn truncate_output(output: &mut ProjectOutput) -> bool {
             blocks.truncated = true;
             true
         }
+        // 块清单同理：丢最后一行并把翻页游标收回到剩下的末行——下一页
+        // 从那里再起，丢掉的行因此还能读到。
+        ProjectOutput::DocumentBlocks(listing) => {
+            if listing.blocks.pop().is_none() {
+                return false;
+            }
+            listing.next = listing.blocks.last().map(|row| row.ordinal + 1);
+            true
+        }
         ProjectOutput::DocumentOpened(document) => document.blocks.pop().is_some(),
         // 编排快照会随 Run 增长而越界。丢最旧的一条 Run 而不是整体拒绝：
         // 界面要的是「现在有哪些在跑」，最新的那些才是它渲染的。
@@ -190,11 +253,26 @@ fn truncate_output(output: &mut ProjectOutput) -> bool {
         // 好过整份读不出来——一份读不出来的历史等于没有历史。
         ProjectOutput::History(entries) => entries.pop().is_some(),
         ProjectOutput::Annotations(rows) => rows.pop().is_some(),
+        // 信箱同提案：排过的在前，作者从上往下处理，丢最后的（没人碰过
+        // 的那些）好过整份读不出来。
+        ProjectOutput::Mailbox(entries) => entries.pop().is_some(),
+        // 材料草稿名录同理：成稿从上往下，丢最后一条好过整份读不出来。
+        ProjectOutput::MaterialDrafts(drafts) => drafts.pop().is_some(),
+        // 资料名录同理，并把截断事实立起来——界面据此说「还有没列出的」。
+        ProjectOutput::Materials(listing) => {
+            if listing.materials.pop().is_none() {
+                return false;
+            }
+            listing.truncated = true;
+            true
+        }
         // 这些输出没有可丢的尾巴：设置与 KARA 是定长快照，裁决与收取的结局
-        // 是一个判别式，其余是单行。放不下就该报错而不是残缺送出——一份被
-        // 截断的设置会被读成作者改过它，一个被截断的裁决结局无法解释。
+        // 是一个判别式，派发预览的请求原文不能截半（半截请求会被读成完整
+        // 请求），其余是单行。放不下就该报错而不是残缺送出——一份被截断的
+        // 设置会被读成作者改过它，一个被截断的裁决结局无法解释。
         ProjectOutput::Cancelled
         | ProjectOutput::Imported(_)
+        | ProjectOutput::DispatchPreview(_)
         | ProjectOutput::Deleted(_)
         | ProjectOutput::DisclosureSet(_)
         | ProjectOutput::Config(_)
@@ -240,7 +318,28 @@ pub fn document_file(root_id: &str, relative: &str) -> Result<PathBuf, RefrainEr
         })
 }
 
-fn application() -> Result<&'static Application, String> {
+/// 原生文档保存之后同步历史。走 `ProjectInput` 而不是直插 store：把动作链
+/// reconcile 进 text_actions 是项目用例的一步，不是桥自己的事。
+pub fn native_saved(root_id: &str, relative: &str) -> Result<(), RefrainError> {
+    application()
+        .map_err(|error| {
+            RefrainError::new(
+                refrain_core::ErrorCode::StateUnavailable,
+                "open the application store",
+                error,
+            )
+        })?
+        .project(
+            &NativeProjectPlatform::production(),
+            ProjectInput::NativeSaved {
+                root_id: root_id.to_owned(),
+                path: relative.to_owned(),
+            },
+        )
+        .map(|_| ())
+}
+
+pub(crate) fn application() -> Result<&'static Application, String> {
     static APPLICATION: OnceLock<Result<Application, String>> = OnceLock::new();
     APPLICATION
         .get_or_init(|| {
@@ -452,6 +551,43 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// 自动化通道：`REFRAIN_AUTOMATION_ROOT` 让生产平台（`NativeProjectPlatform`）
+    /// 直接回答选择器——e2e 仿真不点系统对话框，却走与真人完全相同的
+    /// `ChooseAndAdoptRoot` 路径。删掉 env 通道，这条测试红。
+    #[test]
+    fn the_automation_root_env_answers_the_production_platform() {
+        let data = scratch("data-auto");
+        let root = scratch("root-auto");
+        fs::write(
+            root.join("正文.md"),
+            "one
+",
+        )
+        .unwrap();
+        let application = Application::open(&data).unwrap();
+        let bytes = encode(&ProjectInput::ChooseAndAdoptRoot {
+            kind: RootKind::Folder,
+        });
+        let response = dispatch_with(
+            &application,
+            &NativeProjectPlatform {
+                automation_root: Some(root.clone()),
+            },
+            &request(&bytes),
+            &bytes,
+        );
+
+        assert_eq!(response.status, 0);
+        assert_eq!(response.action, ACTION_PROJECT);
+        let json: serde_json::Value = serde_json::from_str(response_text(&response)).unwrap();
+        assert_eq!(json["kind"], "opened");
+        assert!(json.to_string().contains("正文.md"));
+
+        drop(application);
+        fs::remove_dir_all(data).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn maximum_project_catalog_page_fits_the_fixed_native_payload() {
         let data = scratch("data");
@@ -489,6 +625,22 @@ mod tests {
     }
 
     #[test]
+    fn refusal_json_keeps_the_frozen_text_only_for_a_stale_proposal() {
+        let stale = RefrainError::new(ErrorCode::StaleProposal, "commit a decision batch", "章.md")
+            .with_detail("Agent 当时读到的原文。".to_owned());
+        let json: serde_json::Value = serde_json::from_str(&refusal_json(&stale)).unwrap();
+        assert_eq!(json["code"], "stale-proposal");
+        assert_eq!(json["detail"], "Agent 当时读到的原文。");
+
+        // 其余码的 detail 是运维细节（可能带路径），按边界纪律不出界。
+        let io = RefrainError::new(ErrorCode::Io, "save", "章.md")
+            .with_detail("C:\\secret\\path".to_owned());
+        let json: serde_json::Value = serde_json::from_str(&refusal_json(&io)).unwrap();
+        assert_eq!(json["code"], "io");
+        assert!(json["detail"].is_null());
+    }
+
+    #[test]
     fn project_refusals_do_not_leak_selected_paths_across_the_native_boundary() {
         let data = scratch("data");
         let selected = scratch("selected-secret").join("missing-root");
@@ -505,7 +657,11 @@ mod tests {
 
         assert_eq!(response.status, ERROR_DOMAIN_REFUSAL);
         let detail = response_text(&response);
-        assert_eq!(detail, "Rust refused the project input.");
+        let refusal: serde_json::Value = serde_json::from_str(detail).unwrap();
+        // 码与恢复步骤过界，界面按它们出文案；运维细节（可能带路径）不出界。
+        assert!(refusal["code"].is_string());
+        assert!(refusal["recovery"].is_array());
+        assert!(refusal["detail"].is_null());
         assert!(!detail.contains(&selected.to_string_lossy().to_string()));
 
         drop(application);

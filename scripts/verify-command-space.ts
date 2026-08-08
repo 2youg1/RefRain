@@ -28,10 +28,12 @@ import { readFileSync } from "node:fs";
 const MANIFEST = "apps/native/app.zon";
 const CORE = "apps/native/src/core.ts";
 const VIEW = "apps/native/src/app_main.zig";
+const TABLE = "apps/native/src/commands.zig";
 
 const manifest = readFileSync(MANIFEST, "utf8");
 const core = readFileSync(CORE, "utf8");
 const view = readFileSync(VIEW, "utf8");
+const table = readFileSync(TABLE, "utf8");
 
 /** `commandMsg` 认识的 id：那个 switch 的每一个 case。 */
 function knownCommands(source: string): Set<string> {
@@ -107,6 +109,46 @@ if (lying.length > 0) {
   process.exit(1);
 }
 
+// app.zon 声明的每个 command id 必须在 commands.zig 的表里有条目（标签与
+// 键位的唯一权威）。表比 zon 大是允许的：Alt 系键位走 keyMsg，不在 zon。
+// commands.zig 里没有 app.zon 的 id 不报错——反方向不查。
+const tableEntries = new Map<string, string>();
+for (const match of table.matchAll(/^\s*\.\{ \.id = "([^"]+)", \.label = "([^"]+)"/gmu)) {
+  tableEntries.set(match[1] as string, match[2] as string);
+}
+const unlabeled = [...new Set([...referenced, ...shortcuts])]
+  .filter((id) => !tableEntries.has(id))
+  .sort();
+if (unlabeled.length > 0) {
+  console.error("FAIL  verify:command-space: app.zon declares a command missing from the table");
+  for (const id of unlabeled) console.error(`      ${id}  add an entry to ${TABLE}`);
+  process.exit(1);
+}
+
+// 标签同源：zon 菜单与表对同一个 id 说同一个名字。一个 id 可能在多张菜单
+// 里有多个叫法（go.2 叫「文件」也叫「文件树」），表标签命中其中任何一个。
+const zonLabels = new Map<string, Set<string>>();
+for (const match of manifest.matchAll(/\.label = "([^"]+)", \.command = "([^"]+)"/gu)) {
+  const set = zonLabels.get(match[2] as string) ?? new Set<string>();
+  set.add(match[1] as string);
+  zonLabels.set(match[2] as string, set);
+}
+const renamed = [...zonLabels]
+  .filter(([id, labels]) => {
+    const label = tableEntries.get(id);
+    return label !== undefined && !labels.has(label);
+  })
+  .sort(([a], [b]) => a.localeCompare(b));
+if (renamed.length > 0) {
+  console.error("FAIL  verify:command-space: the table and the menu call one command by two names");
+  for (const [id, labels] of renamed) {
+    console.error(
+      `      ${id}  table says ${tableEntries.get(id)}, menu says ${[...labels].join("/")}`,
+    );
+  }
+  process.exit(1);
+}
+
 console.log(
-  `PASS  verify:command-space  (${known.size} commands, ${shortcuts.size} shortcuts, ${referenced.size} menu references)`,
+  `PASS  verify:command-space  (${known.size} commands, ${shortcuts.size} shortcuts, ${referenced.size} menu references, ${tableEntries.size} table entries)`,
 );

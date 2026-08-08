@@ -89,6 +89,49 @@ impl<'a> MailboxStandings<'a> {
         Ok(rows)
     }
 
+    /// 交换两单的位次，一次事务。相邻交换是界面唯一需要的移动语义，
+    /// 而两条独立 `set_rank` 之间有中间态（同 rank、按 updated_at 排）——
+    /// 交换是一个原子操作，不该由调用方拼。
+    ///
+    /// 双方都须已有位次；任一缺席是空操作（返回 Ok，行未动）——界面在
+    /// 按钮上已经按「双方都有位次」启用，这里只是不把「没排过的」读成错误。
+    pub fn swap_ranks(
+        &self,
+        entry_id_a: &str,
+        entry_id_b: &str,
+        now: u64,
+    ) -> Result<(), StoreError> {
+        let both = self
+            .db
+            .prepare(
+                "SELECT entry_id, rank FROM mailbox_standing
+                 WHERE entry_id IN (?1, ?2)",
+            )?
+            .query_map(params![entry_id_a, entry_id_b], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<u32>>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if both.len() != 2 {
+            return Ok(()); // 有一个没排过（或不存在）：无事可换。
+        }
+        let (Some(rank_a), Some(rank_b)) = (both[0].1, both[1].1) else {
+            return Ok(());
+        };
+        // `unchecked_transaction` is rusqlite's documented way to take a
+        // transaction behind `&self` (Connection is a RefCell inside).
+        let tx = self.db.unchecked_transaction()?;
+        tx.execute(
+            "UPDATE mailbox_standing SET rank = ?2, updated_at = ?3 WHERE entry_id = ?1",
+            params![entry_id_a, rank_b, now as i64],
+        )?;
+        tx.execute(
+            "UPDATE mailbox_standing SET rank = ?2, updated_at = ?3 WHERE entry_id = ?1",
+            params![entry_id_b, rank_a, now as i64],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// 排一单：写下它在那一格里的位次。
     pub fn set_rank(
         &self,

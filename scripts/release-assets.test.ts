@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -23,9 +24,24 @@ const binary = join(
 );
 
 beforeAll(() => {
+  // 门禁链在 bun test 之前已经跑过 `bun run scriptc:build`，同一来源、同一
+  // 编译器、同一次运行——直接复用它的产物。本机另起一次构建在 Windows 上
+  // 会超过 hook 的默认预算，而 PATH 上的 `scriptc` 是个 .CMD，spawnSync
+  // 不开 shell 执行不了它（这正是此处此前在 Windows 必红的两个原因）。
+  const prebuilt = join(
+    repository,
+    "target",
+    "scriptc",
+    process.platform === "win32" ? "release-assets.exe" : "release-assets",
+  );
+  if (existsSync(prebuilt)) {
+    copyFileSync(prebuilt, binary);
+    return;
+  }
   const result = spawnSync("scriptc", ["build", "scripts/release-assets.ts", "-o", binary], {
     cwd: repository,
     encoding: "utf8",
+    shell: process.platform === "win32",
   });
   if (result.status !== 0) {
     throw new Error(`${result.stderr ?? ""}${result.stdout ?? ""}`);
@@ -253,26 +269,37 @@ describe("ScriptC release archive", () => {
     }
   });
 
-  test("rejects a source symlink that escapes the Native application directory", () => {
-    const item = fixture();
-    const outside = join(item.root, "outside.txt");
-    writeFileSync(outside, "must not ship\n");
-    symlinkSync(outside, join(item.app, "resources", "escape.txt"));
+  // 夹具要创建符号链接：Windows 上这需要开发者模式或管理员权限，否则
+  // symlinkSync 直接 EPERM——红的是夹具而不是产品。Linux CI 照跑这道断言。
+  test.skipIf(process.platform === "win32")(
+    "rejects a source symlink that escapes the Native application directory",
+    () => {
+      const item = fixture();
+      const outside = join(item.root, "outside.txt");
+      writeFileSync(outside, "must not ship\n");
+      symlinkSync(outside, join(item.app, "resources", "escape.txt"));
 
-    const result = packageFixture(item);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("symbolic link");
-  });
+      const result = packageFixture(item);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("symbolic link");
+    },
+  );
 
-  test("rejects source members that collide on a Windows filesystem", () => {
-    const item = fixture();
-    writeFileSync(join(item.app, "resources", "ALPHA.TXT"), "collision\n");
+  // 夹具要在同一目录里造出 ALPHA.TXT 与 alpha.txt 两个成员：Windows 的
+  // 大小写不敏感文件系统让这份夹具根本造不出来（写 ALPHA.TXT 会覆盖
+  // alpha.txt），所以这道断言只在大小写敏感的 CI 上跑得起来。
+  test.skipIf(process.platform === "win32")(
+    "rejects source members that collide on a Windows filesystem",
+    () => {
+      const item = fixture();
+      writeFileSync(join(item.app, "resources", "ALPHA.TXT"), "collision\n");
 
-    const result = packageFixture(item);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("duplicate Windows member path");
-    expect(existsSync(join(item.output, "refrain-windows-x64.zip"))).toBe(false);
-  });
+      const result = packageFixture(item);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("duplicate Windows member path");
+      expect(existsSync(join(item.output, "refrain-windows-x64.zip"))).toBe(false);
+    },
+  );
 
   test("rejects member names that Windows reserves or normalizes", () => {
     for (const name of ["alpha.txt.", "CON"]) {

@@ -2,12 +2,12 @@
 //!
 //! 判据（设计 D）：文本逐字节回到冻结前；账本只 append 不删；一批冲销是一次
 //! Text Action（一次撤销全还原）；锚定对不上就整体拒绝；冲销动作本身进历史、
-//! 可撤销。
+//! 可撤销；记账的那一刻磁盘同真（D1／F-01 的反向），外部改动走 Conflict 不让路。
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use refrain_app::decide::{commit_decision_batch, countermand_proposals};
+use refrain_app::decide::{DecisionOutcome, commit_decision_batch, countermand_proposals};
 use refrain_core::manuscript::VerdictKind;
 use refrain_core::{
     EditorAction, EditorChange, ErrorCode, Id, Lineage, Manuscript, Replacement, SourceSnapshot,
@@ -134,7 +134,7 @@ fn a_countermand_restores_the_frozen_bytes_and_the_ledger_keeps_both_records() {
     let proposal = merge(&mut store, &mut manuscript);
     assert!(head_text(&manuscript).contains(MERGED));
 
-    countermand_proposals(&mut store, &mut manuscript, CHAPTER, &[proposal], 20).unwrap();
+    countermand_proposals(&mut store, &mut manuscript, CHAPTER, &[proposal], None, 20).unwrap();
 
     // 文本逐字节回到冻结前。
     assert_eq!(head_text(&manuscript), format!("{OPENING}\n\n{SECOND}"));
@@ -147,6 +147,72 @@ fn a_countermand_restores_the_frozen_bytes_and_the_ledger_keeps_both_records() {
             VerdictKindName::Countermanded
         ]
     );
+
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_countermand_is_durable_the_moment_it_is_recorded() {
+    // D1／F-01 的反向：账本说「已冲销」的那一刻，磁盘不能还带着那笔合并——
+    // 否则重载后正文与账本各说各话。
+    let root = scratch();
+    let (_app, mut store) = store_at(&root);
+    let mut manuscript = open_manuscript(&root);
+    let proposal = merge(&mut store, &mut manuscript);
+    // 作者打开文稿那一刻盖的戳——真实路径就是这么拿到它的。
+    let stamp = store.open_document(CHAPTER).unwrap().stamp;
+
+    let outcome = countermand_proposals(
+        &mut store,
+        &mut manuscript,
+        CHAPTER,
+        &[proposal],
+        Some(stamp),
+        20,
+    )
+    .unwrap();
+
+    assert!(matches!(outcome, DecisionOutcome::Durable { .. }));
+    let on_disk = fs::read_to_string(root.join(CHAPTER)).unwrap();
+    assert!(
+        on_disk.contains(OPENING),
+        "冻结前的字节要回到盘上: {on_disk}"
+    );
+    assert!(
+        !on_disk.contains(MERGED),
+        "已冲销的合并不能留在盘上: {on_disk}"
+    );
+
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_countermand_yields_to_an_external_change_instead_of_overwriting_it() {
+    // 与手工保存同一条 compare-and-swap：磁盘在作者不知情时被动过，冲销不比
+    // 保存多一分覆盖的权力。
+    let root = scratch();
+    let (_app, mut store) = store_at(&root);
+    let mut manuscript = open_manuscript(&root);
+    let proposal = merge(&mut store, &mut manuscript);
+    let stamp = store.open_document(CHAPTER).unwrap().stamp;
+    let outside = "别人写下的一段。\n";
+    fs::write(root.join(CHAPTER), outside).unwrap();
+
+    let outcome = countermand_proposals(
+        &mut store,
+        &mut manuscript,
+        CHAPTER,
+        &[proposal],
+        Some(stamp),
+        20,
+    )
+    .unwrap();
+
+    assert!(matches!(outcome, DecisionOutcome::Conflict { .. }));
+    // 决定性的一条：别人的字还在盘上。
+    assert_eq!(fs::read_to_string(root.join(CHAPTER)).unwrap(), outside);
 
     drop(store);
     fs::remove_dir_all(root).unwrap();
@@ -168,7 +234,15 @@ fn a_batch_countermand_is_one_action_and_one_undo_restores_everything() {
     assert!(head_text(&manuscript).contains(MERGED_SECOND));
 
     let actions_before = manuscript.actions().len();
-    countermand_proposals(&mut store, &mut manuscript, CHAPTER, &[first, second], 20).unwrap();
+    countermand_proposals(
+        &mut store,
+        &mut manuscript,
+        CHAPTER,
+        &[first, second],
+        None,
+        20,
+    )
+    .unwrap();
 
     // 一批冲销 = 一次 Text Action。
     assert_eq!(manuscript.actions().len(), actions_before + 1);
@@ -230,7 +304,8 @@ fn an_anchor_that_appears_twice_refuses_instead_of_reversing_the_wrong_one() {
 
     let text_before = head_text(&manuscript);
     let refusal =
-        countermand_proposals(&mut store, &mut manuscript, CHAPTER, &[proposal], 20).unwrap_err();
+        countermand_proposals(&mut store, &mut manuscript, CHAPTER, &[proposal], None, 20)
+            .unwrap_err();
 
     assert_eq!(refusal.code, ErrorCode::StaleProposal);
     // 说清是几处，而不是笼统一句「过期了」——那会让作者去找一段并没有消失的文字。
@@ -277,7 +352,8 @@ fn a_moved_anchor_refuses_the_whole_countermand_and_records_nothing() {
 
     let text_before = head_text(&manuscript);
     let refusal =
-        countermand_proposals(&mut store, &mut manuscript, CHAPTER, &[proposal], 20).unwrap_err();
+        countermand_proposals(&mut store, &mut manuscript, CHAPTER, &[proposal], None, 20)
+            .unwrap_err();
 
     // 具名拒绝：过期的事实，交还当初合并进去的原文。
     assert_eq!(refusal.code, ErrorCode::StaleProposal);
@@ -332,6 +408,7 @@ fn countermanding_what_was_never_merged_is_refused() {
         &mut manuscript,
         CHAPTER,
         &[proposal.to_string()],
+        None,
         20,
     )
     .unwrap_err();
@@ -360,7 +437,8 @@ fn countermanding_a_deletion_merge_is_refused_with_its_reason() {
     assert_eq!(head_text(&manuscript), SECOND);
 
     let refusal =
-        countermand_proposals(&mut store, &mut manuscript, CHAPTER, &[proposal], 20).unwrap_err();
+        countermand_proposals(&mut store, &mut manuscript, CHAPTER, &[proposal], None, 20)
+            .unwrap_err();
     assert_eq!(refusal.code, ErrorCode::StateUnavailable);
     assert!(
         refusal.action.contains("deleted its scope"),

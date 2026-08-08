@@ -31,6 +31,13 @@ pub enum ErrorCode {
     /// neither is ours to decide, so this reaches the author as its own fact
     /// rather than as a generic I/O failure.
     StaleProposal,
+    /// The request named something outside the request's own vocabulary.
+    ///
+    /// The interface only ever sends known words (its wire shapes are pinned
+    /// by tests), so a miss means the two sides have drifted — surfacing it
+    /// as its own fact keeps the drift visible instead of folding it into
+    /// an I/O failure.
+    InvalidInput,
 }
 
 impl ErrorCode {
@@ -47,6 +54,7 @@ impl ErrorCode {
         Self::StateUnavailable,
         Self::Io,
         Self::StaleProposal,
+        Self::InvalidInput,
     ];
 
     /// The wire spelling, identical to what serde emits.
@@ -63,6 +71,7 @@ impl ErrorCode {
             Self::StateUnavailable => "state-unavailable",
             Self::Io => "io",
             Self::StaleProposal => "stale-proposal",
+            Self::InvalidInput => "invalid-input",
         }
     }
 }
@@ -167,10 +176,11 @@ mod tests {
                 | ErrorCode::UnsupportedFormat
                 | ErrorCode::StateUnavailable
                 | ErrorCode::Io
-                | ErrorCode::StaleProposal => {}
+                | ErrorCode::StaleProposal
+                | ErrorCode::InvalidInput => {}
             }
         }
-        assert_eq!(ErrorCode::ALL.len(), 10);
+        assert_eq!(ErrorCode::ALL.len(), 11);
     }
 
     /// `as_str` is what documentation gates quote. Serde is what the bridge

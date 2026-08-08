@@ -83,6 +83,18 @@ surfaces.push([
   ),
 ]);
 
+// build.zig.zon 也是 ZON。v0.2.5 发布时它仍写 0.2.4——它不在任何检查面上，
+// 所以没有任何门禁看见。一面版本也不许再掉队。
+surfaces.push([
+  "apps/native/build.zig.zon",
+  requireMatch(
+    readFileSync("apps/native/build.zig.zon", "utf8"),
+    /\.version\s*=\s*"([^"]+)"/,
+    "apps/native/build.zig.zon",
+    ".version",
+  ),
+]);
+
 // bun.lock is JSONC (trailing commas), so parse the workspace records by their
 // exact paths rather than pretending JSON.parse accepts its grammar.
 const bunLock = readFileSync(files.bunLock, "utf8");

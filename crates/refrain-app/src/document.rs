@@ -247,29 +247,7 @@ pub(crate) fn create_with_body(
                 texts: paragraphs,
             }],
         };
-        let action_json = serde_json::to_string(&input).map_err(|error| {
-            RefrainError::new(ErrorCode::Io, "serialise an imported body", &path)
-                .with_detail(error.to_string())
-        })?;
-        let journal_id = entry
-            .store
-            .journal_append(&path, &action_json)
-            .map_err(into_domain)?;
-        let action = to_domain_action(input, DocumentFormat::of_path(&path).block_scan())?;
-        let transition = entry
-            .manuscripts
-            .get_mut(&path)
-            .ok_or_else(|| not_open("write a document that is not open", &path))?
-            .execute(TextCommand::Editor(action))
-            .map_err(|refusal| {
-                RefrainError::new(ErrorCode::Io, "write an imported body", &path)
-                    .with_detail(refusal.to_string())
-            })?;
-        record_text_action(&entry.store, &path, &transition)?;
-        entry
-            .store
-            .journal_remove(journal_id)
-            .map_err(into_domain)?;
+        apply_editor_journaled(entry, &path, input)?;
     }
     match persist_in_entry(entry, &path, None)? {
         SaveOutcomeDto::Saved { .. } => {}
@@ -315,6 +293,48 @@ fn refresh_open_view(
         .map(|block| BlockDto::of(block, manuscript.scan()))
         .collect();
     Ok(opened)
+}
+
+/// 把一个编辑器动作落进打开的稿子：先写 journal（重启后仍可重放），
+/// 执行成功再从 journal 拿掉（那段重放与已落盘的动作是同一个）。
+///
+/// **接上哪个功能**：导入正文、全半角转换——「改一份已打开稿子的正文」
+/// 的唯一执行路径。块身份、撤销链与 IN-V4 都在 `manuscript.execute` 里，
+/// 这里不重复它们，只负责 journal 的进出。
+///
+/// 失败路径只有一种走法：`execute` 拒绝（例如 NothingChanged——转换后
+/// 没有字节变化）时动作还留在 journal 里，下一次打开会重放它；调用方
+/// 若把那次拒绝当作成功，就会看到一条重放出来的重复编辑，所以拒绝
+/// 必须原样向上抛。
+pub(crate) fn apply_editor_journaled(
+    entry: &mut ProjectEntry,
+    path: &str,
+    input: EditorActionDto,
+) -> Result<(), RefrainError> {
+    let action_json = serde_json::to_string(&input).map_err(|error| {
+        RefrainError::new(ErrorCode::Io, "serialise an editor action", path)
+            .with_detail(error.to_string())
+    })?;
+    let journal_id = entry
+        .store
+        .journal_append(path, &action_json)
+        .map_err(into_domain)?;
+    let action = to_domain_action(input, DocumentFormat::of_path(path).block_scan())?;
+    let transition = entry
+        .manuscripts
+        .get_mut(path)
+        .ok_or_else(|| not_open("edit a document that is not open", path))?
+        .execute(TextCommand::Editor(action))
+        .map_err(|refusal| {
+            RefrainError::new(ErrorCode::Io, "apply an editor action", path)
+                .with_detail(refusal.to_string())
+        })?;
+    record_text_action(&entry.store, path, &transition)?;
+    entry
+        .store
+        .journal_remove(journal_id)
+        .map_err(into_domain)?;
+    Ok(())
 }
 
 pub(crate) fn persist_in_entry(

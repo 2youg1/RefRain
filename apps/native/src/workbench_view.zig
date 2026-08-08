@@ -45,6 +45,22 @@ pub fn destinationAt(index: i32) Destination {
     return destinations[@intCast(index)];
 }
 
+/// 直达这个去处的键位：`workbench.ts` 的 `destinationForOrdinal` 的反查
+/// （Ctrl+1 是设置、Ctrl+2 文件、Ctrl+3 稿子——不是下标顺序）。裁决与派发
+/// 交空串：Ctrl+4 是动态的 Agent 去处，印上去会教作者一个按到别处的组合。
+pub fn destinationChord(index: usize) []const u8 {
+    return switch (index) {
+        0 => "Ctrl+3",
+        1 => "Ctrl+2",
+        4 => "Ctrl+5",
+        5 => "Ctrl+6",
+        6 => "Ctrl+7",
+        7 => "Ctrl+1",
+        // 2 裁决、3 派发：没有固定键位。
+        else => "",
+    };
+}
+
 test "the destination table matches the TypeScript index vocabulary" {
     // `workbench.ts` 的 DESTINATION_COUNT 是 8。两处漂开的表现是命令面板
     // 少一行或多一行空条目，而两边单看都自洽。
@@ -70,4 +86,17 @@ test "every destination carries a label and a hint" {
         try std.testing.expect(destination.label.len > 0);
         try std.testing.expect(destination.hint.len > 0);
     }
+}
+
+test "destination chords are the inverse of destinationForOrdinal" {
+    // Ctrl+1 是设置、Ctrl+2 文件、Ctrl+3 稿子（workbench.ts 的 ordinal
+    // remap），不是下标顺序。裁决与派发没有固定键位：空串。
+    try std.testing.expectEqualStrings("Ctrl+3", destinationChord(0));
+    try std.testing.expectEqualStrings("Ctrl+2", destinationChord(1));
+    try std.testing.expectEqualStrings("", destinationChord(2));
+    try std.testing.expectEqualStrings("", destinationChord(3));
+    try std.testing.expectEqualStrings("Ctrl+5", destinationChord(4));
+    try std.testing.expectEqualStrings("Ctrl+6", destinationChord(5));
+    try std.testing.expectEqualStrings("Ctrl+7", destinationChord(6));
+    try std.testing.expectEqualStrings("Ctrl+1", destinationChord(7));
 }

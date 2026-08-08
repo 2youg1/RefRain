@@ -1,7 +1,125 @@
+diff --git a/build/app.zig b/build/app.zig
+index 69325f8b7f9d275d71f396fcaaedfabd22382d2f..4100de2c56f6fdfd2775de7a012d6ffaab958826 100644
+--- a/build/app.zig
++++ b/build/app.zig
+@@ -93,7 +93,7 @@ const core_compiler_teaching =
+ /// as main.zig) — plus the compiled-core archive the app module links
+ /// behind the mirror. Built once per app build and shared by the exe
+ /// and test modules.
+-const TsCoreStage = struct {
++pub const TsCoreStage = struct {
+     main_root: std.Build.LazyPath,
+     /// The compiled-core archive: the app module links it (with libc,
+     /// for the toolchain's runtime) beside the staged mirror.
+@@ -337,7 +337,7 @@ fn tsCorePreflight(b: *std.Build, dep: *std.Build.Dependency, app_root: []const
+ /// its own compile. The staged module directory carries core.zig (the
+ /// mirror) + its staged runtime + app.native + main.zig, so the
+ /// generated wiring imports one fixed shape.
+-fn tsCoreStage(b: *std.Build, dep: *std.Build.Dependency, app_root: []const u8, app_name: []const u8) TsCoreStage {
++pub fn tsCoreStage(b: *std.Build, dep: *std.Build.Dependency, app_root: []const u8, app_name: []const u8) TsCoreStage {
+     const node = tsCorePreflight(b, dep, app_root);
+ 
+     // The frontend, in check-only mode: the subset checker and the
+@@ -827,7 +827,12 @@ pub fn addAppArtifacts(b: *std.Build, dep: *std.Build.Dependency, app_options: A
+         .root_module = analysis_mod,
+         .use_llvm = useLlvmWorkaround(target),
+     });
+-    test_step.dependOn(&analysis_obj.step);
++    // Zig's coff backend cannot merge multiple archives into a single
++    // object, so an app that links a Rust staticlib plus its import
++    // libraries fails this analysis object before any test runs
++    // ("coff does not support linking multiple objects into one").
++    // Keep the semantic-analysis gate where the backend supports it.
++    if (target.result.os.tag != .windows) test_step.dependOn(&analysis_obj.step);
+ 
+     // `zig build model-contract`: reflect the app's Model/Msg into
+     // zig-out/model-contract.zon so `native check` can verify markup
+diff --git a/build.zig b/build.zig
+index 0d2d6c30657ef6c373504c84ba7a99509aaa135c..0d27c29721dcf248b90cc7b0162bb886e833e511 100644
+--- a/build.zig
++++ b/build.zig
+@@ -41,6 +41,8 @@ pub const AppArtifacts = @import("build/app.zig").AppArtifacts;
+ pub const addAppArtifacts = @import("build/app.zig").addAppArtifacts;
+ pub const MobileLibOptions = @import("build/app.zig").MobileLibOptions;
+ pub const addMobileLib = @import("build/app.zig").addMobileLib;
++pub const TsCoreStage = @import("build/app.zig").TsCoreStage;
++pub const tsCoreStage = @import("build/app.zig").tsCoreStage;
+ const mobile_export_symbol_names = @import("build/app.zig").mobile_export_symbol_names;
+ 
+ pub fn build(b: *std.Build) void {
+diff --git a/packages/core/package.json b/packages/core/package.json
+index 87039c0212a5e21db8862e00a60f38a7bd110d19..ac3aeb60fd552c7ab61b2a79c213f1f0c61f3e8f 100644
+--- a/packages/core/package.json
++++ b/packages/core/package.json
+@@ -16,15 +16,15 @@
+   ],
+   "exports": {
+     ".": {
+-      "types": "./sdk/core.ts",
++      "types": "./sdk/core.d.ts",
+       "default": "./sdk/core.ts"
+     },
+     "./text": {
+-      "types": "./sdk/text.ts",
++      "types": "./sdk/text.d.ts",
+       "default": "./sdk/text.ts"
+     },
+     "./events": {
+-      "types": "./sdk/events.ts",
++      "types": "./sdk/events.d.ts",
+       "default": "./sdk/events.ts"
+     }
+   },
+diff --git a/packages/core/scripts/compiler_typecheck.mjs b/packages/core/scripts/compiler_typecheck.mjs
+index 3954582f08388fb608a96770ead533409fef9430..6cb9c03d895a552716a19d977797a81f99a407e5 100644
+--- a/packages/core/scripts/compiler_typecheck.mjs
++++ b/packages/core/scripts/compiler_typecheck.mjs
+@@ -12,6 +12,7 @@
+ // printed verbatim, are the teaching. Exit 2: toolchain missing/broken.
+ import { spawnSync } from "node:child_process";
+ import fs from "node:fs";
++import os from "node:os";
+ import path from "node:path";
+ import { createRequire } from "node:module";
+ import { fileURLToPath } from "node:url";
+@@ -33,15 +34,30 @@ try {
+ // The shipped declaration files stand in for the SDK's module surface;
+ // value imports stay external-host findings, which is correct — the
+ // compile stage links the real implementations.
++// RefRain patch: stage the shipped declarations into a scratch directory
++// that carries NO implementation sources. The events.d.ts -> "./text.js"
++// edge otherwise resolves to the text.ts implementation (extension
++// substitution tries .ts before .d.ts), and the analyzer then typechecks
++// SDK implementation sources under the APP's adopted strictness
++// (noUncheckedIndexedAccess), false-failing `native check` for any strict
++// app. With only declarations present, "./text.js" lands on text.d.ts and
++// the pass reads the SDK's type surface only -- what --external-types means.
++const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), "native-core-types-"));
++const stagedSdk = path.join(stageDir, "sdk");
++fs.mkdirSync(stagedSdk, { recursive: true });
++for (const f of fs.readdirSync(path.join(coreRoot, "sdk"))) {
++  if (f.endsWith(".d.ts")) fs.copyFileSync(path.join(coreRoot, "sdk", f), path.join(stagedSdk, f));
++}
+ const maps = [];
+ for (const [specifier, file] of [
+   ["@native-sdk/core", "sdk/core.d.ts"],
+   ["@native-sdk/core/text", "sdk/text.d.ts"],
+   ["@native-sdk/core/events", "sdk/events.d.ts"],
+ ]) {
+-  const p = path.join(coreRoot, file);
+-  if (fs.existsSync(p)) maps.push("--external-types", `${specifier}=${p}`);
++  const p = path.join(stageDir, file);
++  if (fs.existsSync(p)) maps.push("--external-types", specifier + "=" + p.split("\\").join("/"));
+ }
++process.on("exit", () => { fs.rmSync(stageDir, { recursive: true, force: true }); });
+ const probe = spawnSync(process.execPath, [compilerJs, "coverage", entry, ...maps], { encoding: "utf8" });
+ const out = `${probe.stdout ?? ""}${probe.stderr ?? ""}`;
+ if (probe.status === 0) process.exit(0);
 diff --git a/src/automation/snapshot.zig b/src/automation/snapshot.zig
+index 6e7248236e1b253393ee9fc03582ea2891825250..9431646db1f66e710aea6349aed9048a802ac426 100644
 --- a/src/automation/snapshot.zig
 +++ b/src/automation/snapshot.zig
-@@ -206,6 +206,10 @@
+@@ -206,6 +206,10 @@ pub const Widget = struct {
      actions: WidgetActions = .{},
      text_selection: ?TextRange = null,
      text_composition: ?TextRange = null,
@@ -12,7 +130,7 @@ diff --git a/src/automation/snapshot.zig b/src/automation/snapshot.zig
      /// The widget's declared context-menu items in declared order —
      /// what a right-click presents (natively, or through the anchored
      /// fallback surface) and what `widget-context-menu` invokes by
-@@ -584,6 +588,7 @@
+@@ -584,6 +588,7 @@ pub fn writeText(input: Input, writer: anytype) !void {
          try writeWidgetState(widget, writer);
          try writeWidgetActions(widget.actions, writer);
          try writeWidgetTextRanges(widget, writer);
@@ -20,7 +138,7 @@ diff --git a/src/automation/snapshot.zig b/src/automation/snapshot.zig
          try writeWidgetContextMenu(widget, writer);
          try writer.writeByte('\n');
      }
-@@ -705,6 +710,7 @@
+@@ -705,6 +710,7 @@ pub fn writeA11yText(input: Input, writer: anytype) !void {
          try writeWidgetState(widget, writer);
          try writeWidgetActions(widget.actions, writer);
          try writeWidgetTextRanges(widget, writer);
@@ -28,12 +146,10 @@ diff --git a/src/automation/snapshot.zig b/src/automation/snapshot.zig
          try writeWidgetContextMenu(widget, writer);
          try writer.writeByte('\n');
      }
-@@ -832,6 +838,16 @@
- fn writeWidgetTextRanges(widget: Widget, writer: anytype) !void {
-     if (widget.text_selection) |selection| try writer.print(" selection={d}..{d}", .{ selection.start, selection.end });
+@@ -834,6 +840,16 @@ fn writeWidgetTextRanges(widget: Widget, writer: anytype) !void {
      if (widget.text_composition) |composition| try writer.print(" composition={d}..{d}", .{ composition.start, composition.end });
-+}
-+
+ }
+ 
 +fn writeWidgetCaretBounds(widget: Widget, writer: anytype) !void {
 +    const caret = widget.text_caret_bounds orelse return;
 +    try writer.print(" caret=({d},{d} {d}x{d})", .{
@@ -42,10 +158,12 @@ diff --git a/src/automation/snapshot.zig b/src/automation/snapshot.zig
 +        caret.width,
 +        caret.height,
 +    });
- }
- 
++}
++
  /// The widget's declared context-menu items: quoted labels in declared
-@@ -1206,6 +1222,7 @@
+ /// order (list position = the `widget-context-menu` item index), bare
+ /// `separator` for divider slots, `(disabled)` marking items a real
+@@ -1206,6 +1222,7 @@ test "snapshot emits widget semantics" {
              .actions = .{ .focus = true, .press = true, .set_selection = true, .drag = true, .drop_files = true, .dismiss = true },
              .text_selection = .{ .start = 4, .end = 4 },
              .text_composition = .{ .start = 0, .end = 3 },
@@ -53,7 +171,7 @@ diff --git a/src/automation/snapshot.zig b/src/automation/snapshot.zig
          },
          .{
              .window_id = 1,
-@@ -1237,6 +1254,7 @@
+@@ -1237,6 +1254,7 @@ test "snapshot emits widget semantics" {
      try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "actions=[focus,press,set_selection,drag,drop_files,dismiss]") != null);
      try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "selection=4..4") != null);
      try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "composition=0..3") != null);
@@ -62,9 +180,10 @@ diff --git a/src/automation/snapshot.zig b/src/automation/snapshot.zig
      var a11y_buffer: [2048]u8 = undefined;
      var a11y_writer = std.Io.Writer.fixed(&a11y_buffer);
 diff --git a/src/platform/linux/gtk_host.c b/src/platform/linux/gtk_host.c
+index 8a909722b10a9e56e2035220d44634b1ff4b2275..827a29cc843b24e7ff21b159d440c6313353bc02 100644
 --- a/src/platform/linux/gtk_host.c
 +++ b/src/platform/linux/gtk_host.c
-@@ -208,18 +208,17 @@
+@@ -208,18 +208,17 @@ typedef struct native_sdk_gtk_native_view {
       * removes itself (the macOS host's placeholder display timer, in
       * GLib terms). Steady state never ticks it. */
      guint gpu_frame_timer;
@@ -94,7 +213,7 @@ diff --git a/src/platform/linux/gtk_host.c b/src/platform/linux/gtk_host.c
      guint gpu_emit_source;
      uint64_t gpu_last_emit_ns;
      int gpu_presented;
-@@ -1180,6 +1179,25 @@
+@@ -1180,6 +1179,25 @@ static void native_sdk_gpu_surface_schedule_frame_emission(native_sdk_gtk_native
      view->gpu_emit_source = g_timeout_add_full(G_PRIORITY_DEFAULT_IDLE, (guint)((delay_ns + 500000ull) / 1000000ull), native_sdk_gpu_surface_emit_scheduled, view, NULL);
  }
  
@@ -120,7 +239,7 @@ diff --git a/src/platform/linux/gtk_host.c b/src/platform/linux/gtk_host.c
  /* Placeholder pump: arms the scheduler every 16 ms until the first
   * present lands, so the runtime's install choreography (fonts, first
   * rebuild, first present) has frame events to ride before any producer
-@@ -4312,14 +4330,40 @@
+@@ -4312,14 +4330,40 @@ int native_sdk_gtk_request_gpu_surface_frame(native_sdk_gtk_host_t *host, uint64
      native_sdk_gtk_native_view_t *view = native_sdk_find_native_view(win, label_copy);
      free(label_copy);
      if (!view || view->kind != NATIVE_SDK_GTK_VIEW_GPU_SURFACE || !view->widget) return 0;
@@ -165,10 +284,56 @@ diff --git a/src/platform/linux/gtk_host.c b/src/platform/linux/gtk_host.c
  int native_sdk_gtk_present_gpu_surface_pixels(native_sdk_gtk_host_t *host, uint64_t window_id, const char *label, size_t label_len, size_t width, size_t height, double scale, int has_dirty_rect, double dirty_x, double dirty_y, double dirty_width, double dirty_height, const uint8_t *rgba8, size_t rgba8_len) {
      (void)scale;
      (void)has_dirty_rect;
+diff --git a/src/platform/linux/gtk_host.h b/src/platform/linux/gtk_host.h
+index c21e36bb8f0a3c69a8c9ffe5a1e7ae1d74d45cd8..e366844668d31fe97c7c496e326fa0a06cddfba4 100644
+--- a/src/platform/linux/gtk_host.h
++++ b/src/platform/linux/gtk_host.h
+@@ -229,6 +229,7 @@ int native_sdk_gtk_set_view_visible(native_sdk_gtk_host_t *host, uint64_t window
+ int native_sdk_gtk_focus_view(native_sdk_gtk_host_t *host, uint64_t window_id, const char *label, size_t label_len);
+ int native_sdk_gtk_close_view(native_sdk_gtk_host_t *host, uint64_t window_id, const char *label, size_t label_len);
+ int native_sdk_gtk_request_gpu_surface_frame(native_sdk_gtk_host_t *host, uint64_t window_id, const char *label, size_t label_len);
++int native_sdk_gtk_note_gpu_surface_input(native_sdk_gtk_host_t *host, uint64_t window_id, const char *label, size_t label_len);
+ /* Present a native context menu (GtkPopoverMenu) pointing at the given
+  * view-local LOGICAL x/y — the same coordinate space the gpu-surface
+  * input path reports pointer events in, which is the pointing-rect space
+diff --git a/src/platform/linux/root.zig b/src/platform/linux/root.zig
+index fd77d3910508a7225ca6c78cf15d22ebefb26b32..0ee7132911eaf8c4f22c54455c5e35f46bd574ae 100644
+--- a/src/platform/linux/root.zig
++++ b/src/platform/linux/root.zig
+@@ -145,6 +145,7 @@ extern fn native_sdk_gtk_set_view_visible(host: *GtkHost, window_id: u64, label:
+ extern fn native_sdk_gtk_focus_view(host: *GtkHost, window_id: u64, label: [*]const u8, label_len: usize) c_int;
+ extern fn native_sdk_gtk_close_view(host: *GtkHost, window_id: u64, label: [*]const u8, label_len: usize) c_int;
+ extern fn native_sdk_gtk_request_gpu_surface_frame(host: *GtkHost, window_id: u64, label: [*]const u8, label_len: usize) c_int;
++extern fn native_sdk_gtk_note_gpu_surface_input(host: *GtkHost, window_id: u64, label: [*]const u8, label_len: usize) c_int;
+ extern fn native_sdk_gtk_present_gpu_surface_pixels(host: *GtkHost, window_id: u64, label: [*]const u8, label_len: usize, width: usize, height: usize, scale: f64, has_dirty_rect: c_int, dirty_x: f64, dirty_y: f64, dirty_width: f64, dirty_height: f64, rgba8: [*]const u8, rgba8_len: usize) c_int;
+ extern fn native_sdk_gtk_create_webview(host: *GtkHost, window_id: u64, label: [*]const u8, label_len: usize, url: [*]const u8, url_len: usize, x: f64, y: f64, width: f64, height: f64, layer: c_int, transparent: c_int, bridge_enabled: c_int) c_int;
+ extern fn native_sdk_gtk_set_webview_frame(host: *GtkHost, window_id: u64, label: [*]const u8, label_len: usize, x: f64, y: f64, width: f64, height: f64) c_int;
+@@ -375,6 +376,7 @@ pub const LinuxPlatform = struct {
+                 .focus_view_fn = focusView,
+                 .close_view_fn = closeView,
+                 .request_gpu_surface_frame_fn = requestGpuSurfaceFrame,
++                .note_gpu_surface_input_fn = noteGpuSurfaceInput,
+                 .present_gpu_surface_pixels_fn = presentGpuSurfacePixels,
+                 .show_context_menu_fn = showContextMenu,
+                 .create_webview_fn = createWebView,
+@@ -1094,6 +1096,12 @@ fn requestGpuSurfaceFrame(context: ?*anyopaque, window_id: platform_mod.WindowId
+     if (native_sdk_gtk_request_gpu_surface_frame(self.host, window_id, label.ptr, label.len) == 0) return error.ViewNotFound;
+ }
+ 
++fn noteGpuSurfaceInput(context: ?*anyopaque, window_id: platform_mod.WindowId, label: []const u8) anyerror!void {
++    const self: *LinuxPlatform = @ptrCast(@alignCast(context.?));
++    if (self.web_engine != .system) return error.UnsupportedService;
++    if (native_sdk_gtk_note_gpu_surface_input(self.host, window_id, label.ptr, label.len) == 0) return error.ViewNotFound;
++}
++
+ fn presentGpuSurfacePixels(context: ?*anyopaque, pixels: platform_mod.GpuSurfacePixels) anyerror!void {
+     const self: *LinuxPlatform = @ptrCast(@alignCast(context.?));
+     if (self.web_engine != .system) return error.UnsupportedViewKind;
 diff --git a/src/platform/macos/appkit_host.h b/src/platform/macos/appkit_host.h
+index e8a0f040d49cda2379563e94a46ad5e86ed6b64a..89820c97a023810cbcf4849ee8366e96a862d2f2 100644
 --- a/src/platform/macos/appkit_host.h
 +++ b/src/platform/macos/appkit_host.h
-@@ -576,6 +576,7 @@
+@@ -576,6 +576,7 @@ void native_sdk_appkit_wake(native_sdk_appkit_host_t *host);
   * backgrounded and its NSTimers are being coalesced. */
  void native_sdk_appkit_request_frame(native_sdk_appkit_host_t *host);
  int native_sdk_appkit_update_widget_accessibility(native_sdk_appkit_host_t *host, uint64_t window_id, const char *label, size_t label_len, const native_sdk_appkit_widget_accessibility_node_t *nodes, size_t node_count);
@@ -177,6 +342,7 @@ diff --git a/src/platform/macos/appkit_host.h b/src/platform/macos/appkit_host.h
  double native_sdk_appkit_measure_text(uint64_t font_id, double size, const char *text, size_t text_len);
  
 diff --git a/src/platform/macos/appkit_host.m b/src/platform/macos/appkit_host.m
+index 52d55005fa18d876bf35345089096aa2d30d99ae..80a9e3abf6e9fd956df2ffe1bf1c9a39f08ededa 100644
 --- a/src/platform/macos/appkit_host.m
 +++ b/src/platform/macos/appkit_host.m
 @@ -21,6 +21,7 @@
@@ -187,7 +353,7 @@ diff --git a/src/platform/macos/appkit_host.m b/src/platform/macos/appkit_host.m
  #include <stdlib.h>
  #include <string.h>
  
-@@ -602,6 +603,12 @@
+@@ -602,6 +603,12 @@ static NSMutableDictionary *NativeSdkCredentialQuery(NSString *service, NSString
  @property(nonatomic, assign) NSRange selectedTextRange;
  @property(nonatomic, assign) BOOL interpretedKeyEventEmittedInput;
  @property(nonatomic, strong) NSArray<NSAccessibilityElement *> *widgetAccessibilityElements;
@@ -200,7 +366,7 @@ diff --git a/src/platform/macos/appkit_host.m b/src/platform/macos/appkit_host.m
  @property(nonatomic, strong) NSMutableArray<NativeSdkScrollDriverView *> *scrollDrivers;
  @property(nonatomic, assign) NSPoint wheelGesturePoint;
  @property(nonatomic, assign) BOOL wheelGestureActive;
-@@ -961,6 +968,7 @@
+@@ -961,6 +968,7 @@ static NSMutableDictionary *NativeSdkCredentialQuery(NSString *service, NSString
  - (BOOL)uploadGpuSurfaceImageWithId:(uint64_t)imageId width:(NSUInteger)width height:(NSUInteger)height rgba8:(const uint8_t *)rgba8 byteLength:(NSUInteger)byteLength;
  - (BOOL)removeGpuSurfaceImageWithId:(uint64_t)imageId;
  - (BOOL)updateWidgetAccessibilityInWindow:(uint64_t)windowId label:(NSString *)label nodes:(const native_sdk_appkit_widget_accessibility_node_t *)nodes count:(NSUInteger)count;
@@ -208,7 +374,7 @@ diff --git a/src/platform/macos/appkit_host.m b/src/platform/macos/appkit_host.m
  - (BOOL)nativeView:(NSView *)candidate isInSubtreeRootedAt:(NSView *)root;
  - (NSArray<NSString *> *)nativeViewKeysInSubtreeForWindow:(uint64_t)windowId rootKey:(NSString *)rootKey;
  - (BOOL)closeNativeViewInWindow:(uint64_t)windowId label:(NSString *)label;
-@@ -7005,30 +7013,48 @@
+@@ -7025,30 +7033,48 @@ static BOOL NativeSdkScrollDriverCanConsumeHorizontally(NativeSdkScrollDriverVie
  }
  
  - (NSRect)firstRectForCharacterRange:(NSRange)range actualRange:(NSRangePointer)actualRange {
@@ -275,13 +441,10 @@ diff --git a/src/platform/macos/appkit_host.m b/src/platform/macos/appkit_host.m
  }
  
  - (NSAccessibilityElement *)focusedTextAccessibilityElement {
-@@ -8297,6 +8323,17 @@
-     NSView *view = self.nativeViews[key];
-     if (![view isKindOfClass:[NativeSdkMetalSurfaceView class]]) return NO;
-     [(NativeSdkMetalSurfaceView *)view updateWidgetAccessibilityWithNodes:nodes count:count];
-+    return YES;
-+}
-+
+@@ -8320,6 +8346,17 @@ static BOOL NativeSdkScrollDriverCanConsumeHorizontally(NativeSdkScrollDriverVie
+     return YES;
+ }
+ 
 +- (BOOL)updateTextInputGeometryInWindow:(uint64_t)windowId label:(NSString *)label focusedId:(uint64_t)focusedId hasCaret:(BOOL)hasCaret rect:(NSRect)rect {
 +    NSString *key = [self nativeViewKeyForWindow:windowId label:label];
 +    NSView *view = self.nativeViews[key];
@@ -290,10 +453,13 @@ diff --git a/src/platform/macos/appkit_host.m b/src/platform/macos/appkit_host.m
 +    surface.focusedTextInputId = hasCaret ? focusedId : 0;
 +    surface.hasTextInputCaretRect = hasCaret;
 +    surface.textInputCaretRect = hasCaret ? rect : NSZeroRect;
-     return YES;
- }
- 
-@@ -12103,6 +12140,16 @@
++    return YES;
++}
++
+ - (BOOL)nativeView:(NSView *)candidate isInSubtreeRootedAt:(NSView *)root {
+     for (NSView *view = candidate; view; view = view.superview) {
+         if (view == root) return YES;
+@@ -12123,6 +12160,16 @@ int native_sdk_appkit_update_widget_accessibility(native_sdk_appkit_host_t *host
      return [object updateWidgetAccessibilityInWindow:window_id label:labelString ?: @"" nodes:nodes count:node_count] ? 1 : 0;
  }
  
@@ -311,9 +477,10 @@ diff --git a/src/platform/macos/appkit_host.m b/src/platform/macos/appkit_host.m
      NativeSdkAppKitHost *object = (__bridge NativeSdkAppKitHost *)host;
      NSString *labelString = label ? [[NSString alloc] initWithBytes:label length:label_len encoding:NSUTF8StringEncoding] : @"";
 diff --git a/src/platform/macos/root.zig b/src/platform/macos/root.zig
+index ba6a5b94af95f1e3b630c8d84945bd2a7c6c99c8..ee582778364bc7de7f91e5c9c341678e69628d77 100644
 --- a/src/platform/macos/root.zig
 +++ b/src/platform/macos/root.zig
-@@ -221,6 +221,7 @@
+@@ -221,6 +221,7 @@ extern fn native_sdk_appkit_present_gpu_surface_packet_binary(host: *AppKitHost,
  extern fn native_sdk_appkit_upload_gpu_surface_image(host: *AppKitHost, image_id: u64, width: usize, height: usize, rgba8: [*]const u8, rgba8_len: usize) c_int;
  extern fn native_sdk_appkit_remove_gpu_surface_image(host: *AppKitHost, image_id: u64) c_int;
  extern fn native_sdk_appkit_update_widget_accessibility(host: *AppKitHost, window_id: u64, label: [*]const u8, label_len: usize, nodes: [*]const AppKitWidgetAccessibilityNode, node_count: usize) c_int;
@@ -321,7 +488,7 @@ diff --git a/src/platform/macos/root.zig b/src/platform/macos/root.zig
  extern fn native_sdk_appkit_create_webview(host: *AppKitHost, window_id: u64, label: [*]const u8, label_len: usize, url: [*]const u8, url_len: usize, x: f64, y: f64, width: f64, height: f64, layer: c_int, transparent: c_int, bridge_enabled: c_int) c_int;
  extern fn native_sdk_appkit_set_webview_frame(host: *AppKitHost, window_id: u64, label: [*]const u8, label_len: usize, x: f64, y: f64, width: f64, height: f64) c_int;
  extern fn native_sdk_appkit_navigate_webview(host: *AppKitHost, window_id: u64, label: [*]const u8, label_len: usize, url: [*]const u8, url_len: usize) c_int;
-@@ -774,6 +775,7 @@
+@@ -774,6 +775,7 @@ pub const MacPlatform = struct {
                  .register_gpu_surface_font_fn = registerGpuSurfaceFont,
                  .unregister_gpu_surface_font_fn = unregisterGpuSurfaceFont,
                  .update_widget_accessibility_fn = updateWidgetAccessibility,
@@ -329,7 +496,7 @@ diff --git a/src/platform/macos/root.zig b/src/platform/macos/root.zig
                  .measure_text_fn = measureText,
                  .measure_text_advances_fn = measureTextAdvances,
                  .decode_image_fn = decodeImage,
-@@ -1848,6 +1850,24 @@
+@@ -1848,6 +1850,24 @@ fn unregisterGpuSurfaceFont(context: ?*anyopaque, id: u64, token: u64) anyerror!
      if (native_sdk_appkit_unregister_font(id, token) == 0) return error.InvalidGpuSurfaceFont;
  }
  
@@ -354,7 +521,7 @@ diff --git a/src/platform/macos/root.zig b/src/platform/macos/root.zig
  fn updateWidgetAccessibility(context: ?*anyopaque, snapshot: platform_mod.WidgetAccessibilitySnapshot) anyerror!void {
      const self: *MacPlatform = @ptrCast(@alignCast(context.?));
      if (self.web_engine != .system) return error.UnsupportedViewKind;
-@@ -2801,6 +2821,16 @@
+@@ -2801,6 +2821,16 @@ test "mac gpu surface input maps pinch phases and carries the magnification delt
      try std.testing.expectEqual(@as(f32, 0), end.scale);
  }
  
@@ -372,9 +539,10 @@ diff --git a/src/platform/macos/root.zig b/src/platform/macos/root.zig
      try std.testing.expectEqual(platform_mod.ColorScheme.light, appKitColorScheme(0));
      try std.testing.expectEqual(platform_mod.ColorScheme.dark, appKitColorScheme(1));
 diff --git a/src/platform/root.zig b/src/platform/root.zig
+index f8897669830668c12476093a9e2549de58ea52d3..e6e3e9937c637e916acfa719ca001ea4f00d585d 100644
 --- a/src/platform/root.zig
 +++ b/src/platform/root.zig
-@@ -169,6 +169,7 @@
+@@ -169,6 +169,7 @@ pub const WidgetAccessibilityActions = types.WidgetAccessibilityActions;
  pub const WidgetAccessibilityTextRange = types.WidgetAccessibilityTextRange;
  pub const WidgetAccessibilityNode = types.WidgetAccessibilityNode;
  pub const WidgetAccessibilitySnapshot = types.WidgetAccessibilitySnapshot;
@@ -383,9 +551,10 @@ diff --git a/src/platform/root.zig b/src/platform/root.zig
  pub const WidgetAccessibilityActionEvent = types.WidgetAccessibilityActionEvent;
  pub const ClipboardData = types.ClipboardData;
 diff --git a/src/platform/types.zig b/src/platform/types.zig
+index f773c47096612dd89af68d95c72660ddb41fd601..b0af59a46d997583335eb577b2a889b446cd8443 100644
 --- a/src/platform/types.zig
 +++ b/src/platform/types.zig
-@@ -2138,6 +2138,12 @@
+@@ -2138,6 +2138,12 @@ pub const WidgetAccessibilityNode = struct {
      placeholder: []const u8 = "",
      text_selection: ?WidgetAccessibilityTextRange = null,
      text_composition: ?WidgetAccessibilityTextRange = null,
@@ -398,12 +567,10 @@ diff --git a/src/platform/types.zig b/src/platform/types.zig
      value: ?f32 = null,
      bounds: geometry.RectF = .{},
      grid_row_index: ?usize = null,
-@@ -2168,6 +2174,17 @@
-     window_id: WindowId = 1,
-     view_label: []const u8,
+@@ -2170,6 +2176,17 @@ pub const WidgetAccessibilitySnapshot = struct {
      nodes: []const WidgetAccessibilityNode = &.{},
-+};
-+
+ };
+ 
 +/// The one focused text-input anchor in a gpu-surface view. The runtime
 +/// derives this from the same shaped widget geometry that paints the
 +/// caret, so platform IME hosts never estimate position from character
@@ -413,10 +580,12 @@ diff --git a/src/platform/types.zig b/src/platform/types.zig
 +    view_label: []const u8,
 +    focused_id: ?u64 = null,
 +    caret_bounds: ?geometry.RectF = null,
- };
- 
++};
++
  pub const WidgetAccessibilityActionKind = enum(c_int) {
-@@ -2634,6 +2651,7 @@
+     focus = 0,
+     press = 1,
+@@ -2634,6 +2651,7 @@ pub const PlatformServices = struct {
      /// — with no host font state there is nothing to return.
      unregister_gpu_surface_font_fn: ?*const fn (context: ?*anyopaque, id: u64, token: u64) anyerror!void = null,
      update_widget_accessibility_fn: ?*const fn (context: ?*anyopaque, snapshot: WidgetAccessibilitySnapshot) anyerror!void = null,
@@ -424,7 +593,7 @@ diff --git a/src/platform/types.zig b/src/platform/types.zig
      /// Reconcile the native scroll drivers for a gpu-surface view against
      /// the full desired set: create missing drivers, update frames /
      /// content extents / (per set-offset flag) offsets, remove drivers whose
-@@ -3236,6 +3254,18 @@
+@@ -3236,6 +3254,18 @@ pub const PlatformServices = struct {
          return update_fn(self.context, snapshot);
      }
  
@@ -444,9 +613,10 @@ diff --git a/src/platform/types.zig b/src/platform/types.zig
      /// straight-alpha RGBA8 (see `decode_image_fn`). Loop-thread only.
      pub fn decodeImage(self: PlatformServices, bytes: []const u8, buffer: []u8) anyerror!DecodedImage {
 diff --git a/src/platform/windows/root.zig b/src/platform/windows/root.zig
+index a0a9bc248a4cc0da732ef13fc4de7b54a9611d66..6dddb4d0f5b607215a7d4b4a8c9e75388d865502 100644
 --- a/src/platform/windows/root.zig
 +++ b/src/platform/windows/root.zig
-@@ -175,6 +175,7 @@
+@@ -175,6 +175,7 @@ extern fn native_sdk_windows_upload_gpu_surface_image(host: *WindowsHost, id: u6
  extern fn native_sdk_windows_remove_gpu_surface_image(host: *WindowsHost, id: u64) c_int;
  extern fn native_sdk_windows_register_gpu_surface_font(host: *WindowsHost, id: u64, ttf: [*]const u8, ttf_len: usize, token: *u64) c_int;
  extern fn native_sdk_windows_unregister_gpu_surface_font(host: *WindowsHost, id: u64, token: u64) c_int;
@@ -454,7 +624,7 @@ diff --git a/src/platform/windows/root.zig b/src/platform/windows/root.zig
  extern fn native_sdk_windows_create_webview(host: *WindowsHost, window_id: u64, label: [*]const u8, label_len: usize, url: [*]const u8, url_len: usize, x: f64, y: f64, width: f64, height: f64, layer: c_int, transparent: c_int, bridge_enabled: c_int) c_int;
  extern fn native_sdk_windows_set_webview_frame(host: *WindowsHost, window_id: u64, label: [*]const u8, label_len: usize, x: f64, y: f64, width: f64, height: f64) c_int;
  extern fn native_sdk_windows_navigate_webview(host: *WindowsHost, window_id: u64, label: [*]const u8, label_len: usize, url: [*]const u8, url_len: usize) c_int;
-@@ -448,6 +449,7 @@
+@@ -448,6 +449,7 @@ pub const WindowsPlatform = struct {
                  .remove_gpu_surface_image_fn = removeGpuSurfaceImage,
                  .register_gpu_surface_font_fn = registerGpuSurfaceFont,
                  .unregister_gpu_surface_font_fn = unregisterGpuSurfaceFont,
@@ -462,7 +632,7 @@ diff --git a/src/platform/windows/root.zig b/src/platform/windows/root.zig
                  .show_context_menu_fn = showContextMenu,
                  .create_webview_fn = createWebView,
                  .set_webview_frame_fn = setWebViewFrame,
-@@ -1285,6 +1287,24 @@
+@@ -1285,6 +1287,24 @@ fn unregisterGpuSurfaceFont(context: ?*anyopaque, id: u64, token: u64) anyerror!
      }
  }
  
@@ -487,7 +657,7 @@ diff --git a/src/platform/windows/root.zig b/src/platform/windows/root.zig
  /// Win32 menus treat `&` in an item label as a mnemonic marker —
  /// AppendMenuW eats the ampersand and underlines the next character —
  /// so an app-authored label like "R&D" must cross the ABI with the
-@@ -2427,6 +2447,19 @@
+@@ -2427,6 +2447,19 @@ fn flattenFilters(filters: []const platform_mod.FileFilter, buffer: []u8) []cons
      return buffer[0..offset];
  }
  
@@ -508,9 +678,10 @@ diff --git a/src/platform/windows/root.zig b/src/platform/windows/root.zig
      _ = WindowsPlatform;
  }
 diff --git a/src/platform/windows/webview2_host.cpp b/src/platform/windows/webview2_host.cpp
+index 56074298e6e6278afdfca586925cdc3b9e359955..c292eacd1a450a6f024f0b1d72a73bb2b0a90fba 100644
 --- a/src/platform/windows/webview2_host.cpp
 +++ b/src/platform/windows/webview2_host.cpp
-@@ -512,6 +512,15 @@
+@@ -512,6 +512,15 @@ struct NativeView {
       * composition. Mirrors gpu_preedit_text in the GTK host and markedText
       * in the AppKit host. */
      std::string gpu_ime_preedit;
@@ -526,12 +697,10 @@ diff --git a/src/platform/windows/webview2_host.cpp b/src/platform/windows/webvi
      /* The runtime-pushed window-drag mirror (hidden-titlebar windows):
       * WM_NCHITTEST consults it so the markup's drag header behaves like
       * the system caption. */
-@@ -2544,6 +2553,78 @@
-     event.has_composition_cursor = has_composition_cursor ? 1 : 0;
-     event.composition_cursor = has_composition_cursor ? composition_cursor : 0;
+@@ -2546,6 +2555,78 @@ static void emitGpuSurfaceTextInput(Host *host, NativeView &view, int input_kind
      emitGpuSurfaceEvent(host, view, event);
-+}
-+
+ }
+ 
 +/* Anchor the system candidate list to the exact shaped caret rectangle
 + * published by the runtime. IMM32 consumes physical child-client pixels;
 + * the shared geometry is logical view-local, so this is the one DPI
@@ -602,10 +771,12 @@ diff --git a/src/platform/windows/webview2_host.cpp b/src/platform/windows/webvi
 +    }
 +    ImmReleaseContext(hwnd, imc);
 +    return applied;
- }
- 
++}
++
  /* Fetch one composition string (GCS_COMPSTR / GCS_RESULTSTR) from the
-@@ -3351,10 +3432,11 @@
+  * input context. ImmGetCompositionStringW returns a byte count for the
+  * sizing call and the data for the filling call; errors return empty. */
+@@ -3351,10 +3432,11 @@ static LRESULT CALLBACK gpuSurfaceProc(HWND hwnd, UINT message, WPARAM wparam, L
               * from ime_set_composition events, like the other hosts. */
              return DefWindowProcW(hwnd, message, wparam, lparam & ~(LPARAM)ISC_SHOWUICOMPOSITIONWINDOW);
          case WM_IME_STARTCOMPOSITION:
@@ -621,7 +792,7 @@ diff --git a/src/platform/windows/webview2_host.cpp b/src/platform/windows/webvi
              return 0;
          case WM_IME_COMPOSITION:
              gpuSurfaceImeComposition(host, *view, hwnd, lparam);
-@@ -6764,6 +6846,32 @@
+@@ -6764,6 +6846,32 @@ int native_sdk_windows_unregister_gpu_surface_font(Host *host, uint64_t id, uint
      return host->gpu_renderer->unregisterFont(id, token) ? 1 : -1;
  }
  
@@ -654,10 +825,145 @@ diff --git a/src/platform/windows/webview2_host.cpp b/src/platform/windows/webvi
  int native_sdk_windows_present_gpu_surface_pixels(Host *host, uint64_t window_id, const char *label, size_t label_len, size_t width, size_t height, double scale, int has_dirty_rect, double dirty_x, double dirty_y, double dirty_width, double dirty_height, const uint8_t *rgba8, size_t rgba8_len) {
      if (!host || label_len == 0) return 0;
      auto found = host->native_views.find(nativeViewKey(window_id, slice(label, label_len)));
+diff --git a/src/primitives/canvas/text_layout.zig b/src/primitives/canvas/text_layout.zig
+index 0f2c59a84263c48989ecf2000bceffb62a5ec308..0551d5b030d16887adbfc17632653b97dc03502e 100644
+--- a/src/primitives/canvas/text_layout.zig
++++ b/src/primitives/canvas/text_layout.zig
+@@ -366,6 +366,23 @@ pub const TextLineIterator = struct {
+             return self.emit(0, 0, 0, 0, .{});
+         }
+         const start = self.cursor;
++        // RefRain patch: explicit line starts replace the width-driven break
++        // search. The cursor lands exactly on the next break; a trailing
++        // newline is the line's terminator, not painted content.
++        if (self.options.hard_breaks.len > 0) {
++            var end = bytes.len;
++            for (self.options.hard_breaks) |line_start| {
++                if (line_start > start) {
++                    end = @min(line_start, bytes.len);
++                    break;
++                }
++            }
++            self.finished = end >= bytes.len;
++            self.cursor = end;
++            var line_end = end;
++            if (line_end > start and bytes[line_end - 1] == '\n') line_end -= 1;
++            return self.emit(start, line_end - start, start, line_end - start, .{});
++        }
+         const end = nextTextLineEnd(bytes, start, self.text.font_id, self.text.size, self.options);
+         if (end >= bytes.len) {
+             self.finished = true;
+diff --git a/src/primitives/canvas/text_layout_hash.zig b/src/primitives/canvas/text_layout_hash.zig
+index 3d0c3c309d4fc62463727c504a4999842b6537ae..e948092b2fedd08cc740c2c76caf7c7a0ae7e131 100644
+--- a/src/primitives/canvas/text_layout_hash.zig
++++ b/src/primitives/canvas/text_layout_hash.zig
+@@ -1,3 +1,4 @@
++const std = @import("std");
+ const geometry = @import("geometry");
+ const canvas = @import("root.zig");
+ const hash_model = @import("hash.zig");
+@@ -103,6 +104,11 @@ fn resourceHashOptionalTextLayoutOptions(hash: u64, options: ?TextLayoutOptions)
+         next = resourceHashEnum(next, @intFromEnum(value.wrap));
+         next = resourceHashEnum(next, @intFromEnum(value.alignment));
+         next = hashTextOverflow(next, value.overflow);
++        // RefRain patch: explicit breaks join the key only when present —
++        // an empty table keeps every prior fingerprint byte-identical.
++        if (value.hard_breaks.len > 0) {
++            next = resourceHashBytes(next, std.mem.sliceAsBytes(value.hard_breaks));
++        }
+         return next;
+     }
+     return resourceHashU8(hash, 0);
+diff --git a/src/primitives/canvas/text_layout_types.zig b/src/primitives/canvas/text_layout_types.zig
+index 3e29bafa6a8304e5626d84dd550d10628bae694f..4fe159d28bbdc23f88025665e4a76bd0c59be5f6 100644
+--- a/src/primitives/canvas/text_layout_types.zig
++++ b/src/primitives/canvas/text_layout_types.zig
+@@ -60,6 +60,12 @@ pub const TextLayoutOptions = struct {
+     /// Deliberately excluded from equality, hashing, and serialization:
+     /// it is process-local layout context, not drawn content.
+     measure: ?*const text_metrics.TextMeasureProvider = null,
++    /// RefRain patch: explicit line-start offsets (the Rust typeset's CLREQ
++    /// 禁则 breaks). Non-empty replaces the width-driven break search on the
++    /// plain-text path: a line ends where the next line begins, so CJK prose
++    /// breaks correctly (the built-in search only knows space and tab).
++    /// Offsets are into `text`; the first entry is 0.
++    hard_breaks: []const u32 = &.{},
+ };
+ 
+ pub const TextLine = struct {
+diff --git a/src/primitives/canvas/widget_metrics.zig b/src/primitives/canvas/widget_metrics.zig
+index 8f5b0c767e2de9ca3d42d5459e0180e943b5ee18..7f22aa8ba035f001640e48805a413667f9d3ba5b 100644
+--- a/src/primitives/canvas/widget_metrics.zig
++++ b/src/primitives/canvas/widget_metrics.zig
+@@ -28,6 +28,8 @@ pub fn widgetButtonTextSize(widget: Widget, tokens: DesignTokens) f32 {
+ }
+ 
+ pub fn widgetBodyTextSize(widget: Widget, tokens: DesignTokens) f32 {
++    // RefRain patch: an explicit per-widget size beats the token ladder.
++    if (widget.text_size > 0) return widget.text_size;
+     // heading/display are typography-token rungs, honored on text leaves
+     // only: they REPLACE the body base with the named token instead of
+     // stepping it, so the whole type scale stays themable through
+@@ -105,6 +107,8 @@ pub fn widgetTextSpanLayoutOptions(widget: Widget, tokens: DesignTokens, max_wid
+     return .{
+         .size = widgetBodyTextSize(widget, tokens),
+         .max_width = max_width,
++        // RefRain patch: zero keeps the span model's default factor.
++        .line_height = widget.text_line_height,
+         .wrap = if (widget.text_no_wrap) .none else .word,
+         .alignment = widget.text_alignment,
+         .typography = tokens.typography,
+diff --git a/src/primitives/canvas/widget_text_input.zig b/src/primitives/canvas/widget_text_input.zig
+index b772d8660fd1c9da8c0dec89cc371889f8add080..77abc6e80b8a8e0decafb4f6e24ba7f88b1a9570 100644
+--- a/src/primitives/canvas/widget_text_input.zig
++++ b/src/primitives/canvas/widget_text_input.zig
+@@ -171,12 +171,16 @@ pub fn widgetTextInputSize(widget: Widget, tokens: DesignTokens) f32 {
+ }
+ 
+ pub fn widgetTextInputLayoutOptions(widget: Widget, tokens: DesignTokens, text_size: f32, inset: f32) TextLayoutOptions {
+-    const line_height = widgetTextInputLineHeight(text_size);
++    // RefRain patch: an explicit per-widget line height beats the default factor.
++    const line_height = if (widget.text_line_height > 0) widget.text_line_height else widgetTextInputLineHeight(text_size);
+     const trailing_inset = widgetTextInputTrailingInset(widget, text_size, inset);
+     return .{
+         .max_width = @max(1, widget.frame.width - inset - trailing_inset),
+         .line_height = line_height,
+         .wrap = widgetTextInputWrap(widget, line_height),
++        // RefRain patch: explicit line starts (Rust typeset 禁则) replace the
++        // width-driven break search when present.
++        .hard_breaks = widget.hard_breaks,
+         // Never elide input text: a single-line field keeps its overflow
+         // reachable (caret, selection, and scroll address every byte),
+         // so the honest treatment is the frame clip, not an ellipsis
+diff --git a/src/primitives/canvas/widgets.zig b/src/primitives/canvas/widgets.zig
+index 25f80f7bf49a28f5d843e83bc6d60436ca892a40..8573f57812f86da50b46e41d7c2cf825a04172a7 100644
+--- a/src/primitives/canvas/widgets.zig
++++ b/src/primitives/canvas/widgets.zig
+@@ -876,6 +876,19 @@ pub const Widget = struct {
+     /// tooling and write-back can round-trip it. Span paragraphs
+     /// (`spans`) wrap by design and ignore it.
+     text_no_wrap: bool = false,
++    /// RefRain patch: per-widget glyph size in px. Zero keeps the token
++    /// ladder (`widgetBodyTextSize`); a positive value replaces it for
++    /// intrinsic sizing, paint, caret, and hit geometry alike, because all
++    /// of them resolve through `widgetBodyTextSize`.
++    text_size: f32 = 0,
++    /// RefRain patch: per-widget line box height in px. Zero keeps the
++    /// default factor (size x 1.25) in both the span-paragraph and the
++    /// text-input layout paths.
++    text_line_height: f32 = 0,
++    /// RefRain patch: explicit line-start offsets (the Rust typeset's CLREQ
++    /// 禁则 breaks), forwarded into text layout. Empty keeps the width-driven
++    /// break search. Only the plain-text layout path honors them today.
++    hard_breaks: []const u32 = &.{},
+     /// Renderer-owned logical-line gutter for a syntax-code paragraph.
+     /// Zero keeps an ordinary paragraph; a positive value is the decimal
+     /// digit width of the largest marker. The gutter is decoration, not
 diff --git a/src/runtime/automation_snapshot.zig b/src/runtime/automation_snapshot.zig
+index 70f5831d647d6b821da2ee84d3f49e55ad4bb41c..8ecd8c36899166c996a3b3ad96f03fc7ea8c0817 100644
 --- a/src/runtime/automation_snapshot.zig
 +++ b/src/runtime/automation_snapshot.zig
-@@ -194,6 +194,12 @@
+@@ -194,6 +194,12 @@ pub fn RuntimeAutomationSnapshot(comptime Runtime: type) type {
                  const semantics = view.widgetSemantics();
                  for (semantics) |node| {
                      if (widget_count.* >= self.automation_widgets.len) return;
@@ -670,7 +976,7 @@ diff --git a/src/runtime/automation_snapshot.zig b/src/runtime/automation_snapsh
                      self.automation_widgets[widget_count.*] = .{
                          .window_id = view.window_id,
                          .view_label = view.label,
-@@ -221,7 +227,7 @@
+@@ -221,7 +227,7 @@ pub fn RuntimeAutomationSnapshot(comptime Runtime: type) type {
                          },
                          .virtual_range = canvasVirtualRange(layout.virtualRangeById(node.id)),
                          .bounds = node.bounds.translate(geometry.OffsetF.init(view.frame.x, view.frame.y)),
@@ -679,7 +985,7 @@ diff --git a/src/runtime/automation_snapshot.zig b/src/runtime/automation_snapsh
                          .enabled = !node.state.disabled,
                          .hovered = node.state.hovered or (node.id != 0 and node.id == view.canvas_widget_hovered_id),
                          .pressed = node.state.pressed or (node.id != 0 and node.id == view.canvas_widget_pressed_id),
-@@ -233,6 +239,13 @@
+@@ -233,6 +239,13 @@ pub fn RuntimeAutomationSnapshot(comptime Runtime: type) type {
                          .actions = canvasWidgetActions(node.actions),
                          .text_selection = canvasTextRange(node.text_selection),
                          .text_composition = canvasTextRange(node.text_composition),
@@ -693,479 +999,6 @@ diff --git a/src/runtime/automation_snapshot.zig b/src/runtime/automation_snapsh
                          .context_menu = automationWidgetContextMenu(self, layout, node.id, menu_item_count),
                      };
                      widget_count.* += 1;
-diff --git a/src/runtime/canvas_widget_accessibility_tests.zig b/src/runtime/canvas_widget_accessibility_tests.zig
---- a/src/runtime/canvas_widget_accessibility_tests.zig
-+++ b/src/runtime/canvas_widget_accessibility_tests.zig
-@@ -756,6 +756,9 @@
-         view_label_len: usize = 0,
-         nodes: [16]platform.WidgetAccessibilityNode = undefined,
-         node_count: usize = 0,
-+        text_input_geometry_count: usize = 0,
-+        text_input_focused_id: ?u64 = null,
-+        text_input_caret_bounds: ?geometry.RectF = null,
- 
-         fn platformValue(self: *@This()) platform.Platform {
-             return .{
-@@ -769,6 +772,7 @@
-                     .create_view_fn = createView,
-                     .focus_view_fn = focusView,
-                     .update_widget_accessibility_fn = updateWidgetAccessibility,
-+                    .update_text_input_geometry_fn = updateTextInputGeometry,
-                 },
-             };
-         }
-@@ -804,6 +808,13 @@
-             for (snapshot.nodes[0..self.node_count], 0..) |node, index| {
-                 self.nodes[index] = node;
-             }
-+        }
-+
-+        fn updateTextInputGeometry(context: ?*anyopaque, snapshot: platform.TextInputGeometrySnapshot) anyerror!void {
-+            const self: *@This() = @ptrCast(@alignCast(context.?));
-+            self.text_input_geometry_count += 1;
-+            self.text_input_focused_id = snapshot.focused_id;
-+            self.text_input_caret_bounds = snapshot.caret_bounds;
-         }
-     };
- 
-@@ -912,6 +923,11 @@
-     const edited_node = platformWidgetAccessibilityNodeById(platform_state.nodes[0..platform_state.node_count], 6).?;
-     try std.testing.expect(edited_node.can_undo);
-     try std.testing.expect(!edited_node.can_redo);
-+    try std.testing.expect(edited_node.text_caret_bounds != null);
-+    try std.testing.expect(platform_state.text_input_geometry_count >= 1);
-+    try std.testing.expectEqual(@as(?u64, 6), platform_state.text_input_focused_id);
-+    const expected_caret = runtime.views[0].widgetLayoutTree().textGeometry(6, runtime.views[0].widget_tokens).?.caret_bounds.?;
-+    try std.testing.expectEqualDeep(expected_caret, platform_state.text_input_caret_bounds.?);
- 
-     const editor_target = runtime.views[0].widgetLayoutTree().focusTargetById(6).?;
-     const undo = runtime.views[0].canvasWidgetTextHistoryShortcut(editor_target, .{
-diff --git a/src/runtime/canvas_widget_display.zig b/src/runtime/canvas_widget_display.zig
---- a/src/runtime/canvas_widget_display.zig
-+++ b/src/runtime/canvas_widget_display.zig
-@@ -223,6 +223,10 @@
-                     view.canvasWidgetTextHistoryAvailability(node.id)
-                 else
-                     view_widget_text.CanvasWidgetTextHistoryAvailability{};
-+                const text_geometry = if (focused)
-+                    view.widgetLayoutTree().textGeometry(node.id, view.widget_tokens)
-+                else
-+                    null;
-                 nodes[index] = .{
-                     .id = node.id,
-                     .parent_id = canvasWidgetSemanticParentId(semantics, node.parent_index),
-@@ -232,6 +236,7 @@
-                     .placeholder = node.placeholder,
-                     .text_selection = platformWidgetAccessibilityTextRange(node.text_selection),
-                     .text_composition = platformWidgetAccessibilityTextRange(node.text_composition),
-+                    .text_caret_bounds = if (text_geometry) |value| value.caret_bounds else null,
-                     .value = node.value,
-                     .bounds = node.bounds,
-                     .grid_row_index = node.grid_row_index,
-@@ -284,6 +289,17 @@
-                 return;
-             }
-             view.widget_accessibility_publish_deferred = false;
-+            var text_input_geometry: platform.TextInputGeometrySnapshot = .{
-+                .window_id = view.window_id,
-+                .view_label = view.label,
-+            };
-+            for (nodes[0..count]) |node| {
-+                if (!node.focused or node.text_caret_bounds == null) continue;
-+                text_input_geometry.focused_id = node.id;
-+                text_input_geometry.caret_bounds = node.text_caret_bounds;
-+                break;
-+            }
-+            try self.options.platform.services.updateTextInputGeometry(text_input_geometry);
-             try self.options.platform.services.updateWidgetAccessibility(.{
-                 .window_id = view.window_id,
-                 .view_label = view.label,
-@@ -583,6 +599,7 @@
-         hashAccessibilityBytes(&hasher, node.placeholder);
-         hashAccessibilityTextRange(&hasher, node.text_selection);
-         hashAccessibilityTextRange(&hasher, node.text_composition);
-+        hashAccessibilityRect(&hasher, node.text_caret_bounds);
-         hashAccessibilityOptional(&hasher, node.value);
-         hashAccessibilityValue(&hasher, node.bounds.x);
-         hashAccessibilityValue(&hasher, node.bounds.y);
-@@ -616,6 +633,18 @@
-     return hasher.final();
- }
- 
-+fn hashAccessibilityRect(hasher: *std.hash.Wyhash, rect: ?geometry.RectF) void {
-+    if (rect) |value| {
-+        hasher.update(&.{1});
-+        hashAccessibilityValue(hasher, value.x);
-+        hashAccessibilityValue(hasher, value.y);
-+        hashAccessibilityValue(hasher, value.width);
-+        hashAccessibilityValue(hasher, value.height);
-+    } else {
-+        hasher.update(&.{0});
-+    }
-+}
-+
- fn hashAccessibilityValue(hasher: *std.hash.Wyhash, value: anytype) void {
-     switch (@typeInfo(@TypeOf(value))) {
-         .bool => hasher.update(&.{@intFromBool(value)}),
-diff --git a/src/runtime/effects.zig b/src/runtime/effects.zig
---- a/src/runtime/effects.zig
-+++ b/src/runtime/effects.zig
-@@ -4154,6 +4154,12 @@
-         /// requests reject loudly in real mode, and the fake executor
-         /// parks requests for `feedHostResult` regardless.
-         host_calls: ?HostCallBinding = null,
-+        /// Revision of synchronous external state that an app view reads
-+        /// outside its model. A host request that mutates such state calls
-+        /// `noteViewStateChanged`; UiApp then rebuilds from the real state
-+        /// in the same dispatch without pulling the routed result across
-+        /// its deliberate next-drain boundary. Loop-thread only.
-+        view_state_revision: u64 = 0,
-         /// Window-action mirror: counts and the last requested label,
-         /// observable in tests (`windowActionState`).
-         window_action_state: WindowActionState = .{},
-@@ -5327,6 +5333,20 @@
-         /// sticks.
-         pub fn bindHostCalls(self: *Self, binding: HostCallBinding) void {
-             if (self.host_calls == null) self.host_calls = binding;
-+        }
-+
-+        /// Report that a synchronous host call changed external state the
-+        /// app's view reads outside its model. This does not deliver a Msg
-+        /// or change the routed result boundary; it only makes the current
-+        /// UiApp dispatch derive once from the state the host already
-+        /// committed. Loop-thread only.
-+        pub fn noteViewStateChanged(self: *Self) void {
-+            self.view_state_revision +%= 1;
-+        }
-+
-+        /// Identity of the external view state last reported by the host.
-+        pub fn viewStateRevision(self: *const Self) u64 {
-+            return self.view_state_revision;
-         }
- 
-         /// Switch this channel into session-replay mode: the fake
-diff --git a/src/runtime/ts_core_host.zig b/src/runtime/ts_core_host.zig
---- a/src/runtime/ts_core_host.zig
-+++ b/src/runtime/ts_core_host.zig
-@@ -794,11 +794,22 @@
-         /// callback as a dropped entry's terminal is swallowed here —
-         /// the silent drop the keyed-effect discipline promises.
-         pub fn dispatch(fx: *Fx, msg: Msg) void {
-+            _ = dispatchChanged(fx, msg);
-+        }
-+
-+        /// The dispatch cycle plus the one fact a view adapter needs to
-+        /// avoid deriving the same committed root twice: true only when
-+        /// the cycle committed a different root. Commands still run when
-+        /// this returns false, and their routed results still arrive on
-+        /// the next effects drain.
-+        pub fn dispatchChanged(fx: *Fx, msg: Msg) bool {
-             if (swallow_next_dispatch) {
-                 swallow_next_dispatch = false;
--                return;
--            }
-+                return false;
-+            }
-+            const before = model_root;
-             dispatchDepth(fx, msg, 0);
-+            return before != model_root;
-         }
- 
-         /// Drain every queued effect completion into the core — the
-diff --git a/src/runtime/ts_ui_app.zig b/src/runtime/ts_ui_app.zig
---- a/src/runtime/ts_ui_app.zig
-+++ b/src/runtime/ts_ui_app.zig
-@@ -41,7 +41,7 @@
- //! Everything else on `UiApp.Options` is the wiring's, unchanged: view
- //! or markup, scene, `on_command` maps command ids through the core's
- //! `commandMsg`, `tokens_fn`/`windows_fn`/`status_item_fn` derive from
--//! the committed model. The two seams the core owns — `update_fx` and
-+//! the committed model. The two seams the core owns — `update_fx_changed` and
- //! `init_fx` — are stamped by this adapter and must be left null.
- //!
- //! `Options.sync` is deliberately unsupported: it mutates the model in
-@@ -128,8 +128,9 @@
-         };
- 
-         /// Construct the UiApp over the committed TS model. `options`
--        /// carries the wiring seams only — `update`, `update_fx`, and
--        /// `init_fx` belong to the core and must be null; `sync` cannot
-+        /// carries the wiring seams only — `update`, `update_fx`,
-+        /// `update_fx_changed`, and `init_fx` belong to the core and must
-+        /// be null; `sync` cannot
-         /// exist for a committed model (see the module doc).
-         pub fn init(backing: std.mem.Allocator, core_options: CoreOptions, options: Options) App {
-             const stamped = stampOptions(options);
-@@ -171,8 +172,8 @@
-         }
- 
-         fn stampOptions(options: Options) Options {
--            if (options.update != null or options.update_fx != null) {
--                @panic("TsUiApp owns update: the transpiled core is the update loop - remove the wiring's update/update_fx");
-+            if (options.update != null or options.update_fx != null or options.update_fx_changed != null) {
-+                @panic("TsUiApp owns update: the transpiled core is the update loop - remove the wiring's update/update_fx/update_fx_changed");
-             }
-             if (options.init_fx != null) {
-                 @panic("TsUiApp owns init_fx: the core's initialModel boots the app - remove the wiring's init_fx");
-@@ -182,7 +183,7 @@
-             }
-             var stamped = options;
-             stamped.init_fx = initFx;
--            stamped.update_fx = updateFx;
-+            stamped.update_fx_changed = updateFxChanged;
-             // The core's host-event channels, comptime-detected from its
-             // exports (export exists -> wired; every shape mismatch is a
-             // teaching compile error in the adapter below). A wiring that
-@@ -531,13 +532,15 @@
-             validateChannelRecord(@FieldType(T, "buttons"), &.{ "x", "y", "width", "height" }, "chromeMsg's buttons", &.{ "x", "y" });
-         }
- 
--        /// `Options.update_fx`: one full core dispatch cycle, then the
--        /// app-held root becomes the new committed value. The incoming
--        /// model pointer is the previous root value — the bridge holds
--        /// the authoritative one, so it is overwritten, never read.
--        fn updateFx(model: *Model, msg: Msg, fx: *Effects) void {
--            Host.dispatch(fx, msg);
-+        /// `Options.update_fx_changed`: one full core dispatch cycle,
-+        /// then the app-held root becomes the new committed value. Root
-+        /// identity proves whether a view can derive anything new: a
-+        /// command-only cycle can skip its old-root rebuild while its
-+        /// routed result retains the ordinary next-drain boundary.
-+        fn updateFxChanged(model: *Model, msg: Msg, fx: *Effects) bool {
-+            const changed = Host.dispatchChanged(fx, msg);
-             model.* = Host.model().*;
-+            return changed;
-         }
-     };
- }
-diff --git a/src/runtime/ui_app.zig b/src/runtime/ui_app.zig
---- a/src/runtime/ui_app.zig
-+++ b/src/runtime/ui_app.zig
-@@ -466,17 +466,26 @@
-             /// appearances snap instead of animating. Returns the
-             /// number of tweens written to `out`.
-             layout_tweens: ?*const fn (model: *const ModelT, tree: *const Ui.Tree, out: []canvas.CanvasWidgetLayoutTween) usize = null,
--            /// Elm-style update. Set exactly one of `update` and
--            /// `update_fx`: the plain form for pure apps, the `_fx` form
--            /// when update needs the effects channel. Both drive the
--            /// same loop; existing two-argument apps keep compiling
--            /// unchanged.
-+            /// Elm-style update. Set exactly one update form: `update`
-+            /// for pure apps, `update_fx` when update needs the effects
-+            /// channel, or `update_fx_changed` when the update can also
-+            /// prove whether view derivation is necessary. Existing
-+            /// update forms keep their unconditional-rebuild contract.
-             update: ?*const fn (model: *ModelT, msg: MsgT) void = null,
-             /// Effects-capable update: the third parameter spawns and
-             /// cancels subprocess effects (`fx.spawn(.{ ... })`,
-             /// `fx.cancel(key)`). Effects are update-side only — views
-             /// never spawn.
-             update_fx: ?*const fn (model: *ModelT, msg: MsgT, fx: *Effects) void = null,
-+            /// Change-aware effects update. It performs the same work as
-+            /// `update_fx` and returns true when it changed model state
-+            /// that a view derives. Returning false skips that dispatch's
-+            /// rebuild unless an effects-owned visual mirror changed.
-+            /// Commands still execute and routed results still dispatch
-+            /// on their ordinary later drain. Use this only when the
-+            /// update implementation can prove the result; otherwise use
-+            /// `update_fx` and keep the conservative rebuild.
-+            update_fx_changed: ?*const fn (model: *ModelT, msg: MsgT, fx: *Effects) bool = null,
-             /// TEA's init command: runs exactly once, on the installing
-             /// frame, after the effects channel is bound and before the
-             /// first view build — so a boot-time `fx.spawn`/`fx.fetch`
-@@ -1130,6 +1139,11 @@
-         /// staged terminal — still re-renders the house chrome instead
-         /// of leaving controls painted for a playback that is gone.
-         video_rendered_snapshot: Effects.VideoSnapshot = .{},
-+        /// Synchronous external view-state revision consumed by the last
-+        /// successful main-canvas build. Host callbacks can move state a
-+        /// view reads outside its model; this stamp lets dispatch rebuild
-+        /// once from that real state without changing result delivery.
-+        external_view_rendered_revision: u64 = 0,
-         /// Applied declarative-video state: whether a declared src owns
-         /// the playback right now, the src it loaded (so an unchanged
-         /// declaration never reloads — loadVideo replaces the playback
-@@ -1280,7 +1294,10 @@
- 
-         fn assertOptions(options: Options) void {
-             std.debug.assert(options.view != null or options.markup != null);
--            std.debug.assert((options.update != null) != (options.update_fx != null));
-+            const update_forms = @intFromBool(options.update != null) +
-+                @intFromBool(options.update_fx != null) +
-+                @intFromBool(options.update_fx_changed != null);
-+            std.debug.assert(update_forms == 1);
-             // Declared windows need the per-window view to build them.
-             std.debug.assert(options.windows_fn == null or options.window_view != null);
-             if (comptime !features.runtime_markup) std.debug.assert(options.markup == null);
-@@ -1535,7 +1552,7 @@
-         pub fn dispatch(self: *Self, runtime: *Runtime, window_id: platform.WindowId, msg: MsgT) anyerror!void {
-             self.bindEffectsChannel(runtime);
-             self.syncModel(runtime, self.canvas_window_id);
--            self.applyMsg(msg);
-+            const model_changed = self.applyMsg(msg);
-             self.publishAudioState(runtime);
-             // Before the installing frame there is nothing to render
-             // against: canvas size and scale arrive with the first frame
-@@ -1545,6 +1562,12 @@
-             // events land before the first frame on every launch, so it
-             // used to cost a full view build on the launch path.
-             if (!self.installed) return;
-+            // The explicit change-aware update may prove that its model
-+            // root stayed unchanged. Effects-owned video and synchronous
-+            // host view state are independent view inputs, so either one
-+            // keeps the rebuild; otherwise this dispatch has nothing new
-+            // to derive.
-+            if (!model_changed and !self.effectsViewStateChanged()) return;
-             // Hover edges the rebuilds produce (an unmounted hovered
-             // element's leave, an adoption re-hit-test's handoff)
-             // settle at this tail for DIRECT callers — command
-@@ -1574,14 +1597,26 @@
-             _ = window_id;
-         }
- 
--        /// Run `update` through whichever form the app declared; the
--        /// effects channel rides along for the `update_fx` form.
--        fn applyMsg(self: *Self, msg: MsgT) void {
-+        /// Run `update` through whichever form the app declared and
-+        /// report whether this dispatch needs a view derivation. The two
-+        /// legacy forms stay conservative; only the explicit
-+        /// change-aware form can prove that a command-only cycle left the
-+        /// model unchanged.
-+        fn applyMsg(self: *Self, msg: MsgT) bool {
-+            if (self.options.update_fx_changed) |update_fx_changed| {
-+                return update_fx_changed(&self.model, msg, &self.effects);
-+            }
-             if (self.options.update_fx) |update_fx| {
-                 update_fx(&self.model, msg, &self.effects);
-             } else {
-                 self.options.update.?(&self.model, msg);
-             }
-+            return true;
-+        }
-+
-+        fn effectsViewStateChanged(self: *const Self) bool {
-+            return !std.meta.eql(self.video_rendered_snapshot, self.effects.videoSnapshot()) or
-+                self.external_view_rendered_revision != self.effects.viewStateRevision();
-         }
- 
-         /// Drain the effect completion queue on the loop thread: every
-@@ -1595,7 +1630,7 @@
-             if (!self.effects.hasPending()) return;
-             self.bindEffectsChannel(runtime);
-             self.syncModel(runtime, self.canvas_window_id);
--            var dispatched = false;
-+            var rebuild_needed = false;
-             // One pass consumes only completions that existed when it
-             // began: a load started by an update handler in THIS pass
-             // that finishes while the pass still runs waits for the wake
-@@ -1606,26 +1641,21 @@
-             // finds the parked request (see Effects.DrainBoundary).
-             var boundary = self.effects.drainBoundary();
-             while (self.effects.takeMsgWithin(&boundary)) |msg| {
--                self.applyMsg(msg);
--                dispatched = true;
-+                rebuild_needed = self.applyMsg(msg) or rebuild_needed;
-             }
-             self.publishAudioState(runtime);
-             var rebuild_error: ?anyerror = null;
--            if (dispatched) {
-+            if (rebuild_needed) {
-                 self.rebuild(runtime, self.canvas_window_id) catch |err| {
-                     rebuild_error = err;
-                 };
-                 if (rebuild_error == null) self.rebuildWindowSlots(runtime) catch |err| {
-                     rebuild_error = err;
-                 };
--            } else if (self.installed and
--                !std.meta.eql(self.video_rendered_snapshot, self.effects.videoSnapshot()))
--            {
--                // A drained Msg-less video terminal (a handler-less
--                // declarative playback's synchronous failure) moved
--                // the mirrors after the last build rendered them:
--                // re-render the chrome so its controls never keep
--                // advertising a playback that is gone.
-+            } else if (self.installed and self.effectsViewStateChanged()) {
-+                // A drained Msg-less visual terminal or a synchronous
-+                // host projection move can leave the last published view
-+                // stale even though no update reported a model change.
-                 self.rebuild(runtime, self.canvas_window_id) catch |err| {
-                     rebuild_error = err;
-                 };
-@@ -1816,8 +1846,11 @@
-             // the post-build reconcile (`applyVideoDeclaration`) can
-             // move them, and `drainEffects` uses the stamp to know the
-             // published chrome no longer matches (see
--            // `video_rendered_snapshot`).
-+            // `video_rendered_snapshot`). External host view state uses
-+            // the same rule: the revision captured here names exactly
-+            // what this build could read.
-             self.video_rendered_snapshot = self.effects.videoSnapshot();
-+            const external_view_revision = self.effects.viewStateRevision();
-             const next_index = self.contextMenuRebuildIndex(null, self.arena_index);
-             // Widget layout is inset by the runtime's viewport chrome
-             // (safe areas + keyboard on mobile, zero on desktop); the
-@@ -1887,6 +1920,7 @@
-             live_tree_reset = false;
-             self.main_tree_current = true;
-             self.build_generation +%= 1;
-+            self.external_view_rendered_revision = external_view_revision;
-             // Captures track EVERY tree transition (see
-             // refreshHoverLeaveCaptures) — a transient failure is
-             // retried at the next commit or drain and lands in the
-@@ -4166,7 +4200,7 @@
-                 // hidden-titlebar header is padded in the very first
-                 // paint.
-                 if (self.chromeInsetsMsg(runtime, frame_event.window_id)) |msg| {
--                    self.applyMsg(msg);
-+                    _ = self.applyMsg(msg);
-                 }
-                 try self.rebuild(runtime, frame_event.window_id);
-                 if (self.options.chrome == null) {
-diff --git a/src/platform/linux/gtk_host.h b/src/platform/linux/gtk_host.h
-index c21e36bb8f0a3c69a8c9ffe5a1e7ae1d74d45cd8..e366844668d31fe97c7c496e326fa0a06cddfba4 100644
---- a/src/platform/linux/gtk_host.h
-+++ b/src/platform/linux/gtk_host.h
-@@ -229,6 +229,7 @@ int native_sdk_gtk_set_view_visible(native_sdk_gtk_host_t *host, uint64_t window
- int native_sdk_gtk_focus_view(native_sdk_gtk_host_t *host, uint64_t window_id, const char *label, size_t label_len);
- int native_sdk_gtk_close_view(native_sdk_gtk_host_t *host, uint64_t window_id, const char *label, size_t label_len);
- int native_sdk_gtk_request_gpu_surface_frame(native_sdk_gtk_host_t *host, uint64_t window_id, const char *label, size_t label_len);
-+int native_sdk_gtk_note_gpu_surface_input(native_sdk_gtk_host_t *host, uint64_t window_id, const char *label, size_t label_len);
- /* Present a native context menu (GtkPopoverMenu) pointing at the given
-  * view-local LOGICAL x/y — the same coordinate space the gpu-surface
-  * input path reports pointer events in, which is the pointing-rect space
-diff --git a/src/platform/linux/root.zig b/src/platform/linux/root.zig
-index fd77d3910508a7225ca6c78cf15d22ebefb26b32..0ee7132911eaf8c4f22c54455c5e35f46bd574ae 100644
---- a/src/platform/linux/root.zig
-+++ b/src/platform/linux/root.zig
-@@ -145,6 +145,7 @@ extern fn native_sdk_gtk_set_view_visible(host: *GtkHost, window_id: u64, label:
- extern fn native_sdk_gtk_focus_view(host: *GtkHost, window_id: u64, label: [*]const u8, label_len: usize) c_int;
- extern fn native_sdk_gtk_close_view(host: *GtkHost, window_id: u64, label: [*]const u8, label_len: usize) c_int;
- extern fn native_sdk_gtk_request_gpu_surface_frame(host: *GtkHost, window_id: u64, label: [*]const u8, label_len: usize) c_int;
-+extern fn native_sdk_gtk_note_gpu_surface_input(host: *GtkHost, window_id: u64, label: [*]const u8, label_len: usize) c_int;
- extern fn native_sdk_gtk_present_gpu_surface_pixels(host: *GtkHost, window_id: u64, label: [*]const u8, label_len: usize, width: usize, height: usize, scale: f64, has_dirty_rect: c_int, dirty_x: f64, dirty_y: f64, dirty_width: f64, dirty_height: f64, rgba8: [*]const u8, rgba8_len: usize) c_int;
- extern fn native_sdk_gtk_create_webview(host: *GtkHost, window_id: u64, label: [*]const u8, label_len: usize, url: [*]const u8, url_len: usize, x: f64, y: f64, width: f64, height: f64, layer: c_int, transparent: c_int, bridge_enabled: c_int) c_int;
- extern fn native_sdk_gtk_set_webview_frame(host: *GtkHost, window_id: u64, label: [*]const u8, label_len: usize, x: f64, y: f64, width: f64, height: f64) c_int;
-@@ -375,6 +376,7 @@ pub const LinuxPlatform = struct {
-                 .focus_view_fn = focusView,
-                 .close_view_fn = closeView,
-                 .request_gpu_surface_frame_fn = requestGpuSurfaceFrame,
-+                .note_gpu_surface_input_fn = noteGpuSurfaceInput,
-                 .present_gpu_surface_pixels_fn = presentGpuSurfacePixels,
-                 .show_context_menu_fn = showContextMenu,
-                 .create_webview_fn = createWebView,
-@@ -1094,6 +1096,12 @@ fn requestGpuSurfaceFrame(context: ?*anyopaque, window_id: platform_mod.WindowId
-     if (native_sdk_gtk_request_gpu_surface_frame(self.host, window_id, label.ptr, label.len) == 0) return error.ViewNotFound;
- }
- 
-+fn noteGpuSurfaceInput(context: ?*anyopaque, window_id: platform_mod.WindowId, label: []const u8) anyerror!void {
-+    const self: *LinuxPlatform = @ptrCast(@alignCast(context.?));
-+    if (self.web_engine != .system) return error.UnsupportedService;
-+    if (native_sdk_gtk_note_gpu_surface_input(self.host, window_id, label.ptr, label.len) == 0) return error.ViewNotFound;
-+}
-+
- fn presentGpuSurfacePixels(context: ?*anyopaque, pixels: platform_mod.GpuSurfacePixels) anyerror!void {
-     const self: *LinuxPlatform = @ptrCast(@alignCast(context.?));
-     if (self.web_engine != .system) return error.UnsupportedViewKind;
 diff --git a/src/runtime/canvas_frame.zig b/src/runtime/canvas_frame.zig
 index e143e9063ffcba1be3483f13f37e913b93b1a8ea..27ff4c9e15829dd78da6fbd6360f4c3bf490277b 100644
 --- a/src/runtime/canvas_frame.zig
@@ -1212,3 +1045,483 @@ index e143e9063ffcba1be3483f13f37e913b93b1a8ea..27ff4c9e15829dd78da6fbd6360f4c3b
  }
  
  /// Build the frame's CURRENT keyed command list — every supported render
+diff --git a/src/runtime/canvas_widget_accessibility_tests.zig b/src/runtime/canvas_widget_accessibility_tests.zig
+index cd499131ce9f7afe245df1dbc60dd70dd5ee12b1..5354aead0c9885d9de74e5b626c5241b23259038 100644
+--- a/src/runtime/canvas_widget_accessibility_tests.zig
++++ b/src/runtime/canvas_widget_accessibility_tests.zig
+@@ -756,6 +756,9 @@ test "runtime publishes canvas widget accessibility snapshots to platform" {
+         view_label_len: usize = 0,
+         nodes: [16]platform.WidgetAccessibilityNode = undefined,
+         node_count: usize = 0,
++        text_input_geometry_count: usize = 0,
++        text_input_focused_id: ?u64 = null,
++        text_input_caret_bounds: ?geometry.RectF = null,
+ 
+         fn platformValue(self: *@This()) platform.Platform {
+             return .{
+@@ -769,6 +772,7 @@ test "runtime publishes canvas widget accessibility snapshots to platform" {
+                     .create_view_fn = createView,
+                     .focus_view_fn = focusView,
+                     .update_widget_accessibility_fn = updateWidgetAccessibility,
++                    .update_text_input_geometry_fn = updateTextInputGeometry,
+                 },
+             };
+         }
+@@ -805,6 +809,13 @@ test "runtime publishes canvas widget accessibility snapshots to platform" {
+                 self.nodes[index] = node;
+             }
+         }
++
++        fn updateTextInputGeometry(context: ?*anyopaque, snapshot: platform.TextInputGeometrySnapshot) anyerror!void {
++            const self: *@This() = @ptrCast(@alignCast(context.?));
++            self.text_input_geometry_count += 1;
++            self.text_input_focused_id = snapshot.focused_id;
++            self.text_input_caret_bounds = snapshot.caret_bounds;
++        }
+     };
+ 
+     const TestApp = struct {
+@@ -912,6 +923,11 @@ test "runtime publishes canvas widget accessibility snapshots to platform" {
+     const edited_node = platformWidgetAccessibilityNodeById(platform_state.nodes[0..platform_state.node_count], 6).?;
+     try std.testing.expect(edited_node.can_undo);
+     try std.testing.expect(!edited_node.can_redo);
++    try std.testing.expect(edited_node.text_caret_bounds != null);
++    try std.testing.expect(platform_state.text_input_geometry_count >= 1);
++    try std.testing.expectEqual(@as(?u64, 6), platform_state.text_input_focused_id);
++    const expected_caret = runtime.views[0].widgetLayoutTree().textGeometry(6, runtime.views[0].widget_tokens).?.caret_bounds.?;
++    try std.testing.expectEqualDeep(expected_caret, platform_state.text_input_caret_bounds.?);
+ 
+     const editor_target = runtime.views[0].widgetLayoutTree().focusTargetById(6).?;
+     const undo = runtime.views[0].canvasWidgetTextHistoryShortcut(editor_target, .{
+diff --git a/src/runtime/canvas_widget_display.zig b/src/runtime/canvas_widget_display.zig
+index fdaccb8c381df113afc51fbfb2dd91e164f93d5f..0669336650c4310949907c4aba9442b627abbb7f 100644
+--- a/src/runtime/canvas_widget_display.zig
++++ b/src/runtime/canvas_widget_display.zig
+@@ -223,6 +223,10 @@ pub fn RuntimeCanvasWidgetDisplay(comptime Runtime: type) type {
+                     view.canvasWidgetTextHistoryAvailability(node.id)
+                 else
+                     view_widget_text.CanvasWidgetTextHistoryAvailability{};
++                const text_geometry = if (focused)
++                    view.widgetLayoutTree().textGeometry(node.id, view.widget_tokens)
++                else
++                    null;
+                 nodes[index] = .{
+                     .id = node.id,
+                     .parent_id = canvasWidgetSemanticParentId(semantics, node.parent_index),
+@@ -232,6 +236,7 @@ pub fn RuntimeCanvasWidgetDisplay(comptime Runtime: type) type {
+                     .placeholder = node.placeholder,
+                     .text_selection = platformWidgetAccessibilityTextRange(node.text_selection),
+                     .text_composition = platformWidgetAccessibilityTextRange(node.text_composition),
++                    .text_caret_bounds = if (text_geometry) |value| value.caret_bounds else null,
+                     .value = node.value,
+                     .bounds = node.bounds,
+                     .grid_row_index = node.grid_row_index,
+@@ -284,6 +289,17 @@ pub fn RuntimeCanvasWidgetDisplay(comptime Runtime: type) type {
+                 return;
+             }
+             view.widget_accessibility_publish_deferred = false;
++            var text_input_geometry: platform.TextInputGeometrySnapshot = .{
++                .window_id = view.window_id,
++                .view_label = view.label,
++            };
++            for (nodes[0..count]) |node| {
++                if (!node.focused or node.text_caret_bounds == null) continue;
++                text_input_geometry.focused_id = node.id;
++                text_input_geometry.caret_bounds = node.text_caret_bounds;
++                break;
++            }
++            try self.options.platform.services.updateTextInputGeometry(text_input_geometry);
+             try self.options.platform.services.updateWidgetAccessibility(.{
+                 .window_id = view.window_id,
+                 .view_label = view.label,
+@@ -583,6 +599,7 @@ fn hashWidgetAccessibilityNodes(nodes: []const platform.WidgetAccessibilityNode)
+         hashAccessibilityBytes(&hasher, node.placeholder);
+         hashAccessibilityTextRange(&hasher, node.text_selection);
+         hashAccessibilityTextRange(&hasher, node.text_composition);
++        hashAccessibilityRect(&hasher, node.text_caret_bounds);
+         hashAccessibilityOptional(&hasher, node.value);
+         hashAccessibilityValue(&hasher, node.bounds.x);
+         hashAccessibilityValue(&hasher, node.bounds.y);
+@@ -616,6 +633,18 @@ fn hashWidgetAccessibilityNodes(nodes: []const platform.WidgetAccessibilityNode)
+     return hasher.final();
+ }
+ 
++fn hashAccessibilityRect(hasher: *std.hash.Wyhash, rect: ?geometry.RectF) void {
++    if (rect) |value| {
++        hasher.update(&.{1});
++        hashAccessibilityValue(hasher, value.x);
++        hashAccessibilityValue(hasher, value.y);
++        hashAccessibilityValue(hasher, value.width);
++        hashAccessibilityValue(hasher, value.height);
++    } else {
++        hasher.update(&.{0});
++    }
++}
++
+ fn hashAccessibilityValue(hasher: *std.hash.Wyhash, value: anytype) void {
+     switch (@typeInfo(@TypeOf(value))) {
+         .bool => hasher.update(&.{@intFromBool(value)}),
+diff --git a/src/runtime/effects.zig b/src/runtime/effects.zig
+index 38ee062528118166e3e59fb49dc5268404e20b10..54cd69e6eedcb0a3e7daaec7b55ee97397f07ce1 100644
+--- a/src/runtime/effects.zig
++++ b/src/runtime/effects.zig
+@@ -4154,6 +4154,12 @@ pub fn Effects(comptime Msg: type) type {
+         /// requests reject loudly in real mode, and the fake executor
+         /// parks requests for `feedHostResult` regardless.
+         host_calls: ?HostCallBinding = null,
++        /// Revision of synchronous external state that an app view reads
++        /// outside its model. A host request that mutates such state calls
++        /// `noteViewStateChanged`; UiApp then rebuilds from the real state
++        /// in the same dispatch without pulling the routed result across
++        /// its deliberate next-drain boundary. Loop-thread only.
++        view_state_revision: u64 = 0,
+         /// Window-action mirror: counts and the last requested label,
+         /// observable in tests (`windowActionState`).
+         window_action_state: WindowActionState = .{},
+@@ -5329,6 +5335,20 @@ pub fn Effects(comptime Msg: type) type {
+             if (self.host_calls == null) self.host_calls = binding;
+         }
+ 
++        /// Report that a synchronous host call changed external state the
++        /// app's view reads outside its model. This does not deliver a Msg
++        /// or change the routed result boundary; it only makes the current
++        /// UiApp dispatch derive once from the state the host already
++        /// committed. Loop-thread only.
++        pub fn noteViewStateChanged(self: *Self) void {
++            self.view_state_revision +%= 1;
++        }
++
++        /// Identity of the external view state last reported by the host.
++        pub fn viewStateRevision(self: *const Self) u64 {
++            return self.view_state_revision;
++        }
++
+         /// Switch this channel into session-replay mode: the fake
+         /// executor (no processes, no network, no file or pasteboard
+         /// I/O — requests park in their slots) with journaled results as
+diff --git a/src/runtime/ts_core_host.zig b/src/runtime/ts_core_host.zig
+index b599bf6612acfeda6f4a0f81d86734f6c4bb50a0..d8c5e8b5173cf6461b9604eea4b50e705af20e94 100644
+--- a/src/runtime/ts_core_host.zig
++++ b/src/runtime/ts_core_host.zig
+@@ -794,11 +794,22 @@ pub fn TsCoreHost(comptime core: type) type {
+         /// callback as a dropped entry's terminal is swallowed here —
+         /// the silent drop the keyed-effect discipline promises.
+         pub fn dispatch(fx: *Fx, msg: Msg) void {
++            _ = dispatchChanged(fx, msg);
++        }
++
++        /// The dispatch cycle plus the one fact a view adapter needs to
++        /// avoid deriving the same committed root twice: true only when
++        /// the cycle committed a different root. Commands still run when
++        /// this returns false, and their routed results still arrive on
++        /// the next effects drain.
++        pub fn dispatchChanged(fx: *Fx, msg: Msg) bool {
+             if (swallow_next_dispatch) {
+                 swallow_next_dispatch = false;
+-                return;
++                return false;
+             }
++            const before = model_root;
+             dispatchDepth(fx, msg, 0);
++            return before != model_root;
+         }
+ 
+         /// Drain every queued effect completion into the core — the
+diff --git a/src/runtime/ts_ui_app.zig b/src/runtime/ts_ui_app.zig
+index 95634002e3a40012722cb38e9aa4c2c1bc877558..22f737c8b2a4b08920910a7e0ee14e0aa13ddd8e 100644
+--- a/src/runtime/ts_ui_app.zig
++++ b/src/runtime/ts_ui_app.zig
+@@ -41,7 +41,7 @@
+ //! Everything else on `UiApp.Options` is the wiring's, unchanged: view
+ //! or markup, scene, `on_command` maps command ids through the core's
+ //! `commandMsg`, `tokens_fn`/`windows_fn`/`status_item_fn` derive from
+-//! the committed model. The two seams the core owns — `update_fx` and
++//! the committed model. The two seams the core owns — `update_fx_changed` and
+ //! `init_fx` — are stamped by this adapter and must be left null.
+ //!
+ //! `Options.sync` is deliberately unsupported: it mutates the model in
+@@ -128,9 +128,10 @@ pub fn TsUiApp(comptime core: type) type {
+         };
+ 
+         /// Construct the UiApp over the committed TS model. `options`
+-        /// carries the wiring seams only — `update`, `update_fx`, and
+-        /// `init_fx` belong to the core and must be null; `sync` cannot
+-        /// exist for a committed model (see the module doc).
++        /// carries the wiring seams only — `update`, `update_fx`,
++        /// `update_fx_changed`, and `init_fx` belong to the core and must
++        /// be null; `sync` cannot exist for a committed model (see the
++        /// module doc).
+         pub fn init(backing: std.mem.Allocator, core_options: CoreOptions, options: Options) App {
+             const stamped = stampOptions(options);
+             Host.boot();
+@@ -171,8 +172,8 @@ pub fn TsUiApp(comptime core: type) type {
+         }
+ 
+         fn stampOptions(options: Options) Options {
+-            if (options.update != null or options.update_fx != null) {
+-                @panic("TsUiApp owns update: the TypeScript core is the update loop - remove the wiring's update/update_fx");
++            if (options.update != null or options.update_fx != null or options.update_fx_changed != null) {
++                @panic("TsUiApp owns update: the TypeScript core is the update loop - remove the wiring's update/update_fx/update_fx_changed");
+             }
+             if (options.init_fx != null) {
+                 @panic("TsUiApp owns init_fx: the core's initialModel boots the app - remove the wiring's init_fx");
+@@ -182,7 +183,7 @@ pub fn TsUiApp(comptime core: type) type {
+             }
+             var stamped = options;
+             stamped.init_fx = initFx;
+-            stamped.update_fx = updateFx;
++            stamped.update_fx_changed = updateFxChanged;
+             // The core's host-event channels, comptime-detected from its
+             // exports (export exists -> wired; every shape mismatch is a
+             // teaching compile error in the adapter below). A wiring that
+@@ -531,13 +532,15 @@ pub fn TsUiApp(comptime core: type) type {
+             validateChannelRecord(@FieldType(T, "buttons"), &.{ "x", "y", "width", "height" }, "chromeMsg's buttons", &.{ "x", "y" });
+         }
+ 
+-        /// `Options.update_fx`: one full core dispatch cycle, then the
+-        /// app-held root becomes the new committed value. The incoming
+-        /// model pointer is the previous root value — the bridge holds
+-        /// the authoritative one, so it is overwritten, never read.
+-        fn updateFx(model: *Model, msg: Msg, fx: *Effects) void {
+-            Host.dispatch(fx, msg);
++        /// `Options.update_fx_changed`: one full core dispatch cycle,
++        /// then the app-held root becomes the new committed value. Root
++        /// identity proves whether a view can derive anything new: a
++        /// command-only cycle can skip its old-root rebuild while its
++        /// routed result retains the ordinary next-drain boundary.
++        fn updateFxChanged(model: *Model, msg: Msg, fx: *Effects) bool {
++            const changed = Host.dispatchChanged(fx, msg);
+             model.* = Host.model().*;
++            return changed;
+         }
+     };
+ }
+diff --git a/src/runtime/ui_app.zig b/src/runtime/ui_app.zig
+index 3ecf3b93d93d6256ef5b70090f9b1c90f5c63639..083420bb71a46d1e9e539679f0d0ed81f9d805f8 100644
+--- a/src/runtime/ui_app.zig
++++ b/src/runtime/ui_app.zig
+@@ -466,17 +466,26 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+             /// appearances snap instead of animating. Returns the
+             /// number of tweens written to `out`.
+             layout_tweens: ?*const fn (model: *const ModelT, tree: *const Ui.Tree, out: []canvas.CanvasWidgetLayoutTween) usize = null,
+-            /// Elm-style update. Set exactly one of `update` and
+-            /// `update_fx`: the plain form for pure apps, the `_fx` form
+-            /// when update needs the effects channel. Both drive the
+-            /// same loop; existing two-argument apps keep compiling
+-            /// unchanged.
++            /// Elm-style update. Set exactly one update form: `update`
++            /// for pure apps, `update_fx` when update needs the effects
++            /// channel, or `update_fx_changed` when the update can also
++            /// prove whether view derivation is necessary. Existing
++            /// update forms keep their unconditional-rebuild contract.
+             update: ?*const fn (model: *ModelT, msg: MsgT) void = null,
+             /// Effects-capable update: the third parameter spawns and
+             /// cancels subprocess effects (`fx.spawn(.{ ... })`,
+             /// `fx.cancel(key)`). Effects are update-side only — views
+             /// never spawn.
+             update_fx: ?*const fn (model: *ModelT, msg: MsgT, fx: *Effects) void = null,
++            /// Change-aware effects update. It performs the same work as
++            /// `update_fx` and returns true when it changed model state
++            /// that a view derives. Returning false skips that dispatch's
++            /// rebuild unless an effects-owned visual mirror changed.
++            /// Commands still execute and routed results still dispatch
++            /// on their ordinary later drain. Use this only when the
++            /// update implementation can prove the result; otherwise use
++            /// `update_fx` and keep the conservative rebuild.
++            update_fx_changed: ?*const fn (model: *ModelT, msg: MsgT, fx: *Effects) bool = null,
+             /// TEA's init command: runs exactly once, on the installing
+             /// frame, after the effects channel is bound and before the
+             /// first view build — so a boot-time `fx.spawn`/`fx.fetch`
+@@ -1130,6 +1139,11 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+         /// staged terminal — still re-renders the house chrome instead
+         /// of leaving controls painted for a playback that is gone.
+         video_rendered_snapshot: Effects.VideoSnapshot = .{},
++        /// Synchronous external view-state revision consumed by the last
++        /// successful main-canvas build. Host callbacks can move state a
++        /// view reads outside its model; this stamp lets dispatch rebuild
++        /// once from that real state without changing result delivery.
++        external_view_rendered_revision: u64 = 0,
+         /// Applied declarative-video state: whether a declared src owns
+         /// the playback right now, the src it loaded (so an unchanged
+         /// declaration never reloads — loadVideo replaces the playback
+@@ -1280,7 +1294,10 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+ 
+         fn assertOptions(options: Options) void {
+             std.debug.assert(options.view != null or options.markup != null);
+-            std.debug.assert((options.update != null) != (options.update_fx != null));
++            const update_forms = @intFromBool(options.update != null) +
++                @intFromBool(options.update_fx != null) +
++                @intFromBool(options.update_fx_changed != null);
++            std.debug.assert(update_forms == 1);
+             // Declared windows need the per-window view to build them.
+             std.debug.assert(options.windows_fn == null or options.window_view != null);
+             if (comptime !features.runtime_markup) std.debug.assert(options.markup == null);
+@@ -1535,7 +1552,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+         pub fn dispatch(self: *Self, runtime: *Runtime, window_id: platform.WindowId, msg: MsgT) anyerror!void {
+             self.bindEffectsChannel(runtime);
+             self.syncModel(runtime, self.canvas_window_id);
+-            self.applyMsg(msg);
++            const model_changed = self.applyMsg(msg);
+             self.publishAudioState(runtime);
+             // Before the installing frame there is nothing to render
+             // against: canvas size and scale arrive with the first frame
+@@ -1545,6 +1562,12 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+             // events land before the first frame on every launch, so it
+             // used to cost a full view build on the launch path.
+             if (!self.installed) return;
++            // The explicit change-aware update may prove that its model
++            // root stayed unchanged. Effects-owned video and synchronous
++            // host view state are independent view inputs, so either one
++            // keeps the rebuild; otherwise this dispatch has nothing new
++            // to derive.
++            if (!model_changed and !self.effectsViewStateChanged()) return;
+             // Hover edges the rebuilds produce (an unmounted hovered
+             // element's leave, an adoption re-hit-test's handoff)
+             // settle at this tail for DIRECT callers — command
+@@ -1574,14 +1597,26 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+             _ = window_id;
+         }
+ 
+-        /// Run `update` through whichever form the app declared; the
+-        /// effects channel rides along for the `update_fx` form.
+-        fn applyMsg(self: *Self, msg: MsgT) void {
++        /// Run `update` through whichever form the app declared and
++        /// report whether this dispatch needs a view derivation. The two
++        /// legacy forms stay conservative; only the explicit
++        /// change-aware form can prove that a command-only cycle left the
++        /// model unchanged.
++        fn applyMsg(self: *Self, msg: MsgT) bool {
++            if (self.options.update_fx_changed) |update_fx_changed| {
++                return update_fx_changed(&self.model, msg, &self.effects);
++            }
+             if (self.options.update_fx) |update_fx| {
+                 update_fx(&self.model, msg, &self.effects);
+             } else {
+                 self.options.update.?(&self.model, msg);
+             }
++            return true;
++        }
++
++        fn effectsViewStateChanged(self: *const Self) bool {
++            return !std.meta.eql(self.video_rendered_snapshot, self.effects.videoSnapshot()) or
++                self.external_view_rendered_revision != self.effects.viewStateRevision();
+         }
+ 
+         /// Drain the effect completion queue on the loop thread: every
+@@ -1595,7 +1630,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+             if (!self.effects.hasPending()) return;
+             self.bindEffectsChannel(runtime);
+             self.syncModel(runtime, self.canvas_window_id);
+-            var dispatched = false;
++            var rebuild_needed = false;
+             // One pass consumes only completions that existed when it
+             // began: a load started by an update handler in THIS pass
+             // that finishes while the pass still runs waits for the wake
+@@ -1606,26 +1641,21 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+             // finds the parked request (see Effects.DrainBoundary).
+             var boundary = self.effects.drainBoundary();
+             while (self.effects.takeMsgWithin(&boundary)) |msg| {
+-                self.applyMsg(msg);
+-                dispatched = true;
++                rebuild_needed = self.applyMsg(msg) or rebuild_needed;
+             }
+             self.publishAudioState(runtime);
+             var rebuild_error: ?anyerror = null;
+-            if (dispatched) {
++            if (rebuild_needed) {
+                 self.rebuild(runtime, self.canvas_window_id) catch |err| {
+                     rebuild_error = err;
+                 };
+                 if (rebuild_error == null) self.rebuildWindowSlots(runtime) catch |err| {
+                     rebuild_error = err;
+                 };
+-            } else if (self.installed and
+-                !std.meta.eql(self.video_rendered_snapshot, self.effects.videoSnapshot()))
+-            {
+-                // A drained Msg-less video terminal (a handler-less
+-                // declarative playback's synchronous failure) moved
+-                // the mirrors after the last build rendered them:
+-                // re-render the chrome so its controls never keep
+-                // advertising a playback that is gone.
++            } else if (self.installed and self.effectsViewStateChanged()) {
++                // A drained Msg-less visual terminal or a synchronous
++                // host projection move can leave the last published view
++                // stale even though no update reported a model change.
+                 self.rebuild(runtime, self.canvas_window_id) catch |err| {
+                     rebuild_error = err;
+                 };
+@@ -1816,8 +1846,11 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+             // the post-build reconcile (`applyVideoDeclaration`) can
+             // move them, and `drainEffects` uses the stamp to know the
+             // published chrome no longer matches (see
+-            // `video_rendered_snapshot`).
++            // `video_rendered_snapshot`). External host view state uses
++            // the same rule: the revision captured here names exactly
++            // what this build could read.
+             self.video_rendered_snapshot = self.effects.videoSnapshot();
++            const external_view_revision = self.effects.viewStateRevision();
+             const next_index = self.contextMenuRebuildIndex(null, self.arena_index);
+             // Widget layout is inset by the runtime's viewport chrome
+             // (safe areas + keyboard on mobile, zero on desktop); the
+@@ -1887,6 +1920,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+             live_tree_reset = false;
+             self.main_tree_current = true;
+             self.build_generation +%= 1;
++            self.external_view_rendered_revision = external_view_revision;
+             // Captures track EVERY tree transition (see
+             // refreshHoverLeaveCaptures) — a transient failure is
+             // retried at the next commit or drain and lands in the
+@@ -4166,7 +4200,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+                 // hidden-titlebar header is padded in the very first
+                 // paint.
+                 if (self.chromeInsetsMsg(runtime, frame_event.window_id)) |msg| {
+-                    self.applyMsg(msg);
++                    _ = self.applyMsg(msg);
+                 }
+                 try self.rebuild(runtime, frame_event.window_id);
+                 if (self.options.chrome == null) {
+diff --git a/tools/corewire/emit.zig b/tools/corewire/emit.zig
+index 085e593e9c1be45b60889b43d482e1ce16a1783c..201fb83ad6764f76564f97e9452f7d01ed3ab486 100644
+--- a/tools/corewire/emit.zig
++++ b/tools/corewire/emit.zig
+@@ -884,6 +884,9 @@ const Emitter = struct {
+             \\comptime {{
+             \\    // The union and the tag table are emitted from one arm list;
+             \\    // hold them equal anyway so a hand edit cannot skew dispatch.
++            \\    // RefRain patch: the per-field name compare multiplies branches
++            \\    // by the arm count — lift the quota so a big Msg union compiles.
++            \\    @setEvalBranchQuota(100_000);
+             \\    const fields = @typeInfo({f}).@"union".fields;
+             \\    if (fields.len != msg_tags.len) @compileError("core_shim: msg_tags and the message union disagree — regenerate from the sidecar");
+             \\    for (fields, msg_tags) |field, tag_name| {{
+diff --git a/tools/corewire/emit_facade.zig b/tools/corewire/emit_facade.zig
+index ff612851b6616517ecd3ade476dbfe7f2cdbc0f0..481d377b81db3b4b9dc4a002f2db63d6f2eecef2 100644
+--- a/tools/corewire/emit_facade.zig
++++ b/tools/corewire/emit_facade.zig
+@@ -1017,6 +1017,26 @@ const FacadeEmitter = struct {
+             try self.print("  \"{s}\",\n", .{try tsString(self.arena, name)});
+         }
+         try self.raw("];\n");
++        // RefRain patch: the compile stage's fact reader (scriptc's
++        // entryContractFacts) expects the SPLIT pair modelUnbound/msgUnbound
++        // ("a generated facade declares these; authors declare nothing").
++        // Emitting only the combined viewUnbound leaves the compile-emitted
++        // sidecar's unbound lists empty, and the mirror then carries no
++        // view_unbound — `native check --strict` flags every Zig-read field.
++        try self.raw("\n// The split spellings the compile stage reads (same facts, resolved model-first above).\n");
++        try self.raw("export const modelUnbound = [\n");
++        for (field_unbound.items) |name| {
++            try self.print("  \"{s}\",\n", .{try tsString(self.arena, name)});
++        }
++        for (helper_unbound.items) |name| {
++            try self.print("  \"{s}\",\n", .{try tsString(self.arena, name)});
++        }
++        try self.raw("] as const;\n");
++        try self.raw("export const msgUnbound = [\n");
++        for (self.sidecar.msg.unbound) |name| {
++            try self.print("  \"{s}\",\n", .{try tsString(self.arena, name)});
++        }
++        try self.raw("] as const;\n");
+     }
+ 
+     // ------------------------------------------------- helper wrappers

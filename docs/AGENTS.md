@@ -3,6 +3,24 @@
 Read [ARCHITECTURE.md](ARCHITECTURE.md) before editing. Use its glossary; do not
 invent a second term for an existing concept.
 
+## Before any code
+
+If you cannot follow these rules, do not add a line of code.
+
+Every new feature starts in [ARCHITECTURE.md](ARCHITECTURE.md), not in a source
+file. Before you edit, find the module there and fix its position on three
+axes:
+
+- **its layer** — which layer owns it (see "The Native layers" below);
+- **its event flow** — the full path from the author's action to the answer;
+- **its neighbours** — the other modules the change touches.
+
+If the feature is not in the document, prove it is necessary and add it first:
+the module, its layer, the invariant it owns, and its event flow. Then land
+the code and the document update in the same commit. A feature that exists
+only in code is invisible to the next reader, and the document becomes a
+second, stale authority.
+
 ## Be strategic
 
 You are spending someone else's token budget. Spend it on understanding, not on
@@ -64,6 +82,12 @@ A comment states three things and stops:
 - **what it connects to** — which feature this serves;
 - **what it owns globally** — the invariant or decision that lives here;
 - **what can be reused** — what a caller may build on.
+
+On an interactive surface, a comment also states the interaction design: which
+key does what, which layer closes first, what the author sees after each
+action, and which decisions are deliberate (with their reason, or the version
+they came from). A later change must be able to tell intent from accident
+without reading the whole file.
 
 Keep it readable at a glance. Do not narrate syntax. Record a measurement or a
 correction that the code cannot state itself — `corners.zig` keeps

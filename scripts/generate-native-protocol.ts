@@ -34,6 +34,7 @@ interface ProtocolSchema {
     readonly eventTextBytes: number;
     readonly defaultViewportBlocks: number;
     readonly virtualBlockHeight: number;
+    readonly anchorRangeCapacity: number;
   };
   readonly hostRecord: HostRecord;
   readonly actions: readonly ProtocolCode[];
@@ -134,6 +135,7 @@ function protocolSchema(value: unknown): ProtocolSchema {
       eventTextBytes: integer(layout.eventTextBytes, "layout.eventTextBytes"),
       defaultViewportBlocks: integer(layout.defaultViewportBlocks, "layout.defaultViewportBlocks"),
       virtualBlockHeight: integer(layout.virtualBlockHeight, "layout.virtualBlockHeight"),
+      anchorRangeCapacity: integer(layout.anchorRangeCapacity, "layout.anchorRangeCapacity"),
     },
     hostRecord: hostRecord(value.hostRecord),
     actions: codes(value.actions, "actions"),
@@ -229,6 +231,7 @@ function renderHeader(schema: ProtocolSchema, hash: string): string {
 #define REFRAIN_EVENT_TEXT_BYTES ${schema.layout.eventTextBytes}
 #define REFRAIN_DEFAULT_VIEWPORT_BLOCKS ${schema.layout.defaultViewportBlocks}
 #define REFRAIN_VIRTUAL_BLOCK_HEIGHT ${schema.layout.virtualBlockHeight}
+#define REFRAIN_ANCHOR_RANGE_CAPACITY ${schema.layout.anchorRangeCapacity}
 #define REFRAIN_PROTOCOL_FINGERPRINT "${hash}"
 ${errors}
 typedef struct RefrainNativeRequest {
@@ -252,6 +255,18 @@ typedef struct RefrainNativeRequest {
   /* Borrowed for the duration of the call only; the host never stores it. */
   const uint8_t *text;
 } RefrainNativeRequest;
+/* One anchored range in projection-window byte coordinates: an annotation
+   (highlight or comment) or an undecided proposal, resolved by Rust against
+   the current manuscript. kind: 1 = highlight, 2 = comment, 3 = proposal.
+   Coordinates are u32 because the protocol already caps a document at 4 GiB
+   (the overflow rule in encodeDispatchResponse). id is the source's durable
+   identity (a 36-byte uuid string): the mark's actions name it. */
+typedef struct RefrainNativeAnchorRange {
+  uint32_t start;
+  uint32_t end;
+  uint32_t kind;
+  uint8_t id[36];
+} RefrainNativeAnchorRange;
 typedef struct RefrainNativeResponse {
   uint32_t status;
   uint16_t protocol_version;
@@ -285,6 +300,9 @@ typedef struct RefrainNativeResponse {
   /* CLREQ line-start offsets into text; same owner, same lifetime. */
   const uint32_t *line_starts;
   uint32_t line_start_count;
+  /* Anchored ranges in window coordinates; same owner, same lifetime. */
+  const RefrainNativeAnchorRange *anchor_ranges;
+  uint32_t anchor_range_count;
 } RefrainNativeResponse;
 RefrainNativeResponse refrain_native_dispatch(RefrainNativeRequest request);
 #endif
@@ -304,6 +322,7 @@ pub const PROJECTION_BYTES: usize = ${schema.layout.projectionBytes};
 pub const EVENT_TEXT_BYTES: usize = ${schema.layout.eventTextBytes};
 pub const DEFAULT_VIEWPORT_BLOCKS: u32 = ${schema.layout.defaultViewportBlocks};
 pub const VIRTUAL_BLOCK_HEIGHT: f64 = ${schema.layout.virtualBlockHeight}.0;
+pub const ANCHOR_RANGE_CAPACITY: usize = ${schema.layout.anchorRangeCapacity};
 #[allow(dead_code)]
 pub const PROTOCOL_FINGERPRINT: &str =
     "${hash}";
@@ -339,6 +358,20 @@ pub struct RefrainNativeRequest {
     /// Borrowed input bytes, valid only for the duration of one dispatch call.
     /// The host reads them once and never stores the pointer.
     pub text: *const u8,
+}
+
+/// One anchored range in projection-window byte coordinates: an annotation
+/// (highlight or comment) or an undecided proposal, resolved against the
+/// current manuscript. kind: 1 = highlight, 2 = comment, 3 = proposal.
+/// Coordinates are u32 because the protocol already caps a document at 4 GiB.
+/// id 是来源身份（36 字节 uuid 串）：印点上的动作按它点名。
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AnchorRangeWire {
+    pub start: u32,
+    pub end: u32,
+    pub kind: u32,
+    pub id: [u8; 36],
 }
 
 #[repr(C)]
@@ -379,6 +412,11 @@ pub struct RefrainNativeResponse {
     /// rather than wrapping. Borrowed like the text: same owner and lifetime.
     pub line_starts: *const u32,
     pub line_start_count: u32,
+    /// Anchored ranges in projection-window byte coordinates (annotations and
+    /// undecided proposals), resolved against the current manuscript. Owned by
+    /// the session like the text: valid until its next dispatch.
+    pub anchor_ranges: *const AnchorRangeWire,
+    pub anchor_range_count: u32,
 }
 
 impl RefrainNativeResponse {
@@ -409,6 +447,8 @@ impl RefrainNativeResponse {
             text: std::ptr::null(),
             line_starts: std::ptr::null(),
             line_start_count: 0,
+            anchor_ranges: std::ptr::null(),
+            anchor_range_count: 0,
         }
     }
 }
@@ -458,11 +498,23 @@ pub const virtual_block_height: f64 = ${schema.layout.virtualBlockHeight}.0;
 pub const protocol_fingerprint = "${hash}";
 pub const protocol_magic = [4]u8{ ${magicBytes(schema.magic)} };
 pub const response_header_bytes: usize = 88;
-pub const response_bytes: usize = response_header_bytes + projection_bytes;
+/// 锚定区间的线容量：区间挂在投影文本之后（计数 u32 + 每条 12 字节三元组），
+/// 与投影同一次响应过界。回放从同一段字节重建——印点因此与录制时同真。
+/// 锚定区间的线容量：区间挂在行首段之后（计数 u32 + 每条 48 字节：坐标
+/// 三元组 + 36 字节身份），与投影同一次响应过界。回放从同一段字节重建——
+/// 印点因此与录制时同真。
+pub const anchor_range_capacity: usize = ${schema.layout.anchorRangeCapacity};
+pub const anchor_range_wire_bytes: usize = 48;
+pub const anchor_range_section_bytes: usize = 4 + anchor_range_capacity * anchor_range_wire_bytes;
+/// 行首偏移段的上界：每行 4 字节，行数不超投影字节数（理论极值，每字节
+/// 一个换行）。视图按行首断行（禁则），回放从线上字节重建同一布局。
+pub const line_starts_section_bytes: usize = projection_bytes * 4;
+pub const response_bytes: usize = response_header_bytes + projection_bytes + line_starts_section_bytes + anchor_range_section_bytes;
 
 /// The zero-length projection an empty response borrows.
 const empty_projection = [_]u8{};
 const empty_line_starts = [_]u32{};
+const empty_anchor_ranges = [_]AnchorRangeWire{};
 
 pub const ProtocolError = enum(u32) { ${errors} };
 ${zigEnum("Action", schema.actions)}
@@ -502,6 +554,17 @@ pub const RefrainNativeRequest = extern struct {
     text: [*]const u8,
 };
 
+/// 一条锚定区间（投影窗口字节坐标）：批注（高亮/评论）或未裁决提案，
+/// 由 Rust 按当前稿子解析。kind：1=高亮 2=评论 3=提案。坐标 u32：
+/// 协议本身已把文档限在 4 GiB（encodeDispatchResponse 的 overflow 规则）。
+/// id 是来源身份（36 字节 uuid 串）：印点上的动作按它点名。
+pub const AnchorRangeWire = extern struct {
+    start: u32,
+    end: u32,
+    kind: u32,
+    id: [36]u8,
+};
+
 pub const RefrainNativeResponse = extern struct {
     status: u32,
     protocol_version: u16,
@@ -532,6 +595,9 @@ pub const RefrainNativeResponse = extern struct {
     /// CLREQ line-start offsets into the text; same owner and lifetime.
     line_starts: [*]const u32,
     line_start_count: u32,
+    /// 锚定区间（窗口坐标）：与文本同属 Rust 会话，活到下一次 dispatch。
+    anchor_ranges: [*]const AnchorRangeWire,
+    anchor_range_count: u32,
 };
 
 pub fn encodeDispatchResponse(response: RefrainNativeResponse) [response_bytes]u8 {
@@ -575,11 +641,40 @@ pub fn encodeDispatchResponse(response: RefrainNativeResponse) [response_bytes]u
     std.mem.writeInt(u32, out[80..84], wireIndex(response.document_selection_start), .little);
     std.mem.writeInt(u32, out[84..88], wireIndex(response.document_selection_end), .little);
     @memcpy(out[response_header_bytes..][0..text_len], response.text[0..text_len]);
+    // 行首偏移挂在文本之后（无长度前缀——计数在头部 [52..56]）：视图按它们
+    // 断行（SDK 只认 space/tab，断不了中文），回放从同一段字节重建。
+    // 计数为 0 时这一段缺席，健康与错误答复保持 v3 的字节长度。
+    var section = response_header_bytes + text_len;
+    const line_count: usize = @min(@as(usize, response.line_start_count), projection_bytes);
+    if (line_count > 0) {
+        for (response.line_starts[0..line_count], 0..) |line_start, index| {
+            std.mem.writeInt(u32, out[section + index * 4 ..][0..4], line_start, .little);
+        }
+        section += line_count * 4;
+    }
+    // 锚定区间挂在行首之后（计数 + 每条 48 字节：坐标三元组 + 36 字节
+    // 身份），只在有区间时出场。容量是协议上界——宿主先按窗口过滤，
+    // 实践中到不了这条界。
+    const range_count: usize = @min(@as(usize, response.anchor_range_count), anchor_range_capacity);
+    if (range_count > 0) {
+        std.mem.writeInt(u32, out[section..][0..4], @intCast(range_count), .little);
+        for (response.anchor_ranges[0..range_count], 0..) |range, index| {
+            const at = section + 4 + index * anchor_range_wire_bytes;
+            std.mem.writeInt(u32, out[at..][0..4], range.start, .little);
+            std.mem.writeInt(u32, out[at + 4 ..][0..4], range.end, .little);
+            std.mem.writeInt(u32, out[at + 8 ..][0..4], range.kind, .little);
+            @memcpy(out[at + 12 ..][0..36], &range.id);
+        }
+    }
     return out;
 }
 
 pub fn encodedResponseLen(response: RefrainNativeResponse) usize {
-    return response_header_bytes + @min(@as(usize, response.text_len), projection_bytes);
+    const line_count: usize = @min(@as(usize, response.line_start_count), projection_bytes);
+    const line_bytes: usize = if (line_count > 0) line_count * 4 else 0;
+    const range_count: usize = @min(@as(usize, response.anchor_range_count), anchor_range_capacity);
+    const section_bytes: usize = if (range_count > 0) 4 + range_count * anchor_range_wire_bytes else 0;
+    return response_header_bytes + @min(@as(usize, response.text_len), projection_bytes) + line_bytes + section_bytes;
 }
 
 fn wireIndex(value: u64) u32 {
@@ -620,6 +715,8 @@ pub fn emptyResponse(action: u16) RefrainNativeResponse {
         .text = empty_projection[0..].ptr,
         .line_starts = empty_line_starts[0..].ptr,
         .line_start_count = 0,
+        .anchor_ranges = empty_anchor_ranges[0..].ptr,
+        .anchor_range_count = 0,
     };
 }
 
@@ -692,6 +789,8 @@ ${tsCodes("CARET", schema.caretDirections)}
 export const CARET_EXTEND_FLAG = 0x100;
 
 export const RESPONSE_HEADER_BYTES = 88;
+export const ANCHOR_RANGE_CAPACITY = ${schema.layout.anchorRangeCapacity};
+export const ANCHOR_RANGE_WIRE_BYTES = 48;
 
 export function isDispatchResponse(bytes: Uint8Array): boolean {
   if (
@@ -701,7 +800,24 @@ export function isDispatchResponse(bytes: Uint8Array): boolean {
   )
     return false;
   const textLength = readU32(bytes, 48);
-  return textLength <= PROJECTION_BYTES && bytes.length === RESPONSE_HEADER_BYTES + textLength;
+  if (textLength > PROJECTION_BYTES || bytes.length < RESPONSE_HEADER_BYTES + textLength) {
+    return false;
+  }
+  let trailing = bytes.length - RESPONSE_HEADER_BYTES - textLength;
+  // v4 起响应在文本之后挂两段可选数据：行首偏移（计数在头部 [52..56]，
+  // 每行 4 字节）与锚定区间（自带计数的三元组）。旧录制两段都没有。
+  if (trailing === 0) return true;
+  const lineCount = readU32(bytes, 52);
+  if (lineCount > 0) {
+    if (trailing < lineCount * 4) return false;
+    trailing -= lineCount * 4;
+  }
+  if (trailing === 0) return true;
+  return (
+    trailing >= 4 &&
+    (trailing - 4) % ANCHOR_RANGE_WIRE_BYTES === 0 &&
+    readU32(bytes, bytes.length - trailing) === (trailing - 4) / ANCHOR_RANGE_WIRE_BYTES
+  );
 }
 
 export function dispatchResponseStatus(bytes: Uint8Array): number {

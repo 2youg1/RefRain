@@ -409,7 +409,15 @@ impl ProjectStore {
             .with_detail(other.to_string()),
         })?;
         self.index_is_fresh = true;
+        // 建成是一次事实：立起一次性旗标，让「索引刷新」这个安静事件有据可依。
+        self.index_built_pending = true;
         Ok(())
+    }
+
+    /// 取走「索引刚建成」的一次性事实：有则真并清零，无则假。
+    /// 应用层在搜索用例成功后问一次，据它产 KARA 的安静事件。
+    pub fn take_index_built(&mut self) -> bool {
+        std::mem::take(&mut self.index_built_pending)
     }
 
     /// Bring the search index up to the catalog, once.

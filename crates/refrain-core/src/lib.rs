@@ -25,6 +25,7 @@ pub mod role;
 pub mod search_rank;
 pub mod searchable_block;
 pub mod source_layout;
+pub mod text_width;
 pub mod typeset;
 pub mod upstream_work;
 

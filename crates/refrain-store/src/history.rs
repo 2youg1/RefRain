@@ -80,6 +80,20 @@ impl<'a> ActionHistory<'a> {
         Ok(())
     }
 
+    /// 这个动作 id 在这份文档下已经记录过吗。原生编辑在保存时才把整链同步
+    /// 进来，幂等靠这一问：链在会话里是活的，表里只该有它一份。
+    pub fn contains(&self, document: &str, id: Id) -> Result<bool, StoreError> {
+        let found = self
+            .db
+            .query_row(
+                "SELECT 1 FROM text_actions WHERE document = ?1 AND id = ?2",
+                params![document, id.to_string()],
+                |_| Ok(()),
+            )
+            .optional()?;
+        Ok(found.is_some())
+    }
+
     /// The live chain that produced `tip`, oldest first, capped at `depth`
     /// rows. The walk follows the chain's own linkage — a row joins only when
     /// its `head` is the `base` the row above it names — so rows that never

@@ -1,6 +1,6 @@
 {
   "name": "@refrain/native",
-  "version": "0.2.5",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,10 +10,9 @@
     "core": "native dev . --core"
   },
   "dependencies": {
-    "@native-sdk/core": "0.7.2"
+    "@native-sdk/core": "0.8.1"
   },
   "devDependencies": {
-    "@native-sdk/cli": "0.7.2",
-    "@typescript/old": "npm:typescript@6.0.3"
+    "@native-sdk/cli": "0.8.1"
   }
 }

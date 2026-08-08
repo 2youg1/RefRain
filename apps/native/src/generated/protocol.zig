@@ -2,25 +2,37 @@
 const std = @import("std");
 
 pub const host_service = "refrain.host";
-pub const protocol_version: u16 = 3;
+pub const protocol_version: u16 = 4;
 pub const api_version: u16 = 1;
 pub const capability_mask: u32 = 1;
 pub const projection_bytes: usize = 40960;
 pub const event_text_bytes: usize = 12000;
 pub const default_viewport_blocks: u32 = 96;
 pub const virtual_block_height: f64 = 36.0;
-pub const protocol_fingerprint = "074a5037a9f96a6bbcc44ea4d21448d99f08ec995cda4862d06f4d8b917e62eb";
+pub const protocol_fingerprint = "a5c7d63aa2474df25a9a0127689a58d74d2840025f38b3f0c0747629f23fe66f";
 pub const protocol_magic = [4]u8{ 82, 70, 82, 78 };
 pub const response_header_bytes: usize = 88;
-pub const response_bytes: usize = response_header_bytes + projection_bytes;
+/// 锚定区间的线容量：区间挂在投影文本之后（计数 u32 + 每条 12 字节三元组），
+/// 与投影同一次响应过界。回放从同一段字节重建——印点因此与录制时同真。
+/// 锚定区间的线容量：区间挂在行首段之后（计数 u32 + 每条 48 字节：坐标
+/// 三元组 + 36 字节身份），与投影同一次响应过界。回放从同一段字节重建——
+/// 印点因此与录制时同真。
+pub const anchor_range_capacity: usize = 512;
+pub const anchor_range_wire_bytes: usize = 48;
+pub const anchor_range_section_bytes: usize = 4 + anchor_range_capacity * anchor_range_wire_bytes;
+/// 行首偏移段的上界：每行 4 字节，行数不超投影字节数（理论极值，每字节
+/// 一个换行）。视图按行首断行（禁则），回放从线上字节重建同一布局。
+pub const line_starts_section_bytes: usize = projection_bytes * 4;
+pub const response_bytes: usize = response_header_bytes + projection_bytes + line_starts_section_bytes + anchor_range_section_bytes;
 
 /// The zero-length projection an empty response borrows.
 const empty_projection = [_]u8{};
 const empty_line_starts = [_]u32{};
+const empty_anchor_ranges = [_]AnchorRangeWire{};
 
 pub const ProtocolError = enum(u32) { protocol_mismatch = 1, invalid_request = 2, unknown_session = 3, domain_refusal = 4, host_failure = 5, stale_revision = 6 };
 pub const Action = enum(u16) { health = 1, open_manuscript = 2, apply_input = 3, obtain_projection = 4, project = 5 };
-pub const Input = enum(u16) { set_selection = 1, insert_text = 2, delete_backward = 3, delete_forward = 4, delete_word_backward = 5, delete_word_forward = 6, clear = 7, move_caret = 8, set_composition = 9, commit_composition = 10, cancel_composition = 11, undo = 12, save = 13 };
+pub const Input = enum(u16) { set_selection = 1, insert_text = 2, delete_backward = 3, delete_forward = 4, delete_word_backward = 5, delete_word_forward = 6, clear = 7, move_caret = 8, set_composition = 9, commit_composition = 10, cancel_composition = 11, undo = 12, save = 13, revert_to = 14 };
 pub const CaretDirection = enum(u16) { previous = 1, next = 2, previous_word = 3, next_word = 4, start = 5, end = 6 };
 
 /// Host-record byte offsets derived from the SDK's field-name packing order.
@@ -68,6 +80,17 @@ pub const RefrainNativeRequest = extern struct {
     text: [*]const u8,
 };
 
+/// 一条锚定区间（投影窗口字节坐标）：批注（高亮/评论）或未裁决提案，
+/// 由 Rust 按当前稿子解析。kind：1=高亮 2=评论 3=提案。坐标 u32：
+/// 协议本身已把文档限在 4 GiB（encodeDispatchResponse 的 overflow 规则）。
+/// id 是来源身份（36 字节 uuid 串）：印点上的动作按它点名。
+pub const AnchorRangeWire = extern struct {
+    start: u32,
+    end: u32,
+    kind: u32,
+    id: [36]u8,
+};
+
 pub const RefrainNativeResponse = extern struct {
     status: u32,
     protocol_version: u16,
@@ -98,6 +121,9 @@ pub const RefrainNativeResponse = extern struct {
     /// CLREQ line-start offsets into the text; same owner and lifetime.
     line_starts: [*]const u32,
     line_start_count: u32,
+    /// 锚定区间（窗口坐标）：与文本同属 Rust 会话，活到下一次 dispatch。
+    anchor_ranges: [*]const AnchorRangeWire,
+    anchor_range_count: u32,
 };
 
 pub fn encodeDispatchResponse(response: RefrainNativeResponse) [response_bytes]u8 {
@@ -141,11 +167,40 @@ pub fn encodeDispatchResponse(response: RefrainNativeResponse) [response_bytes]u
     std.mem.writeInt(u32, out[80..84], wireIndex(response.document_selection_start), .little);
     std.mem.writeInt(u32, out[84..88], wireIndex(response.document_selection_end), .little);
     @memcpy(out[response_header_bytes..][0..text_len], response.text[0..text_len]);
+    // 行首偏移挂在文本之后（无长度前缀——计数在头部 [52..56]）：视图按它们
+    // 断行（SDK 只认 space/tab，断不了中文），回放从同一段字节重建。
+    // 计数为 0 时这一段缺席，健康与错误答复保持 v3 的字节长度。
+    var section = response_header_bytes + text_len;
+    const line_count: usize = @min(@as(usize, response.line_start_count), projection_bytes);
+    if (line_count > 0) {
+        for (response.line_starts[0..line_count], 0..) |line_start, index| {
+            std.mem.writeInt(u32, out[section + index * 4 ..][0..4], line_start, .little);
+        }
+        section += line_count * 4;
+    }
+    // 锚定区间挂在行首之后（计数 + 每条 48 字节：坐标三元组 + 36 字节
+    // 身份），只在有区间时出场。容量是协议上界——宿主先按窗口过滤，
+    // 实践中到不了这条界。
+    const range_count: usize = @min(@as(usize, response.anchor_range_count), anchor_range_capacity);
+    if (range_count > 0) {
+        std.mem.writeInt(u32, out[section..][0..4], @intCast(range_count), .little);
+        for (response.anchor_ranges[0..range_count], 0..) |range, index| {
+            const at = section + 4 + index * anchor_range_wire_bytes;
+            std.mem.writeInt(u32, out[at..][0..4], range.start, .little);
+            std.mem.writeInt(u32, out[at + 4 ..][0..4], range.end, .little);
+            std.mem.writeInt(u32, out[at + 8 ..][0..4], range.kind, .little);
+            @memcpy(out[at + 12 ..][0..36], &range.id);
+        }
+    }
     return out;
 }
 
 pub fn encodedResponseLen(response: RefrainNativeResponse) usize {
-    return response_header_bytes + @min(@as(usize, response.text_len), projection_bytes);
+    const line_count: usize = @min(@as(usize, response.line_start_count), projection_bytes);
+    const line_bytes: usize = if (line_count > 0) line_count * 4 else 0;
+    const range_count: usize = @min(@as(usize, response.anchor_range_count), anchor_range_capacity);
+    const section_bytes: usize = if (range_count > 0) 4 + range_count * anchor_range_wire_bytes else 0;
+    return response_header_bytes + @min(@as(usize, response.text_len), projection_bytes) + line_bytes + section_bytes;
 }
 
 fn wireIndex(value: u64) u32 {
@@ -186,6 +241,8 @@ pub fn emptyResponse(action: u16) RefrainNativeResponse {
         .text = empty_projection[0..].ptr,
         .line_starts = empty_line_starts[0..].ptr,
         .line_start_count = 0,
+        .anchor_ranges = empty_anchor_ranges[0..].ptr,
+        .anchor_range_count = 0,
     };
 }
 

@@ -3,7 +3,10 @@ use refrain_app::{
 };
 use refrain_core::material_listing::Disclosure;
 use refrain_core::{DocumentRole, KaraAutoEntry};
+use refrain_store::annotations::{AnnotationKind, AnnotationRow};
+use refrain_store::ledger::VerdictKindName;
 use refrain_store::materials::MaterialDraftRow;
+use refrain_store::project::ProposalRow;
 use refrain_store::root::RootKind;
 use std::collections::VecDeque;
 use std::fs;
@@ -466,6 +469,7 @@ fn material_draft_commit_uses_the_application_document_lifecycle() {
             "draft-1",
             Some("作者确认后的正文".to_string()),
             false,
+            DocumentRole::Material,
         )
         .unwrap()
         .expect("commit must create one Material");
@@ -494,6 +498,231 @@ fn material_draft_commit_uses_the_application_document_lifecycle() {
             .blocks
             .iter()
             .any(|block| block.text.contains("作者确认后的正文"))
+    );
+
+    drop(application);
+    fs::remove_dir_all(data).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn native_anchor_sources_collect_annotations_and_only_undecided_proposals() {
+    let data = scratch("anchor-sources-data");
+    let root = scratch("anchor-sources-root");
+    fs::write(root.join("正文.md"), "原稿。下一句。\n\n第二块。\n").unwrap();
+    let application = Application::open(&data).unwrap();
+    let ProjectOutput::Opened(project) = application
+        .project(
+            &ChosenPaths::new([Some(root.clone())]),
+            ProjectInput::ChooseAndAdoptRoot {
+                kind: RootKind::Folder,
+            },
+        )
+        .unwrap()
+    else {
+        panic!("adoption must open the project");
+    };
+
+    let block_id = refrain_core::Id::new().to_string();
+    let pending_id = refrain_core::Id::new().to_string();
+    let judged_id = refrain_core::Id::new().to_string();
+    let malformed_id = refrain_core::Id::new().to_string();
+    application
+        .with_project(&project.root_id, |entry| {
+            entry
+                .store
+                .annotation_upsert(&AnnotationRow {
+                    id: "a1".to_string(),
+                    document: "正文.md".to_string(),
+                    block_id: refrain_core::Id::new().to_string(),
+                    start: 3,
+                    end: 9,
+                    quote: "下一句".to_string(),
+                    kind: AnnotationKind::Comment,
+                    body: Some("这里再说".to_string()),
+                    created_at: 1,
+                    updated_at: 1,
+                })
+                .map_err(refrain_app::journal::into_domain)
+        })
+        .unwrap();
+
+    let pending = ProposalRow {
+        id: pending_id,
+        run: refrain_core::Id::new().to_string(),
+        baseline: refrain_core::Id::new().to_string(),
+        document_path: "正文.md".to_string(),
+        scope: format!("[\"{block_id}\"]"),
+        before_text: "原稿。下一句。".to_string(),
+        after_text: Some("改后。下一句。".to_string()),
+        created_at: 1,
+    };
+    let judged = ProposalRow {
+        id: judged_id.clone(),
+        ..pending.clone()
+    };
+    let malformed = ProposalRow {
+        id: malformed_id,
+        scope: "not json".to_string(),
+        ..pending.clone()
+    };
+    application
+        .with_project(&project.root_id, |entry| {
+            for row in [&pending, &judged, &malformed] {
+                entry
+                    .store
+                    .proposal_insert(row)
+                    .map_err(refrain_app::journal::into_domain)?;
+            }
+            Ok(())
+        })
+        .unwrap();
+
+    // 判掉 p2：拒绝不进正文，是区分「判过」与「待裁决」最薄的判法。
+    application
+        .project(
+            &ChosenPaths::new([]),
+            ProjectInput::StageVerdict {
+                root_id: project.root_id.clone(),
+                path: "正文.md".to_string(),
+                proposal_id: judged_id,
+                kind: VerdictKindName::Reject,
+                final_text: None,
+                reason: None,
+            },
+        )
+        .unwrap();
+
+    let sources = application
+        .native_anchor_sources(&project.root_id, "正文.md")
+        .unwrap();
+    // 批注 a1 + 待裁决的 p1；p2 判过省略，p3 的 scope 坏了省略。
+    assert_eq!(sources.len(), 2);
+    match &sources[0] {
+        refrain_app::AnchorSource::Annotation {
+            id,
+            block_id: _,
+            start,
+            end,
+            quote,
+            comment,
+        } => {
+            assert_eq!(id, "a1");
+            assert_eq!((*start, *end), (3, 9));
+            assert_eq!(quote, "下一句");
+            assert!(comment);
+        }
+        other => panic!("the annotation must come first: {other:?}"),
+    }
+    match &sources[1] {
+        refrain_app::AnchorSource::Proposal {
+            id,
+            block_id: anchored,
+            candidates,
+        } => {
+            assert_eq!(id, &pending.id);
+            assert_eq!(anchored, &block_id);
+            assert!(
+                !candidates.is_empty(),
+                "a rewrite proposal carries anchorable slices"
+            );
+        }
+        other => panic!("the pending proposal must follow: {other:?}"),
+    }
+
+    drop(application);
+    fs::remove_dir_all(data).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_material_draft_promotes_to_manuscript_through_the_project_channel() {
+    let data = scratch("material-promote-data");
+    let root = scratch("material-promote-root");
+    fs::write(root.join("正文.md"), "原稿。\n").unwrap();
+    let application = Application::open(&data).unwrap();
+    let ProjectOutput::Opened(project) = application
+        .project(
+            &ChosenPaths::new([Some(root.clone())]),
+            ProjectInput::ChooseAndAdoptRoot {
+                kind: RootKind::Folder,
+            },
+        )
+        .unwrap()
+    else {
+        panic!("adoption must open the project");
+    };
+
+    application
+        .with_project(&project.root_id, |entry| {
+            entry
+                .store
+                .material_draft_insert(&MaterialDraftRow {
+                    id: "draft-9".to_string(),
+                    run_id: "run-9".to_string(),
+                    document: "正文.md".to_string(),
+                    kind: "chapter-synopsis".to_string(),
+                    title: "全文摘要".to_string(),
+                    basis: "[]".to_string(),
+                    body: "这一章写河湾起雾。".to_string(),
+                    created_at: 1,
+                })
+                .map_err(refrain_app::journal::into_domain)
+        })
+        .unwrap();
+
+    // 读名录：一条草稿在列。
+    let ProjectOutput::MaterialDrafts(drafts) = application
+        .project(
+            &ChosenPaths::new([]),
+            ProjectInput::ReadMaterialDrafts {
+                root_id: project.root_id.clone(),
+            },
+        )
+        .unwrap()
+    else {
+        panic!("reading drafts must answer with the listing");
+    };
+    assert_eq!(drafts.len(), 1);
+    assert_eq!(drafts[0].title, "全文摘要");
+    assert_eq!(drafts[0].body, "这一章写河湾起雾。");
+
+    // 提拔成正文：答复即刷新后的名录（空了），落地的是一份 Chapter。
+    let ProjectOutput::MaterialDrafts(after) = application
+        .project(
+            &ChosenPaths::new([]),
+            ProjectInput::CommitMaterialDraft {
+                root_id: project.root_id.clone(),
+                draft_id: "draft-9".to_string(),
+                edited_body: None,
+                dismiss: false,
+                as_chapter: true,
+            },
+        )
+        .unwrap()
+    else {
+        panic!("committing must answer with the refreshed listing");
+    };
+    assert!(after.is_empty(), "a committed draft leaves the listing");
+
+    let ProjectOutput::Page(page) = application
+        .project(
+            &ChosenPaths::new([]),
+            ProjectInput::DocumentPage {
+                root_id: project.root_id.clone(),
+                after: None,
+            },
+        )
+        .unwrap()
+    else {
+        panic!("the document page must list the promoted chapter");
+    };
+    assert!(
+        page.documents
+            .iter()
+            .any(|row| row.role == DocumentRole::Chapter && row.path.contains("全文摘要")),
+        "the promoted draft must land as a Chapter: {:?}",
+        page.documents
     );
 
     drop(application);
@@ -555,4 +784,293 @@ fn adopting_a_project_rearms_karas_one_automatic_entry() {
     drop(application);
     fs::remove_dir_all(data).unwrap();
     fs::remove_dir_all(root).unwrap();
+}
+
+// ---------- 2.2 派发深度回迁：ReadBlocks（派发台块清单） ----------
+
+/// 起一个打开着一份五段稿子的应用：ReadBlocks 列的是活 Manuscript，
+/// 不打开就没有清单。
+fn open_chapter(label: &str, body: &str) -> (PathBuf, Application, String) {
+    let data = scratch(label);
+    let root = scratch(label);
+    fs::write(root.join("章.md"), body).unwrap();
+    let platform = ChosenPaths::new([Some(root.clone())]);
+    let application = Application::open(&data).unwrap();
+    let ProjectOutput::Opened(project) = application
+        .project(
+            &platform,
+            ProjectInput::ChooseAndAdoptRoot {
+                kind: RootKind::Folder,
+            },
+        )
+        .unwrap()
+    else {
+        panic!("adopt must open the project");
+    };
+    let root_id = project.root_id.clone();
+    let ProjectOutput::DocumentOpened(_) = application
+        .project(
+            &platform,
+            ProjectInput::OpenDocument {
+                root_id: root_id.clone(),
+                path: "章.md".to_string(),
+            },
+        )
+        .unwrap()
+    else {
+        panic!("open input must return an open document");
+    };
+    (data, application, root_id)
+}
+
+fn read_blocks(
+    application: &Application,
+    root_id: &str,
+    after: Option<u32>,
+    count: u32,
+) -> refrain_app::DocumentBlocks {
+    let platform = ChosenPaths::new([]);
+    let ProjectOutput::DocumentBlocks(page) = application
+        .project(
+            &platform,
+            ProjectInput::ReadBlocks {
+                root_id: root_id.to_string(),
+                path: "章.md".to_string(),
+                after,
+                count,
+            },
+        )
+        .unwrap()
+    else {
+        panic!("readBlocks must return the block list");
+    };
+    page
+}
+
+#[test]
+fn read_blocks_pages_by_ordinal_until_nothing_remains() {
+    let (_data, application, root_id) = open_chapter(
+        "blocks-paging",
+        "一。
+
+二。
+
+三。
+
+四。
+
+五。
+",
+    );
+
+    let first = read_blocks(&application, &root_id, None, 2);
+    assert_eq!(first.blocks.len(), 2);
+    assert_eq!(first.blocks[0].ordinal, 0);
+    assert_eq!(first.blocks[0].peek, "一。");
+    assert_eq!(first.blocks[1].ordinal, 1);
+    // 还有剩余：下一页从末行的下一个 ordinal 起。
+    assert_eq!(first.next, Some(2));
+
+    let second = read_blocks(&application, &root_id, first.next, 2);
+    assert_eq!(
+        second
+            .blocks
+            .iter()
+            .map(|row| row.ordinal)
+            .collect::<Vec<_>>(),
+        vec![2, 3]
+    );
+    assert_eq!(second.next, Some(4));
+
+    // 翻到末尾：余一行，next 熄灭。
+    let last = read_blocks(&application, &root_id, second.next, 2);
+    assert_eq!(last.blocks.len(), 1);
+    assert_eq!(last.blocks[0].ordinal, 4);
+    assert_eq!(last.next, None);
+
+    // 行视图：id 是 36 字节的 uuid，chars 数字符不数字节。
+    let row = &first.blocks[0];
+    assert_eq!(row.id.len(), 36);
+    assert_eq!(row.chars, 2);
+}
+
+#[test]
+fn read_blocks_on_a_document_that_is_not_open_is_a_named_refusal() {
+    let data = scratch("blocks-closed-data");
+    let root = scratch("blocks-closed-root");
+    fs::write(
+        root.join("章.md"),
+        "一。
+",
+    )
+    .unwrap();
+    let platform = ChosenPaths::new([Some(root.clone())]);
+    let application = Application::open(&data).unwrap();
+    let ProjectOutput::Opened(project) = application
+        .project(
+            &platform,
+            ProjectInput::ChooseAndAdoptRoot {
+                kind: RootKind::Folder,
+            },
+        )
+        .unwrap()
+    else {
+        panic!("adopt must open the project");
+    };
+
+    // 没打开就列块：具名拒绝，而不是拿磁盘字节顶替——那份可能已被别处改过。
+    let error = application
+        .project(
+            &platform,
+            ProjectInput::ReadBlocks {
+                root_id: project.root_id,
+                path: "章.md".to_string(),
+                after: None,
+                count: 10,
+            },
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("not open"),
+        "the refusal names the closed document: {error}"
+    );
+}
+
+#[test]
+fn read_blocks_peek_never_cuts_a_character_in_half() {
+    // 70 个汉字：前 60 个字符的 peek 若按字节切会切在半个字上（一个汉字
+    // 三个字节），那一刀在 UTF-8 里甚至不是合法切片。
+    let paragraph = "剑".repeat(70);
+    let (_data, application, root_id) = open_chapter(
+        "blocks-peek",
+        &format!(
+            "{paragraph}
+"
+        ),
+    );
+
+    let page = read_blocks(&application, &root_id, None, 10);
+    assert_eq!(page.blocks.len(), 1);
+    let row = &page.blocks[0];
+    assert_eq!(row.peek.chars().count(), 60);
+    assert_eq!(row.peek, "剑".repeat(60));
+    assert_eq!(row.chars, 70);
+    // 块种类线名：与索引库同一个词，散文块是 paragraph。
+    assert_eq!(row.kind, "paragraph");
+}
+
+// ---------- 2.2 资料分区：ReadMaterials（派发台的资料勾选行） ----------
+
+/// 起一个 adopt 了 root 的应用，root 里只有一篇正文。
+fn adopt_chapter(label: &str) -> (Application, String, PathBuf) {
+    let data = scratch(label);
+    let root = scratch(label);
+    fs::write(
+        root.join("章.md"),
+        "一。
+",
+    )
+    .unwrap();
+    let platform = ChosenPaths::new([Some(root.clone())]);
+    let application = Application::open(&data).unwrap();
+    let ProjectOutput::Opened(project) = application
+        .project(
+            &platform,
+            ProjectInput::ChooseAndAdoptRoot {
+                kind: RootKind::Folder,
+            },
+        )
+        .unwrap()
+    else {
+        panic!("adopt must open the project");
+    };
+    (application, project.root_id, root)
+}
+
+#[test]
+fn read_materials_lists_only_materials_with_their_disclosure() {
+    let (application, root_id, _root) = adopt_chapter("materials-listed");
+    // 两份项目外的来源文件，各导入成一份资料。资料来源是 HTML——
+    // markdown 是正文不是资料，`prepare_material_source` 具名拒绝。
+    let sources = scratch("materials-sources");
+    let source_a = sources.join("人物志.html");
+    let source_b = sources.join("年表.html");
+    fs::write(
+        &source_a,
+        "<!doctype html><html><body><p>陆沉舟。</p></body></html>\n",
+    )
+    .unwrap();
+    fs::write(
+        &source_b,
+        "<!doctype html><html><body><p>元年。</p></body></html>\n",
+    )
+    .unwrap();
+    let mut paths = Vec::new();
+    for source in [source_a, source_b] {
+        let platform = ChosenPaths::new([Some(source)]);
+        let ProjectOutput::Imported(row) = application
+            .project(
+                &platform,
+                ProjectInput::ChooseAndImportMaterial {
+                    root_id: root_id.clone(),
+                },
+            )
+            .unwrap()
+        else {
+            panic!("material import must return the imported row");
+        };
+        assert_eq!(row.role, DocumentRole::Material);
+        paths.push(row.path);
+    }
+    // 给其中一份设档位：名录带着它过河。
+    application
+        .project(
+            &ChosenPaths::new([]),
+            ProjectInput::SetDisclosure {
+                root_id: root_id.clone(),
+                path: paths[0].clone(),
+                disclosure: Disclosure::OutlineOnly,
+            },
+        )
+        .unwrap();
+
+    let ProjectOutput::Materials(listing) = application
+        .project(
+            &ChosenPaths::new([]),
+            ProjectInput::ReadMaterials {
+                root_id: root_id.clone(),
+            },
+        )
+        .unwrap()
+    else {
+        panic!("readMaterials must return the materials listing");
+    };
+    // 只有资料两行：正文不在内；截断旗没立。
+    assert_eq!(listing.materials.len(), 2);
+    assert!(!listing.truncated);
+    assert!(listing.materials.iter().all(|row| row.path != "章.md"));
+    let first = &listing.materials[0];
+    assert_eq!(first.path, paths[0]);
+    assert_eq!(first.disclosure.as_deref(), Some("outline-only"));
+    // 没设过档位的另一份是 null：默认档的读法归界面。
+    assert_eq!(listing.materials[1].path, paths[1]);
+    assert_eq!(listing.materials[1].disclosure, None);
+}
+
+#[test]
+fn read_materials_on_a_project_without_materials_is_an_empty_list() {
+    let (application, root_id, _root) = adopt_chapter("materials-empty");
+    let ProjectOutput::Materials(listing) = application
+        .project(
+            &ChosenPaths::new([]),
+            ProjectInput::ReadMaterials { root_id },
+        )
+        .unwrap()
+    else {
+        panic!("readMaterials must return the materials listing");
+    };
+    // 空名录是空表，不是错误。
+    assert!(listing.materials.is_empty());
+    assert!(!listing.truncated);
 }

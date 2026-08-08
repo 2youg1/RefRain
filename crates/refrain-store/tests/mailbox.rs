@@ -210,3 +210,69 @@ fn pinning_a_ranked_entry_keeps_its_rank() {
     drop(store);
     fs::remove_dir_all(&root).ok();
 }
+
+/// 相邻交换是一次事务：双方位次互换，次序反转；任一方没排过时是空操作。
+#[test]
+fn swapping_ranks_is_atomic_and_reverses_the_pair() {
+    let root = scratch();
+    fs::write(root.join("章一.md"), "　　第一段。\n").unwrap();
+    let mut db = app_db();
+    let store = adopt(&mut db, &root);
+
+    let now = 1_000u64;
+    store
+        .mailbox()
+        .set_rank("a", MailboxBoxName::Unread, 1, now)
+        .unwrap();
+    store
+        .mailbox()
+        .set_rank("b", MailboxBoxName::Unread, 2, now + 1)
+        .unwrap();
+    store.mailbox().swap_ranks("a", "b", now + 2).unwrap();
+    let all = store.mailbox().all().unwrap();
+    let a = all.iter().find(|row| row.entry_id == "a").unwrap();
+    let b = all.iter().find(|row| row.entry_id == "b").unwrap();
+    assert_eq!(a.rank, Some(2));
+    assert_eq!(b.rank, Some(1));
+
+    // 反向换回来。
+    store.mailbox().swap_ranks("a", "b", now + 3).unwrap();
+    let all = store.mailbox().all().unwrap();
+    let a = all.iter().find(|row| row.entry_id == "a").unwrap();
+    let b = all.iter().find(|row| row.entry_id == "b").unwrap();
+    assert_eq!(a.rank, Some(1));
+    assert_eq!(b.rank, Some(2));
+
+    // 未排过的单不参与：空操作，行未动。
+    store
+        .mailbox()
+        .set_rank("d", MailboxBoxName::Unread, 4, now + 6)
+        .unwrap();
+    store
+        .mailbox()
+        .set_rank("e", MailboxBoxName::Unread, 5, now + 7)
+        .unwrap();
+    // 让 e 的位次消失（重排为 None 不可行——用不存在的 id 模拟缺席）。
+    store
+        .mailbox()
+        .swap_ranks("a", "no-such-entry", now + 8)
+        .unwrap();
+    let all = store.mailbox().all().unwrap();
+    let a = all.iter().find(|row| row.entry_id == "a").unwrap();
+    assert_eq!(a.rank, Some(1), "swapping with a missing entry is a no-op");
+
+    store
+        .mailbox()
+        .set_rank("c", MailboxBoxName::Unread, 3, now + 4)
+        .unwrap();
+    store.mailbox().swap_ranks("a", "c", now + 5).unwrap();
+    let all = store.mailbox().all().unwrap();
+    let a = all.iter().find(|row| row.entry_id == "a").unwrap();
+    let c = all.iter().find(|row| row.entry_id == "c").unwrap();
+    // a 与 c 都有位次（1 与 3）——换。
+    assert_eq!(a.rank, Some(3));
+    assert_eq!(c.rank, Some(1));
+
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}

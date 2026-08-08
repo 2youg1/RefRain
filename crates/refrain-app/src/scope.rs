@@ -24,6 +24,14 @@ pub fn before_sections(request: &str) -> Vec<(String, String)> {
         let text = rest
             .strip_prefix('\n')
             .unwrap_or(rest)
+            // 编译器的合同尾巴从这一行开始（`context_compiler::round_contract`，
+            // D14 把它并入 before 段以保住缓存前缀）：它不是冻结原文，收进去
+            // 会让「原文对不上」——块文本比对必挂。解析器与编译器是一对，
+            // 改合同行文必须同步这里（near-miss：删掉这行截断，k3_full_flow
+            // 立即红）。
+            .split("\n- Use the scope ids")
+            .next()
+            .unwrap_or(rest)
             .trim_end_matches('\n')
             .to_string();
         out.push((id.trim().to_string(), text));

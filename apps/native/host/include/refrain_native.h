@@ -2,14 +2,15 @@
 #ifndef REFRAIN_NATIVE_H
 #define REFRAIN_NATIVE_H
 #include <stdint.h>
-#define REFRAIN_PROTOCOL_VERSION 3
+#define REFRAIN_PROTOCOL_VERSION 4
 #define REFRAIN_API_VERSION 1
 #define REFRAIN_CAPABILITY_MASK 1
 #define REFRAIN_PROJECTION_BYTES 40960
 #define REFRAIN_EVENT_TEXT_BYTES 12000
 #define REFRAIN_DEFAULT_VIEWPORT_BLOCKS 96
 #define REFRAIN_VIRTUAL_BLOCK_HEIGHT 36
-#define REFRAIN_PROTOCOL_FINGERPRINT "074a5037a9f96a6bbcc44ea4d21448d99f08ec995cda4862d06f4d8b917e62eb"
+#define REFRAIN_ANCHOR_RANGE_CAPACITY 512
+#define REFRAIN_PROTOCOL_FINGERPRINT "a5c7d63aa2474df25a9a0127689a58d74d2840025f38b3f0c0747629f23fe66f"
 #define REFRAIN_ERROR_PROTOCOL_MISMATCH 1
 #define REFRAIN_ERROR_INVALID_REQUEST 2
 #define REFRAIN_ERROR_UNKNOWN_SESSION 3
@@ -37,6 +38,18 @@ typedef struct RefrainNativeRequest {
   /* Borrowed for the duration of the call only; the host never stores it. */
   const uint8_t *text;
 } RefrainNativeRequest;
+/* One anchored range in projection-window byte coordinates: an annotation
+   (highlight or comment) or an undecided proposal, resolved by Rust against
+   the current manuscript. kind: 1 = highlight, 2 = comment, 3 = proposal.
+   Coordinates are u32 because the protocol already caps a document at 4 GiB
+   (the overflow rule in encodeDispatchResponse). id is the source's durable
+   identity (a 36-byte uuid string): the mark's actions name it. */
+typedef struct RefrainNativeAnchorRange {
+  uint32_t start;
+  uint32_t end;
+  uint32_t kind;
+  uint8_t id[36];
+} RefrainNativeAnchorRange;
 typedef struct RefrainNativeResponse {
   uint32_t status;
   uint16_t protocol_version;
@@ -70,6 +83,9 @@ typedef struct RefrainNativeResponse {
   /* CLREQ line-start offsets into text; same owner, same lifetime. */
   const uint32_t *line_starts;
   uint32_t line_start_count;
+  /* Anchored ranges in window coordinates; same owner, same lifetime. */
+  const RefrainNativeAnchorRange *anchor_ranges;
+  uint32_t anchor_range_count;
 } RefrainNativeResponse;
 RefrainNativeResponse refrain_native_dispatch(RefrainNativeRequest request);
 #endif

@@ -281,6 +281,10 @@ pub struct ProjectStore {
     /// neither existed, so a store that had never reconciled searched an empty
     /// index and said the manuscript contained nothing.
     pub(crate) index_is_fresh: bool,
+    /// 一次性旗标：`ensure_indexed` 真正建过索引才立起，读者取走即清。
+    /// 安静的 KARA 事件「索引刷新」以它为事实来源——旗标不立起时，
+    /// 搜索走的是现成索引，没有发生「刷新」这个事实。
+    pub(crate) index_built_pending: bool,
 }
 
 impl ProjectStore {
@@ -318,6 +322,7 @@ impl ProjectStore {
             db,
             reconciled: None,
             index_is_fresh: false,
+            index_built_pending: false,
         };
         let backup = root::take_source_backup(&canonical, locator.kind, &store.layout).into();
         Ok((store, backup))

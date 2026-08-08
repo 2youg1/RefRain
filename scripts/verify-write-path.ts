@@ -18,12 +18,13 @@ import { collect } from "./gate-lib.ts";
 /*
  * 允许把手稿字节落盘的函数。每一个都只在人类动作之后到达写者：
  *   refresh_open_view      作者在打字（`TextCommand::Editor` 之后的投影刷新）
- *   commit_decision_batch  作者的裁决，一次点击提交
+ *   persist_manuscript     裁决与冲销的共享写者（D1）——commit_decision_batch
+ *                          与 countermand_proposals 都经它落盘
  *   persist_in_entry       Save 的共享写者——作者自己的按键或按钮
  * `persist_in_entry` 列在这里是因为它**确实**是第三个写者，不是为了让门禁变绿：
  * 旧版那条按名字匹配的谓词从来没看见过它（`persist_` 不在动词表里）。
  */
-const AUTHORISED = ["commit_decision_batch", "refresh_open_view", "persist_in_entry"] as const;
+const AUTHORISED = ["persist_manuscript", "refresh_open_view", "persist_in_entry"] as const;
 
 /*
  * Root 之外的唯一写路径：install_skill 把生成的协议写进 harness 的 skill 目录

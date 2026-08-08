@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use refrain_core::Id;
-use refrain_host::adapters::{ClaudePrint, DispatchSpec, HarnessAdapter, ProducerUsage};
+use refrain_host::adapters::{DispatchSpec, HarnessAdapter, PrintAdapter, ProducerUsage, channel};
 
 /// 与 process.rs / edge_end_to_end.rs 同一套按需构建：`cargo test` 只把
 /// example 包成 libtest，可执行文件要 `cargo build --example` 才有。
@@ -43,7 +43,8 @@ fn claude_print_dispatches_and_reads_claude_frames() {
     let program = dir.join(format!("claude{}", std::env::consts::EXE_SUFFIX));
     std::fs::copy(fake_claude_path(), &program).unwrap();
 
-    let adapter = ClaudePrint::at(program).expect("version probe accepts the fake");
+    let channel = channel("claude-print").expect("registered");
+    let adapter = PrintAdapter::at(channel, program).expect("version probe accepts the fake");
 
     let workspace = dir.join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();

@@ -8,7 +8,7 @@
 //! Detection follows one rule: probe is version-only and
 //! never touches the model — `kimi --version` answers; no probe burns a turn.
 
-use std::io::{self, BufRead, BufReader, Read};
+use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use refrain_core::context_compiler::SkillStatus;
@@ -194,7 +194,7 @@ fn allowed_env(names: &[String]) -> Vec<(String, String)> {
 /// Write the protocol file for one adapter, creating its skill directory.
 /// Returns the path and the BLAKE3 of the bytes written — the digest the
 /// Config records as provenance.
-fn install_skill_at(path: &Path, bytes: &[u8]) -> io::Result<(PathBuf, String)> {
+pub fn install_skill_at(path: &Path, bytes: &[u8]) -> io::Result<(PathBuf, String)> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -206,7 +206,7 @@ fn install_skill_at(path: &Path, bytes: &[u8]) -> io::Result<(PathBuf, String)> 
 /// the fact, the Config digest is only the record of what we wrote. A file
 /// that hashes to the current generated protocol is `Current` whoever put it
 /// there; a file that differs is `Stale`, and no file is `None`.
-fn skill_status_at(path: &Path, expected: &[u8]) -> SkillStatus {
+pub fn skill_status_at(path: &Path, expected: &[u8]) -> SkillStatus {
     match std::fs::read(path) {
         Ok(bytes) if content_hex(&bytes) == content_hex(expected) => SkillStatus::Current,
         Ok(_) => SkillStatus::Stale,
@@ -275,29 +275,111 @@ fn merged_argv(base: &[String], spec: &DispatchSpec) -> Vec<String> {
 /// Kimi Code print mode (L1): `kimi -p <prompt> --output-format stream-json`.
 /// The stream carries assistant content and a session resume hint; usage is
 /// unknown on this channel and says so (r1-kc: print has no usage frames).
-pub struct KimiPrint {
+/// 一个 print 通道的全部差异。新 harness = 注册表加一行，零 Rust 代码：
+/// 探测、派发、流解析、协议装载全部由 `PrintAdapter` 按通道参数化。
+/// 解析器按**输出形状**分类，不按品牌——`KimiStream` 与 `ClaudeStream`
+/// 都是 stream-json，但帧形状不同；`JsonLines` 是 pi 的事件流；
+/// `Plain` 兑底整个 stdout。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputFormat {
+    /// kimi 风格 stream-json 帧：`role: assistant` 带整段 content。
+    KimiStream,
+    /// Claude Code 风格 stream-json 帧：assistant 流 + 收尾 result。
+    ClaudeStream,
+    /// pi 风格 JSON Lines 事件：session 头 + message_update/message_end。
+    JsonLines,
+    /// 兑底：stdout 的每一行就是产出。
+    Plain,
+}
+
+/// 一个 print 通道的注册项。
+pub struct PrintChannel {
+    /// 适配器的稳定 id，与 Config 的 `AdapterKind` 对应。
+    pub id: &'static str,
+    /// PATH 上的程序名。
+    pub program: &'static str,
+    /// `-p` 之前的旗标（如 Claude 的 `--bare`）。
+    pub prefix_args: &'static [&'static str],
+    /// `-p <request>` 之后的旗标（如 `--output-format stream-json`）。
+    pub suffix_args: &'static [&'static str],
+    /// 输出流的形状。
+    pub output: OutputFormat,
+    /// 相对 home 的 skill 目录段。
+    pub skill_subdir: &'static [&'static str],
+    /// 协议文件头（各家 harness 的 frontmatter 习惯）。
+    pub frontmatter: &'static str,
+}
+
+const PROTOCOL_FRONTMATTER: &str = "---
+name: refrain
+description: RefRain 写作台的代理协议：提案、评审与合并的规矩。为 RefRain 工作时先读本文件。
+---";
+
+/// 内置通道。新 harness（aider、codex、gemini CLI……凡是 print 型的）
+/// 在这里加一行。
+pub const CHANNELS: &[PrintChannel] = &[
+    PrintChannel {
+        id: "kimi-print",
+        program: "kimi",
+        prefix_args: &[],
+        suffix_args: &["--output-format", "stream-json"],
+        output: OutputFormat::KimiStream,
+        skill_subdir: &[".kimi-code", "skills", "refrain", "SKILL.md"],
+        frontmatter: PROTOCOL_FRONTMATTER,
+    },
+    PrintChannel {
+        id: "claude-print",
+        program: "claude",
+        prefix_args: &["--bare"],
+        suffix_args: &["--output-format", "stream-json", "--verbose"],
+        output: OutputFormat::ClaudeStream,
+        skill_subdir: &[".claude", "skills", "refrain", "SKILL.md"],
+        frontmatter: PROTOCOL_FRONTMATTER,
+    },
+    PrintChannel {
+        id: "pi-print",
+        program: "pi",
+        prefix_args: &[],
+        suffix_args: &["--mode", "json"],
+        output: OutputFormat::JsonLines,
+        skill_subdir: &[".pi", "agent", "skills", "refrain", "SKILL.md"],
+        frontmatter: PROTOCOL_FRONTMATTER,
+    },
+];
+
+/// 按 id 找通道。认不出的 id 返回 None。
+pub fn channel(id: &str) -> Option<&'static PrintChannel> {
+    CHANNELS.iter().find(|channel| channel.id == id)
+}
+
+/// 一个已探测的 print 适配器实例：通道 + 可执行文件 + 版本 + 允许继承的环境。
+pub struct PrintAdapter {
+    channel: &'static PrintChannel,
     program: PathBuf,
     version: String,
     env: Vec<(String, String)>,
 }
 
-impl KimiPrint {
-    /// Detect the CLI and read its version. Absent is None, never an error.
-    pub fn detect() -> Option<Self> {
-        let program = find_on_path("kimi")?;
-        Self::at(program)
+impl PrintAdapter {
+    /// 在 PATH 上找这个通道的程序并读版本。
+    pub fn detect(channel: &'static PrintChannel) -> Option<Self> {
+        let program = find_on_path(channel.program)?;
+        Self::at(channel, program)
     }
 
-    /// The connection the author declared in Config: probe that exact
-    /// executable, never a PATH lookup.
-    pub fn at(program: PathBuf) -> Option<Self> {
-        Self::at_with_env(program, &[])
+    pub fn at(channel: &'static PrintChannel, program: PathBuf) -> Option<Self> {
+        Self::at_with_env(channel, program, &[])
     }
 
-    pub fn at_with_env(program: PathBuf, env_allow: &[String]) -> Option<Self> {
-        let version = version_of(&program, "kimi").ok()?;
+    pub fn at_with_env(
+        channel: &'static PrintChannel,
+        program: PathBuf,
+        env_allow: &[String],
+    ) -> Option<Self> {
+        let version = version_of(&program, channel.program).ok()?;
         let program = program.canonicalize().ok()?;
         Some(Self {
+            channel,
             program,
             version,
             env: allowed_env(env_allow),
@@ -314,43 +396,49 @@ impl KimiPrint {
         &self.version
     }
 
-    /// Where Kimi Code auto-loads skills: `~/.kimi-code/skills/refrain/SKILL.md`.
-    pub fn skill_path(home: &Path) -> PathBuf {
-        home.join(".kimi-code")
-            .join("skills")
-            .join("refrain")
-            .join("SKILL.md")
-    }
-
-    /// The protocol file bytes for this harness: Kimi's frontmatter, then the
-    /// generated protocol. The text is `skill_doc()`, never a hand copy.
-    pub fn skill_bytes() -> Vec<u8> {
-        skill_bytes(
-            "---\nname: refrain\ndescription: RefRain 写作台的代理协议：提案、评审与合并的规矩。为 RefRain 工作时先读本文件。\n---",
-        )
-    }
-
-    /// Install the protocol into this harness's skill directory. Explicit
-    /// user action only — the application's one write outside the Root.
-    pub fn install_skill(home: &Path) -> io::Result<(PathBuf, String)> {
-        install_skill_at(&Self::skill_path(home), &Self::skill_bytes())
-    }
-
-    /// Whether the installed copy still says what this build would say.
-    pub fn skill_status(home: &Path) -> SkillStatus {
-        skill_status_at(&Self::skill_path(home), &Self::skill_bytes())
+    #[must_use]
+    pub fn channel(&self) -> &'static PrintChannel {
+        self.channel
     }
 }
 
-/// One parsed stream-json frame: assistant content or a meta hint.
+/// 一个通道的 skill 目录路径：home 下按注册的子目录段拼。
+pub fn channel_skill_path(home: &Path, channel: &PrintChannel) -> PathBuf {
+    let mut path = home.to_path_buf();
+    for segment in channel.skill_subdir {
+        path = path.join(segment);
+    }
+    path
+}
+
+/// 一个通道的协议文件字节：注册的 frontmatter + 生成的协议。
+pub fn channel_skill_bytes(channel: &PrintChannel) -> Vec<u8> {
+    skill_bytes(channel.frontmatter)
+}
+
+/// 一个解析后的流帧。解析器按输出形状分类，不按品牌。
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Frame {
     Assistant(String),
     SessionHint(String),
+    Refused(String),
+    Result { reply: String, usage: ProducerUsage },
     Other,
 }
 
-fn parse_frame(line: &str) -> Frame {
+/// 一行输出按通道形状解析成一帧。
+fn parse_line(channel: &PrintChannel, line: &str) -> Frame {
+    match channel.output {
+        OutputFormat::KimiStream => kimi_frame(line),
+        OutputFormat::ClaudeStream => claude_frame(line),
+        OutputFormat::JsonLines => jsonlines_frame(line),
+        OutputFormat::Plain => Frame::Assistant(line.to_string()),
+    }
+}
+
+/// kimi 风格 stream-json 帧：`role: assistant` 带整段 content，
+/// `role: meta` 带会话续接提示。
+fn kimi_frame(line: &str) -> Frame {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
         return Frame::Other;
     };
@@ -374,25 +462,152 @@ fn parse_frame(line: &str) -> Frame {
     }
 }
 
-fn drain(stream: impl Read, reply: &mut String, session: &mut Option<String>) -> io::Result<()> {
-    for line in BufReader::new(stream).lines() {
-        match parse_frame(&line?) {
-            Frame::Assistant(text) => reply.push_str(&text),
-            Frame::SessionHint(id) => *session = Some(id),
-            Frame::Other => {}
+/// Claude Code 风格 stream-json 帧：`assistant` 流式正文，收尾 `result`
+/// 带最终正文与用量，`subtype != success` 的 result 是具名拒绝。
+fn claude_frame(line: &str) -> Frame {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        return Frame::Other;
+    };
+    match value.get("type").and_then(serde_json::Value::as_str) {
+        Some("assistant") => {
+            let texts = value
+                .get("message")
+                .and_then(|message| message.get("content"))
+                .and_then(serde_json::Value::as_array)
+                .map(|parts| {
+                    parts
+                        .iter()
+                        .filter(|part| {
+                            part.get("type").and_then(serde_json::Value::as_str) == Some("text")
+                        })
+                        .filter_map(|part| part.get("text").and_then(serde_json::Value::as_str))
+                        .collect::<Vec<_>>()
+                        .join("")
+                })
+                .unwrap_or_default();
+            if texts.is_empty() {
+                Frame::Other
+            } else {
+                Frame::Assistant(texts)
+            }
         }
+        Some("result") => {
+            let subtype = value
+                .get("subtype")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            if subtype != "success" {
+                let errors = value
+                    .get("errors")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(serde_json::Value::as_str)
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    })
+                    .unwrap_or_default();
+                return Frame::Refused(format!("claude:{subtype}: {errors}"));
+            }
+            let reply = value
+                .get("result")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            // modelUsage is per-model; a dispatch may span models, so the
+            // honest total is the column sum. total_cost_usd is never read.
+            let usage = value
+                .get("modelUsage")
+                .and_then(serde_json::Value::as_object)
+                .map(|per_model| {
+                    per_model
+                        .values()
+                        .fold((0_u64, 0_u64, 0_u64, 0_u64), |acc, model| {
+                            (
+                                acc.0
+                                    + model
+                                        .get("inputTokens")
+                                        .and_then(serde_json::Value::as_u64)
+                                        .unwrap_or(0),
+                                acc.1
+                                    + model
+                                        .get("cacheReadInputTokens")
+                                        .and_then(serde_json::Value::as_u64)
+                                        .unwrap_or(0),
+                                acc.2
+                                    + model
+                                        .get("cacheCreationInputTokens")
+                                        .and_then(serde_json::Value::as_u64)
+                                        .unwrap_or(0),
+                                acc.3
+                                    + model
+                                        .get("outputTokens")
+                                        .and_then(serde_json::Value::as_u64)
+                                        .unwrap_or(0),
+                            )
+                        })
+                });
+            let usage = match usage {
+                Some((input_other, cache_read, cache_creation, output)) => {
+                    ProducerUsage::Reported {
+                        input_other,
+                        cache_read,
+                        cache_creation,
+                        output,
+                    }
+                }
+                None => ProducerUsage::Unknown,
+            };
+            Frame::Result { reply, usage }
+        }
+        _ => Frame::Other,
     }
-    Ok(())
 }
 
-impl HarnessAdapter for KimiPrint {
+/// pi 风格 JSON Lines 事件。产出只收 `text_delta`——`thinking_*` 是
+/// 思考过程，收进来会污染给作者看的正文。`session` 头带会话 id，
+/// 续接提示从那里来。
+fn jsonlines_frame(line: &str) -> Frame {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        return Frame::Other;
+    };
+    let Some(kind) = value.get("type").and_then(serde_json::Value::as_str) else {
+        return Frame::Other;
+    };
+    if kind == "session" {
+        return value
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .map_or(Frame::Other, |id| Frame::SessionHint(id.to_string()));
+    }
+    if kind != "message_update" {
+        return Frame::Other;
+    }
+    let event = value.get("assistantMessageEvent");
+    let Some(event_type) = event
+        .and_then(|e| e.get("type"))
+        .and_then(serde_json::Value::as_str)
+    else {
+        return Frame::Other;
+    };
+    if event_type == "text_delta" {
+        return event
+            .and_then(|e| e.get("delta"))
+            .and_then(serde_json::Value::as_str)
+            .map_or(Frame::Other, |delta| Frame::Assistant(delta.to_string()));
+    }
+    Frame::Other
+}
+
+impl HarnessAdapter for PrintAdapter {
     fn tier(&self) -> Tier {
         Tier::L1
     }
 
     fn probe(&self) -> Option<HarnessProbe> {
         Some(HarnessProbe {
-            id: "kimi-print".to_string(),
+            id: self.channel.id.to_string(),
             program: self.program.clone(),
             version: self.version.clone(),
             tier: Tier::L1,
@@ -410,21 +625,18 @@ impl HarnessAdapter for KimiPrint {
                 ),
             ));
         }
+        let mut args: Vec<String> = Vec::new();
+        args.extend(self.channel.prefix_args.iter().map(|arg| arg.to_string()));
+        args.push("-p".to_string());
+        args.push(spec.request_md.clone());
+        args.extend(self.channel.suffix_args.iter().map(|arg| arg.to_string()));
         let handle = process::launch(&LaunchSpec {
             program: self.program.clone(),
-            args: merged_argv(
-                &[
-                    "-p".to_string(),
-                    spec.request_md.clone(),
-                    "--output-format".to_string(),
-                    "stream-json".to_string(),
-                ],
-                spec,
-            ),
+            args: merged_argv(&args, spec),
             env: self.env.clone(),
             cwd: spec.workspace.clone(),
         })?;
-        let receipt = format!("kimi-l1:pid={}", handle.pid());
+        let receipt = format!("{}-l1:pid={}", self.channel.id, handle.pid());
         Ok(DispatchReceipt { receipt, handle })
     }
 
@@ -432,15 +644,52 @@ impl HarnessAdapter for KimiPrint {
         let DispatchReceipt { mut handle, .. } = receipt;
         let mut reply = String::new();
         let mut session = None;
+        let mut final_result: Option<(String, ProducerUsage)> = None;
+        let mut refusal: Option<io::Error> = None;
         if let Some(stdout) = handle.stdout() {
-            drain(stdout, &mut reply, &mut session)?;
+            for line in BufReader::new(stdout).lines() {
+                let line = match line {
+                    Ok(line) => line,
+                    Err(error) => {
+                        refusal = Some(error);
+                        break;
+                    }
+                };
+                match parse_line(self.channel, &line) {
+                    Frame::Assistant(text) => reply.push_str(&text),
+                    Frame::SessionHint(id) => session = Some(id),
+                    Frame::Result { reply: text, usage } => {
+                        final_result = Some((text, usage));
+                    }
+                    // The refusal is reported, but not before the producer is
+                    // ended: returning here used to leave it running with the
+                    // host believing the Run had finished, and unreaped once it
+                    // did exit. The adapter says what the producer said; ending
+                    // the process stays with the process module.
+                    Frame::Refused(reason) => {
+                        refusal = Some(io::Error::new(io::ErrorKind::InvalidData, reason));
+                        break;
+                    }
+                    Frame::Other => {}
+                }
+            }
+        }
+        if let Some(error) = refusal {
+            handle.cancel_tree()?;
+            return Err(error);
         }
         let ProcessOutcome { code, .. } = handle.wait()?;
+        let (reply_text, usage) = match final_result {
+            // The closing result carries the whole reply; assistant frames
+            // are the same words streamed (r1-cc), so the result wins.
+            Some((text, usage)) => (text, usage),
+            None => (reply, ProducerUsage::Unknown),
+        };
         Ok(ProducerOutcome {
             exit_code: code,
-            reply_text: reply,
+            reply_text,
             session_hint: session,
-            usage: ProducerUsage::Unknown,
+            usage,
         })
     }
 
@@ -454,7 +703,13 @@ impl HarnessAdapter for KimiPrint {
         let mut reply = String::new();
         let mut session = None;
         if let Some(stream) = stdout {
-            drain(stream, &mut reply, &mut session)?;
+            for line in BufReader::new(stream).lines() {
+                match parse_line(self.channel, &line?) {
+                    Frame::Assistant(text) => reply.push_str(&text),
+                    Frame::SessionHint(id) => session = Some(id),
+                    Frame::Other | Frame::Refused(_) | Frame::Result { .. } => {}
+                }
+            }
         }
         Ok(ProducerOutcome {
             exit_code: code,
@@ -472,11 +727,12 @@ mod tests {
     /// Contract tests run live only when explicitly requested and the CLI is
     /// on PATH. A developer's installed but logged-out CLI must not make the
     /// deterministic workspace suite depend on network or account state.
-    fn kimi() -> Option<KimiPrint> {
+    fn live_adapter(id: &str) -> Option<PrintAdapter> {
         if std::env::var("REFRAIN_RUN_LIVE_HARNESS").as_deref() != Ok("1") {
-            eprintln!("skipped: set REFRAIN_RUN_LIVE_HARNESS=1 for live Kimi contracts");
+            eprintln!("skipped: set REFRAIN_RUN_LIVE_HARNESS=1 for live contracts");
             return None;
         }
+        let channel = channel(id)?;
         let env_allow = std::env::var("REFRAIN_HARNESS_ENV_ALLOW")
             .ok()
             .map(|value| {
@@ -487,12 +743,19 @@ mod tests {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        find_on_path("kimi")
-            .and_then(|program| KimiPrint::at_with_env(program, &env_allow))
+        PrintAdapter::detect(channel)
+            .and_then(|adapter| {
+                PrintAdapter::at_with_env(channel, adapter.program().clone(), &env_allow)
+                    .or(Some(adapter))
+            })
             .or_else(|| {
-                eprintln!("skipped: kimi CLI not on PATH");
+                eprintln!("skipped: {} CLI not on PATH", channel.program);
                 None
             })
+    }
+
+    fn kimi() -> Option<PrintAdapter> {
+        live_adapter("kimi-print")
     }
 
     fn spec(text: &str) -> DispatchSpec {
@@ -544,7 +807,8 @@ mod tests {
     /// leaves the fixture alive for its full sleep and turns this red.
     #[test]
     fn a_refused_frame_still_ends_the_producer_process() {
-        let adapter = ClaudePrint {
+        let adapter = PrintAdapter {
+            channel: channel("claude-print").expect("registered"),
             program: fixture_program(),
             version: "fixture".to_string(),
             env: Vec::new(),
@@ -661,20 +925,17 @@ mod tests {
     #[test]
     fn frames_parse_assistant_and_session_hint() {
         assert_eq!(
-            parse_frame(r#"{"role":"assistant","content":"OK"}"#),
+            kimi_frame(r#"{"role":"assistant","content":"OK"}"#),
             Frame::Assistant("OK".to_string())
         );
         assert_eq!(
-            parse_frame(
+            kimi_frame(
                 r#"{"role":"meta","type":"session.resume_hint","session_id":"s1","content":"…"}"#
             ),
             Frame::SessionHint("s1".to_string())
         );
-        assert_eq!(parse_frame("not json"), Frame::Other);
-        assert_eq!(
-            parse_frame(r#"{"role":"user","content":"x"}"#),
-            Frame::Other
-        );
+        assert_eq!(kimi_frame("not json"), Frame::Other);
+        assert_eq!(kimi_frame(r#"{"role":"user","content":"x"}"#), Frame::Other);
     }
 
     #[test]
@@ -777,309 +1038,6 @@ mod tests {
     }
 }
 
-// ── Claude Code print mode (L1) ─────────────────────────────────────────────
-//
-// `claude --bare -p <prompt> --output-format stream-json --verbose`
-// (r1-cc, v2.1.220): frames are `system/init` → `user`/`assistant` → one
-// closing `result`. Usage comes from `modelUsage` — `result.usage` excludes
-// subagents, and `total_cost_usd` is a client-side estimate we never read
-// (INV-3). Cancellation is SIGTERM to the tree (documented exit 143).
-
-/// Claude Code print mode (L1). L2 needs the live contract tests against a
-/// logged-in binary; the frame parsing is fixture-proven here either way.
-pub struct ClaudePrint {
-    program: PathBuf,
-    version: String,
-    env: Vec<(String, String)>,
-}
-
-impl ClaudePrint {
-    pub fn detect() -> Option<Self> {
-        let program = find_on_path("claude")?;
-        Self::at(program)
-    }
-
-    pub fn at(program: PathBuf) -> Option<Self> {
-        Self::at_with_env(program, &[])
-    }
-
-    pub fn at_with_env(program: PathBuf, env_allow: &[String]) -> Option<Self> {
-        let version = version_of(&program, "claude").ok()?;
-        let program = program.canonicalize().ok()?;
-        Some(Self {
-            program,
-            version,
-            env: allowed_env(env_allow),
-        })
-    }
-
-    #[must_use]
-    pub fn program(&self) -> &PathBuf {
-        &self.program
-    }
-
-    #[must_use]
-    pub fn version(&self) -> &str {
-        &self.version
-    }
-
-    /// Where Claude Code auto-loads skills: `~/.claude/skills/refrain/SKILL.md`.
-    pub fn skill_path(home: &Path) -> PathBuf {
-        home.join(".claude")
-            .join("skills")
-            .join("refrain")
-            .join("SKILL.md")
-    }
-
-    /// The protocol file bytes for this harness: Claude's frontmatter, then
-    /// the generated protocol. The text is `skill_doc()`, never a hand copy.
-    pub fn skill_bytes() -> Vec<u8> {
-        skill_bytes(
-            "---\nname: refrain\ndescription: RefRain 写作台的代理协议：提案、评审与合并的规矩。为 RefRain 工作时先读本文件。\n---",
-        )
-    }
-
-    /// Install the protocol into this harness's skill directory. Explicit
-    /// user action only — the application's one write outside the Root.
-    pub fn install_skill(home: &Path) -> io::Result<(PathBuf, String)> {
-        install_skill_at(&Self::skill_path(home), &Self::skill_bytes())
-    }
-
-    /// Whether the installed copy still says what this build would say.
-    pub fn skill_status(home: &Path) -> SkillStatus {
-        skill_status_at(&Self::skill_path(home), &Self::skill_bytes())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ClaudeFrame {
-    Assistant(String),
-    Result { reply: String, usage: ProducerUsage },
-    Refused(String),
-    Other,
-}
-
-fn claude_frame(line: &str) -> ClaudeFrame {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
-        return ClaudeFrame::Other;
-    };
-    match value.get("type").and_then(serde_json::Value::as_str) {
-        Some("assistant") => {
-            let texts = value
-                .get("message")
-                .and_then(|message| message.get("content"))
-                .and_then(serde_json::Value::as_array)
-                .map(|parts| {
-                    parts
-                        .iter()
-                        .filter(|part| {
-                            part.get("type").and_then(serde_json::Value::as_str) == Some("text")
-                        })
-                        .filter_map(|part| part.get("text").and_then(serde_json::Value::as_str))
-                        .collect::<Vec<_>>()
-                        .join("")
-                })
-                .unwrap_or_default();
-            if texts.is_empty() {
-                ClaudeFrame::Other
-            } else {
-                ClaudeFrame::Assistant(texts)
-            }
-        }
-        Some("result") => {
-            let subtype = value
-                .get("subtype")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("");
-            if subtype != "success" {
-                let errors = value
-                    .get("errors")
-                    .and_then(serde_json::Value::as_array)
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(serde_json::Value::as_str)
-                            .collect::<Vec<_>>()
-                            .join("; ")
-                    })
-                    .unwrap_or_default();
-                return ClaudeFrame::Refused(format!("claude:{subtype}: {errors}"));
-            }
-            let reply = value
-                .get("result")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            // modelUsage is per-model; a dispatch may span models, so the
-            // honest total is the column sum. total_cost_usd is never read.
-            let usage = value
-                .get("modelUsage")
-                .and_then(serde_json::Value::as_object)
-                .map(|per_model| {
-                    per_model
-                        .values()
-                        .fold((0_u64, 0_u64, 0_u64, 0_u64), |acc, model| {
-                            (
-                                acc.0
-                                    + model
-                                        .get("inputTokens")
-                                        .and_then(serde_json::Value::as_u64)
-                                        .unwrap_or(0),
-                                acc.1
-                                    + model
-                                        .get("cacheReadInputTokens")
-                                        .and_then(serde_json::Value::as_u64)
-                                        .unwrap_or(0),
-                                acc.2
-                                    + model
-                                        .get("cacheCreationInputTokens")
-                                        .and_then(serde_json::Value::as_u64)
-                                        .unwrap_or(0),
-                                acc.3
-                                    + model
-                                        .get("outputTokens")
-                                        .and_then(serde_json::Value::as_u64)
-                                        .unwrap_or(0),
-                            )
-                        })
-                });
-            let usage = match usage {
-                Some((input_other, cache_read, cache_creation, output)) => {
-                    ProducerUsage::Reported {
-                        input_other,
-                        cache_read,
-                        cache_creation,
-                        output,
-                    }
-                }
-                None => ProducerUsage::Unknown,
-            };
-            ClaudeFrame::Result { reply, usage }
-        }
-        _ => ClaudeFrame::Other,
-    }
-}
-
-impl HarnessAdapter for ClaudePrint {
-    fn tier(&self) -> Tier {
-        Tier::L1
-    }
-
-    fn probe(&self) -> Option<HarnessProbe> {
-        Some(HarnessProbe {
-            id: "claude-print".to_string(),
-            program: self.program.clone(),
-            version: self.version.clone(),
-            tier: Tier::L1,
-        })
-    }
-
-    fn dispatch(&self, spec: &DispatchSpec) -> io::Result<DispatchReceipt> {
-        if spec.request_md.len() > ARGV_PROMPT_LIMIT {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "the frozen request is {} bytes; argv holds {} — this dispatch needs the L2 channel",
-                    spec.request_md.len(),
-                    ARGV_PROMPT_LIMIT
-                ),
-            ));
-        }
-        let handle = process::launch(&LaunchSpec {
-            program: self.program.clone(),
-            args: merged_argv(
-                &[
-                    "--bare".to_string(),
-                    "-p".to_string(),
-                    spec.request_md.clone(),
-                    "--output-format".to_string(),
-                    "stream-json".to_string(),
-                    "--verbose".to_string(),
-                ],
-                spec,
-            ),
-            env: self.env.clone(),
-            cwd: spec.workspace.clone(),
-        })?;
-        let receipt = format!("claude-l1:pid={}", handle.pid());
-        Ok(DispatchReceipt { receipt, handle })
-    }
-
-    fn observe(&self, receipt: DispatchReceipt) -> io::Result<ProducerOutcome> {
-        let DispatchReceipt { mut handle, .. } = receipt;
-        let mut reply = String::new();
-        let mut final_result: Option<(String, ProducerUsage)> = None;
-        let mut refusal: Option<io::Error> = None;
-        if let Some(stdout) = handle.stdout() {
-            for line in BufReader::new(stdout).lines() {
-                let line = match line {
-                    Ok(line) => line,
-                    Err(error) => {
-                        refusal = Some(error);
-                        break;
-                    }
-                };
-                match claude_frame(&line) {
-                    ClaudeFrame::Assistant(text) => reply.push_str(&text),
-                    ClaudeFrame::Result { reply: text, usage } => {
-                        final_result = Some((text, usage));
-                    }
-                    // The refusal is reported, but not before the producer is
-                    // ended: returning here used to leave it running with the
-                    // host believing the Run had finished, and unreaped once it
-                    // did exit. The adapter says what the producer said; ending
-                    // the process stays with the process module.
-                    ClaudeFrame::Refused(reason) => {
-                        refusal = Some(io::Error::new(io::ErrorKind::InvalidData, reason));
-                        break;
-                    }
-                    ClaudeFrame::Other => {}
-                }
-            }
-        }
-        if let Some(error) = refusal {
-            // The producer is still running and has stopped being useful, so
-            // stop the tree rather than waiting out a child that may never
-            // exit. A cancel that itself fails is reported instead of hidden.
-            handle.cancel_tree()?;
-            return Err(error);
-        }
-        let ProcessOutcome { code, .. } = handle.wait()?;
-        let (reply_text, usage) = match final_result {
-            // The closing result carries the whole reply; assistant frames
-            // are the same words streamed (r1-cc), so the result wins.
-            Some((text, usage)) => (text, usage),
-            None => (reply, ProducerUsage::Unknown),
-        };
-        Ok(ProducerOutcome {
-            exit_code: code,
-            reply_text,
-            session_hint: None,
-            usage,
-        })
-    }
-
-    fn cancel(&self, receipt: DispatchReceipt) -> io::Result<ProducerOutcome> {
-        let DispatchReceipt { mut handle, .. } = receipt;
-        let stdout = handle.stdout();
-        let ProcessOutcome { code, .. } = handle.cancel_tree()?;
-        let mut reply = String::new();
-        if let Some(stream) = stdout {
-            for line in BufReader::new(stream).lines() {
-                if let ClaudeFrame::Assistant(text) = claude_frame(&line?) {
-                    reply.push_str(&text);
-                }
-            }
-        }
-        Ok(ProducerOutcome {
-            exit_code: code,
-            reply_text: reply,
-            session_hint: None,
-            usage: ProducerUsage::Unknown,
-        })
-    }
-}
-
 #[cfg(test)]
 mod claude_tests {
     use super::*;
@@ -1089,7 +1047,7 @@ mod claude_tests {
         let frame = claude_frame(
             r#"{"type":"result","subtype":"success","uuid":"u","session_id":"s","is_error":false,"duration_ms":100,"duration_api_ms":90,"num_turns":1,"result":"<agent-result version=\"2\">ok</agent-result>","stop_reason":"end_turn","total_cost_usd":0.01,"usage":{},"modelUsage":{"claude-a":{"inputTokens":100,"outputTokens":10,"cacheReadInputTokens":40,"cacheCreationInputTokens":20},"claude-b":{"inputTokens":7,"outputTokens":3,"cacheReadInputTokens":0,"cacheCreationInputTokens":0}}}"#,
         );
-        let ClaudeFrame::Result { reply, usage } = frame else {
+        let Frame::Result { reply, usage } = frame else {
             panic!("expected a result frame");
         };
         assert!(reply.contains("<agent-result"));
@@ -1109,7 +1067,7 @@ mod claude_tests {
         let frame = claude_frame(
             r#"{"type":"assistant","uuid":"u","session_id":"s","message":{"id":"m","content":[{"type":"text","text":"克制。"},{"type":"thinking","thinking":"…"}],"model":"x","stop_reason":null},"parent_tool_use_id":null}"#,
         );
-        assert_eq!(frame, ClaudeFrame::Assistant("克制。".to_string()));
+        assert_eq!(frame, Frame::Assistant("克制。".to_string()));
     }
 
     #[test]
@@ -1119,13 +1077,16 @@ mod claude_tests {
         );
         assert_eq!(
             frame,
-            ClaudeFrame::Refused("claude:error_max_turns: hit the turn cap".to_string())
+            Frame::Refused("claude:error_max_turns: hit the turn cap".to_string())
         );
     }
 
     #[test]
     fn contract_probe_reports_path_and_version() {
-        let Some(claude) = ClaudePrint::detect() else {
+        let Some(channel) = channel("claude-print") else {
+            panic!("claude-print must be registered");
+        };
+        let Some(claude) = PrintAdapter::detect(channel) else {
             eprintln!("skipped: claude CLI not on PATH");
             return;
         };
@@ -1136,7 +1097,10 @@ mod claude_tests {
 
     #[test]
     fn contract_dispatch_and_observe_a_real_turn() {
-        let Some(claude) = ClaudePrint::detect() else {
+        let Some(channel) = channel("claude-print") else {
+            panic!("claude-print must be registered");
+        };
+        let Some(claude) = PrintAdapter::detect(channel) else {
             eprintln!("skipped: claude CLI not on PATH");
             return;
         };
@@ -1169,23 +1133,18 @@ mod skill_tests {
     }
 
     /// 安装即注册：写进 harness 的 skill 目录，内容唯一来源是 skill_doc()。
-    /// 两家 adapter 各自走一遍——目录约定与 frontmatter 是各家的知识，
+    /// 每个注册通道各自走一遍——目录约定与 frontmatter 是各家的知识，
     /// 只测一家等于把另一家当成猜测。
     #[test]
     fn install_writes_the_generated_protocol_under_each_convention() {
-        for (install, relative) in [
-            (
-                KimiPrint::install_skill as fn(&Path) -> io::Result<(PathBuf, String)>,
-                ".kimi-code/skills/refrain/SKILL.md",
-            ),
-            (
-                ClaudePrint::install_skill,
-                ".claude/skills/refrain/SKILL.md",
-            ),
-        ] {
+        for channel in CHANNELS {
             let home = home();
-            let (path, digest) = install(&home).unwrap();
-            assert_eq!(path, home.join(relative));
+            let (path, digest) = install_skill_at(
+                &channel_skill_path(&home, channel),
+                &channel_skill_bytes(channel),
+            )
+            .unwrap();
+            assert_eq!(path, channel_skill_path(&home, channel));
             let bytes = std::fs::read(&path).unwrap();
             // digest 记的就是落盘字节的 BLAKE3——Config 里的 provenance。
             assert_eq!(digest, content_hex(&bytes));
@@ -1203,18 +1162,17 @@ mod skill_tests {
     /// Stale 还活着没有。
     #[test]
     fn status_reads_the_file_none_current_stale() {
+        let channel = channel("kimi-print").expect("registered");
         let home = home();
-        assert_eq!(KimiPrint::skill_status(&home), SkillStatus::None);
+        let path = channel_skill_path(&home, channel);
+        let bytes = channel_skill_bytes(channel);
+        assert_eq!(skill_status_at(&path, &bytes), SkillStatus::None);
 
-        let (_path, _digest) = KimiPrint::install_skill(&home).unwrap();
-        assert_eq!(KimiPrint::skill_status(&home), SkillStatus::Current);
+        let (_path, _digest) = install_skill_at(&path, &bytes).unwrap();
+        assert_eq!(skill_status_at(&path, &bytes), SkillStatus::Current);
 
-        std::fs::write(
-            KimiPrint::skill_path(&home),
-            "an older protocol, or bytes someone else changed",
-        )
-        .unwrap();
-        assert_eq!(KimiPrint::skill_status(&home), SkillStatus::Stale);
+        std::fs::write(&path, "an older protocol, or bytes someone else changed").unwrap();
+        assert_eq!(skill_status_at(&path, &bytes), SkillStatus::Stale);
     }
 
     /// 合并规则：连接的 argv 在前，agent 的在后——重复旗标时更具体的
@@ -1254,6 +1212,73 @@ mod skill_tests {
         assert!(
             check_agent_argv(&["--model".to_string(), "k2".to_string()]).is_ok(),
             "普通旗标不该被误伤"
+        );
+    }
+}
+
+#[cfg(test)]
+mod jsonlines_tests {
+    use super::*;
+
+    fn pi_channel() -> &'static PrintChannel {
+        channel("pi-print").expect("registered")
+    }
+
+    #[test]
+    fn text_deltas_accumulate_and_thinking_is_skipped() {
+        let channel = pi_channel();
+        assert_eq!(
+            parse_line(
+                channel,
+                r#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"你好"}}"#
+            ),
+            Frame::Assistant("你好".to_string())
+        );
+        // 思考过程不是产出——收进来会污染给作者看的正文。
+        assert_eq!(
+            parse_line(
+                channel,
+                r#"{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"The user"}}"#
+            ),
+            Frame::Other
+        );
+        // 用户消息、工具帧、非 JSON 行都不是产出。
+        assert_eq!(
+            parse_line(
+                channel,
+                r#"{"type":"message_start","message":{"role":"user"}}"#
+            ),
+            Frame::Other
+        );
+        assert_eq!(parse_line(channel, "not json"), Frame::Other);
+    }
+
+    #[test]
+    fn the_session_header_carries_the_resume_hint() {
+        let channel = pi_channel();
+        assert_eq!(
+            parse_line(
+                channel,
+                r#"{"type":"session","version":3,"id":"s1","cwd":"/x"}"#
+            ),
+            Frame::SessionHint("s1".to_string())
+        );
+    }
+
+    #[test]
+    fn plain_channels_treat_every_line_as_output() {
+        let plain = PrintChannel {
+            id: "plain-test",
+            program: "echo",
+            prefix_args: &[],
+            suffix_args: &[],
+            output: OutputFormat::Plain,
+            skill_subdir: &["skills", "refrain", "SKILL.md"],
+            frontmatter: "---\n",
+        };
+        assert_eq!(
+            parse_line(&plain, "hello world"),
+            Frame::Assistant("hello world".to_string())
         );
     }
 }

@@ -182,8 +182,8 @@ for (const [literal, meaning] of nativeBuildRequirements) {
 requireLiteral(
   runtimeObjectFile,
   runtimeObject,
-  "LIBRARY runtimeobject.dll",
-  "name the OS library",
+  "LIBRARY combase.dll",
+  "name the library that really exports the symbol — RuntimeObject.dll is only a forwarder and is absent on trimmed Windows installs",
 );
 requireLiteral(
   runtimeObjectFile,

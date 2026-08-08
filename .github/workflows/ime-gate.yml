@@ -11,7 +11,7 @@ on:
       - "crates/refrain-app/**"
       - "crates/refrain-core/**"
       - "e2e/ime/**"
-      - "patches/@native-sdk%2Fcli@0.7.2.patch"
+      - "patches/@native-sdk%2Fcli@0.8.1.patch"
       - "scripts/native-document-evidence-identity.ts"
 
 concurrency:

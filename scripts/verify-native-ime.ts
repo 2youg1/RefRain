@@ -9,7 +9,7 @@ interface Contract {
 
 const contracts: readonly Contract[] = [
   {
-    path: "patches/@native-sdk%2Fcli@0.7.2.patch",
+    path: "patches/@native-sdk%2Fcli@0.8.1.patch",
     required: [
       "diff --git a/src/automation/snapshot.zig b/src/automation/snapshot.zig",
       "text_caret_bounds",

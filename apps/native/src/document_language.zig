@@ -46,8 +46,12 @@ pub fn syntaxOf(wire_code: u32) Syntax {
 /// 判据是「作者在这里写的是代码还是散文」，不是「有没有语法上色」：
 /// Markdown 里可以有围栏代码，但整份稿子仍按中文排版规则断行；而一份
 /// `.toml` 即使没有上色，也不该被压半字或套用禁则。
+///
+/// 判据与 Rust 的 `DocumentFormat::is_code` 同一处权威：Markdown 与 LaTeX
+/// 是写作格式（正文夹在源码里），其余按代码排。两侧漂开的后果是同一份
+/// 稿子在字体与断行上各说各话。
 pub fn isCode(wire_code: u32) bool {
-    return wire_code != 0;
+    return wire_code != 0 and wire_code != 1;
 }
 
 test "the wire numbers match DocumentFormat::wire_code one for one" {
@@ -77,10 +81,12 @@ test "an unknown number falls back instead of indexing past the table" {
 }
 
 test "prose and code are separated by the same number, not by whether it colours" {
-    // Markdown 是唯一的散文格式：它走中文断行规矩。其余都按代码排版，
-    // 包括 SDK 上不了色的那三门——上色与排版是两个问题。
+    // 散文是 Markdown 与 LaTeX 两种：LaTeX 虽是源码模样，但作者写的是
+    // 正文（中文注释与公式文字按散文排）。其余都按代码排版，包括 SDK
+    // 上不了色的那三门——上色与排版是两个问题。与 Rust 的
+    // `DocumentFormat::is_code` 同一处权威。
     try std.testing.expect(!isCode(0));
-    try std.testing.expect(isCode(1));
+    try std.testing.expect(!isCode(1));
     try std.testing.expect(isCode(3));
     try std.testing.expect(isCode(10));
 }

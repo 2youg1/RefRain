@@ -2,14 +2,15 @@
   "schemaVersion": 3,
   "magic": "RFRN",
   "service": "refrain.host",
-  "protocolVersion": 3,
+  "protocolVersion": 4,
   "apiVersion": 1,
   "capabilityMask": 1,
   "layout": {
     "projectionBytes": 40960,
     "eventTextBytes": 12000,
     "defaultViewportBlocks": 96,
-    "virtualBlockHeight": 36
+    "virtualBlockHeight": 36,
+    "anchorRangeCapacity": 512
   },
   "hostRecord": {
     "scalars": [
@@ -102,6 +103,10 @@
     {
       "name": "save",
       "code": 13
+    },
+    {
+      "name": "revertTo",
+      "code": 14
     }
   ],
   "caretDirections": [

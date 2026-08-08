@@ -55,19 +55,22 @@ Each one has a gate that fails the build when it is broken:
 ### Writing
 
 The whole manuscript is one editing surface, so a selection crosses paragraphs
-the way you expect. About sixty blocks are mounted at any moment out of a
-possible hundred thousand, and frame scheduling follows your display's refresh
-rate.
+the way you expect. A bounded 96-block projection is mounted at any moment out
+of a possible hundred thousand, and frame scheduling follows your display's
+refresh rate.
 
-For CJK authors specifically: IME composition is never interrupted, saving waits
-for `compositionend`, and three font slots (Latin, Chinese, Japanese) resolve
-shared Han characters by priority rather than by accident.
+For CJK authors specifically: IME composition is never interrupted, and saving
+waits for `compositionend`. Three typefaces are bundled and registered with the
+renderer — Noto Sans SC for the manuscript, Antic Didone for Latin, Zen Kaku
+Gothic New for Japanese. One honest limit: the Native SDK's typography has a
+global text face and a global mono face and nothing per-script yet, so the
+manuscript is drawn in Noto Sans SC, which covers Han and kana in one face.
 
-Typography is under your control — weight, letter and word spacing, measure,
-indent, paragraph spacing, alignment, baseline grid, display scale — with
-presets for Chinese, Japanese and English, and room for your own. Fenced code is
-syntax-highlighted across thirty-four languages and six palettes, all embedded
-at build time so that highlighting never reaches the network.
+Typography settings persist per author. Text size, line height and measure are
+adjustable from the settings panel today; the wider set (indent, alignment,
+baseline grid and friends) is stored and carried, but the native renderer does
+not consume it yet — a known boundary of the rewrite, stated here rather than
+silently dropped.
 
 Editing is reversible. Ctrl+Z undoes the last step, and a history panel beside
 the manuscript can roll back to any earlier step — the record survives restarts.
@@ -87,14 +90,17 @@ unit overflows rather than being cut, and the breaks come out identical on every
 platform because the algorithm is one Rust module rather than three browser
 engines.
 
-**Where the rewrite stands.** RefRain is moving onto a native rendering path.
+**Where the rewrite stands.** RefRain has moved onto a native rendering path.
 The domain — manuscript bytes, block identity, verdicts, orchestration, PDF text
 extraction — carried over whole and is covered by tests. The screens are being
-rebuilt one at a time, so the features released in v0.2.4 (in-place Markdown
-rendering, tables, diagrams, PDF reading, annotations, search results, history)
-are **temporarily without a surface**: their rules and dependencies are still
-here, and each returns as its native screen lands. Nothing was dropped from the
-product; what changed is what draws it.
+rebuilt one at a time. Back on a native surface: editing with undo, the history
+panel with rollback to any step, the mailbox (pin, discard, countermand),
+annotations for reading, search hits that jump to the exact block, the
+work/cosplay persona switch, and the bundled fonts. Still without a native
+surface: in-place Markdown rendering, tables, diagrams, PDF reading, writing
+annotations, typography the renderer consumes, and multi-round relay
+orchestration. Their rules and dependencies are still here, and each returns as
+its screen lands.
 
 ### Working with agents
 
@@ -130,17 +136,26 @@ Measured on the development machine, not estimated:
 
 ## Install
 
-RefRain has not been released yet. The application builds and runs for
-Windows, macOS and Linux from one manifest, but no platform has been through a
-real installer run, so nothing is offered for download.
+Releases are published on
+[GitHub](https://github.com/kaile9/RefRain/releases). The current release is
+v0.2.5. The next one, v0.3.0, is the first build with the native surface and
+will be offered for Windows once the author has signed it off on his own
+machine.
 
-Every measurement in this repository comes from Linux. Nothing will be claimed
-for a platform until it has been measured there — in particular, the Windows
-and macOS input-method paths are written but not yet signed off on real hardware.
+Most measurements in this repository come from Linux, and nothing is claimed
+for a platform until it has been measured there. The exception is now the
+Windows build itself: it compiles and passes the full test suite on real
+Windows hardware. The Windows and macOS input-method paths are written but not
+yet signed off.
 
 ### Building from source
 
-Requires the Rust toolchain and [Bun](https://bun.sh):
+Requires the Rust toolchain, [Bun](https://bun.sh), and Node.js ≥ 22.15 for the
+Native toolchain. On Windows, add the GNU target (`rustup target add
+x86_64-pc-windows-gnu`) and keep a `dlltool` on `PATH` — CI uses Zig's. The
+RuntimeObject import is bound to `combase.dll`, the library that really exports
+it; the forwarder DLL of the same name family is absent on some trimmed Windows
+installs.
 
 ```sh
 bun install
@@ -174,16 +189,13 @@ TMPDIR="$PWD/.tmp" cargo test --workspace --all-targets
 | **Core** | [Rust](https://rust-lang.org) — the domain, storage, and agent orchestration |
 | **Application shell** | [Native SDK](https://native-sdk.dev) — native rendering. No WebView, and no JavaScript runtime in the shipped binary. |
 | **Surface** | `.native` markup, a restricted [TypeScript](https://www.typescriptlang.org) subset for interface state, and [Zig](https://ziglang.org) for platform events and drawing |
-| **Editor kernel** | Framework-free direct DOM; Rust owns the canonical bytes |
 | **Storage** | [SQLite](https://sqlite.org) via [rusqlite](https://github.com/rusqlite/rusqlite); FTS5 `unicode61` with an application-level bigram tokeniser |
 | **Identity** | [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) digests, [UUID](https://github.com/uuid-rs/uuid) v7 |
 | **Bindings** | [Serde](https://serde.rs) and [Specta](https://github.com/specta-rs/specta), which generates the TypeScript types |
 | **Line breaking** | `refrain_core::typeset` — RefRain's own, because no engine breaks Chinese correctly (see below) |
 | **Highlighting** | The Native SDK's own `code` widget — 17 grammars compiled into the binary, so nothing is loaded at runtime and nothing reaches the network |
-| **Diagrams** | [nomnoml](https://github.com/skanaar/nomnoml) at 26 KB gzipped, with a translator that accepts Mermaid flowchart syntax |
 | **Imported sources** | Text is extracted by `lopdf` in Rust — no renderer, no browser engine. Each page's text carries a `<!-- p.N -->` anchor, so a quotation can name the page it came from and a reader can return to the original. |
-| **Build tooling** | [ScriptC](https://github.com/vercel-labs/scriptc) compiles the gates and release scripts to native binaries; [Bun](https://bun.sh) runs the rest. Neither ships. |
-| **Build and release** | [Bun](https://bun.sh) and [Node.js](https://nodejs.org), build-time only; [ScriptC](https://github.com/vercel-labs/scriptc) compiles the release policy into a native executable |
+| **Build tooling** | [ScriptC](https://github.com/vercel-labs/scriptc) compiles the tier A gates and the release program to native binaries; [Bun](https://bun.sh) and [Node.js](https://nodejs.org) run the rest. Build-time only — nothing of them ships. |
 
 Why the search index uses bigrams rather than trigrams or a tokeniser — with the
 measurements that decided it — is in
@@ -198,10 +210,8 @@ measurements that decided it — is in
 The bundled typefaces, all under the
 [SIL Open Font License 1.1](https://openfontlicense.org):
 
-- **[Noto Sans SC](https://fonts.google.com/noto/specimen/Noto+Sans+SC)** — 20,976 Han characters plus kana, the reason a Chinese manuscript shows no tofu
-- **[Zen Kaku Gothic New](https://fonts.google.com/specimen/Zen+Kaku+Gothic+New)** — 6,682 Han characters, for Japanese text
-- **[Antic Didone](https://fonts.google.com/specimen/Antic+Didone)**
-- **[Jost](https://indestructibletype.com/Jost.html)**
-- **[Courier Prime](https://quoteunquoteapps.com/courierprime/)**
+- **[Noto Sans SC](https://fonts.google.com/noto/specimen/Noto+Sans+SC)** — 20,976 Han characters plus kana, the manuscript face and the reason a Chinese manuscript shows no tofu
+- **[Zen Kaku Gothic New](https://fonts.google.com/specimen/Zen+Kaku+Gothic+New)** — 6,682 Han characters, the Japanese slot
+- **[Antic Didone](https://fonts.google.com/specimen/Antic+Didone)** — the Latin serif slot
 
 Full third-party terms are in [LICENSE-THIRD-PARTY](LICENSE-THIRD-PARTY).

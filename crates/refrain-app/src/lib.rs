@@ -22,6 +22,7 @@ pub mod document;
 pub mod harness;
 pub mod history;
 pub mod journal;
+pub mod mailbox;
 pub mod native;
 pub mod native_document;
 pub mod review;
@@ -29,9 +30,9 @@ pub mod scope;
 pub mod upstream;
 
 pub use application::{
-    Application, CollectReport, DecisionReport, ProjectBlocks, ProjectDocuments, ProjectEntry,
-    ProjectImport, ProjectInput, ProjectOpened, ProjectOutput, ProjectPage, ProjectPlatform,
-    ProjectProposals, ProposalView, RootKind, SearchPrecision,
+    Application, CollectReport, DecisionReport, DocumentBlockRow, DocumentBlocks, ProjectBlocks,
+    ProjectDocuments, ProjectEntry, ProjectImport, ProjectInput, ProjectOpened, ProjectOutput,
+    ProjectPage, ProjectPlatform, ProjectProposals, ProposalView, RootKind, SearchPrecision,
 };
 pub use cancel::{cancel_and_read_back, progress_of, refuse_cancel_without_handle};
 pub use collect::{Collected, collect_attempt};
@@ -45,6 +46,7 @@ pub use journal::{
     task_row,
 };
 pub use native::{NativeHealth, NativeHealthError, native_health};
+pub use native_document::{AnchorKind, AnchorSource, AnchoredRange};
 pub use refrain_store::config::{Config, ConfigChange};
 pub use review::rebuild_proposal;
 pub use scope::{ScopeLocation, before_sections, locate_scope};

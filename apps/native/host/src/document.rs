@@ -1,17 +1,18 @@
 use crate::protocol::{
     ACTION_APPLY_INPUT, ACTION_HEALTH, ACTION_OBTAIN_PROJECTION, ACTION_OPEN_MANUSCRIPT,
-    ACTION_PROJECT, API_VERSION, CAPABILITY_MASK, CARET_END, CARET_EXTEND_FLAG, CARET_NEXT,
-    CARET_NEXT_WORD, CARET_PREVIOUS, CARET_PREVIOUS_WORD, CARET_START, DEFAULT_VIEWPORT_BLOCKS,
-    ERROR_DOMAIN_REFUSAL, ERROR_HOST_FAILURE, ERROR_INVALID_REQUEST, ERROR_PROTOCOL_MISMATCH,
-    ERROR_STALE_REVISION, ERROR_UNKNOWN_SESSION, INPUT_CANCEL_COMPOSITION, INPUT_CLEAR,
-    INPUT_COMMIT_COMPOSITION, INPUT_DELETE_BACKWARD, INPUT_DELETE_FORWARD,
-    INPUT_DELETE_WORD_BACKWARD, INPUT_DELETE_WORD_FORWARD, INPUT_INSERT_TEXT, INPUT_MOVE_CARET,
-    INPUT_SAVE, INPUT_SET_COMPOSITION, INPUT_SET_SELECTION, INPUT_UNDO, PROJECTION_BYTES,
-    PROTOCOL_VERSION, RefrainNativeRequest, RefrainNativeResponse, VIRTUAL_BLOCK_HEIGHT,
+    ACTION_PROJECT, ANCHOR_RANGE_CAPACITY, API_VERSION, AnchorRangeWire, CAPABILITY_MASK,
+    CARET_END, CARET_EXTEND_FLAG, CARET_NEXT, CARET_NEXT_WORD, CARET_PREVIOUS, CARET_PREVIOUS_WORD,
+    CARET_START, DEFAULT_VIEWPORT_BLOCKS, ERROR_DOMAIN_REFUSAL, ERROR_HOST_FAILURE,
+    ERROR_INVALID_REQUEST, ERROR_PROTOCOL_MISMATCH, ERROR_STALE_REVISION, ERROR_UNKNOWN_SESSION,
+    INPUT_CANCEL_COMPOSITION, INPUT_CLEAR, INPUT_COMMIT_COMPOSITION, INPUT_DELETE_BACKWARD,
+    INPUT_DELETE_FORWARD, INPUT_DELETE_WORD_BACKWARD, INPUT_DELETE_WORD_FORWARD, INPUT_INSERT_TEXT,
+    INPUT_MOVE_CARET, INPUT_REVERT_TO, INPUT_SAVE, INPUT_SET_COMPOSITION, INPUT_SET_SELECTION,
+    INPUT_UNDO, PROJECTION_BYTES, PROTOCOL_VERSION, RefrainNativeRequest, RefrainNativeResponse,
+    VIRTUAL_BLOCK_HEIGHT,
 };
 use refrain_app::native_document::{
-    ByteSelection, CaretDirection, DocumentAnchor, DocumentError, DocumentInput, DocumentOpen,
-    DocumentProjection, DocumentSurface, DocumentViewport,
+    AnchoredRange, ByteSelection, CaretDirection, DocumentAnchor, DocumentError, DocumentInput,
+    DocumentOpen, DocumentProjection, DocumentSurface, DocumentViewport,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -34,6 +35,12 @@ struct Session {
     /// the text they index — the response borrows both, so they must be
     /// replaced together on every projection.
     line_starts: Vec<u32>,
+    /// 锚定区间（窗口坐标）的后备存储：与 line_starts 同一条 lent 纪律——
+    /// 响应借指针，所有权在会话，每次投影整批替换。
+    anchor_ranges: Vec<AnchorRangeWire>,
+    /// 这份文档属于哪个项目的哪一份（root_id + 相对路径）。只有从项目里
+    /// 打开的文档有：保存后要把动作链同步进那个项目的 text_actions。
+    project: Option<(String, String)>,
 }
 
 #[derive(Default)]
@@ -56,6 +63,16 @@ impl From<DocumentError> for DispatchError {
 }
 
 pub fn dispatch(request: RefrainNativeRequest, text: &[u8]) -> RefrainNativeResponse {
+    dispatch_with(request, text, &HarnessOverrides::from_env())
+}
+
+/// `dispatch` 的身体，覆盖来源显式传入：生产从环境读，测试直接构造——
+/// 「测试能不能打开夹具」因此不靠进程环境这种跨测试共享的状态。
+fn dispatch_with(
+    request: RefrainNativeRequest,
+    text: &[u8],
+    harness: &HarnessOverrides,
+) -> RefrainNativeResponse {
     if request.protocol_version != PROTOCOL_VERSION {
         return RefrainNativeResponse::empty(ERROR_PROTOCOL_MISMATCH, request.action);
     }
@@ -71,7 +88,7 @@ pub fn dispatch(request: RefrainNativeRequest, text: &[u8]) -> RefrainNativeResp
         return RefrainNativeResponse::empty(ERROR_HOST_FAILURE, request.action);
     };
     if request.action == ACTION_OPEN_MANUSCRIPT {
-        return open_manuscript(&mut sessions, request, text);
+        return open_manuscript(&mut sessions, request, text, harness);
     }
     let Some(session) = sessions.documents.get_mut(&request.session) else {
         return RefrainNativeResponse::empty(ERROR_UNKNOWN_SESSION, request.action);
@@ -90,8 +107,24 @@ pub fn dispatch(request: RefrainNativeRequest, text: &[u8]) -> RefrainNativeResp
         let result = input_of(&request, text)
             .and_then(|input| session.document.apply(input).map_err(Into::into));
         match result {
-            Ok(())
-            | Err(DispatchError::Domain(DocumentError::Text(
+            Ok(()) => {
+                // 保存成功才把动作链同步进项目的 text_actions：历史表是持久
+                // 视图，与状态文件同一生灭。同步失败按 host 失败报——字节
+                // 已落盘，下一次保存会修复视图（record/sync_chain 幂等）。
+                if request.input == INPUT_SAVE
+                    && let Some((root_id, relative)) = &session.project
+                    && crate::project::native_saved(root_id, relative).is_err()
+                {
+                    return projection_response(
+                        request.session,
+                        request.action,
+                        session,
+                        &request,
+                        ERROR_HOST_FAILURE,
+                    );
+                }
+            }
+            Err(DispatchError::Domain(DocumentError::Text(
                 refrain_core::TextRefusal::NothingChanged,
             ))) => {}
             Err(DispatchError::InvalidRequest) => {
@@ -129,9 +162,10 @@ fn open_manuscript(
     sessions: &mut Sessions,
     request: RefrainNativeRequest,
     text: &[u8],
+    harness: &HarnessOverrides,
 ) -> RefrainNativeResponse {
-    let source = match requested_document_open(text, &HarnessOverrides::from_env()) {
-        Ok(source) => source,
+    let (source, project) = match requested_document_open(text, harness) {
+        Ok(resolved) => resolved,
         Err(status) => return RefrainNativeResponse::empty(status, request.action),
     };
     let Ok(document) = DocumentSurface::open(source) else {
@@ -145,6 +179,8 @@ fn open_manuscript(
         document,
         projection: String::new(),
         line_starts: Vec::new(),
+        anchor_ranges: Vec::new(),
+        project,
     });
     projection_response(session, request.action, entry, &request, 0)
 }
@@ -180,6 +216,13 @@ fn input_of(request: &RefrainNativeRequest, bytes: &[u8]) -> Result<DocumentInpu
         INPUT_COMMIT_COMPOSITION => DocumentInput::CommitComposition,
         INPUT_CANCEL_COMPOSITION => DocumentInput::CancelComposition,
         INPUT_UNDO => DocumentInput::Undo,
+        // 回档带的是历史面板那一行的动作 id：借已有的文本指针过河，不为它
+        // 加协议字段。id 解析不出是请求形状错误，不是领域拒绝。
+        INPUT_REVERT_TO => DocumentInput::RevertTo {
+            action: text(request, bytes)?
+                .parse()
+                .map_err(|_| DispatchError::InvalidRequest)?,
+        },
         INPUT_SAVE => DocumentInput::Save,
         _ => return Err(DispatchError::InvalidRequest),
     })
@@ -193,7 +236,10 @@ fn input_of(request: &RefrainNativeRequest, bytes: &[u8]) -> Result<DocumentInpu
 /// [`HarnessOverrides::from_env`]. The scale fixture is reachable only through
 /// `REFRAIN_NATIVE_SCALE_FIXTURE`, so a production launch can no longer open
 /// 100,000 synthetic blocks by default — it refuses instead.
-fn requested_document_open(text: &[u8], harness: &HarnessOverrides) -> Result<DocumentOpen, u32> {
+fn requested_document_open(
+    text: &[u8],
+    harness: &HarnessOverrides,
+) -> Result<(DocumentOpen, Option<(String, String)>), u32> {
     if !text.is_empty() {
         // `root_id\nrelative/path.md`. Two lines rather than a struct because
         // this is the only variable-length request payload the open action
@@ -203,23 +249,26 @@ fn requested_document_open(text: &[u8], harness: &HarnessOverrides) -> Result<Do
         let path =
             crate::project::document_file(root_id, relative).map_err(|_| ERROR_DOMAIN_REFUSAL)?;
         let state_path = path.with_extension("refrain-state.json");
-        return Ok(DocumentOpen::Persistent { path, state_path });
+        let project = (root_id.to_owned(), relative.to_owned());
+        return Ok((DocumentOpen::Persistent { path, state_path }, Some(project)));
     }
     if let Some(path) = harness.document_path.clone() {
         let state_path = harness
             .state_path
             .clone()
             .unwrap_or_else(|| path.with_extension("refrain-state.json"));
-        return Ok(DocumentOpen::Persistent { path, state_path });
+        return Ok((DocumentOpen::Persistent { path, state_path }, None));
     }
     if harness.scale_fixture {
-        return Ok(DocumentOpen::ScaleFixture);
+        return Ok((DocumentOpen::ScaleFixture, None));
     }
     Err(ERROR_INVALID_REQUEST)
 }
 
 /// The three launch overrides the performance and automation harnesses use.
-/// Production reads them once per open; tests construct them directly.
+/// Production resolves them from the environment inside `dispatch`; tests
+/// construct them directly so a fixture open never depends on process state
+/// a sibling test could also see.
 struct HarnessOverrides {
     document_path: Option<PathBuf>,
     state_path: Option<PathBuf>,
@@ -270,42 +319,99 @@ fn projection_response(
     let Ok(projection) = session.document.project(viewport) else {
         return RefrainNativeResponse::empty(ERROR_HOST_FAILURE, action);
     };
+    let anchor_ranges = anchor_ranges_for(session, &projection);
     fill_projection(
         session_id,
         action,
         status,
         projection,
-        &mut session.projection,
-        &mut session.line_starts,
+        anchor_ranges,
+        session,
     )
 }
 
-/// Store the projected text in `owner` and answer with a response that borrows it.
+/// 把这份文档的锚定来源解析成窗口坐标的区间表。
+///
+/// 来源在项目（批注、待裁决提案），解析在表面（块身份 → 当前字节）——
+/// 桥只做这一手传递，两边都不必知道对方的内部结构。没有项目的会话
+/// （夹具、裸字节）与取不到项目状态的时刻都回空表：印点是投影的修饰，
+/// 不该让一次存储失败变成一次投影失败。
+fn anchor_ranges_for(session: &Session, projection: &DocumentProjection) -> Vec<AnchorRangeWire> {
+    let Some((root_id, relative)) = &session.project else {
+        return Vec::new();
+    };
+    let Ok(application) = crate::project::application() else {
+        return Vec::new();
+    };
+    let Ok(sources) = application.native_anchor_sources(root_id, relative) else {
+        return Vec::new();
+    };
+    window_ranges(
+        session.document.anchored_ranges(&sources),
+        projection.window_start,
+        projection.text.len(),
+    )
+}
+
+/// 文档坐标 → 窗口坐标：相交的钳进窗口，不相交的丢弃。容量是协议上界
+/// （`ANCHOR_RANGE_CAPACITY`），到它的路上先按窗口过滤，实践中到不了。
+fn window_ranges(
+    ranges: Vec<AnchoredRange>,
+    window_start: usize,
+    window_len: usize,
+) -> Vec<AnchorRangeWire> {
+    let window_end = window_start.saturating_add(window_len);
+    let mut output = Vec::new();
+    for range in ranges {
+        let (start, end) = (range.start as usize, range.end as usize);
+        if end <= window_start || start >= window_end {
+            continue;
+        }
+        if output.len() == ANCHOR_RANGE_CAPACITY {
+            break;
+        }
+        output.push(AnchorRangeWire {
+            start: start.saturating_sub(window_start) as u32,
+            end: end.min(window_end).saturating_sub(window_start) as u32,
+            kind: range.kind as u32,
+            id: range.id,
+        });
+    }
+    output
+}
+
+/// Store the projected text and ranges in the session and answer with a
+/// response that borrows them.
 fn fill_projection(
-    session: u64,
+    session_id: u64,
     action: u16,
     status: u32,
     projection: DocumentProjection,
-    owner: &mut String,
-    line_owner: &mut Vec<u32>,
+    anchor_ranges: Vec<AnchorRangeWire>,
+    session: &mut Session,
 ) -> RefrainNativeResponse {
-    *owner = projection.text;
-    line_owner.clear();
-    line_owner.extend(projection.line_starts.iter().map(|start| *start as u32));
+    session.projection = projection.text;
+    session.line_starts.clear();
+    session
+        .line_starts
+        .extend(projection.line_starts.iter().map(|start| *start as u32));
+    session.anchor_ranges = anchor_ranges;
     let mut response = RefrainNativeResponse::empty(status, action);
     response.api_version = API_VERSION;
     response.capabilities = CAPABILITY_MASK;
-    response.session = session;
+    response.session = session_id;
     response.revision = projection.revision;
     response.total_bytes = projection.total_bytes as u64;
     response.total_blocks = projection.total_blocks as u64;
     response.window_start = projection.window_start as u64;
     response.first_block = projection.first_block as u64;
     response.block_count = projection.block_count as u32;
-    response.text_len = owner.len() as u32;
-    response.text = owner.as_ptr();
-    response.line_start_count = line_owner.len() as u32;
-    response.line_starts = line_owner.as_ptr();
+    response.text_len = session.projection.len() as u32;
+    response.text = session.projection.as_ptr();
+    response.line_start_count = session.line_starts.len() as u32;
+    response.line_starts = session.line_starts.as_ptr();
+    response.anchor_range_count = session.anchor_ranges.len() as u32;
+    response.anchor_ranges = session.anchor_ranges.as_ptr();
     response.document_format = projection.format.wire_code();
     response.selection_anchor = projection.selection.start as u64;
     response.selection_focus = projection.selection.end as u64;
@@ -378,16 +484,26 @@ mod tests {
         }
     }
 
+    /// 测试的打开源是显式给的规模夹具，不走进程环境——环境是跨测试共享的
+    /// 状态，靠它打开的文件会让「没有来源必须拒绝」那条测试的断言失效。
+    fn fixture_harness() -> HarnessOverrides {
+        HarnessOverrides {
+            document_path: None,
+            state_path: None,
+            scale_fixture: true,
+        }
+    }
+
     /// Dispatch the way the C ABI entry point does: request plus its bytes.
     fn send(request: RefrainNativeRequest) -> RefrainNativeResponse {
-        dispatch(request, &[])
+        dispatch_with(request, &[], &fixture_harness())
     }
 
     /// Dispatch one request whose text is borrowed from `bytes`.
     fn send_text(mut request: RefrainNativeRequest, bytes: &[u8]) -> RefrainNativeResponse {
         request.text_len = bytes.len() as u32;
         request.text = bytes.as_ptr();
-        dispatch(request, bytes)
+        dispatch_with(request, bytes, &fixture_harness())
     }
 
     fn apply(session: u64, revision: u64, input: u16) -> RefrainNativeRequest {
@@ -522,7 +638,76 @@ mod tests {
     fn abi_layout_is_fixed_for_c_and_zig_consumers() {
         assert_eq!(std::mem::size_of::<RefrainNativeRequest>(), 96);
         assert_eq!(std::mem::align_of::<RefrainNativeRequest>(), 8);
-        assert_eq!(std::mem::size_of::<RefrainNativeResponse>(), 152);
+        assert_eq!(std::mem::size_of::<RefrainNativeResponse>(), 168);
         assert_eq!(std::mem::align_of::<RefrainNativeResponse>(), 8);
+        // 一条区间恰好 48 字节且无填充：坐标三元组 + 36 字节身份，
+        // 线上的条目与它逐字节同形。
+        assert_eq!(std::mem::size_of::<AnchorRangeWire>(), 48);
+        assert_eq!(std::mem::align_of::<AnchorRangeWire>(), 4);
+    }
+
+    #[test]
+    fn anchor_ranges_clamp_to_the_projection_window() {
+        use refrain_app::native_document::AnchorKind;
+        let id = |byte: u8| [byte; 36];
+        let ranges = vec![
+            // 窗口内：原样平移。
+            AnchoredRange {
+                start: 110,
+                end: 120,
+                kind: AnchorKind::Highlight,
+                id: id(b'a'),
+            },
+            // 跨窗口左缘：钳到 0。
+            AnchoredRange {
+                start: 90,
+                end: 105,
+                kind: AnchorKind::Comment,
+                id: id(b'b'),
+            },
+            // 跨窗口右缘：钳到窗口末尾。
+            AnchoredRange {
+                start: 195,
+                end: 300,
+                kind: AnchorKind::Proposal,
+                id: id(b'c'),
+            },
+            // 不相交：丢弃。
+            AnchoredRange {
+                start: 400,
+                end: 500,
+                kind: AnchorKind::Highlight,
+                id: id(b'd'),
+            },
+        ];
+        let windowed = window_ranges(ranges, 100, 100);
+        assert_eq!(windowed.len(), 3);
+        assert_eq!(
+            (
+                windowed[0].start,
+                windowed[0].end,
+                windowed[0].kind,
+                windowed[0].id
+            ),
+            (10, 20, 1, id(b'a'))
+        );
+        assert_eq!(
+            (
+                windowed[1].start,
+                windowed[1].end,
+                windowed[1].kind,
+                windowed[1].id
+            ),
+            (0, 5, 2, id(b'b'))
+        );
+        assert_eq!(
+            (
+                windowed[2].start,
+                windowed[2].end,
+                windowed[2].kind,
+                windowed[2].id
+            ),
+            (95, 100, 3, id(b'c'))
+        );
     }
 }

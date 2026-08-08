@@ -120,18 +120,88 @@ impl SourceSnapshot {
 }
 
 /// Persistent block identity supplied when a source snapshot is opened.
+///
+/// Two shapes, one vocabulary: an opening manuscript derives its whole
+/// lineage from one random seed (`Derived`), and a manuscript resumed from a
+/// persisted state carries the ids it was saved with (`Listed`). The open
+/// path pays one mint instead of one per block — 200k mints measured 59 ms,
+/// the whole v0.3.0 open budget — while the resumed path keeps its ids
+/// verbatim and its duplicate check (a restored state must describe the
+/// bytes it names).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Lineage(Box<[Id]>);
+pub enum Lineage {
+    /// One seed plus the block count; every id is a bijective image of the
+    /// seed, so uniqueness holds by construction and `id_at` is O(1).
+    Derived { seed: Id, blocks: usize },
+    /// Explicit ids from a persisted state; duplicates are possible and are
+    /// refused at open.
+    Listed(Box<[Id]>),
+}
 
 impl Lineage {
+    /// A lineage that costs one mint and derives every id from it. The ids
+    /// are new on every open (the seed is fresh) and unique within the
+    /// document (derivation is injective); see [`Id::derive`] for why this
+    /// does not break INV-9.
     #[must_use]
     pub fn fresh(blocks: usize) -> Self {
-        Self((0..blocks).map(|_| Id::new()).collect())
+        Self::Derived {
+            seed: Id::new(),
+            blocks,
+        }
+    }
+
+    /// The lineage a persisted state was saved with. Resumed verbatim.
+    #[must_use]
+    pub fn from_ids(ids: Vec<Id>) -> Self {
+        Self::Listed(ids.into_boxed_slice())
+    }
+
+    /// How many blocks this lineage names.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Derived { blocks, .. } => *blocks,
+            Self::Listed(ids) => ids.len(),
+        }
     }
 
     #[must_use]
-    pub fn from_ids(ids: Vec<Id>) -> Self {
-        Self(ids.into_boxed_slice())
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The id of one block. O(1) in both shapes.
+    #[must_use]
+    pub fn id_at(&self, index: usize) -> Id {
+        match self {
+            Self::Derived { seed, .. } => Id::derive(*seed, index),
+            Self::Listed(ids) => ids[index],
+        }
+    }
+
+    /// The index an id names in this lineage, if it names one at all.
+    ///
+    /// Derived lineages answer by inverting the bijection — O(1), no map.
+    /// A `Listed` lineage has no derivation rule, so it answers nothing
+    /// (the caller keeps its own map, as materialisation always did).
+    #[must_use]
+    pub fn index_of(&self, id: Id) -> Option<usize> {
+        match self {
+            Self::Derived { seed, blocks } => Id::invert(*seed, id, *blocks),
+            Self::Listed(_) => None,
+        }
+    }
+
+    /// Every id, oldest first. The persisted form a later open resumes from.
+    #[must_use]
+    pub fn to_vec(&self) -> Vec<Id> {
+        match self {
+            Self::Derived { seed, blocks } => {
+                (0..*blocks).map(|index| Id::derive(*seed, index)).collect()
+            }
+            Self::Listed(ids) => ids.to_vec(),
+        }
     }
 }
 
@@ -611,11 +681,18 @@ pub enum TextRefusal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manuscript {
     source: SourceSnapshot,
-    original_ids: Box<[Id]>,
+    /// The lineage this manuscript opened with. Materialisation inverts
+    /// derived ids to source spans without a map; a resumed lineage keeps
+    /// its ids verbatim.
+    lineage: Lineage,
     head: TextHead,
     materialized: ByteSequence,
     offsets: BlockOffsets,
-    block_at: HashMap<Id, usize>,
+    /// id → block position, built on first use. An opening manuscript
+    /// derives its ids and skips the index entirely; editing and undoing
+    /// build it once and keep it. `Option` so open stays O(blocks) not
+    /// O(blocks · hash).
+    block_at: Option<HashMap<Id, usize>>,
     actions: Vec<TextAction>,
     action_at: HashMap<Id, usize>,
     last_touched: HashMap<Id, usize>,
@@ -696,16 +773,17 @@ impl Manuscript {
         history: Vec<TextAction>,
     ) -> Result<Self, TextRefusal> {
         let expected = source.layout.blocks().len();
-        if lineage.0.len() != expected {
+        if lineage.len() != expected {
             return Err(TextRefusal::LineageLength {
                 expected,
-                actual: lineage.0.len(),
+                actual: lineage.len(),
             });
         }
-        // Build the blocks, then the id index, then check for duplicates by
-        // comparing the two lengths: a repeated id collapses into one map
-        // entry, so a shorter map is exactly the duplicate case. The earlier
-        // `HashSet` pass hashed every id a second time to learn this.
+        // Build the blocks, then the id index. A `Listed` lineage (resumed
+        // from a persisted state) still gets the duplicate check: a repeated
+        // id collapses into one map entry, so a shorter map is exactly the
+        // duplicate case. A `Derived` lineage needs none — derivation is a
+        // bijection, uniqueness holds by construction.
         //
         // The two loops stay separate on purpose. Fusing them — inserting into
         // the map inside the block loop — writes two large structures in
@@ -713,34 +791,32 @@ impl Manuscript {
         // (7.2 million blocks) fused ran 1,055-1,460 ms against 497-563 ms
         // split. Each loop alone walks its own memory in order.
         let mut blocks = Vec::with_capacity(expected);
-        for (index, (span, id)) in source
-            .layout
-            .blocks()
-            .iter()
-            .zip(lineage.0.iter())
-            .enumerate()
-        {
+        for (index, span) in source.layout.blocks().iter().enumerate() {
             // Borrow the snapshot's bytes rather than copying them. This is
             // the whole reason `BlockText` exists; see its module comment for
             // the measurement that motivated it.
             let text = BlockText::shared(source.text(), span.start, span.end)
                 .map_err(|_| TextRefusal::InvalidUtf8 { block: index })?;
-            blocks.push(Block { id: *id, text });
+            blocks.push(Block {
+                id: lineage.id_at(index),
+                text,
+            });
         }
-        let block_at: HashMap<Id, usize> = blocks
-            .iter()
-            .enumerate()
-            .map(|(index, block)| (block.id, index))
-            .collect();
-        if block_at.len() != blocks.len() {
-            let mut seen = HashSet::with_capacity(block_at.len());
-            let repeated = lineage
-                .0
+        if let Lineage::Listed(_) = &lineage {
+            let block_at: HashMap<Id, usize> = blocks
                 .iter()
-                .find(|block| !seen.insert(**block))
-                .copied()
-                .expect("a shorter index than block list means some id repeats");
-            return Err(TextRefusal::DuplicateLineage { block: repeated });
+                .enumerate()
+                .map(|(index, block)| (block.id, index))
+                .collect();
+            if block_at.len() != blocks.len() {
+                let mut seen = HashSet::with_capacity(block_at.len());
+                let repeated = blocks
+                    .iter()
+                    .find(|block| !seen.insert(block.id))
+                    .map(|block| block.id)
+                    .expect("a shorter index than block list means some id repeats");
+                return Err(TextRefusal::DuplicateLineage { block: repeated });
+            }
         }
         let materialized = ByteSequence::from_source(source.text());
         let offsets = BlockOffsets::from_spans(source.layout.blocks().to_vec());
@@ -757,7 +833,7 @@ impl Manuscript {
         let scan = source.scan;
         Ok(Self {
             source,
-            original_ids: lineage.0,
+            lineage,
             head: TextHead {
                 id: head,
                 blocks: BlockSequence::from_vec(blocks),
@@ -765,7 +841,7 @@ impl Manuscript {
             },
             materialized,
             offsets,
-            block_at,
+            block_at: None,
             actions: history,
             action_at,
             last_touched,
@@ -806,8 +882,8 @@ impl Manuscript {
         }
         let index = self
             .block_at
-            .get(&after.id)
-            .copied()
+            .as_ref()
+            .and_then(|at| at.get(&after.id).copied())
             .ok_or(TextRefusal::NotInvertible { action: action.id })?;
         if self.head.blocks.get(index) != Some(after) {
             return Err(TextRefusal::NotInvertible { action: action.id });
@@ -879,6 +955,10 @@ impl Manuscript {
     ///   inverse exists, but reverting merged text would falsify the Verdict
     ///   Ledger, which already recorded those decisions.
     pub fn undo_last(&mut self) -> Result<TextTransition, TextRefusal> {
+        // Undoing hydrates an action whose block ids the index must resolve;
+        // the index was skipped at open (derived lineages cost one mint), so
+        // build it now if the first edit never did.
+        self.ensure_block_at();
         let local = {
             let action = self.actions.last().ok_or(TextRefusal::NothingToUndo)?;
             if !action.verdicts.is_empty() {
@@ -906,19 +986,21 @@ impl Manuscript {
                 blocks: BlockSequence::from_vec(action::invert(&self.head, action)?),
                 cause: format!("undo: {}", action.cause),
             };
-            let after = materialize::blocks(&self.source, &self.original_ids, restored.blocks())?;
+            let after = materialize::blocks(&self.source, &self.lineage, restored.blocks())?;
             let byte_patch = BytePatch::between(&self.materialized, &after);
             let undo = undo_record(self.head.id, &restored, action);
             (restored, after, byte_patch, undo)
         };
         self.offsets = BlockOffsets::from_spans(self.scan.layout(&after).blocks().to_vec());
         self.materialized = ByteSequence::from_vec(after);
-        self.block_at = restored
-            .blocks
-            .iter()
-            .enumerate()
-            .map(|(index, block)| (block.id, index))
-            .collect();
+        self.block_at = Some(
+            restored
+                .blocks
+                .iter()
+                .enumerate()
+                .map(|(index, block)| (block.id, index))
+                .collect(),
+        );
         Ok(self.finish_undo(restored, byte_patch, undo))
     }
 
@@ -1080,7 +1162,11 @@ impl Manuscript {
             .offsets
             .span(last)
             .ok_or(TextRefusal::SourceDrift(SourceDrift))?;
-        if range.start < first_span.start || range.end > last_span.end {
+        // 文档末尾总是合法插入点：最后的块 span 不含尾随分隔符，而光标
+        // 停在文档末尾（尾随换行之后）输入是最常见的写作动作——把
+        //  一并拒绝，光标在文末的每一次输入都会
+        // 失败（e2e 仿真抓出：set_text 在 41 字节文档的 41 处被拒）。
+        if range.start < first_span.start || (range.end > last_span.end && range.end != length) {
             return Err(TextRefusal::InvalidByteRange {
                 start: range.start,
                 end: range.end,
@@ -1092,9 +1178,12 @@ impl Manuscript {
             .materialized
             .copy_range(first_span.start..range.start)
             .ok_or(TextRefusal::SourceDrift(SourceDrift))?;
+        // 文档末尾追加时  超出最后一块的 span 末尾
+        // （尾随分隔符不属于任何块）：after 应为空，而不是一次 start >
+        // end 的越界拷贝。
         let after = self
             .materialized
-            .copy_range(range.end..last_span.end)
+            .copy_range(range.end.min(last_span.end)..last_span.end)
             .ok_or(TextRefusal::SourceDrift(SourceDrift))?;
         let mut text = Vec::with_capacity(before.len() + replacement.len() + after.len());
         text.extend_from_slice(&before);
@@ -1132,15 +1221,37 @@ impl Manuscript {
         Ok(transition)
     }
 
+    /// Build the id → position index on first use. Opening skips it (a
+    /// derived lineage costs one mint, an index would cost one hash per
+    /// block); the first edit or undo pays the build once.
+    fn ensure_block_at(&mut self) {
+        if self.block_at.is_none() {
+            self.block_at = Some(
+                self.head
+                    .blocks
+                    .iter()
+                    .enumerate()
+                    .map(|(index, block)| (block.id, index))
+                    .collect(),
+            );
+        }
+    }
+
     pub fn execute(&mut self, command: TextCommand) -> Result<TextTransition, TextRefusal> {
         let local = match &command {
-            TextCommand::Editor(editor) => local_replacement(editor, &self.block_at, self.scan),
+            TextCommand::Editor(editor) => {
+                self.ensure_block_at();
+                local_replacement(editor, self.block_at.as_ref().unwrap(), self.scan)
+            }
             TextCommand::CommitDecisionBatch(_) => None,
         };
         let (head, action) = match command {
-            TextCommand::Editor(editor) => {
-                action::apply_editor_indexed(&self.head, &editor, &self.block_at, self.scan)?
-            }
+            TextCommand::Editor(editor) => action::apply_editor_indexed(
+                &self.head,
+                &editor,
+                self.block_at.as_ref().expect("ensured above"),
+                self.scan,
+            )?,
             TextCommand::CommitDecisionBatch(batch) => {
                 decision::apply(&self.head, &batch, self.scan)?
             }
@@ -1148,16 +1259,17 @@ impl Manuscript {
         let byte_patch = if let Some(index) = local {
             self.replace_materialized_block(index, &head)?
         } else {
-            let after = materialize::blocks(&self.source, &self.original_ids, head.blocks())?;
+            let after = materialize::blocks(&self.source, &self.lineage, head.blocks())?;
             let patch = BytePatch::between(&self.materialized, &after);
             self.offsets = BlockOffsets::from_spans(self.scan.layout(&after).blocks().to_vec());
             self.materialized = ByteSequence::from_vec(after);
-            self.block_at = head
-                .blocks
-                .iter()
-                .enumerate()
-                .map(|(index, block)| (block.id, index))
-                .collect();
+            self.block_at = Some(
+                head.blocks
+                    .iter()
+                    .enumerate()
+                    .map(|(index, block)| (block.id, index))
+                    .collect(),
+            );
             patch
         };
         let transition = TextTransition {
@@ -1195,5 +1307,23 @@ impl Manuscript {
             .ok_or(TextRefusal::SourceDrift(SourceDrift))?;
         self.materialized = materialized;
         Ok(patch)
+    }
+}
+
+#[cfg(test)]
+mod boundary_tests {
+    use super::*;
+
+    #[test]
+    fn insert_at_the_end_of_the_document_is_valid() {
+        let bytes = "# 第一章\n\n剑一直握在他手里。\n";
+        let snapshot = SourceSnapshot::read(bytes.as_bytes().to_vec());
+        let lineage = Lineage::fresh(snapshot.block_count());
+        let mut manuscript = Manuscript::open(snapshot, lineage).unwrap();
+        let length = manuscript.byte_len();
+        let _transition = manuscript
+            .replace_bytes(length..length, "这是新写的一段。", "boundary probe")
+            .expect("insert at the very end is a normal input");
+        assert!(manuscript.byte_len() > length);
     }
 }

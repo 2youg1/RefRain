@@ -20,31 +20,62 @@
 //! 再回来点派发——那时冻结下来的原文已经对不上任何块。这一路在编译请求
 //! 之前就失败，而不是把一份指向不存在文本的请求送给 agent。
 
+use std::path::{Path, PathBuf};
+
 use refrain_core::context_compiler::{
-    BeforeScope, ContractMode, DispatchInput, DispatchPackage, compile,
+    BeforeScope, ContractMode, DispatchInput, DispatchPackage, InstalledSkill, SkillStatus, compile,
 };
+use refrain_core::digest::content_hex;
 use refrain_core::manuscript::Manuscript;
+use refrain_core::material_listing::MaterialListing;
 use refrain_core::persona::Persona;
-use refrain_core::{ErrorCode, Id, RefrainError};
+use refrain_core::{Block, ErrorCode, Id, RefrainError};
+use refrain_host::adapters::{channel, channel_skill_bytes, channel_skill_path};
 use refrain_host::host::{AgentHost, HostCommand};
 use refrain_host::run_edge::RunEdge;
 use refrain_host::staging::DirectoryContext;
+use refrain_store::config::{AdapterKind, Config};
+use refrain_store::ledger::{VerdictKindName, VerdictRecord};
+use refrain_store::project::ProjectStore;
 
-use crate::journal::{StoreJournal, into_domain_host};
+use crate::journal::{StoreJournal, into_domain, into_domain_host};
 use crate::scope::{ScopeLocation, locate_scope};
 
 /// 作者要派发的一段：正文的原文，以及它在稿子里的位置。
 ///
-/// 只带原文而不带块 id：作者是在界面上框一段文字，块身份是 Rust 这边定位
-/// 出来的。让界面送块 id 等于要求它先知道块怎么切——那是 `source_layout`
-/// 的事，而且它切的方式会随格式变。
+/// 两种指法，**给了块段就以块为准**（`before` 此时被忽略，界面送空串）：
+///
+/// - 文本路径（`blocks` 缺席）：只带原文而不带块 id。作者是在界面上框一段
+///   文字，块身份是 Rust 这边定位出来的。让界面送块 id 等于要求它先知道
+///   块怎么切——那是 `source_layout` 的事，而且它切的方式会随格式变。
+/// - 块段路径（`blocks` 在场）：界面引用的是 **Rust 自己切好的块**——
+///   `ReadBlocks` 清单给出的块 id，不是界面猜的切法。整章与大跨度派发靠
+///   它越过 12KB 的 ABI：原文不必过河，河这边按 id 取块、自己拼回原文。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchScope {
     /// 作者给这一段起的名字，出现在请求里当位置标签。
     pub label: String,
-    /// 选中的原文，逐字节。
+    /// 选中的原文，逐字节。块段路径下被忽略（界面送空串）。
     pub before: String,
+    /// 块段：从第几块起（ordinal）、取几块。在场就以块为准，`before` 被忽略。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocks: Option<ScopeSpan>,
+}
+
+/// 一段按块指名的范围：起始块的 ordinal 与块数。
+///
+/// 用 ordinal 不用块 id：界面手上的就是行号，而 id 是清单行的携带物——
+/// 跨页勾选时起始行的 id 未必还在当前页上， ordinal 永远可指。序号漂移
+/// （清单列出后作者又改了稿子）由「预览必经 + digest 核对」兜住：预览
+/// 按当前稿子编译，预览的原文展开就是给作者核对范围的。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ScopeSpan {
+    /// 起始块的 ordinal（`ReadBlocks` 清单的行号，从 0 起）。
+    pub from: u32,
+    /// 从起始块起取几块。剩余不足就取到末尾；0 被具名拒绝。
+    pub count: u32,
 }
 
 /// 这一轮的身份走哪条路。
@@ -77,6 +108,33 @@ pub enum Orchestration {
     Verifies,
 }
 
+/// 这一轮带不带稿子、怎么带（v0.2.4 的带稿模式）。
+///
+/// **默认是 `None`，不是 `Diff`**：增量是界面替作者选的默认，不是线协议
+/// 的默认——旧载荷没有这个词，反序列化出来的必须是旧行为（什么都不带），
+/// 否则一个没升级的对端会突然开始收到它从未要求的增量。
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, specta::Type,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum CarryMode {
+    /// 增量：上一轮以来的裁决行进 `<changes>`。
+    Diff,
+    /// 全文：整份稿子的文本进 `# Context`。
+    Full,
+    /// 什么都不带：旧行为。
+    #[default]
+    None,
+}
+
+impl CarryMode {
+    /// 线协议默认（不带）。默认态不落进 JSON：旧形状的请求逐字节成立
+    /// （与 `materials`／`agent` 同一条 default + skip 纪律）。
+    fn is_none(&self) -> bool {
+        matches!(self, Self::None)
+    }
+}
+
 /// 一次派发要什么。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -107,6 +165,29 @@ pub struct DispatchRequest {
     pub result_path: String,
     /// 产出的字节上限（同上）。
     pub max_bytes: u64,
+    /// 这一轮带不带稿子、怎么带。缺席 = 不带（旧载荷 = 旧行为）。
+    #[serde(default, skip_serializing_if = "CarryMode::is_none")]
+    pub carry: CarryMode,
+    /// 作者为本轮勾选的资料，Root 相对路径。
+    ///
+    /// **只有路径过河，档位不随请求走**：`documents.disclosure` 是档位的
+    /// 唯一权威（`SetDisclosure` 写它）。请求自带档位会让同一份资料的
+    /// 权限有两个说法，而界面那份可以说得比名录那份更宽。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub materials: Vec<String>,
+    /// 这次派发挂在哪个 Agent 名下（Config 里 `AgentProfile` 的 id）。
+    ///
+    /// `None` 保持旧行为：每个 Run 铸一个新身份，接续轮与协议装载都不
+    /// 发生。具名之后 Run 落在 `.refrain/agents/<id>/` 下，同一 Agent 的
+    /// 第二轮起 `has_agent_memo` 才有意义——每轮换一个新 id 等于每次都
+    /// 以新身份相见。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<Id>,
+    /// 送前核对：预览答复里的那份 digest。带上它时，编译出的包与它不一致
+    /// 就具名拒绝（预览之后稿子或资料变了）；`None` 是不经预览的旧路径
+    /// （测试与脚本），领域不替作者省掉这一步的说理。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_digest: Option<String>,
 }
 
 /// 一次派发的结果：铸出了哪些 Run，以及那份请求有多稳定。
@@ -122,6 +203,222 @@ pub struct Dispatched {
     pub prefix_bytes: u32,
 }
 
+/// 一轮派发从环境里读出的事实：接续、协议装载与勾选的资料。
+///
+/// 与 `DispatchRequest` 分开：请求装的是作者点的，这些是应用从名录、
+/// Config 与工作区里查出来的。两者在派发这一刻汇合，此后一起冻结进
+/// 请求包。
+#[derive(Debug, Clone, Default)]
+pub struct RoundFacts {
+    /// 作者勾选的资料，已按名录解析成目录条目（档位取自名录）。
+    pub materials: Vec<MaterialListing>,
+    /// 这个 Agent 的工作区里已有它自己维护的 Memo.md：本轮是接续轮。
+    pub resumed: bool,
+    /// 本轮连接的协议装载状态。`None` 是「没装过」或「说不上装没装」——
+    /// 两种情况下请求都照旧背协议全文，指针只在说得出文件在哪时才出现。
+    pub installed_skill: Option<InstalledSkill>,
+    /// 上一轮以来的裁决行：增量带稿（`CarryMode::Diff`）的 payload。
+    /// 由装配层从账本填（`verdict_changes`），其余带稿模式下是空。
+    pub changes: Vec<refrain_core::ChangeEntry>,
+}
+
+/// 把作者勾选的资料路径解析成目录条目。
+///
+/// 名录（`documents` 表）是唯一权威：路径必须在册（与 `set_disclosure`
+/// 同一条具名拒绝），档位取名录里的那一档，`None` 读作枚举默认——请求
+/// 里说的不算。正文从磁盘现读，摘要随这次读取重算：目录描述的是这一次
+/// 读到的字节，不是名录记忆里的一份。
+///
+/// # Errors
+///
+/// 路径不在册、读不到、或不是 UTF-8 文本，各自具名拒绝。
+pub fn resolve_materials(
+    store: &mut ProjectStore,
+    paths: &[String],
+) -> Result<Vec<MaterialListing>, RefrainError> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let catalog = store.documents()?;
+    paths
+        .iter()
+        .map(|path| {
+            let row = catalog
+                .iter()
+                .find(|row| &row.path == path)
+                .ok_or_else(|| {
+                    RefrainError::new(
+                        ErrorCode::StateUnavailable,
+                        "attach a material that is not registered",
+                        path.clone(),
+                    )
+                })?;
+            let opened = store.open_document(path).map_err(into_domain)?;
+            let text = String::from_utf8(opened.bytes).map_err(|error| {
+                RefrainError::new(
+                    ErrorCode::UnsupportedFormat,
+                    "read a material as text",
+                    path.clone(),
+                )
+                .with_detail(error.to_string())
+            })?;
+            Ok(MaterialListing::describe(
+                path,
+                title_of(path),
+                row.role,
+                &opened.stamp.digest,
+                &text,
+                row.disclosure.unwrap_or_default(),
+            ))
+        })
+        .collect()
+}
+
+/// 目录条目上的标题：文件主名。名录不存标题——`资料/人物志.md` 的标题
+/// 就是「人物志」，另存一份只会与文件名漂移。
+fn title_of(path: &str) -> &str {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name.strip_suffix(".md").unwrap_or(name)
+}
+
+/// 查出这一轮的事实：Agent 的接续状态，连接的协议装载状态。
+///
+/// `materials` 由 `resolve_materials` 先解析好——两个函数分开，是因为
+/// 资料要碰 store，而这里只读 Config 与工作区。
+///
+/// # Errors
+///
+/// 请求具名了一个 Config 里不存在的 Agent，或那个 Agent 指着一条不存在
+/// 的连接，具名拒绝——替它匿名派发会让 Run 落进一个与作者选择不同的
+/// 身份下。
+pub fn round_facts(
+    config: &Config,
+    context: &DirectoryContext,
+    request: &DispatchRequest,
+    materials: Vec<MaterialListing>,
+) -> Result<RoundFacts, RefrainError> {
+    let installed_skill = installed_skill_for(config, request, std::env::home_dir().as_deref())?;
+    // Memo.md 是接续轮的唯一事实来源：它是 Agent 自己的记忆，应用不写也
+    // 不读，只问它在不在。
+    let resumed = request
+        .agent
+        .is_some_and(|agent| context.has_agent_memo(agent));
+    Ok(RoundFacts {
+        materials,
+        resumed,
+        installed_skill,
+        // 裁决行由装配层填：`round_facts` 只读 Config 与工作区，账本查询
+        // 要碰 store（与 `materials` 先由 `resolve_materials` 解析同一条分工）。
+        changes: Vec::new(),
+    })
+}
+
+/// 账本行映射成 `<changes>` 的裁决行：四态一一对应。
+///
+/// `Countermanded` 不进包：它是一笔已合并裁决的冲销，那笔决定已经不在
+/// 正文里——把它当成一条「改动」送给 agent，等于让它参考一次已经撤销的
+/// 决定。账本只增，冲销与原裁决都留在账上，而请求只带还成立的那些。
+#[must_use]
+pub fn verdict_changes(records: &[VerdictRecord]) -> Vec<refrain_core::ChangeEntry> {
+    records
+        .iter()
+        .filter_map(|record| {
+            let kind = match record.kind {
+                VerdictKindName::Accept => refrain_core::ChangeKind::Accept,
+                VerdictKindName::AcceptModified => refrain_core::ChangeKind::AcceptModified,
+                VerdictKindName::Reject => refrain_core::ChangeKind::Reject,
+                VerdictKindName::CommentOnly => refrain_core::ChangeKind::CommentOnly,
+                VerdictKindName::Countermanded => return None,
+            };
+            Some(refrain_core::ChangeEntry {
+                reference: record.slice_id.clone(),
+                kind,
+                reason: record.reason.clone(),
+                final_text: record.final_text.clone(),
+            })
+        })
+        .collect()
+}
+
+/// 本轮连接的协议装载状态，从 Config 的 `skill_digest` 读出。
+///
+/// 摘要登记者是本应用：`Some` 是「上次装载写的是这些字节」，与「那个
+/// 文件此刻还在不在、被谁动过」无关——后者是状态徽章的事，它读文件
+/// 本身。拿登记的摘要与本构建会写出的字节对一遍：相等才是 `Current`。
+/// 协议随版本演进，上一版装的那份今天就是 `Stale`——那时请求明说并
+/// 照旧背全文，而不是悄悄信任漂移过的字节。
+fn installed_skill_for(
+    config: &Config,
+    request: &DispatchRequest,
+    home: Option<&Path>,
+) -> Result<Option<InstalledSkill>, RefrainError> {
+    let Some(agent_id) = request.agent else {
+        return Ok(None);
+    };
+    let profile = config
+        .agents
+        .iter()
+        .find(|agent| agent.id == agent_id)
+        .ok_or_else(|| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "dispatch under an agent that is not configured",
+                agent_id.to_string(),
+            )
+        })?;
+    // L0 文件通道没有可装载的协议。
+    let Some(connection_id) = profile.connection_id else {
+        return Ok(None);
+    };
+    let connection = config
+        .harness_connections
+        .iter()
+        .find(|connection| connection.id == connection_id)
+        .ok_or_else(|| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "dispatch on a connection that is not configured",
+                connection_id.to_string(),
+            )
+        })?;
+    let Some(recorded) = &connection.skill_digest else {
+        return Ok(None);
+    };
+    // 指不出协议文件在哪（连 home 都不可得），指针就无处可指——背全文。
+    let Some(home) = home else { return Ok(None) };
+    let Some((path, bytes)) = skill_surface(&connection.adapter, home) else {
+        return Ok(None);
+    };
+    let status = if *recorded == content_hex(&bytes) {
+        SkillStatus::Current
+    } else {
+        SkillStatus::Stale
+    };
+    Ok(Some(InstalledSkill {
+        path: path.display().to_string(),
+        status,
+    }))
+}
+
+/// 一种 harness 的协议装载处：skill 目录里的目标路径，与本构建会写出的
+/// 字节。没有适配器的连接种类没有装载处——它们的 `skill_digest` 因此
+/// 也总是 `None`。
+fn skill_surface(kind: &AdapterKind, home: &Path) -> Option<(PathBuf, Vec<u8>)> {
+    // 适配器种类 → 注册通道：新通道在 adapters 注册表加一行，这里自动跟随。
+    let id = match kind {
+        AdapterKind::KimiCode => "kimi-print",
+        AdapterKind::ClaudeCode => "claude-print",
+        AdapterKind::Pi => "pi-print",
+        // L0 没有 skill 目录；Codex／Hermes 还没有通道。
+        AdapterKind::L0 | AdapterKind::Codex | AdapterKind::Hermes => return None,
+    };
+    let channel = channel(id)?;
+    Some((
+        channel_skill_path(home, channel),
+        channel_skill_bytes(channel),
+    ))
+}
+
 /// 派发一次改写请求。
 ///
 /// 三步都在这里发生，但每一步的拒绝都来自领域层：范围对不上是这里的
@@ -131,6 +428,7 @@ pub fn dispatch(
     host: &mut AgentHost<StoreJournal<'_>, DirectoryContext>,
     manuscript: &Manuscript,
     request: &DispatchRequest,
+    round: &RoundFacts,
 ) -> Result<Dispatched, RefrainError> {
     if request.agents == 0 {
         return Err(RefrainError::new(
@@ -147,62 +445,27 @@ pub fn dispatch(
         ));
     }
 
-    // 先定位，再编译。顺序是规则：一份指向不存在文本的请求，agent 会照着
-    // 改，而收取时才发现对不上——那时它已经花掉了一次真实的调用。
-    let mut scopes = Vec::with_capacity(request.scopes.len());
-    for scope in &request.scopes {
-        let blocks = match locate_scope(manuscript, &scope.before) {
-            ScopeLocation::Unique(blocks) => blocks,
-            ScopeLocation::Moved => {
-                return Err(RefrainError::new(
-                    ErrorCode::StateUnavailable,
-                    "dispatch a scope that is no longer in the manuscript",
-                    scope.label.clone(),
-                ));
-            }
-            // 重复段落不替作者选。默认第一处会把提案落在另一段上（F-02），
-            // 而两段逐字相同，界面上分辨不出选错了。
-            ScopeLocation::Ambiguous(candidates) => {
-                return Err(RefrainError::new(
-                    ErrorCode::StateUnavailable,
-                    "dispatch a scope whose text appears more than once",
-                    format!("{}: {} places", scope.label, candidates.len()),
-                ));
-            }
-        };
-        scopes.push(BeforeScope {
-            scope: scope.label.clone(),
-            text: scope.before.clone(),
-            blocks,
-        });
+    let package = prepare_package(manuscript, request, round)?;
+    // 送前核对：预览答复里的 digest 与刚编译出来的不一致，就是预览之后
+    // 稿子或资料变了——具名拒绝，让作者重新预览，而不是把过期的那一份
+    // 送出去花掉一次真实调用。
+    if let Some(expected) = &request.expected_digest
+        && *expected != package.digest
+    {
+        return Err(RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "dispatch with a stale preview",
+            format!(
+                "previewed {}, but the package now digests as {}",
+                expected, package.digest
+            ),
+        ));
     }
 
-    let package = compile(&DispatchInput {
-        // 身份只在手动通道下进请求。Harness 通道靠 `AGENTS.md`——那边
-        // 已经有全文，这边再带一份就是两个会漂移的权威。
-        persona: match request.channel {
-            DispatchChannel::Manual => request.persona.as_ref().map(|p| p.body().to_string()),
-            DispatchChannel::Harness => None,
-        },
-        installed_skill: None,
-        resumed: false,
-        manuscript: None,
-        changes: Vec::new(),
-        materials: Vec::new(),
-        upstream: Vec::new(),
-        request: request.prompt.clone(),
-        scopes,
-        result_path: request.result_path.clone(),
-        max_bytes: request.max_bytes,
-        contract_mode: ContractMode::Short,
-    });
-
-    let baseline = manuscript
-        .head()
-        .blocks()
-        .get(0)
-        .map(|block| block.id())
-        .unwrap_or_default();
+    // 基线是提案冻结时的文本头（revision id），不是第一块的 id：提交裁决时
+    // 校验的就是 `proposal.baseline() != head.id`——用块 id 做基线，派发→
+    // 收取→提交的全链在提交处必被 StaleProposal 拒（k3_full_flow 抓出）。
+    let baseline = manuscript.head().id();
     host.execute(HostCommand::DraftTask {
         baseline,
         document: request.document.clone(),
@@ -223,7 +486,14 @@ pub fn dispatch(
         .id;
 
     let runs_before = host.runs().len();
-    let agents: Vec<Id> = (0..request.agents).map(|_| Id::new()).collect();
+    // 具名 Agent 的 Run 全部挂在它自己的目录下：Memo.md 与 AGENTS.md 按
+    // agent id 找，每轮换一个新 id 等于每次都以新身份相见，接续轮永远
+    // 不发生。一次派发多个 Run 时它们是同一个 Agent 的几路——身份只有
+    // 一份，所以 id 也只有一份。
+    let agents: Vec<Id> = match request.agent {
+        Some(agent) => vec![agent; request.agents],
+        None => (0..request.agents).map(|_| Id::new()).collect(),
+    };
     // 并列的 Run 之间没有边：它们读同一份请求、各写各的产出，谁先谁后
     // 不改变结果。其余两种排法把边算出来——位置由这里定，界面因此不必
     // 知道 Run 会以什么顺序铸出来。
@@ -243,6 +513,188 @@ pub fn dispatch(
         digest,
         prefix_bytes,
     })
+}
+
+/// 预览一次派发：定位范围、编译请求包，不动编排状态。
+///
+/// 与 `dispatch` 共用同一份顺序知识（`prepare_package`）——预览看到的
+/// digest 与送出时核对的 digest 因此必然是同一条规则算出来的。这正是
+/// 「送前核对」的读法：清单（各节名字/来源/字节/token）加 digest 前 12 位。
+///
+/// # Errors
+///
+/// 范围对不上（`ScopeMoved`／`ScopeAmbiguous`）与资料不在册都在这里失败——
+/// 这些拒绝发生在花掉一次真实调用之前。
+pub fn preview(
+    manuscript: &Manuscript,
+    request: &DispatchRequest,
+    round: &RoundFacts,
+) -> Result<DispatchPackage, RefrainError> {
+    if request.scopes.is_empty() {
+        return Err(RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "preview a dispatch without a scope",
+            "select the text to be rewritten first",
+        ));
+    }
+    prepare_package(manuscript, request, round)
+}
+
+/// 定位一个派发范围：块段在场按块 id 取，缺席走文本定位。
+///
+/// 两条路径的拒绝各自具名：文本路径的 Moved/Ambiguous 与块段路径的
+/// 「起始块没了」是不同的事实，作者要做的事不一样。
+fn resolve_scope(
+    manuscript: &Manuscript,
+    scope: &DispatchScope,
+) -> Result<BeforeScope, RefrainError> {
+    if let Some(span) = &scope.blocks {
+        return block_span_scope(manuscript, scope, span);
+    }
+    let blocks = match locate_scope(manuscript, &scope.before) {
+        ScopeLocation::Unique(blocks) => blocks,
+        ScopeLocation::Moved => {
+            return Err(RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "dispatch a scope that is no longer in the manuscript",
+                scope.label.clone(),
+            ));
+        }
+        // 重复段落不替作者选。默认第一处会把提案落在另一段上（F-02），
+        // 而两段逐字相同，界面上分辨不出选错了。
+        ScopeLocation::Ambiguous(candidates) => {
+            return Err(RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "dispatch a scope whose text appears more than once",
+                format!("{}: {} places", scope.label, candidates.len()),
+            ));
+        }
+    };
+    Ok(BeforeScope {
+        scope: scope.label.clone(),
+        text: scope.before.clone(),
+        blocks,
+    })
+}
+
+/// 块段路径：从起始块起取连续 `count` 块，id 与拼回的原文一起进
+/// `BeforeScope`。原文由 Rust 拼——界面送的是空串，它引用的只是块 id。
+fn block_span_scope(
+    manuscript: &Manuscript,
+    scope: &DispatchScope,
+    span: &ScopeSpan,
+) -> Result<BeforeScope, RefrainError> {
+    if span.count == 0 {
+        return Err(RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "dispatch a scope of zero blocks",
+            scope.label.clone(),
+        ));
+    }
+    let blocks = manuscript.head().blocks();
+    // 起始序号越出稿子与序号漂移落在同一句拒绝上：对作者都是同一件事——
+    // 手上的清单过期了，重读一次 ReadBlocks 再指。
+    let start = span.from as usize;
+    if start >= blocks.len() {
+        return Err(RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "dispatch a scope whose start block is no longer in the manuscript",
+            scope.label.clone(),
+        ));
+    }
+    // 剩余不足 count 就取到末尾：作者指名的是「从这里起的这些块」，
+    // 不是「必须恰好这么多块」。
+    let taken: Vec<&Block> = blocks
+        .iter()
+        .skip(start)
+        .take(span.count as usize)
+        .collect();
+    Ok(BeforeScope {
+        scope: scope.label.clone(),
+        text: join_block_texts(manuscript, taken.iter().copied()),
+        blocks: taken.iter().map(|block| block.id()).collect(),
+    })
+}
+
+/// 整份稿子的文本：块按这份稿子自己的分隔符拼回。
+///
+/// `TextHead::text()` 不能复用——它写死散文分隔符（两个换行），纯文本
+/// 稿子会被拼出它从未有过的字节。分隔符知识归 `scan().separator()`
+/// （与 `locate_scope` 同一来源），这里不再造一份。
+fn full_text(manuscript: &Manuscript) -> String {
+    join_block_texts(manuscript, manuscript.head().blocks().iter())
+}
+
+/// 块文本按这份稿子自己的分隔符拼接。
+fn join_block_texts<'a>(
+    manuscript: &Manuscript,
+    blocks: impl Iterator<Item = &'a Block>,
+) -> String {
+    let join = std::str::from_utf8(manuscript.scan().separator()).expect("separators are ASCII");
+    let mut out = String::new();
+    for (index, block) in blocks.enumerate() {
+        if index > 0 {
+            out.push_str(join);
+        }
+        out.push_str(block.text());
+    }
+    out
+}
+
+/// 定位范围并编译请求包：预览与送出共用的前半程。
+fn prepare_package(
+    manuscript: &Manuscript,
+    request: &DispatchRequest,
+    round: &RoundFacts,
+) -> Result<DispatchPackage, RefrainError> {
+    // 先定位，再编译。顺序是规则：一份指向不存在文本的请求，agent 会照着
+    // 改，而收取时才发现对不上——那时它已经花掉了一次真实的调用。
+    let mut scopes = Vec::with_capacity(request.scopes.len());
+    for scope in &request.scopes {
+        scopes.push(resolve_scope(manuscript, scope)?);
+    }
+
+    Ok(compile(&DispatchInput {
+        // 身份只在手动通道下进请求。Harness 通道靠 `AGENTS.md`——那边
+        // 已经有全文，这边再带一份就是两个会漂移的权威。
+        persona: match request.channel {
+            DispatchChannel::Manual => request.persona.as_ref().map(|p| p.body().to_string()),
+            DispatchChannel::Harness => None,
+        },
+        installed_skill: round.installed_skill.clone(),
+        resumed: round.resumed,
+        // 带稿模式：Full 带全文、Diff 带裁决行、None 都不带（旧行为）。
+        manuscript: match request.carry {
+            CarryMode::Full => Some(full_text(manuscript)),
+            CarryMode::Diff | CarryMode::None => None,
+        },
+        changes: match request.carry {
+            CarryMode::Diff => round.changes.clone(),
+            CarryMode::Full | CarryMode::None => Vec::new(),
+        },
+        materials: round.materials.clone(),
+        // 上游产出不进冻结包：授权那一刻上游多半还没跑完，它有的写才有
+        // 的喂。它在提升之后经 `feed_upstream` 进工作区里的那一份。
+        upstream: Vec::new(),
+        request: request.prompt.clone(),
+        scopes,
+        result_path: request.result_path.clone(),
+        max_bytes: request.max_bytes,
+        contract_mode: match request.channel {
+            // L0 没有会话：短契约随每轮走，接续与装载都与它无关（§8.4）。
+            DispatchChannel::Manual => ContractMode::Short,
+            DispatchChannel::Harness => match (&round.installed_skill, round.resumed) {
+                // 已装载的接续轮：协议在 skill 目录、记忆在 Memo.md，都在
+                // Agent 自己那边，请求只带一行指针。
+                (Some(_), true) => ContractMode::Pointer,
+                // 已装载的首轮：Full 档读到 Current 的装载会自己收成一行
+                // 指向协议文件的话（协议装载，SPEC 8.4）。
+                (Some(_), false) => ContractMode::Full,
+                // 未装载：维持既有规则，短契约照旧随轮走。
+                (None, _) => ContractMode::Short,
+            },
+        },
+    }))
 }
 
 /// 作者选的排法，铺成一串按位置的边。

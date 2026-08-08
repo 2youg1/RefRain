@@ -187,3 +187,255 @@ fn a_run_without_an_edge_is_left_untouched() {
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }
+
+// ── 生产路径：经 ProjectInput 的 LaunchRun 在提升之后自动喂上游 ────────────
+//
+// 上面两条直接调 `feed_upstream`；这两条问的是它的第一个生产调用者——
+// `ProjectInput::HostCommand` 那一臂。界面（Zig）发过来的 LaunchRun 走的
+// 正是这条路，所以喂不喂要在这里断言，而不是只在用例函数上断言。
+
+use std::sync::Mutex;
+
+use refrain_app::dispatch::{
+    CarryMode, DispatchChannel, DispatchRequest, DispatchScope, Orchestration,
+};
+use refrain_app::{Application, ProjectImport, ProjectInput, ProjectOutput, ProjectPlatform};
+use refrain_core::RefrainError;
+
+struct Chosen(Mutex<Option<PathBuf>>);
+
+impl ProjectPlatform for Chosen {
+    fn choose_root(&self, _kind: RootKind) -> Result<Option<PathBuf>, RefrainError> {
+        Ok(self.0.lock().unwrap().take())
+    }
+
+    fn choose_project_parent(&self) -> Result<Option<PathBuf>, RefrainError> {
+        Ok(self.0.lock().unwrap().take())
+    }
+
+    fn choose_import(&self, _kind: ProjectImport) -> Result<Option<PathBuf>, RefrainError> {
+        Ok(self.0.lock().unwrap().take())
+    }
+}
+
+/// 开一个 Application，收养一个带一章的 Root，打开那章，返回
+/// (数据目录, Root, Application, root_id)。
+fn application_with_chapter(label: &str) -> (PathBuf, PathBuf, Application, String) {
+    let data = std::env::temp_dir().join(format!("refrain-upstream-app-{label}-{}", Id::new()));
+    let root =
+        std::env::temp_dir().join(format!("refrain-upstream-app-{label}-root-{}", Id::new()));
+    fs::create_dir_all(&data).unwrap();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join(CHAPTER), format!("{FIRST}\n\n他没有说话。\n")).unwrap();
+
+    let application = Application::open(&data).unwrap();
+    let platform = Chosen(Mutex::new(Some(root.clone())));
+    let opened = application
+        .project(
+            &platform,
+            ProjectInput::ChooseAndAdoptRoot {
+                kind: RootKind::Folder,
+            },
+        )
+        .unwrap();
+    let ProjectOutput::Opened(opened) = opened else {
+        panic!("adopt must return the opened project");
+    };
+    let root_id = opened.root_id;
+    application
+        .project(
+            &platform,
+            ProjectInput::OpenDocument {
+                root_id: root_id.clone(),
+                path: CHAPTER.to_string(),
+            },
+        )
+        .unwrap();
+    (data, root, application, root_id)
+}
+
+/// 经生产入口派发：两个 agent，Follows 排法。返回 [上游, 下游] 的 Run id。
+fn dispatch_follows(application: &Application, root_id: &str) -> [Id; 2] {
+    let platform = Chosen(Mutex::new(None));
+    let dispatched = application
+        .project(
+            &platform,
+            ProjectInput::Dispatch {
+                root_id: root_id.to_string(),
+                request: Box::new(DispatchRequest {
+                    document: CHAPTER.to_string(),
+                    prompt: "改克制些。".to_string(),
+                    scopes: vec![DispatchScope {
+                        label: "s1".to_string(),
+                        before: FIRST.to_string(),
+                        blocks: None,
+                    }],
+                    agents: 2,
+                    orchestration: Orchestration::Follows,
+                    persona: None,
+                    channel: DispatchChannel::Harness,
+                    result_path: "result.md".to_string(),
+                    max_bytes: 64 * 1024,
+                    carry: CarryMode::None,
+                    materials: Vec::new(),
+                    agent: None,
+                    expected_digest: None,
+                }),
+            },
+        )
+        .unwrap();
+    let ProjectOutput::Dispatched(dispatched) = dispatched else {
+        panic!("dispatch must return the minted runs");
+    };
+    [dispatched.runs[0], dispatched.runs[1]]
+}
+
+fn host_command(application: &Application, root_id: &str, command: HostCommand) {
+    let platform = Chosen(Mutex::new(None));
+    application
+        .project(
+            &platform,
+            ProjectInput::HostCommand {
+                root_id: root_id.to_string(),
+                command: Box::new(command),
+            },
+        )
+        .unwrap();
+}
+
+/// 生产调用者：Follows 的下游经 ProjectInput 启动后，它的请求里真的有
+/// 上游写下的全部字节——不再需要谁记得单独去喂。
+#[test]
+fn launching_a_follows_run_through_the_project_input_feeds_the_upstream() {
+    let (data, root, application, root_id) = application_with_chapter("follows");
+    let [upstream, downstream] = dispatch_follows(&application, &root_id);
+    let artifact = "他握着剑，没有说话。".repeat(500);
+
+    // 上游跑到终态：launch → dispatched → 产出落盘 → completed。
+    host_command(
+        &application,
+        &root_id,
+        HostCommand::LaunchRun {
+            run_id: upstream,
+            workspace: format!("runs/{upstream}"),
+        },
+    );
+    host_command(
+        &application,
+        &root_id,
+        HostCommand::CompleteDispatch {
+            run_id: upstream,
+            receipt: "receipt".to_string(),
+        },
+    );
+    let attempt = root
+        .join(".refrain")
+        .join(format!("runs/{upstream}"))
+        .join("attempts")
+        .join(upstream.to_string());
+    fs::create_dir_all(&attempt).unwrap();
+    fs::write(attempt.join("result.md"), &artifact).unwrap();
+    host_command(
+        &application,
+        &root_id,
+        HostCommand::CollectAttempt {
+            run_id: upstream,
+            artifact_digest: "digest".to_string(),
+            at: 2,
+        },
+    );
+
+    // 下游启动：与界面上作者点「启动」是同一条输入。
+    host_command(
+        &application,
+        &root_id,
+        HostCommand::LaunchRun {
+            run_id: downstream,
+            workspace: format!("runs/{downstream}"),
+        },
+    );
+
+    let request = fs::read_to_string(
+        root.join(".refrain")
+            .join(format!("runs/{downstream}"))
+            .join("request.md"),
+    )
+    .unwrap();
+    assert!(
+        request.contains(&artifact),
+        "生产路径启动的下游请求里没有上游写下的字节:\n{request}"
+    );
+    assert!(
+        request.contains("<upstream"),
+        "这一节必须说出来源——下游读的不是作者的话:\n{request}"
+    );
+    assert!(request.contains("# Request"));
+
+    drop(application);
+    fs::remove_dir_all(data).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// 近失手：喂的动作挂在「启动」上而不是挂在「边」上——一个无边的 Run
+/// 启动后，请求必须原样。每个普通发送都多一段别人的产出，既费字节又
+/// 让 Agent 读一段与它无关的话。
+#[test]
+fn launching_a_run_without_an_edge_leaves_its_request_alone() {
+    let (data, root, application, root_id) = application_with_chapter("star");
+    let platform = Chosen(Mutex::new(None));
+    let dispatched = application
+        .project(
+            &platform,
+            ProjectInput::Dispatch {
+                root_id: root_id.clone(),
+                request: Box::new(DispatchRequest {
+                    document: CHAPTER.to_string(),
+                    prompt: "改克制些。".to_string(),
+                    scopes: vec![DispatchScope {
+                        label: "s1".to_string(),
+                        before: FIRST.to_string(),
+                        blocks: None,
+                    }],
+                    agents: 1,
+                    orchestration: Orchestration::Alternates,
+                    persona: None,
+                    channel: DispatchChannel::Harness,
+                    result_path: "result.md".to_string(),
+                    max_bytes: 64 * 1024,
+                    carry: CarryMode::None,
+                    materials: Vec::new(),
+                    agent: None,
+                    expected_digest: None,
+                }),
+            },
+        )
+        .unwrap();
+    let ProjectOutput::Dispatched(dispatched) = dispatched else {
+        panic!("dispatch must return the minted runs");
+    };
+    let run = dispatched.runs[0];
+
+    host_command(
+        &application,
+        &root_id,
+        HostCommand::LaunchRun {
+            run_id: run,
+            workspace: format!("runs/{run}"),
+        },
+    );
+
+    let request = fs::read_to_string(
+        root.join(".refrain")
+            .join(format!("runs/{run}"))
+            .join("request.md"),
+    )
+    .unwrap();
+    assert!(
+        !request.contains("<upstream"),
+        "无边的 Run 被喂进了别人的产出:\n{request}"
+    );
+
+    drop(application);
+    fs::remove_dir_all(data).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}

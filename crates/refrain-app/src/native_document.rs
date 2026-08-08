@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 pub const DOCUMENT_FIXTURE_BLOCKS: usize = 100_000;
@@ -59,6 +59,11 @@ pub enum DocumentInput {
     CommitComposition,
     CancelComposition,
     Undo,
+    /// 回到某一条动作刚落下的状态：它之后的动作全部撤销，它自己保留。
+    /// 领域先查再动——上面有带裁决的动作时整次拒绝，不做半截回档。
+    RevertTo {
+        action: Id,
+    },
     Save,
 }
 
@@ -127,6 +132,67 @@ pub struct DocumentProjection {
     /// is a window of bytes, and a window into a `.rs` file looks exactly like
     /// a fenced block inside Markdown.
     pub format: DocumentFormat,
+}
+
+/// 一条要锚进当前正文的来源。
+///
+/// 批注与提案共用这一个类型：它们都以块身份锚（block_id 在编辑中稳定），
+/// 解析规则不同所以分两个变体。解析不出就省略——绝不钉错段落。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AnchorSource {
+    /// 批注：块内字节区间 + 当时被标记的原文。区间越出块现在的长度、或那
+    /// 一段的字已经不是当时的原文（作者改过了），都按「锚不上」省略——
+    /// quote 仍在批注名录里说得出它当初标的是什么。id 是批注的稳定身份
+    /// （uuid 的 36 字节串），界面的动作按它点名。
+    Annotation {
+        id: String,
+        block_id: String,
+        start: u64,
+        end: u64,
+        quote: String,
+        comment: bool,
+    },
+    /// 提案：按切片顺序的候选文本（评审切片的 Same/Delete 片，由裁决那侧
+    /// 的切法给出）。第一个还能在块当前文本里锚上的落点；全部锚不上→省略。
+    /// id 是提案身份——印点上的裁决动作按它记账。
+    Proposal {
+        id: String,
+        block_id: String,
+        candidates: Vec<String>,
+    },
+}
+
+/// 锚定区间的种类。线码跨 ABI（1=高亮 2=评论 3=提案），
+/// 与生成的 `AnchorRangeWire.kind` 一张表。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum AnchorKind {
+    Highlight = 1,
+    Comment = 2,
+    Proposal = 3,
+}
+
+/// 锚进当前正文的一段：文档字节坐标（不是窗口坐标——解析随内容变、
+/// 不随窗口变；视图拿 window_start 自剪）。id 是来源的稳定身份
+/// （36 字节的 uuid 串），界面的动作按它点名。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnchoredRange {
+    pub start: u64,
+    pub end: u64,
+    pub kind: AnchorKind,
+    pub id: [u8; 36],
+}
+
+/// 来源身份 → 线槽：uuid 串恰好 36 字节。不是这个形状的来源不锚——
+/// 一个点不了名的印点，上面的动作落不下去。
+fn anchor_id(id: &str) -> Option<[u8; 36]> {
+    let bytes = id.as_bytes();
+    if bytes.len() != 36 {
+        return None;
+    }
+    let mut out = [0u8; 36];
+    out.copy_from_slice(bytes);
+    Some(out)
 }
 
 #[derive(Debug, Error)]
@@ -311,6 +377,7 @@ impl DocumentSurface {
                 Ok(())
             }
             DocumentInput::Undo => self.undo(),
+            DocumentInput::RevertTo { action } => self.revert_to(action),
             DocumentInput::Save => self.save(),
         }
     }
@@ -353,14 +420,21 @@ impl DocumentSurface {
                 range
             });
         let line_starts = if viewport.columns_em > 0.0 {
-            // 预设暂时固定简中：文档尚未携带语言字段。它决定行尾标点压不压
-            // （GB/T 15834 压半字 vs JLREQ 保留后置空白）与混排间距值，
-            // 所以接上文档语言之前，日文正文的行尾会按中文规矩排。
-            refrain_core::typeset::line_starts(
-                &text,
-                viewport.columns_em,
-                &refrain_core::typeset::ZH_HANS,
-            )
+            // 代码与散文分流（P3.7）：代码走等宽硬切（无禁则、无行尾调整），
+            // 散文走禁则与候选。判据是格式——Markdown 与 LaTeX 是写作格式，
+            // 中文注释与公式文字按散文排；其余格式按代码排。
+            if self.format.is_code() {
+                refrain_core::typeset::line_starts_code(&text, viewport.columns_em)
+            } else {
+                // 预设暂时固定简中：文档尚未携带语言字段。它决定行尾标点压不压
+                // （GB/T 15834 压半字 vs JLREQ 保留后置空白）与混排间距值，
+                // 所以接上文档语言之前，日文正文的行尾会按中文规矩排。
+                refrain_core::typeset::line_starts(
+                    &text,
+                    viewport.columns_em,
+                    &refrain_core::typeset::ZH_HANS,
+                )
+            }
         } else {
             vec![0]
         };
@@ -378,6 +452,102 @@ impl DocumentSurface {
             line_starts,
             format: self.format,
         })
+    }
+
+    /// 把一批锚定来源解析成当前正文的文档字节区间。    ///
+    /// 解析只做一次查表：块身份 → 当前字节包络（`block_byte_range`），锚
+    /// 不上的来源（块没了、原文对不上、候选全落空）一律省略——界面按返回
+    /// 的顺序分层绘制，缺席的那一个就是它「锚不上」的全部表示，绝不钉错
+    /// 段落。
+    #[must_use]
+    pub fn anchored_ranges(&self, sources: &[AnchorSource]) -> Vec<AnchoredRange> {
+        let mut resolved = Vec::new();
+        for source in sources {
+            match source {
+                AnchorSource::Annotation {
+                    id,
+                    block_id,
+                    start,
+                    end,
+                    quote,
+                    comment,
+                } => {
+                    let Some(id) = anchor_id(id) else { continue };
+                    let Some((start, end)) = self.anchor_in_block(block_id, |text| {
+                        let (start, end) = (*start as usize, *end as usize);
+                        if start >= end || end > text.len() {
+                            return None;
+                        }
+                        if !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+                            return None;
+                        }
+                        if &text[start..end] != quote {
+                            return None;
+                        }
+                        Some(start..end)
+                    }) else {
+                        continue;
+                    };
+                    resolved.push(AnchoredRange {
+                        start,
+                        end,
+                        kind: if *comment {
+                            AnchorKind::Comment
+                        } else {
+                            AnchorKind::Highlight
+                        },
+                        id,
+                    });
+                }
+                AnchorSource::Proposal {
+                    id,
+                    block_id,
+                    candidates,
+                } => {
+                    let Some(id) = anchor_id(id) else { continue };
+                    let Some((start, end)) = self.anchor_in_block(block_id, |text| {
+                        candidates
+                            .iter()
+                            .filter(|candidate| !candidate.is_empty())
+                            .find_map(|candidate| {
+                                text.find(candidate.as_str())
+                                    .map(|at| at..at + candidate.len())
+                            })
+                    }) else {
+                        continue;
+                    };
+                    resolved.push(AnchoredRange {
+                        start,
+                        end,
+                        kind: AnchorKind::Proposal,
+                        id,
+                    });
+                }
+            }
+        }
+        resolved
+    }
+
+    /// 在一个块里按块内规则解析，交出文档字节坐标。块没了 → None。
+    fn anchor_in_block(
+        &self,
+        block_id: &str,
+        locate: impl FnOnce(&str) -> Option<Range<usize>>,
+    ) -> Option<(u64, u64)> {
+        let target = block_id.parse::<Id>().ok()?;
+        let blocks = self.manuscript.head().blocks();
+        let (index, block) = blocks
+            .iter()
+            .enumerate()
+            .find(|(_, block)| block.id() == target)?;
+        let within = locate(block.text())?;
+        // 包络起点即块文本起点（分隔符附在末尾），块内偏移因此直接平移成
+        // 文档字节坐标。
+        let envelope = self.manuscript.block_byte_range(index..index + 1).ok()?;
+        Some((
+            (envelope.start + within.start) as u64,
+            (envelope.start + within.end) as u64,
+        ))
     }
 
     /// Resolve one anchor into the first block a projection starts at.
@@ -565,6 +735,21 @@ impl DocumentSurface {
         Ok(())
     }
 
+    fn revert_to(&mut self, action: Id) -> Result<(), DocumentError> {
+        let transitions = self.manuscript.revert_to(action)?;
+        // 回到链尖是空走：什么都没动，revision 也不该涨——涨了界面会以为
+        // 字节变了去重画。动了才与 undo 同一口径：一步弹一层选区史。
+        if transitions.is_empty() {
+            return Ok(());
+        }
+        for _ in 0..transitions.len() {
+            self.selection = self.selection_history.pop().unwrap_or_else(|| collapsed(0));
+        }
+        self.composition = None;
+        self.revision += 1;
+        Ok(())
+    }
+
     fn save(&mut self) -> Result<(), DocumentError> {
         let persistence = self
             .persistence
@@ -637,7 +822,9 @@ impl DocumentSurface {
     ) -> Result<(), DocumentError> {
         let before = self.selection;
         let cursor = range.start + text.len();
-        self.manuscript.replace_bytes(range, text, cause)?;
+        if let Err(error) = self.manuscript.replace_bytes(range.clone(), text, cause) {
+            return Err(error.into());
+        }
         self.selection_history.push(before);
         self.selection = collapsed(cursor);
         self.composition = None;
@@ -749,6 +936,36 @@ impl DocumentSurface {
     }
 }
 
+/// 一次原生保存落盘的动作链，给历史同步用。
+pub struct SavedChain {
+    pub actions: Vec<TextAction>,
+    pub head: Id,
+}
+
+/// 读一次原生保存写下的状态文件，取出动作链。
+///
+/// 解析仍只有 `read_persisted_state` 一处——这里只是它的一个调用方，不是
+/// 第二份解析。文件刚由 `save` 原子写下，字节与状态同真，digest 校验自然
+/// 通过；外部改动过文件时这里拿不到状态（与打开路径同一条规则），同步方
+/// 把这份历史丢弃而不是重放到别人的字节上。
+pub fn read_saved_chain(
+    path: &Path,
+    state_path: &Path,
+) -> Result<Option<SavedChain>, DocumentError> {
+    let bytes = fs::read(path).map_err(|source| persistence_error("read", path, source))?;
+    let Some(state) = read_persisted_state(state_path, &bytes)? else {
+        return Ok(None);
+    };
+    Ok(Some(SavedChain {
+        actions: state
+            .actions
+            .into_iter()
+            .map(PersistedAction::into_action)
+            .collect(),
+        head: state.head,
+    }))
+}
+
 fn persistence_error(
     action: &'static str,
     path: &std::path::Path,
@@ -848,6 +1065,49 @@ mod tests {
             max_bytes: 40_960,
             columns_em: 0.0,
         }
+    }
+
+    /// 断行分流（P3.7）：同样的字节，`.rs` 走等宽硬切、`.md` 走散文候选。
+    /// 一行 26 个 ASCII 字符在 5 em 版心里，硬切断在词中间，散文退到空格。
+    /// 把 `is_code` 改成恒 false（或恒 true），这条测试失败。
+    #[test]
+    fn code_files_break_hard_while_prose_breaks_at_candidates() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let directory = std::env::temp_dir().join(format!(
+            "refrain-native-document-code-break-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed),
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+
+        let bytes = "abcdefgh ijklmnop qrstuvwx
+";
+        let mut starts_by_format = Vec::new();
+        for name in ["draft.rs", "draft.md"] {
+            let path = directory.join(name);
+            let state_path = directory.join(format!("{name}.state.json"));
+            std::fs::write(&path, bytes).unwrap();
+            let document =
+                DocumentSurface::open(DocumentOpen::Persistent { path, state_path }).unwrap();
+            let mut viewport = viewport(0, 1);
+            viewport.columns_em = 5.0;
+            let projection = document.project(viewport).unwrap();
+            assert_eq!(
+                projection.line_starts,
+                if name.ends_with(".rs") {
+                    vec![0, 10, 20, 27]
+                } else {
+                    vec![0, 9, 18, 27]
+                },
+                "{name} broke at the wrong places"
+            );
+            starts_by_format.push(projection.line_starts);
+        }
+        assert_ne!(
+            starts_by_format[0], starts_by_format[1],
+            "code and prose must break differently"
+        );
     }
 
     #[test]
@@ -1074,7 +1334,63 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
 
-    /// An editor outside RefRain rewrote the file between sessions. The saved
+    /// 回档由表面直通领域的 `revert_to`：回到链尖是空走，回到中途把上面的
+    /// 动作撤掉，已离链的 id 是具名拒绝而不是再撤一次。
+    #[test]
+    fn revert_to_walks_back_to_the_chosen_action_and_refuses_an_unknown_one() {
+        use std::fs;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let directory = std::env::temp_dir().join(format!(
+            "refrain-native-document-revert-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed),
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("draft.md");
+        let state_path = directory.join("draft.state.json");
+        fs::write(&path, "原稿。\n").unwrap();
+
+        let mut document = DocumentSurface::open(DocumentOpen::Persistent {
+            path: path.clone(),
+            state_path: state_path.clone(),
+        })
+        .unwrap();
+        document
+            .apply(DocumentInput::InsertText("第一笔。".to_owned()))
+            .unwrap();
+        document
+            .apply(DocumentInput::InsertText("第二笔。".to_owned()))
+            .unwrap();
+        let revision = document.project(viewport(0, 1)).unwrap().revision;
+        let first = document.manuscript.actions()[0].id();
+        let tip = document.manuscript.actions()[1].id();
+
+        // 回到链尖什么都没动：revision 不涨，界面不会白重画一次。
+        document
+            .apply(DocumentInput::RevertTo { action: tip })
+            .unwrap();
+        assert_eq!(document.project(viewport(0, 1)).unwrap().revision, revision);
+
+        // 回到第一笔：第二笔离链，目标自己保留——「回到第 1 步」之后第 1 步
+        // 还在历史里。
+        document
+            .apply(DocumentInput::RevertTo { action: first })
+            .unwrap();
+        let reverted = document.project(viewport(0, 1)).unwrap();
+        assert_eq!(reverted.text, "第一笔。原稿。\n");
+        assert_eq!(reverted.revision, revision + 1);
+        assert_eq!(document.manuscript.actions().len(), 1);
+
+        // 已离链的 id 是具名拒绝，不是「再撤一次」。
+        assert!(matches!(
+            document.apply(DocumentInput::RevertTo { action: tip }),
+            Err(DocumentError::Text(TextRefusal::UnknownAction { .. }))
+        ));
+
+        fs::remove_dir_all(directory).unwrap();
+    }
     /// state describes bytes that no longer exist, so replaying its undo
     /// history would restore text the author never wrote. `read_persisted_state`
     /// compares the content digest and drops the state; this pins that the
@@ -1152,5 +1468,115 @@ mod tests {
         let head = document.project(viewport(0, 24)).unwrap();
         assert_eq!(head.selection.start, 0);
         assert!(head.selection.end > 0);
+    }
+
+    /// 锚定测试共用的三块文档："alpha one" / "beta two gamma" / "delta three"。
+    fn anchored_fixture() -> DocumentSurface {
+        DocumentSurface::open(DocumentOpen::Bytes(
+            "alpha one\n\nbeta two gamma\n\ndelta three"
+                .as_bytes()
+                .to_vec(),
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn annotation_anchors_at_its_block_in_document_coordinates() {
+        let document = anchored_fixture();
+        let block = document.manuscript.head().blocks().iter().nth(1).unwrap();
+        let ranges = document.anchored_ranges(&[AnchorSource::Annotation {
+            id: "11111111-1111-1111-1111-111111111111".to_string(),
+            block_id: block.id().to_string(),
+            start: 5,
+            end: 8,
+            quote: "two".to_string(),
+            comment: false,
+        }]);
+        assert_eq!(ranges.len(), 1);
+        let envelope = document.manuscript.block_byte_range(1..2).unwrap();
+        assert_eq!(ranges[0].start as usize, envelope.start + 5);
+        assert_eq!(ranges[0].end as usize, envelope.start + 8);
+        assert_eq!(ranges[0].kind, AnchorKind::Highlight);
+    }
+
+    #[test]
+    fn comment_annotation_carries_the_comment_kind() {
+        let document = anchored_fixture();
+        let block = document.manuscript.head().blocks().iter().next().unwrap();
+        let ranges = document.anchored_ranges(&[AnchorSource::Annotation {
+            id: "11111111-1111-1111-1111-111111111111".to_string(),
+            block_id: block.id().to_string(),
+            start: 0,
+            end: 5,
+            quote: "alpha".to_string(),
+            comment: true,
+        }]);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].kind, AnchorKind::Comment);
+    }
+
+    #[test]
+    fn stale_or_lost_annotations_are_omitted_never_misplaced() {
+        let document = anchored_fixture();
+        let blocks = document.manuscript.head().blocks();
+        let first = blocks.iter().next().unwrap().id().to_string();
+        // 原文对不上（作者改过了）。
+        let stale_quote = AnchorSource::Annotation {
+            id: "11111111-1111-1111-1111-111111111111".to_string(),
+            block_id: first.clone(),
+            start: 0,
+            end: 5,
+            quote: "ALPHA".to_string(),
+            comment: false,
+        };
+        // 区间越出块现在的长度。
+        let out_of_range = AnchorSource::Annotation {
+            id: "11111111-1111-1111-1111-111111111111".to_string(),
+            block_id: first,
+            start: 0,
+            end: 500,
+            quote: "alpha".to_string(),
+            comment: false,
+        };
+        // 块没了。
+        let lost_block = AnchorSource::Annotation {
+            id: "11111111-1111-1111-1111-111111111111".to_string(),
+            block_id: Id::new().to_string(),
+            start: 0,
+            end: 1,
+            quote: "x".to_string(),
+            comment: false,
+        };
+        let ranges = document.anchored_ranges(&[stale_quote, out_of_range, lost_block]);
+        assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn proposal_anchors_at_the_first_candidate_that_still_matches() {
+        let document = anchored_fixture();
+        let block = document.manuscript.head().blocks().iter().nth(1).unwrap();
+        let ranges = document.anchored_ranges(&[AnchorSource::Proposal {
+            id: "33333333-3333-3333-3333-333333333333".to_string(),
+            block_id: block.id().to_string(),
+            // 第一个候选锚不上，第二个落上；空候选不占位。
+            candidates: vec![
+                "不存在的一句".to_string(),
+                "".to_string(),
+                "gamma".to_string(),
+            ],
+        }]);
+        assert_eq!(ranges.len(), 1);
+        let envelope = document.manuscript.block_byte_range(1..2).unwrap();
+        // "beta two gamma" 里 "gamma" 从 9 开始。
+        assert_eq!(ranges[0].start as usize, envelope.start + 9);
+        assert_eq!(ranges[0].end as usize, envelope.start + 14);
+        assert_eq!(ranges[0].kind, AnchorKind::Proposal);
+
+        let none = document.anchored_ranges(&[AnchorSource::Proposal {
+            id: "33333333-3333-3333-3333-333333333333".to_string(),
+            block_id: block.id().to_string(),
+            candidates: vec!["全落空".to_string()],
+        }]);
+        assert!(none.is_empty());
     }
 }

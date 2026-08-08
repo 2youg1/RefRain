@@ -1,8 +1,14 @@
 #!/usr/bin/env bun
 import { readFileSync } from "node:fs";
-/** Keeps the rejected editor kernel out of runtime code and dependencies. */
+/**
+ * Keeps the rejected editor kernel (ProseMirror) out of dependencies and
+ * runtime code. The decision it once guarded — direct DOM against ProseMirror —
+ * went with the DOM surface, and so did the falsifying-corpus probe that pinned
+ * it; what remains load-bearing is that the rejected dependency never returns
+ * through a build tool. Injection proof: add `prosemirror-view` to any
+ * package.json and this exits 1 naming the file.
+ */
 
-import { createHash } from "node:crypto";
 import { collect } from "./gate-lib.ts";
 
 interface PackageManifest {
@@ -10,12 +16,6 @@ interface PackageManifest {
   readonly devDependencies?: Readonly<Record<string, string>>;
   readonly optionalDependencies?: Readonly<Record<string, string>>;
   readonly peerDependencies?: Readonly<Record<string, string>>;
-}
-
-interface BoundaryProbe {
-  readonly decision: string;
-  readonly mismatched: number;
-  readonly sourceOracle: { readonly file: string; readonly sha256: string };
 }
 
 const failures: string[] = [];
@@ -43,25 +43,14 @@ for (const file of sources) {
   }
 }
 
-const probe = JSON.parse(
-  readFileSync("probe-results/editor-boundaries.json", "utf8"),
-) as BoundaryProbe;
-const oracle = Buffer.from(readFileSync(probe.sourceOracle.file));
-const oracleHash = createHash("sha256").update(oracle).digest("hex");
-if (probe.decision !== "direct-dom") failures.push("boundary probe does not select direct-dom");
-if (probe.mismatched < 1) failures.push("boundary probe records no falsifying corpus");
-if (oracleHash !== probe.sourceOracle.sha256) {
-  failures.push(`${probe.sourceOracle.file}: source oracle changed after the boundary probe`);
-}
-
 if (manifests.length === 0 || sources.length === 0) {
   failures.push(`empty scan: ${manifests.length} manifests and ${sources.length} source files`);
 }
 if (failures.length > 0) {
-  console.error("FAIL  verify:editor-kernel: direct DOM decision drifted");
+  console.error("FAIL  verify:editor-kernel: rejected editor kernel resurfaced");
   for (const failure of failures) console.error(`      ${failure}`);
   process.exit(1);
 }
 console.log(
-  `PASS  verify:editor-kernel  (${manifests.length} manifests, ${sources.length} source files, ${probe.mismatched} falsifying corpora)`,
+  `PASS  verify:editor-kernel  (${manifests.length} manifests, ${sources.length} source files)`,
 );

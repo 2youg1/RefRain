@@ -6,6 +6,8 @@
       "!**/node_modules",
       "!**/dist",
       "!**/target",
+      "!**/.zig-cache",
+      "!**/zig-out",
       "!**/.worktrees",
       "!**/.tmp",
       "!legacy",

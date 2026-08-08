@@ -108,45 +108,6 @@ pub fn annotations_of(
         .collect())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_undone_action_stays_in_the_list_marked_rather_than_vanishing() {
-        // 已撤销的行是作者做过的事。从列表里消失，他会以为自己记错了——
-        // 而撤销本身是可以再撤销回来的。
-        let entry = HistoryEntry {
-            id: "a".to_string(),
-            ordinal: 3,
-            cause: "native text input".to_string(),
-            at: 1,
-            undone: true,
-        };
-        assert!(entry.undone);
-        assert_eq!(entry.ordinal, 3, "an undone action keeps its place");
-    }
-
-    #[test]
-    fn a_highlight_and_a_comment_are_told_apart_by_one_field() {
-        // 两者在界面上是不同的行：评论有正文，高亮没有。压成一个「有没有
-        // body」来判断，一条正文为空的评论就会被画成高亮。
-        let highlight = AnnotationView {
-            id: "h".to_string(),
-            block_id: "b".to_string(),
-            quote: "剑".to_string(),
-            comment: false,
-            body: String::new(),
-        };
-        let empty_comment = AnnotationView {
-            comment: true,
-            ..highlight.clone()
-        };
-        assert!(!highlight.comment);
-        assert!(empty_comment.comment, "an empty comment is still a comment");
-    }
-}
-
 /// 在选中的一段正文上留一条批注。
 ///
 /// # 定位与派发同源
@@ -225,4 +186,43 @@ pub fn annotate(
         })
         .map_err(into_domain)?;
     Ok(id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_undone_action_stays_in_the_list_marked_rather_than_vanishing() {
+        // 已撤销的行是作者做过的事。从列表里消失，他会以为自己记错了——
+        // 而撤销本身是可以再撤销回来的。
+        let entry = HistoryEntry {
+            id: "a".to_string(),
+            ordinal: 3,
+            cause: "native text input".to_string(),
+            at: 1,
+            undone: true,
+        };
+        assert!(entry.undone);
+        assert_eq!(entry.ordinal, 3, "an undone action keeps its place");
+    }
+
+    #[test]
+    fn a_highlight_and_a_comment_are_told_apart_by_one_field() {
+        // 两者在界面上是不同的行：评论有正文，高亮没有。压成一个「有没有
+        // body」来判断，一条正文为空的评论就会被画成高亮。
+        let highlight = AnnotationView {
+            id: "h".to_string(),
+            block_id: "b".to_string(),
+            quote: "剑".to_string(),
+            comment: false,
+            body: String::new(),
+        };
+        let empty_comment = AnnotationView {
+            comment: true,
+            ..highlight.clone()
+        };
+        assert!(!highlight.comment);
+        assert!(empty_comment.comment, "an empty comment is still a comment");
+    }
 }

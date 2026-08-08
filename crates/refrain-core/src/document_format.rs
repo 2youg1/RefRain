@@ -142,6 +142,18 @@ impl DocumentFormat {
 
     /// How this format's bytes divide into blocks.
     #[must_use]
+    /// 这份格式按代码排还是按散文排。
+    ///
+    /// **接上哪个功能**：投影的断行分流（P3.7）——代码走等宽硬切
+    /// （`typeset::line_starts_code`），散文走禁则与候选（`line_starts`）。
+    ///
+    /// **拥有什么全局不变量**：判据是「作者在这里写的是代码还是散文」。
+    /// LaTeX 虽然以 ASCII 为主，但它是写作格式（正文夹在源码里），禁则与
+    /// 行尾调整对它仍正确——中文注释与公式文字按散文排。Markdown 同理。
+    pub fn is_code(self) -> bool {
+        !matches!(self, Self::Markdown | Self::Latex)
+    }
+
     pub fn block_scan(self) -> BlockScan {
         match self {
             Self::Markdown => BlockScan::Markdown,
@@ -239,6 +251,28 @@ mod tests {
         // What the table does not know, it does not admit.
         assert_eq!(DocumentFormat::of_extension("docx"), None);
         assert_eq!(DocumentFormat::of_extension("pdf"), None);
+    }
+
+    /// 近失手：把 LaTeX 当代码排会切错中文注释（硬切在词中间断），
+    /// 把 Markdown 当代码排会让散文失去禁则——两种都钉住。
+    #[test]
+    fn prose_formats_are_markdown_and_latex_only() {
+        assert!(!DocumentFormat::Markdown.is_code());
+        assert!(!DocumentFormat::Latex.is_code());
+        for format in [
+            DocumentFormat::TypeScript,
+            DocumentFormat::Rust,
+            DocumentFormat::Python,
+            DocumentFormat::Go,
+            DocumentFormat::Lean,
+            DocumentFormat::Css,
+            DocumentFormat::Html,
+            DocumentFormat::Xml,
+            DocumentFormat::Toml,
+            DocumentFormat::Yaml,
+        ] {
+            assert!(format.is_code(), "{format:?} must break as code");
+        }
     }
 
     #[test]
