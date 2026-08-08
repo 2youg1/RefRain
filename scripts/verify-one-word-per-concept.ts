@@ -56,7 +56,7 @@ const RULES: readonly Rule[] = [
     concept: "把一批提案交给智能体这件事",
     canonical: "发送 / 发送台 / 发送信箱（UI 与散文同一个词）",
     synonyms: ["工单", "托付", "委派"],
-    scope: ["README.md", "README.zh-CN.md", "docs/"],
+    scope: ["README.md", "docs/"],
   },
 ];
 

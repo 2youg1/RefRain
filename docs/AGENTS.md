@@ -21,7 +21,7 @@ the code and the document update in the same commit. A feature that exists
 only in code is invisible to the next reader, and the document becomes a
 second, stale authority.
 
-## Be strategic
+## Understand before you produce
 
 You are spending someone else's token budget. Spend it on understanding, not on
 producing.
@@ -205,6 +205,5 @@ Repository prose is limited to `README.md` and the approved files under `docs/`.
 - [Architecture and glossary](ARCHITECTURE.md)
 - [Effect conventions](EFFECT.md)
 - [Contributing](CONTRIBUTING.md)
-- [Roadmap](ROADMAP.md)
 - [Agent protocol](SKILL.md)
 - [MPL 2.0 licence](../LICENSE)

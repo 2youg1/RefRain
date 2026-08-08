@@ -17,11 +17,9 @@
  */
 export const PUBLISHED = {
   "README.md": "what RefRain is, and how to install it",
-  "README.zh-CN.md": "the same, in Chinese",
   "docs/ARCHITECTURE.md": "modules, glossary, and where problems live",
   "docs/CONTRIBUTING.md": "how to propose a change",
   "docs/EFFECT.md": "where Effect runs and which patterns are canonical",
-  "docs/ROADMAP.md": "what is planned",
   "docs/AGENTS.md": "working discipline for agents",
   "docs/SKILL.md": "the agent protocol (generated)",
   "e2e/native/README.md": "how to record and replay the session E2E journals",

@@ -54,9 +54,11 @@ pub fn runRow(row: snapshot.Value) ?Row {
 
 /// Run 的状态的中文名。
 ///
-/// `RunProgress` 是 Rust 的枚举（终态在类型里），serde 把它写成一个单键对象
-/// 或一个字符串。两种形状都认，认不出就说「未知」——把未知状态显示成某个
-/// 已知状态，作者会对一个还在跑的 Run 按下取消并以为它已经结束。
+/// `RunProgress` 是 Rust 的枚举（终态在类型里），serde 相邻标记
+/// （`tag = "kind"`）把它写成 `{"kind":"authorized","value":{…}}`——
+/// 单变体也是 `{"kind":"cancelled"}`。只认这一种形状（host.rs 的 serde
+/// 属性是唯一权威），认不出就说「未知」——把未知状态显示成某个已知
+/// 状态，作者会对一个还在跑的 Run 按下取消并以为它已经结束。
 ///
 /// 措辞的唯一权威是这里（v0.2.4 的七态表）：排队／已授权／启动／在途／
 /// 完成／失败／取消。失败带原因时说原因——作者据此决定重试还是放弃。
@@ -69,7 +71,7 @@ pub fn progressLabel(progress: ?snapshot.Value) []const u8 {
     if (std.mem.eql(u8, name, "dispatched")) return "在途";
     if (std.mem.eql(u8, name, "completed")) return "完成";
     if (std.mem.eql(u8, name, "failed")) {
-        const payload = snapshot.field(raw, "failed") orelse return "失败";
+        const payload = snapshot.field(raw, "value") orelse return "失败";
         const reason = snapshot.stringField(payload, "failure") orelse return "失败";
         return failedLabel(reason);
     }
@@ -95,8 +97,16 @@ fn failedLabel(reason: []const u8) []const u8 {
     return buffer[0 .. prefix.len + len];
 }
 
-/// 枚举变体的名字：`"queued"` 或 `{"authorized":{…}}` 都取到 `authorized`。
+/// 枚举变体的名字：相邻标记下变体名就是 `kind` 字段的值
+/// （`{"kind":"authorized","value":{…}}` 取到 `authorized`）。
 fn progressName(raw: snapshot.Value) []const u8 {
+    return snapshot.stringField(raw, "kind") orelse "";
+}
+
+/// 外部标记枚举的变体键：serde 默认形状 `{"work":{…}}`——取第一个键。
+/// RunProgress 是相邻标记（progressName 读 kind 字段），Persona 是外部
+/// 标记；两种 serde 形状两个读者，不共用一份猜测。
+fn variantKey(raw: snapshot.Value) []const u8 {
     if (raw.len >= 2 and raw[0] == '"') return raw[1 .. raw.len - 1];
     if (raw.len >= 2 and raw[0] == '{') {
         var index: usize = 1;
@@ -561,35 +571,36 @@ test "a document row shows its path and says what kind of document it is" {
     try std.testing.expect(documentRow("{\"role\":\"chapter\"}") == null);
 }
 
-test "run progress reads both the unit and the payload-carrying enum shapes" {
-    // serde 把无字段变体写成字符串，带字段的写成单键对象。两种都要认——
-    // 只认一种的表现是半数 Run 显示「未知」。
-    try std.testing.expectEqualStrings("取消", progressLabel("\"cancelled\""));
+test "run progress reads the adjacently tagged enum shape" {
+    // serde 相邻标记（tag = "kind"）：无字段变体是 {"kind":"cancelled"}，
+    // 带字段的是 {"kind":"authorized","value":{…}}。host.rs 的 serde 属性
+    // 是唯一权威——这里按真实形状断言，不认旧的外部标记形状。
+    try std.testing.expectEqualStrings("取消", progressLabel("{\"kind\":\"cancelled\"}"));
     try std.testing.expectEqualStrings(
         "已授权",
-        progressLabel("{\"authorized\":{\"requestDigest\":\"d\"}}"),
+        progressLabel("{\"kind\":\"authorized\",\"value\":{\"requestDigest\":\"d\"}}"),
     );
     // 失败带原因时说原因：作者据此决定重试还是放弃。
     try std.testing.expectEqualStrings(
         "失败：磁盘被占",
-        progressLabel("{\"failed\":{\"failure\":\"磁盘被占\"}}"),
+        progressLabel("{\"kind\":\"failed\",\"value\":{\"failure\":\"磁盘被占\"}}"),
     );
     // 认不出的状态说「未知」，不落到某个已知状态上。
-    try std.testing.expectEqualStrings("未知", progressLabel("{\"brandNew\":{}}"));
+    try std.testing.expectEqualStrings("未知", progressLabel("{\"kind\":\"brandNew\"}"));
     try std.testing.expectEqualStrings("未知", progressLabel(null));
 }
 
 test "the allowed actions come from the state, not from a guess about terminality" {
     // 旧栈按「是不是终态」推断按钮，于是重启后的 Dispatched Run 上有一个
     // 后端必然拒绝的取消键。这条守着按钮不再猜。
-    const dispatched = runActions("{\"dispatched\":{\"receipt\":\"r\"}}", false);
+    const dispatched = runActions("{\"kind\":\"dispatched\",\"value\":{\"receipt\":\"r\"}}", false);
     try std.testing.expect(dispatched.cancellable);
     try std.testing.expect(dispatched.collectable);
     try std.testing.expect(!dispatched.retryable);
 
     // 非终态都能取消：已授权（还没发射）也是。收取只在在途——结果只可能
     // 在送出之后出现。
-    const authorized = runActions("{\"authorized\":{\"requestDigest\":\"d\"}}", false);
+    const authorized = runActions("{\"kind\":\"authorized\",\"value\":{\"requestDigest\":\"d\"}}", false);
     try std.testing.expect(authorized.cancellable);
     try std.testing.expect(!authorized.collectable);
     try std.testing.expect(!authorized.retryable);
@@ -597,20 +608,20 @@ test "the allowed actions come from the state, not from a guess about terminalit
     try std.testing.expect(authorized.launchable);
     try std.testing.expect(!dispatched.launchable);
 
-    const failed = runActions("{\"failed\":{\"failure\":\"boom\"}}", false);
+    const failed = runActions("{\"kind\":\"failed\",\"value\":{\"failure\":\"boom\"}}", false);
     try std.testing.expect(!failed.cancellable);
     try std.testing.expect(!failed.collectable);
     try std.testing.expect(failed.retryable);
 
     // 待恢复的 Run 什么都不给：取消会被拒绝，重试与收取也不接受这个状态。
-    const stranded = runActions("{\"dispatched\":{\"receipt\":\"r\"}}", true);
+    const stranded = runActions("{\"kind\":\"dispatched\",\"value\":{\"receipt\":\"r\"}}", true);
     try std.testing.expect(!stranded.cancellable);
     try std.testing.expect(!stranded.collectable);
     try std.testing.expect(!stranded.retryable);
     try std.testing.expect(stranded.needs_recovery);
 
     // 已完成的 Run 不给取消也不给重试——它已经结束了。
-    const done = runActions("{\"completed\":{\"artifactDigest\":\"d\"}}", false);
+    const done = runActions("{\"kind\":\"completed\",\"value\":{\"artifactDigest\":\"d\"}}", false);
     try std.testing.expect(!done.cancellable);
     try std.testing.expect(!done.collectable);
     try std.testing.expect(!done.retryable);
@@ -1170,7 +1181,7 @@ test "a mailbox entry carries its box both raw and translated" {
 ///
 /// 二态的规则住在 `refrain_core::persona`：干活时作者写下的就是全部，
 /// 扮演时应用补一套演法。线上 persona 是 `{"work":{…}}`／`{"cosplay":{…}}`
-/// 或 `null`——模式名取变体键，与 `progressName` 取进度变体同一条路子。
+/// 或 `null`——模式名由 `variantKey` 取变体键（serde 外部标记）。
 pub const Agent = struct {
     id: []const u8,
     name: []const u8,
@@ -1195,16 +1206,16 @@ pub const Agent = struct {
 
 /// 读 Agent 名录里的一位。缺 id 的行不画：切换要点名，点不了名是死行。
 ///
-/// 身份说明在 `persona.<mode>.body` 两层嵌套下：`progressName` 读出变体
-/// 键，body 用同一个键再下一层。argv 是数组，这里并成一段以空格相连的
-/// 文本——显示与编辑共用同一个样子，作者看到的编辑框内容就是存进去
-/// 的那份。
+/// 身份说明在 `persona.<mode>.body` 两层嵌套下：`variantKey` 读出变体
+/// 键（Persona 是 serde 外部标记），body 用同一个键再下一层。argv 是数组，
+/// 这里并成一段以空格相连的文本——显示与编辑共用同一个样子，作者看到的
+/// 编辑框内容就是存进去的那份。
 pub fn agentAt(listing: snapshot.Value, index: usize) ?Agent {
     var rows = snapshot.arrayOf(listing);
     const row = rows.at(index) orelse return null;
     const id = snapshot.stringField(row, "id") orelse return null;
     const persona = snapshot.field(row, "persona");
-    const mode = if (persona) |raw| progressName(raw) else "";
+    const mode = if (persona) |raw| variantKey(raw) else "";
     const workable = std.mem.eql(u8, mode, "work") or std.mem.eql(u8, mode, "cosplay");
     const body = if (persona) |raw| blk: {
         const branch = snapshot.field(raw, mode) orelse break :blk "";

@@ -4,8 +4,6 @@
 
 **A local writing workbench for long manuscripts, where an agent may propose and only you may merge.**
 
-[English](README.md) · [简体中文](README.zh-CN.md)
-
 [![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](LICENSE)
 [![Download](https://img.shields.io/github/v/release/kaile9/RefRain?label=Download&color=blue)](https://github.com/kaile9/RefRain/releases/latest)
 
@@ -66,11 +64,11 @@ Gothic New for Japanese. One honest limit: the Native SDK's typography has a
 global text face and a global mono face and nothing per-script yet, so the
 manuscript is drawn in Noto Sans SC, which covers Han and kana in one face.
 
-Typography settings persist per author. Text size, line height and measure are
-adjustable from the settings panel today; the wider set (indent, alignment,
-baseline grid and friends) is stored and carried, but the native renderer does
-not consume it yet — a known boundary of the rewrite, stated here rather than
-silently dropped.
+Typography settings persist per author and take effect as you move the sliders:
+text size, line height and measure re-project the manuscript live. The wider
+set (indent, alignment, baseline grid and friends) is stored and carried, but
+the renderer does not consume it yet — a known boundary, stated here rather
+than silently dropped.
 
 Editing is reversible. Ctrl+Z undoes the last step, and a history panel beside
 the manuscript can roll back to any earlier step — the record survives restarts.
@@ -89,18 +87,6 @@ full-width punctuation mark is compressed at the end of a line, an unbreakable
 unit overflows rather than being cut, and the breaks come out identical on every
 platform because the algorithm is one Rust module rather than three browser
 engines.
-
-**Where the rewrite stands.** RefRain has moved onto a native rendering path.
-The domain — manuscript bytes, block identity, verdicts, orchestration, PDF text
-extraction — carried over whole and is covered by tests. The screens are being
-rebuilt one at a time. Back on a native surface: editing with undo, the history
-panel with rollback to any step, the mailbox (pin, discard, countermand),
-annotations for reading, search hits that jump to the exact block, the
-work/cosplay persona switch, and the bundled fonts. Still without a native
-surface: in-place Markdown rendering, tables, diagrams, PDF reading, writing
-annotations, typography the renderer consumes, and multi-round relay
-orchestration. Their rules and dependencies are still here, and each returns as
-its screen lands.
 
 ### Working with agents
 
@@ -134,19 +120,68 @@ Measured on the development machine, not estimated:
 | 100MB PDF import | parses in 195ms |
 | 100k-file project directory | warm, p95 404ms |
 
+## How the code is organised
+
+Read this section before you open an editor — human or agent.
+
+RefRain is a stack of six layers. Each layer holds one kind of thing and
+refuses the rest; a layer may depend only on the layers below it.
+
+| Layer | Crate / directory | Holds |
+|---|---|---|
+| L0 domain | `crates/refrain-core` | Every product rule. Depends on nothing in the workspace. |
+| L1 persistence | `crates/refrain-store` | Both databases, every disk write, the Config file, trash |
+| L2 orchestration | `crates/refrain-host` | Task/Run state, workspaces, process launching, harness adapters |
+| L3 use cases | `crates/refrain-app` | The flows that need more than one layer below |
+| L4 bridge | `apps/native/host` | The C ABI between Rust and the surface |
+| L5 surface | `apps/native/src` | Markup, interface state (a restricted TypeScript subset), platform events and drawing (Zig) |
+
+Five rules decide where any code belongs:
+
+1. **Deep modules.** A module earns its existence by owning an invariant.
+2. **One authority per fact.** A second copy is a defect, not a convenience.
+3. **Layers point down.** Never up, never sideways.
+4. **Links are few and named.** Each seam has a schema and a gate.
+5. **A feature is a module plus its wiring.** Never logic inside a router's
+   match arms, and never a second authority beside an old one.
+
+[ARCHITECTURE.md](docs/ARCHITECTURE.md) enumerates what these rules mean
+today: the function matrix (which module owns which function at which layer),
+the module inventory, the wiring graph, the glossary, and a symptom-to-module
+table for when something is wrong.
+
+## Changing the code safely
+
+**Do not mess it up.** Every new feature starts in
+[ARCHITECTURE.md](docs/ARCHITECTURE.md), not in a source file. Find the module,
+fix its layer, its event flow, and its neighbours. If the feature is not in the
+document, add it there first and land the code and the document update in the
+same commit. The full discipline is in [AGENTS.md](docs/AGENTS.md) — if you
+cannot follow it, do not add a line of code.
+
+**Mess it up less.** Search the repository before you write anything: the rule,
+the guard, or the derivation you need usually exists already. Match the
+surrounding code. Write one test that can fail, not five that restate the
+implementation.
+
+**After you messed it up.** Run the full verification chain (below) and read
+the first red, not the last. A red gate can be the environment rather than your
+change — run the same gate on the base commit to tell them apart. The
+symptom-to-module table in [ARCHITECTURE.md](docs/ARCHITECTURE.md) maps the
+failure to the module that owns it; fix the one authority, do not add a second
+one beside it.
+
 ## Install
 
 Releases are published on
 [GitHub](https://github.com/kaile9/RefRain/releases). The current release is
-v0.2.5. The next one, v0.3.0, is the first build with the native surface and
-will be offered for Windows once the author has signed it off on his own
-machine.
+v0.3.0 — the first build on the native surface, with a Windows client.
 
 Most measurements in this repository come from Linux, and nothing is claimed
-for a platform until it has been measured there. The exception is now the
-Windows build itself: it compiles and passes the full test suite on real
-Windows hardware. The Windows and macOS input-method paths are written but not
-yet signed off.
+for a platform until it has been measured there. The exception is the Windows
+build itself: it compiles and passes the full test suite on real Windows
+hardware. The Windows and macOS input-method paths are written but not yet
+signed off.
 
 ### Building from source
 
@@ -177,9 +212,8 @@ TMPDIR="$PWD/.tmp" cargo test --workspace --all-targets
 ## Documentation
 
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) — modules, glossary, and where a problem most likely lives
-- [CONTRIBUTING.md](docs/CONTRIBUTING.md) — how to propose a change
-- [ROADMAP.md](docs/ROADMAP.md) — what is planned (written in Chinese)
 - [AGENTS.md](docs/AGENTS.md) — working discipline for agents in this repository
+- [CONTRIBUTING.md](docs/CONTRIBUTING.md) — how to propose a change
 - [SKILL.md](docs/SKILL.md) — the agent protocol, generated from the parser
 
 ## Technology
@@ -192,14 +226,10 @@ TMPDIR="$PWD/.tmp" cargo test --workspace --all-targets
 | **Storage** | [SQLite](https://sqlite.org) via [rusqlite](https://github.com/rusqlite/rusqlite); FTS5 `unicode61` with an application-level bigram tokeniser |
 | **Identity** | [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) digests, [UUID](https://github.com/uuid-rs/uuid) v7 |
 | **Bindings** | [Serde](https://serde.rs) and [Specta](https://github.com/specta-rs/specta), which generates the TypeScript types |
-| **Line breaking** | `refrain_core::typeset` — RefRain's own, because no engine breaks Chinese correctly (see below) |
+| **Line breaking** | `refrain_core::typeset` — RefRain's own, because no engine breaks Chinese correctly (see [ARCHITECTURE.md](docs/ARCHITECTURE.md)) |
 | **Highlighting** | The Native SDK's own `code` widget — 17 grammars compiled into the binary, so nothing is loaded at runtime and nothing reaches the network |
 | **Imported sources** | Text is extracted by `lopdf` in Rust — no renderer, no browser engine. Each page's text carries a `<!-- p.N -->` anchor, so a quotation can name the page it came from and a reader can return to the original. |
 | **Build tooling** | [ScriptC](https://github.com/vercel-labs/scriptc) compiles the tier A gates and the release program to native binaries; [Bun](https://bun.sh) and [Node.js](https://nodejs.org) run the rest. Build-time only — nothing of them ships. |
-
-Why the search index uses bigrams rather than trigrams or a tokeniser — with the
-measurements that decided it — is in
-[ARCHITECTURE.md](docs/ARCHITECTURE.md#why-bigram-not-trigram-or-a-tokeniser).
 
 ## Licence
 

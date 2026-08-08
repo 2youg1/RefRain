@@ -7,6 +7,4 @@
       </row>
     </alert>
   </if>
-  <text>{status}</text>
-  <text>protocol {protocolVersion} · revision {documentRevision} · {documentBlocks} blocks · {documentBytes} bytes</text>
 </column>

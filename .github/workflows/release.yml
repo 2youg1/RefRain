@@ -227,7 +227,6 @@ jobs:
           - [Agent rules](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/AGENTS.md)
           - [Architecture](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/ARCHITECTURE.md)
           - [Contributing](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/CONTRIBUTING.md)
-          - [Roadmap](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/ROADMAP.md)
           - [Agent protocol](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/SKILL.md)
           - [MPL 2.0 license](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/LICENSE)
 

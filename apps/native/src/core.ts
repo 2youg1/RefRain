@@ -123,9 +123,9 @@ const INTERRUPT_VALUE_FIELD = asciiBytes('"kind":"interruptNow","value":');
 const NEXT_FIELD = asciiBytes('"next"');
 // 在飞判定的三个状态键（v0.2.4：authorized/launching/dispatched 在飞，
 // queued 不算）。线是 `{"dispatched":{…}}` 形状，模式带冒号大括号。
-const IN_FLIGHT_AUTHORIZED = asciiBytes('"authorized":{');
-const IN_FLIGHT_LAUNCHING = asciiBytes('"launching":{');
-const IN_FLIGHT_DISPATCHED = asciiBytes('"dispatched":{');
+const IN_FLIGHT_AUTHORIZED = asciiBytes('"kind":"authorized"');
+const IN_FLIGHT_LAUNCHING = asciiBytes('"kind":"launching"');
+const IN_FLIGHT_DISPATCHED = asciiBytes('"kind":"dispatched"');
 const CODE_FIELD = asciiBytes('"code"');
 const ID_FIELD = asciiBytes('"id":');
 const AFTER_TEXT_FIELD = asciiBytes('"afterText":');
@@ -249,7 +249,7 @@ export interface Model {
   /**
    * 当前主题的下标，指向 `generated/themes.zig` 的 `themes` 表。
    *
-   * 界面状态归 Model（Roadmap 2.3 的结构限制），色值归生成的色表——Model 只
+   * 界面状态归 Model（ARCHITECTURE 的 L5 分层纪律），色值归生成的色表——Model 只
    * 记「选了第几套」，不持有任何颜色。切换主题因此是一次 Msg，不是一次样式写入。
    */
   readonly themeIndex: number;
@@ -279,6 +279,14 @@ export interface Model {
    * 层最常去的台子。
    */
   readonly agentDestination: number;
+  /**
+   * 探头态（2.13 悬停开栏）：1 = 功能区是鼠标贴左缘探出来的，此后还没有
+   * 任何交互——指针移出整个栏宽时由 `rail_peek_close` 收回（迟滞 = 栏宽：
+   * 开 4px、关约 248px，栏不在边缘抖动）。任何交互消息在进 switch 前解除
+   * 它：用过的栏留下，解除的只是「自动收回」的资格。Zig 据此决定要不要
+   * 给栏 pane 挂 hover_leave 感应面。
+   */
+  readonly railPeek: number;
   /**
    * 侧栏（文件区）占分栏的比例。作者拖动分隔条时由 `split_resize` 更新——
    * Model 持有它，重建不丢（SDK 的 split 只保存跨重建的位置，不保存到
@@ -707,6 +715,17 @@ export type Msg =
    * 1..4 是四区（设置/文件/编辑/Agent），5..8 直达其余去处。 */
   | { readonly kind: "workbench_key"; readonly ordinal: number }
   /**
+   * 贴左缘悬停（2.13）：稿子全宽时左缘 4px 探头条的 hover_enter。开出
+   * 探头态功能区——与 Ctrl+2（workbench_key 2）同一个落点，只是不用点、
+   * 也不用够键盘。
+   */
+  | { readonly kind: "rail_peek_open" }
+  /**
+   * 指针移出探头栏的整个栏宽：栏没被动过（railPeek 仍在）且仍停在文件
+   * 去处时收回稿子。迟滞由栏宽提供——开 4px、关约 248px。
+   */
+  | { readonly kind: "rail_peek_close" }
+  /**
    * 面板退一层（Escape / Ctrl+[）。旧版 `PanelStack.back()`：回到上一个去处，
    * 没有上一个时回稿子。
    */
@@ -1007,8 +1026,25 @@ export function keyMsg(key: KeyEvent): Msg | null {
 export const viewUnbound = [
   // hostReady 由 Zig 的 statusItem 读（状态行徽章），标记里没有绑定它的元素。
   "hostReady",
+  // 状态行由 Zig 从保存证据链另构（statuslineText，2.6）；status 只被那行
+  // 调试脚手架绑定过，v0.3.0 走查删了它——update 仍写它留作答复记录。
+  "status",
+  // 握手簿记与文档四件套：修订号是保存证据链的判据，块数由 Zig 的滚动
+  // 布局直读 Model（app_main 的 documentLayout）——标记里没有绑定它们的
+  // 元素（脚手架的 protocol/revision/blocks/bytes 行已删）。
+  "protocolVersion",
+  "documentRevision",
+  "documentBytes",
+  "documentBlocks",
   // Agent 区记忆只服务 update 里的导航换算（workbench_key → 落点），视图不读。
   "agentDestination",
+  // 探头态（2.13）：Zig 读它决定栏 pane 挂不挂 hover_leave 感应面——
+  // 探头开的栏移出整栏才收回；手动开的栏不自动收。标记里没有绑定它的元素。
+  "railPeek",
+  // 探头两臂（2.13）由 Zig 的悬停绑定发出（探头条 hover_enter、栏 pane
+  // 感应面 hover_leave），标记里没有发它们的元素。
+  "rail_peek_open",
+  "rail_peek_close",
   // 两个分栏比例由 Zig 的 split 部件读写，标记里没有绑定它们的元素。
   "railFraction",
   "layoutFraction",
@@ -1307,11 +1343,16 @@ function checkingModel(): Model {
     // 实心：与 Rust `PanelMaterial::default` 同源，readConfig 答复一到即被
     // 作者的真实选择替换。
     panelMaterial: 0,
-    destinationIndex: DESTINATION_MANUSCRIPT | 0,
+    // 首启落文件去处而不是稿子：rail（功能区）首帧即开，作者（慢鼠标
+    // 画像）第一眼就看到全部入口——文件树、「前往」节、打开项目按钮。
+    // 稿子去处没有侧栏，从它起步等于把功能全藏起来（v0.3.0 走查问题 1）。
+    destinationIndex: DESTINATION_FILES | 0,
     panelStack: PANEL_STACK_EMPTY | 0,
     agentDestination: DESTINATION_DISPATCH | 0,
+    // 探头态初始为无：首启 rail 是正式打开（首帧即开），不是探出来的。
+    railPeek: 0,
     railFraction: RAIL_FRACTION_DEFAULT,
-    layoutFraction: layoutFractionOf(DESTINATION_MANUSCRIPT, RAIL_FRACTION_DEFAULT),
+    layoutFraction: layoutFractionOf(DESTINATION_FILES, RAIL_FRACTION_DEFAULT),
     // 与 Rust `TypographyConfig::default`（config.rs）同源：启动的
     // readConfig 答复一到即被真实值替换。
     typographyTextSize: 17,
@@ -1542,7 +1583,26 @@ export function initialModel(): [Model, Cmd<Msg>] {
   ];
 }
 
-export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
+/**
+ * update 恒返 `[Model, Cmd<Msg>]`——不用 SDK 文档里的混形糖
+ * （`Model | [Model, Cmd]`，「裸 Model 是 [model, Cmd.none] 的糖」）。
+ *
+ * 原因（v0.3.0 真窗首派崩溃）：facade 对混形的窄化靠编译产物里的
+ * `Array.isArray`，ScriptC 车道上它对元组返回假，凡带 Cmd 的臂都把
+ * 元组本身提交成模型，下一次 model_snapshot 保留到 0x0/0x1——窗口
+ * 一收到第一条 Msg 即段错误，null 平台与 node 车道全程不可见。
+ * 恒元组让 facade 走 `pair[0]/pair[1]` 无窄化路径（与 initialModel 同，
+ * 那条路径 boot 已证明可靠）。「这一臂没有效果」写作 `[model, Cmd.none]`，
+ * 不许写裸 `return model`。回归闸：app_main.zig 的
+ * 「compiled lane: bare-sugar-free update snapshots after tuple and
+ * bare arms alike」。
+ */
+export function update(previous: Model, msg: Msg): [Model, Cmd<Msg>] {
+  // 探头态（2.13）的解除在进 switch 之前：任何交互消息都算「作者用过
+  // 这栏」——栏留下，解除的只是自动收回的资格。`keepsPeek` 列的是机器
+  // 自己的动静（帧、轮询、定时器与答复），它们不解除。
+  const model =
+    !keepsPeek(msg.kind) && previous.railPeek === 1 ? { ...previous, railPeek: 0 } : previous;
   switch (msg.kind) {
     // 保存答复与打字答复同形（二进制投影回包），落地规则因此完全共用；
     // 差别只在保存证据的盖法，由 msg.kind 分派——子集不许运行时形状测试
@@ -1551,13 +1611,16 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
     case "dispatch_ok": {
       const bytes = msg.bytes;
       if (!isDispatchResponse(bytes) || dispatchResponseStatus(bytes) !== 0) {
-        return {
-          ...model,
-          hostReady: false,
-          // 保存通道上的坏答复同样结束这次在飞：卡住「正在保存…」是谎话。
-          savePending: msg.kind === "save_ok" ? false : model.savePending,
-          status: asciiBytes("Native host returned an invalid contract."),
-        };
+        return [
+          {
+            ...model,
+            hostReady: false,
+            // 保存通道上的坏答复同样结束这次在飞：卡住「正在保存…」是谎话。
+            savePending: msg.kind === "save_ok" ? false : model.savePending,
+            status: asciiBytes("Native host returned an invalid contract."),
+          },
+          Cmd.none,
+        ];
       }
       const action = dispatchResponseAction(bytes);
       if (action === ACTION_HEALTH) {
@@ -1565,11 +1628,14 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
           dispatchResponseApiVersion(bytes) !== API_VERSION ||
           (dispatchResponseCapabilities(bytes) & CAPABILITY_MASK) !== CAPABILITY_MASK
         ) {
-          return {
-            ...model,
-            hostReady: false,
-            status: asciiBytes("Native host capability mismatch."),
-          };
+          return [
+            {
+              ...model,
+              hostReady: false,
+              status: asciiBytes("Native host capability mismatch."),
+            },
+            Cmd.none,
+          ];
         }
         // 文档由 Zig 的 `document_open` 打开（携带 rootId + 换行 + path
         // 的引用）；这里不再自动补发 open_manuscript——没有文档可开时那
@@ -1731,7 +1797,8 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
         // 顺带说明：正文投影的刷新不在这条链上——投影随下一次滚动/输入
         // 自取新文本，这是既有缝，不在这里改。
         if (bytesEqual(quotedField(text, KIND_FIELD), DECIDED_KIND)) {
-          if (model.rootId.length === 0 || model.documentPath.length === 0) return recolumned;
+          if (model.rootId.length === 0 || model.documentPath.length === 0)
+            return [recolumned, Cmd.none];
           return [
             recolumned,
             Cmd.request(
@@ -1763,7 +1830,7 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
           bytesEqual(quotedField(text, KIND_FIELD), COLLECTED_KIND) ||
           bytesEqual(quotedField(text, KIND_FIELD), DISPATCHED_KIND)
         ) {
-          if (model.rootId.length === 0) return recolumned;
+          if (model.rootId.length === 0) return [recolumned, Cmd.none];
           return [
             recolumned,
             Cmd.request(
@@ -1799,7 +1866,7 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
           if (inFlight > 0 && model.rootId.length > 0) {
             return [recolumned, Cmd.delay("runs.tick", 2500, "runs_tick")];
           }
-          return recolumned;
+          return [recolumned, Cmd.none];
         }
         // KARA 答复：一次至多挂一口钟（优先状态钟——它是机器活下去的腿；
         // 回来卡与打断是自消展示，下一口答复会再挂）。
@@ -1812,7 +1879,7 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
           if (interruptField.found) {
             return [recolumned, Cmd.delay("kara.interrupt", 4000, "kara_interrupt_done")];
           }
-          return recolumned;
+          return [recolumned, Cmd.none];
         }
         if (
           model.documentSession === 0 ||
@@ -1827,7 +1894,7 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
               Cmd.delay("review.advance", 120, "review_advance"),
             ];
           }
-          return recolumned;
+          return [recolumned, Cmd.none];
         }
         return [
           recolumned,
@@ -1859,7 +1926,10 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
         action !== ACTION_APPLY_INPUT &&
         action !== ACTION_OBTAIN_PROJECTION
       ) {
-        return { ...model, status: asciiBytes("Native host returned an unknown dispatch action.") };
+        return [
+          { ...model, status: asciiBytes("Native host returned an unknown dispatch action.") },
+          Cmd.none,
+        ];
       }
       const session = dispatchResponseSession(bytes);
       const revision = dispatchResponseRevision(bytes);
@@ -1902,10 +1972,10 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
       // 规则，界面不自己 clamp。无论会话开没开成，挂起标记都在这一步清掉：
       // 这次串联结束了。
       if (model.pendingJumpBlock < 0 || action !== ACTION_OPEN_MANUSCRIPT) {
-        return landed;
+        return [landed, Cmd.none];
       }
       if (landed.documentSession === 0) {
-        return { ...landed, pendingJumpBlock: -1 };
+        return [{ ...landed, pendingJumpBlock: -1 }, Cmd.none];
       }
       const jumping: Model = {
         ...landed,
@@ -1940,12 +2010,15 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
     }
     case "dispatch_err":
       // 任何失败都先卸掉判后前进旗：判失败的裁决不该移动作者的注意力。
-      return rejectDispatch({ ...model, reviewAdvanceArmed: false }, msg.bytes);
+      return [rejectDispatch({ ...model, reviewAdvanceArmed: false }, msg.bytes), Cmd.none];
     case "document_input": {
-      if (model.documentSession === 0) return model;
+      if (model.documentSession === 0) return [model, Cmd.none];
       const event = textEventRequest(msg.event);
       if (event === null) {
-        return { ...model, status: asciiBytes("The text event exceeded the fixed ABI bound.") };
+        return [
+          { ...model, status: asciiBytes("The text event exceeded the fixed ABI bound.") },
+          Cmd.none,
+        ];
       }
       return [
         model,
@@ -1975,7 +2048,7 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
     case "document_scroll": {
       const scrolled: Model = { ...model, documentScroll: msg.scroll.offsetY };
       if (model.documentSession === 0 || msg.scroll.offsetY === model.documentScroll) {
-        return scrolled;
+        return [scrolled, Cmd.none];
       }
       return [
         scrolled,
@@ -2015,7 +2088,7 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
         documentViewportHeight: viewportHeightPx({ ...model, windowHeight: msg.height }) | 0,
       };
       if (model.documentSession === 0 || reframed.documentColumnsEm === model.documentColumnsEm) {
-        return reframed;
+        return [reframed, Cmd.none];
       }
       return [
         reframed,
@@ -2045,7 +2118,7 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
     case "document_jump": {
       // 命中跳块：scrollOffsetY 为 0 时 Rust 按块序号锚定视口，越界它钳到
       // 尾窗——界面不自己 clamp，clamping 的规则只有 Rust 一份。
-      if (model.documentSession === 0) return model;
+      if (model.documentSession === 0) return [model, Cmd.none];
       const jumped: Model = { ...model, documentScroll: 0, viewportFirstBlock: msg.block };
       return [
         jumped,
@@ -2075,7 +2148,7 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
     case "document_undo": {
       // NS1017：Cmd 必须在 update 的返回里现写，三条相似的请求不能提成
       // 一个助手——提出去的那份会逃出派发周期，回放对不上。
-      if (model.documentSession === 0) return model;
+      if (model.documentSession === 0) return [model, Cmd.none];
       return [
         model,
         Cmd.request(
@@ -2102,7 +2175,7 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
       ];
     }
     case "document_save": {
-      if (model.documentSession === 0) return model;
+      if (model.documentSession === 0) return [model, Cmd.none];
       // 保存走自己的通道键：与打字共键时在飞的保存会被下一次输入顶掉，
       // 而「已保存」必须等到 save_ok 这份正面证据（见 Model.savePending）。
       // 请求形状与撤销、回档同源，只是 input 码不同。
@@ -2133,10 +2206,10 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
     }
     case "save_err":
       // 失败只卸在飞标记：没有落盘就是没有，状态行继续如实说「未保存」。
-      return rejectDispatch({ ...model, savePending: false }, msg.bytes);
+      return [rejectDispatch({ ...model, savePending: false }, msg.bytes), Cmd.none];
     case "document_revert": {
       // 与撤销、保存同一条请求形状，文本段带历史面板那一行的动作 id。
-      if (model.documentSession === 0) return model;
+      if (model.documentSession === 0) return [model, Cmd.none];
       return [
         model,
         Cmd.request(
@@ -2169,7 +2242,10 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
       // production route; the harnesses still open via the startup request,
       // which Rust answers from its environment overrides.
       if (msg.reference.length > EVENT_TEXT_BYTES) {
-        return { ...model, status: asciiBytes("The document reference exceeded the ABI bound.") };
+        return [
+          { ...model, status: asciiBytes("The document reference exceeded the ABI bound.") },
+          Cmd.none,
+        ];
       }
       // 记住打开的是哪一份：裁决与提案读取都以它为作用域。引用的形状是
       // `rootId\npath`，所以路径是换行之后那一段。换稿同时清掉派发台的
@@ -2214,7 +2290,10 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
       // 与 `document_open` 同一条路，只是多记一个挂起的块序号：打开答复
       // 落地后由 dispatch_ok 分支补发跳块投影。
       if (msg.reference.length > EVENT_TEXT_BYTES) {
-        return { ...model, status: asciiBytes("The document reference exceeded the ABI bound.") };
+        return [
+          { ...model, status: asciiBytes("The document reference exceeded the ABI bound.") },
+          Cmd.none,
+        ];
       }
       let split = 0;
       while (split < msg.reference.length && msg.reference[split] !== 10) split = split + 1;
@@ -2360,7 +2439,80 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
       // 去处换了分栏就变，行长跟着变；稿子开着而断行还是旧行长的，
       // 连带重投影（NS1017：Cmd 在分支里现写）。
       if (model.documentSession === 0 || landed.documentColumnsEm === model.documentColumnsEm) {
-        return landed;
+        return [landed, Cmd.none];
+      }
+      return [
+        landed,
+        Cmd.request(
+          /* @generated:host-service */ "refrain.host",
+          hostRecordBytes({
+            action: ACTION_OBTAIN_PROJECTION,
+            anchor: 0,
+            columnsEm: projectionColumnsEm(landed),
+            cursor: 0,
+            flags: 0,
+            focus: 0,
+            input: 0,
+            protocolVersion: PROTOCOL_VERSION,
+            revision: landed.documentRevision,
+            scrollOffsetY: landed.documentScroll,
+            session: landed.documentSession,
+            text: new Uint8Array(0),
+            viewportBlockCount: DEFAULT_VIEWPORT_BLOCKS,
+            viewportFirstBlock: landed.viewportFirstBlock,
+            windowStart: landed.projectionWindowStart,
+          }),
+          { key: "native-dispatch", ok: "dispatch_ok", err: "dispatch_err" },
+        ),
+      ];
+    }
+    case "rail_peek_open": {
+      // 悬停开栏（2.13）：只在稿子全宽时有意义——别的好去处下 rail 本来
+      // 就在。与 Ctrl+2 同一条落地（goTo → 同样的重投影判据），落点标成
+      // 探头态。goTo 压栈对稿子是空操作，Escape 的退层语义不被探头污染。
+      if (model.destinationIndex !== DESTINATION_MANUSCRIPT) return [model, Cmd.none];
+      const gone = goTo(model, DESTINATION_FILES, true, model.panelStack);
+      const peeked: Model = { ...gone, railPeek: 1 };
+      if (model.documentSession === 0 || peeked.documentColumnsEm === model.documentColumnsEm) {
+        return [peeked, Cmd.none];
+      }
+      return [
+        peeked,
+        Cmd.request(
+          /* @generated:host-service */ "refrain.host",
+          hostRecordBytes({
+            action: ACTION_OBTAIN_PROJECTION,
+            anchor: 0,
+            columnsEm: projectionColumnsEm(peeked),
+            cursor: 0,
+            flags: 0,
+            focus: 0,
+            input: 0,
+            protocolVersion: PROTOCOL_VERSION,
+            revision: peeked.documentRevision,
+            scrollOffsetY: peeked.documentScroll,
+            session: peeked.documentSession,
+            text: new Uint8Array(0),
+            viewportBlockCount: DEFAULT_VIEWPORT_BLOCKS,
+            viewportFirstBlock: peeked.viewportFirstBlock,
+            windowStart: peeked.projectionWindowStart,
+          }),
+          { key: "native-dispatch", ok: "dispatch_ok", err: "dispatch_err" },
+        ),
+      ];
+    }
+    case "rail_peek_close": {
+      // 指针移出整个栏宽：栏没被用过（railPeek 仍在）且仍停在文件去处才
+      // 收回稿子——动过（下标已解除）或已经去了别处的，都不抢它的去处。
+      if (model.railPeek !== 1 || model.destinationIndex !== DESTINATION_FILES)
+        return [model, Cmd.none];
+      const landed = relayout({
+        ...model,
+        destinationIndex: DESTINATION_MANUSCRIPT | 0,
+        railPeek: 0,
+      });
+      if (model.documentSession === 0 || landed.documentColumnsEm === model.documentColumnsEm) {
+        return [landed, Cmd.none];
       }
       return [
         landed,
@@ -2391,11 +2543,11 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
       const target = destinationForOrdinal(msg.ordinal, model.agentDestination);
       // 不是导航键就原样返回：这条消息也承担「这个键归不归我管」的判断，
       // 免得每个调用点自己先查一遍表。
-      if (target < 0) return model;
+      if (target < 0) return [model, Cmd.none];
       const landed = goTo(model, target, true, model.panelStack);
       // 与 `workbench_go` 同一条落地：分栏变了行长就变，稿子开着连带重投影。
       if (model.documentSession === 0 || landed.documentColumnsEm === model.documentColumnsEm) {
-        return landed;
+        return [landed, Cmd.none];
       }
       return [
         landed,
@@ -2425,42 +2577,51 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
     case "panel_back": {
       // 浮层逐层关、一次只关一层：饭盒开着时 Escape 先关饭盒。
       if (model.verdictProposal.length > 0) {
-        return {
-          ...model,
-          verdictProposal: new Uint8Array(0),
-          verdictAccept: new Uint8Array(0),
-          verdictReject: new Uint8Array(0),
-          verdictSeed: new Uint8Array(0),
-        };
+        return [
+          {
+            ...model,
+            verdictProposal: new Uint8Array(0),
+            verdictAccept: new Uint8Array(0),
+            verdictReject: new Uint8Array(0),
+            verdictSeed: new Uint8Array(0),
+          },
+          Cmd.none,
+        ];
       }
       // 其次是最小的编辑态：理由框（当作没问过，已记下的不动）。
       if (model.reasonOpen) {
-        return { ...model, reasonOpen: false, reasonDraft: new Uint8Array(0) };
+        return [{ ...model, reasonOpen: false, reasonDraft: new Uint8Array(0) }, Cmd.none];
       }
       // 再是改写框：收回改写，提案回到未判（v0.2.4 编辑态 Escape 同款）。
       if (model.revisingProposal.length > 0) {
-        return {
-          ...model,
-          revisingProposal: new Uint8Array(0),
-          revisionText: new Uint8Array(0),
-        };
+        return [
+          {
+            ...model,
+            revisingProposal: new Uint8Array(0),
+            revisionText: new Uint8Array(0),
+          },
+          Cmd.none,
+        ];
       }
       // 再是过期面板：它是一次失败的说辞，关掉不影响名录。
       if (model.staleRecovery.length > 0) {
-        return {
-          ...model,
-          staleFrozen: new Uint8Array(0),
-          staleRecovery: new Uint8Array(0),
-        };
+        return [
+          {
+            ...model,
+            staleFrozen: new Uint8Array(0),
+            staleRecovery: new Uint8Array(0),
+          },
+          Cmd.none,
+        ];
       }
       // 弹栈退一步；栈空回稿子（旧版 `back()`：退一步，不关整棵路径）。
       // 栈空且已在稿子时原地不动——稿子没有「上一个」。
       const back = popDestination(model.panelStack);
-      if (back === model.destinationIndex) return model;
+      if (back === model.destinationIndex) return [model, Cmd.none];
       const landed = goTo(model, back, false, popRest(model.panelStack));
       // 退层同样换分栏：与 `workbench_go` 同一条落地。
       if (model.documentSession === 0 || landed.documentColumnsEm === model.documentColumnsEm) {
-        return landed;
+        return [landed, Cmd.none];
       }
       return [
         landed,
@@ -2492,14 +2653,14 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
       // 「reflowing both panes exactly as a divider drag would and noting
       // the same on_resize echoes」），面板开合的中间值不是作者意图，
       // 混进 railFraction 会把侧栏宽污染成面板宽（实测 0.19→0.32）。
-      if (model.destinationIndex !== DESTINATION_FILES) return model;
+      if (model.destinationIndex !== DESTINATION_FILES) return [model, Cmd.none];
       const rail = clampRailFraction(msg.fraction);
-      if (rail === model.railFraction) return model;
+      if (rail === model.railFraction) return [model, Cmd.none];
       const landed = relayout({ ...model, railFraction: rail });
       // 拖侧栏就是改视口实测：行长逐帧跟着拖柄走（旧版 DOM 的 live
       // reflow 同源），稿子开着连带重投影。
       if (model.documentSession === 0 || landed.documentColumnsEm === model.documentColumnsEm) {
-        return landed;
+        return [landed, Cmd.none];
       }
       return [
         landed,
@@ -2529,14 +2690,17 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
     case "palette_toggle":
       // 开合面板不动去处，也不清提示：作者可能正是因为看到拒绝才打开面板。
       // 打开时清空过滤词——每次打开都是一次新的「我要去…」。
-      return {
-        ...model,
-        paletteOpen: !model.paletteOpen,
-        paletteQuery: new Uint8Array(0),
-      };
+      return [
+        {
+          ...model,
+          paletteOpen: !model.paletteOpen,
+          paletteQuery: new Uint8Array(0),
+        },
+        Cmd.none,
+      ];
     case "palette_query":
-      if (!model.paletteOpen) return model;
-      return { ...model, paletteQuery: searchAfterEdit(model.paletteQuery, msg.event) };
+      if (!model.paletteOpen) return [model, Cmd.none];
+      return [{ ...model, paletteQuery: searchAfterEdit(model.paletteQuery, msg.event) }, Cmd.none];
     case "kara_toggle": {
       // 手动切换 KARA：与设置页按钮同一条消息，两个入口一条路径。请求
       // 字节与 `project_request.zig` 的 karaStep("manualToggle") 逐字节
@@ -2570,7 +2734,7 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
     case "app_focus": {
       // 失焦：只在写作(2)/评审(3)里挂 8s 离场判定——别的状态里失焦不算离开。
       if (!msg.active) {
-        if (model.karaState !== 2 && model.karaState !== 3) return model;
+        if (model.karaState !== 2 && model.karaState !== 3) return [model, Cmd.none];
         return [model, Cmd.delay("kara.away", 8000, "kara_gone_away")];
       }
       // 回焦：机器在 Away(4) 说明离场判定已发作过，发 returned 让它回去；
@@ -2605,7 +2769,7 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
     }
     case "kara_gone_away": {
       // 钟到点时还在写作/评审才算离开（期间回来过会被撤钟，到这里双保险）。
-      if (model.karaState !== 2 && model.karaState !== 3) return model;
+      if (model.karaState !== 2 && model.karaState !== 3) return [model, Cmd.none];
       return [
         model,
         Cmd.request(
@@ -2633,7 +2797,7 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
     }
     case "kara_entered": {
       // 进场钟到点：还在 Entering(1) 才补发（作者 700ms 内又退出就不发）。
-      if (model.karaState !== 1) return model;
+      if (model.karaState !== 1) return [model, Cmd.none];
       return [
         model,
         Cmd.request(
@@ -2661,7 +2825,7 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
     }
     case "kara_leave_finished": {
       // 离场钟到点：还在 Leaving(5) 才补发（v0.2.4 从没发过，机器卡死）。
-      if (model.karaState !== 5) return model;
+      if (model.karaState !== 5) return [model, Cmd.none];
       return [
         model,
         Cmd.request(
@@ -2688,30 +2852,38 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
       ];
     }
     case "kara_card_done":
-      return model.karaCard
-        ? { ...model, karaCard: false, karaReturnTail: new Uint8Array(0) }
-        : model;
+      return [
+        model.karaCard ? { ...model, karaCard: false, karaReturnTail: new Uint8Array(0) } : model,
+        Cmd.none,
+      ];
     case "kara_interrupt_done":
-      return model.karaInterrupt.length > 0
-        ? { ...model, karaInterrupt: new Uint8Array(0) }
-        : model;
+      return [
+        model.karaInterrupt.length > 0 ? { ...model, karaInterrupt: new Uint8Array(0) } : model,
+        Cmd.none,
+      ];
     case "verdict_begin":
       // 开盒：id、预编请求与起笔一起落地（全部 Zig 读出与编好）。
-      return {
-        ...model,
-        verdictProposal: msg.proposalId,
-        verdictAccept: msg.accept,
-        verdictReject: msg.reject,
-        verdictSeed: msg.seed,
-      };
+      return [
+        {
+          ...model,
+          verdictProposal: msg.proposalId,
+          verdictAccept: msg.accept,
+          verdictReject: msg.reject,
+          verdictSeed: msg.seed,
+        },
+        Cmd.none,
+      ];
     case "verdict_close":
-      return {
-        ...model,
-        verdictProposal: new Uint8Array(0),
-        verdictAccept: new Uint8Array(0),
-        verdictReject: new Uint8Array(0),
-        verdictSeed: new Uint8Array(0),
-      };
+      return [
+        {
+          ...model,
+          verdictProposal: new Uint8Array(0),
+          verdictAccept: new Uint8Array(0),
+          verdictReject: new Uint8Array(0),
+          verdictSeed: new Uint8Array(0),
+        },
+        Cmd.none,
+      ];
     case "verdict_accept": {
       // 饭盒开着就走饭盒（预编请求转发）；没开盒轮到裁决台：接受游标行，
       // 字节在此拼出（wire_json）——键盘触发等不到带数据的 Zig 事件，
@@ -2750,7 +2922,7 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
         ];
       }
       const accepted = deskProposalId(model);
-      if (accepted.length === 0) return model;
+      if (accepted.length === 0) return [model, Cmd.none];
       return [
         {
           ...model,
@@ -2821,7 +2993,7 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
         ];
       }
       const rejected = deskProposalId(model);
-      if (rejected.length === 0) return model;
+      if (rejected.length === 0) return [model, Cmd.none];
       return [
         {
           ...model,
@@ -2859,97 +3031,116 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
     case "verdict_revise": {
       // 饭盒改写：起笔是开盒时读出的 agent 建议。
       if (model.verdictProposal.length > 0) {
-        return {
-          ...model,
-          revisingProposal: model.verdictProposal,
-          revisionText: model.verdictSeed,
-        };
+        return [
+          {
+            ...model,
+            revisingProposal: model.verdictProposal,
+            revisionText: model.verdictSeed,
+          },
+          Cmd.none,
+        ];
       }
       // 裁决台改写（Alt+E）：游标行的提案 id 与 afterText 在这里从名录
       // 答复取出（`wire_json`，逃逸感知）——行内按钮的种子仍由 Zig 在
       // 渲染时读出（`revision_begin`），两条路径同一形状。只评论的提案
       // 没有 afterText：键原地不动，与按钮的灰掉同款。
-      if (!deskListingReady(model)) return model;
+      if (!deskListingReady(model)) return [model, Cmd.none];
       const reviseId = stringFieldAt(model.projectResult, ID_FIELD, model.rosterCursor);
       const reviseSeed = stringFieldAt(model.projectResult, AFTER_TEXT_FIELD, model.rosterCursor);
-      if (!reviseId.found || !reviseSeed.found) return model;
-      return {
-        ...model,
-        revisingProposal: reviseId.value,
-        revisionText: reviseSeed.value,
-      };
+      if (!reviseId.found || !reviseSeed.found) return [model, Cmd.none];
+      return [
+        {
+          ...model,
+          revisingProposal: reviseId.value,
+          revisionText: reviseSeed.value,
+        },
+        Cmd.none,
+      ];
     }
     case "notice_dismiss":
-      return model.noticeShown
-        ? { ...model, notice: new Uint8Array(0), noticeShown: false }
-        : model;
+      return [
+        model.noticeShown ? { ...model, notice: new Uint8Array(0), noticeShown: false } : model,
+        Cmd.none,
+      ];
     case "noop":
       // 滑杆没跨步：什么都不做，model 原样返回（引用不变 = 无变化）。
-      return model;
+      return [model, Cmd.none];
     case "roster_step": {
       // 只在没有名录的去处上不动：在那里移动一个看不见的游标，等作者回到
       // 台上时位置已经漂了。
-      if (!hasRoster(peekStack(model.panelStack))) return model;
+      if (!hasRoster(peekStack(model.panelStack))) return [model, Cmd.none];
       // 不变量归 `roster.ts`：这里只落地，不自己判越界。四个去处共用它，
       // 所以「撞到底就停」这条规矩只有一份。`hasRow` 与游标一起写——
       // 两处漂开的表现是一个指着空名录却仍可点的按钮。
       const moved = step(model.rosterCursor, msg.delta, model.rosterCount) | 0;
       // 换了一行就翻回 A 面：竞争稿的翻看跟着行走，不跟着台子走。
-      return {
-        ...model,
-        rosterCursor: moved,
-        rosterHasRow: hasRow(moved, model.rosterCount),
-        reviewPeer: 0,
-      };
+      return [
+        {
+          ...model,
+          rosterCursor: moved,
+          rosterHasRow: hasRow(moved, model.rosterCount),
+          reviewPeer: 0,
+        },
+        Cmd.none,
+      ];
     }
     case "review_advance": {
       // 判后前进：只 +1，不跳过已判（v0.2.4 同款）。名录在判后答复里已经
       // 重新钳过，这里只是在新的长度上再走一步。
       const moved = step(model.rosterCursor, 1, model.rosterCount) | 0;
-      return {
-        ...model,
-        rosterCursor: moved,
-        rosterHasRow: hasRow(moved, model.rosterCount),
-        reviewPeer: 0,
-      };
+      return [
+        {
+          ...model,
+          rosterCursor: moved,
+          rosterHasRow: hasRow(moved, model.rosterCount),
+          reviewPeer: 0,
+        },
+        Cmd.none,
+      ];
     }
     case "review_peer": {
-      if (peekStack(model.panelStack) !== DESTINATION_REVIEW) return model;
-      if (!model.rosterHasRow) return model;
-      return { ...model, reviewPeer: (1 - model.reviewPeer) | 0 };
+      if (peekStack(model.panelStack) !== DESTINATION_REVIEW) return [model, Cmd.none];
+      if (!model.rosterHasRow) return [model, Cmd.none];
+      return [{ ...model, reviewPeer: (1 - model.reviewPeer) | 0 }, Cmd.none];
     }
     case "review_reason_open": {
-      if (peekStack(model.panelStack) !== DESTINATION_REVIEW) return model;
-      if (!model.rosterHasRow) return model;
+      if (peekStack(model.panelStack) !== DESTINATION_REVIEW) return [model, Cmd.none];
+      if (!model.rosterHasRow) return [model, Cmd.none];
       // 起笔是已记下的理由——改上次说的，而不是每次从零写。
-      return { ...model, reasonOpen: true, reasonDraft: model.reviewReason };
+      return [{ ...model, reasonOpen: true, reasonDraft: model.reviewReason }, Cmd.none];
     }
     case "review_reason_typed":
-      if (!model.reasonOpen) return model;
-      return { ...model, reasonDraft: draftAfterEdit(model.reasonDraft, msg.event) };
+      if (!model.reasonOpen) return [model, Cmd.none];
+      return [{ ...model, reasonDraft: draftAfterEdit(model.reasonDraft, msg.event) }, Cmd.none];
     case "review_reason_commit":
       // Enter 记：空串也是一条记下的理由（v0.2.4「理由（可留空）」）。
-      if (!model.reasonOpen) return model;
-      return {
-        ...model,
-        reasonOpen: false,
-        reviewReason: model.reasonDraft,
-        reasonRecorded: true,
-      };
+      if (!model.reasonOpen) return [model, Cmd.none];
+      return [
+        {
+          ...model,
+          reasonOpen: false,
+          reviewReason: model.reasonDraft,
+          reasonRecorded: true,
+        },
+        Cmd.none,
+      ];
     case "review_reason_cancel":
       // Escape 当作没问过：草稿丢掉，已记下的那条不动。
-      if (!model.reasonOpen) return model;
-      return { ...model, reasonOpen: false, reasonDraft: new Uint8Array(0) };
+      if (!model.reasonOpen) return [model, Cmd.none];
+      return [{ ...model, reasonOpen: false, reasonDraft: new Uint8Array(0) }, Cmd.none];
     case "stale_dismiss":
-      return {
-        ...model,
-        staleFrozen: new Uint8Array(0),
-        staleRecovery: new Uint8Array(0),
-      };
+      return [
+        {
+          ...model,
+          staleFrozen: new Uint8Array(0),
+          staleRecovery: new Uint8Array(0),
+        },
+        Cmd.none,
+      ];
     case "desk_verdict": {
       // 桌面裁决按钮：字节由 Zig 在行渲染时编好（含已记下的理由）。发出
       // 即清理由（判后即清）、立起判后前进旗——答复落地时挂 120ms 延迟。
-      if (msg.request.length === 0) return model;
+      if (msg.request.length === 0) return [model, Cmd.none];
       return [
         {
           ...model,
@@ -2989,10 +3180,13 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
         // 改写落定：作者写的那段成为最终正文。空段不落——按钮侧同款门禁
         // （按钮在文字为空时灰掉），键盘路径在这里换成一行状态说明。
         if (model.revisionText.length === 0) {
-          return {
-            ...model,
-            status: asciiBytes("A modified verdict needs its final text."),
-          };
+          return [
+            {
+              ...model,
+              status: asciiBytes("A modified verdict needs its final text."),
+            },
+            Cmd.none,
+          ];
         }
         // 饭盒的落定走 judgeVerdict（判了即落盘，回到写作）；裁决台的落定
         // 走 stageVerdict（进批次，等合并）。请求字节在此拼出——与按钮的
@@ -3041,9 +3235,9 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
       }
       // 裁决台上的落定 = 提交暂存的批次。空批次不发——v0.2.4 的措辞是
       // 「没有入批的裁决。」；这里化成一行状态（ASCII 纪律）。
-      if (peekStack(model.panelStack) !== DESTINATION_REVIEW) return model;
+      if (peekStack(model.panelStack) !== DESTINATION_REVIEW) return [model, Cmd.none];
       if (model.stagedCount === 0) {
-        return { ...model, status: asciiBytes("No staged verdicts to commit.") };
+        return [{ ...model, status: asciiBytes("No staged verdicts to commit.") }, Cmd.none];
       }
       return [
         {
@@ -3087,7 +3281,7 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
     }
     case "search_fire": {
       // 空查询与没有项目都不发（回 idle 与「还没打开」都不该有结果）。
-      if (model.searchQuery.length === 0 || model.rootId.length === 0) return model;
+      if (model.searchQuery.length === 0 || model.rootId.length === 0) return [model, Cmd.none];
       return [
         model,
         Cmd.request(
@@ -3114,97 +3308,124 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
       ];
     }
     case "search_precision":
-      return { ...model, searchExact: !model.searchExact };
+      return [{ ...model, searchExact: !model.searchExact }, Cmd.none];
     case "mailbox_tab":
-      return { ...model, mailboxDiscarded: !model.mailboxDiscarded };
+      return [{ ...model, mailboxDiscarded: !model.mailboxDiscarded }, Cmd.none];
     case "revision_begin":
       // 起点是 Agent 建议的改后文字，由调用方从 Rust 答复里读出来传进来。
       // 换一条提案改写会丢掉上一条改到一半的文字——这是对的：那段文字是
       // 针对上一条提案的，留着它会让作者把 A 的改写提交到 B 上。
-      return {
-        ...model,
-        revisingProposal: msg.proposalId,
-        revisionText: msg.seed,
-      };
+      return [
+        {
+          ...model,
+          revisingProposal: msg.proposalId,
+          revisionText: msg.seed,
+        },
+        Cmd.none,
+      ];
     case "revision_typed":
       // 没在改写时忽略输入。少了这条守卫，一次落错地方的按键会凭空开始
       // 一段没有归属的改写，而它提交时才会被 Rust 拒绝。
-      if (model.revisingProposal.length === 0) return model;
-      return { ...model, revisionText: draftAfterEdit(model.revisionText, msg.event) };
+      if (model.revisingProposal.length === 0) return [model, Cmd.none];
+      return [{ ...model, revisionText: draftAfterEdit(model.revisionText, msg.event) }, Cmd.none];
     case "dispatch_typed":
-      return { ...model, dispatchPrompt: draftAfterEdit(model.dispatchPrompt, msg.event) };
+      return [
+        { ...model, dispatchPrompt: draftAfterEdit(model.dispatchPrompt, msg.event) },
+        Cmd.none,
+      ];
     case "annotation_draft_typed":
       // 与改写框同一条纪律：发送之后草稿保留（作者可能还要再发一条
       // 差不多的），重新框一段字时自己清掉——这里不替他做决定。
-      return { ...model, annotationDraft: draftAfterEdit(model.annotationDraft, msg.event) };
+      return [
+        { ...model, annotationDraft: draftAfterEdit(model.annotationDraft, msg.event) },
+        Cmd.none,
+      ];
     case "agent_edit_begin":
       // 起点是空（快照是借用模式，拼不出现有 argv 的文本）；换一个
       // Agent 编辑会丢掉上一个改到一半的参数——那是针对上一个的。
-      return { ...model, editingAgent: msg.agentId, agentArgvDraft: new Uint8Array(0) };
+      return [{ ...model, editingAgent: msg.agentId, agentArgvDraft: new Uint8Array(0) }, Cmd.none];
     case "agent_argv_typed":
       // 没在编辑时忽略输入。少了这条守卫，一次落错地方的按键会凭空
       // 开始一段没有归属的参数。
-      if (model.editingAgent.length === 0) return model;
-      return { ...model, agentArgvDraft: draftAfterEdit(model.agentArgvDraft, msg.event) };
+      if (model.editingAgent.length === 0) return [model, Cmd.none];
+      return [
+        { ...model, agentArgvDraft: draftAfterEdit(model.agentArgvDraft, msg.event) },
+        Cmd.none,
+      ];
     case "agent_edit_cancel":
       // 两个字段一起清。只清 id 会留下一段孤立的参数，下次编辑时它
       // 作为起点冒出来，作者读成的是「上一条的字漏进来了」。
-      return {
-        ...model,
-        editingAgent: new Uint8Array(0),
-        agentArgvDraft: new Uint8Array(0),
-      };
+      return [
+        {
+          ...model,
+          editingAgent: new Uint8Array(0),
+          agentArgvDraft: new Uint8Array(0),
+        },
+        Cmd.none,
+      ];
     case "dispatch_agents": {
       // 钳在 1..4。零个 agent 的派发铸不出 Run，作者看到的是一行永远
       // 等待的 Task；上限是因为并列的 Run 各跑一个真实进程。
       const next = model.dispatchAgents + msg.delta;
-      return { ...model, dispatchAgents: next < 1 ? 1 : next > 4 ? 4 : next };
+      return [{ ...model, dispatchAgents: next < 1 ? 1 : next > 4 ? 4 : next }, Cmd.none];
     }
     case "dispatch_orchestration":
       // 三种循环。越界回落到并列——一个下标指不到的排法会让 Rust 那边
       // 具名拒绝，而作者只是多按了一下。
-      return { ...model, dispatchOrchestration: (model.dispatchOrchestration + 1) % 3 };
+      return [{ ...model, dispatchOrchestration: (model.dispatchOrchestration + 1) % 3 }, Cmd.none];
     case "dispatch_block_toggle":
       // 翻转位图里的一位；位图按需长长（尾部补零）。
-      return { ...model, dispatchChecked: toggledBit(model.dispatchChecked, msg.ordinal) };
+      return [
+        { ...model, dispatchChecked: toggledBit(model.dispatchChecked, msg.ordinal) },
+        Cmd.none,
+      ];
     case "dispatch_blocks_all":
       // 整章 = 按稿子总块数铺满位图（总数是投影给的跨界事实）。
-      return { ...model, dispatchChecked: allBits(model.documentBlocks) };
+      return [{ ...model, dispatchChecked: allBits(model.documentBlocks) }, Cmd.none];
     case "dispatch_blocks_clear":
-      return { ...model, dispatchChecked: new Uint8Array(0) };
+      return [{ ...model, dispatchChecked: new Uint8Array(0) }, Cmd.none];
     case "dispatch_carry":
       // 三档直选；越界按下标 0（增量）落——一个指不到的档不该送出。
-      return {
-        ...model,
-        dispatchCarry: (msg.index >= 0 && msg.index <= 2 ? msg.index : 0) | 0,
-      };
+      return [
+        {
+          ...model,
+          dispatchCarry: (msg.index >= 0 && msg.index <= 2 ? msg.index : 0) | 0,
+        },
+        Cmd.none,
+      ];
     case "dispatch_agent":
-      return { ...model, dispatchAgent: msg.id };
+      return [{ ...model, dispatchAgent: msg.id }, Cmd.none];
     case "dispatch_material_toggle":
-      if (msg.path.length === 0) return model;
-      return { ...model, dispatchMaterials: toggledLine(model.dispatchMaterials, msg.path) };
+      if (msg.path.length === 0) return [model, Cmd.none];
+      return [
+        { ...model, dispatchMaterials: toggledLine(model.dispatchMaterials, msg.path) },
+        Cmd.none,
+      ];
     case "dispatch_stash": {
-      if (msg.text.length === 0) return model;
+      if (msg.text.length === 0) return [model, Cmd.none];
       // NUL 分隔：正文不含 NUL。攒是「只记录」——notice 说去了哪里。
       const stash =
         model.dispatchStash.length === 0
           ? msg.text
           : concatBytes([model.dispatchStash, new Uint8Array([0]), msg.text]);
-      return {
-        ...model,
-        dispatchStash: stash,
-        notice: asciiBytes("Stashed into the next dispatch."),
-        noticeShown: true,
-      };
+      return [
+        {
+          ...model,
+          dispatchStash: stash,
+          notice: asciiBytes("Stashed into the next dispatch."),
+          noticeShown: true,
+        },
+        Cmd.none,
+      ];
     }
     case "dispatch_stash_drop":
-      return { ...model, dispatchStash: stashDrop(model.dispatchStash, msg.index) };
+      return [{ ...model, dispatchStash: stashDrop(model.dispatchStash, msg.index) }, Cmd.none];
     case "dispatch_stash_clear":
-      return { ...model, dispatchStash: new Uint8Array(0) };
+      return [{ ...model, dispatchStash: new Uint8Array(0) }, Cmd.none];
     case "runs_tick": {
       // 轮询一跳：读一次编排快照。有没有在飞由答复落地时判——没有新在飞
       // 就不挂下一跳，轮询自己停下。
-      if (model.rootId.length === 0) return model;
+      if (model.rootId.length === 0) return [model, Cmd.none];
       return [
         model,
         Cmd.request(
@@ -3233,27 +3454,39 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
     case "material_draft_begin":
       // 起笔是草稿正文（随名录答复带来的 body），不是空白——「改」多半
       // 只动几处，从空白开始等于让作者重写一遍。
-      return { ...model, materialDraftId: msg.id, materialDraftText: msg.seed };
+      return [{ ...model, materialDraftId: msg.id, materialDraftText: msg.seed }, Cmd.none];
     case "material_draft_typed":
-      if (model.materialDraftId.length === 0) return model;
-      return { ...model, materialDraftText: draftAfterEdit(model.materialDraftText, msg.event) };
+      if (model.materialDraftId.length === 0) return [model, Cmd.none];
+      return [
+        { ...model, materialDraftText: draftAfterEdit(model.materialDraftText, msg.event) },
+        Cmd.none,
+      ];
     case "material_draft_cancel":
-      return {
-        ...model,
-        materialDraftId: new Uint8Array(0),
-        materialDraftText: new Uint8Array(0),
-      };
+      return [
+        {
+          ...model,
+          materialDraftId: new Uint8Array(0),
+          materialDraftText: new Uint8Array(0),
+        },
+        Cmd.none,
+      ];
     case "revision_cancel":
       // 两个字段一起清。只清 id 会留下一段孤立的文字，下次改写时它会作为
       // 起点冒出来，作者读成的是「上一条的字漏进来了」。
-      return {
-        ...model,
-        revisingProposal: new Uint8Array(0),
-        revisionText: new Uint8Array(0),
-      };
+      return [
+        {
+          ...model,
+          revisingProposal: new Uint8Array(0),
+          revisionText: new Uint8Array(0),
+        },
+        Cmd.none,
+      ];
     case "project_request": {
       if (msg.input.length > EVENT_TEXT_BYTES) {
-        return { ...model, status: asciiBytes("The project input exceeded the fixed ABI bound.") };
+        return [
+          { ...model, status: asciiBytes("The project input exceeded the fixed ABI bound.") },
+          Cmd.none,
+        ];
       }
       return [
         model,
@@ -3294,6 +3527,33 @@ export function update(model: Model, msg: Msg): Model | [Model, Cmd<Msg>] {
  *
  * **能复用什么**：新增去处不必改这里，只改 `DESTINATIONS` 与 `needsDocument`。
  */
+/**
+ * 哪些消息不算「作者用过探头栏」（2.13）。帧、轮询、定时器与答复是机器
+ * 自己的动静——它们不解除探头态；其余一切消息都在进 switch 前解除它。
+ * 新消息种类默认解除：漏进这张表的代价是探头栏提前变手动栏，比反向安全。
+ */
+function keepsPeek(kind: string): boolean {
+  switch (kind) {
+    case "frame":
+    case "runs_tick":
+    case "dispatch_ok":
+    case "dispatch_err":
+    case "save_ok":
+    case "save_err":
+    case "search_fire":
+    case "app_focus":
+    case "kara_gone_away":
+    case "kara_entered":
+    case "kara_leave_finished":
+    case "kara_card_done":
+    case "kara_interrupt_done":
+    case "rail_peek_open":
+    case "rail_peek_close":
+      return true;
+  }
+  return false;
+}
+
 function relayout(model: Model): Model {
   // 去处或侧栏宽度变了，分栏投影要跟着重算——这里是一处权威的落地：
   // 渲染侧只读 `layoutFraction`，不会在 Zig 侧再抄一份去处→宽度的表。

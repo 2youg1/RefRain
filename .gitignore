@@ -27,3 +27,9 @@ e2e/ime/results/
 # TMPDIR here. Scratch directories, never source.
 /.tmp/
 .worktrees/
+
+# Local walkthrough/probe artifacts — evidence for the author, never shipped
+# (same reason SPEC.md is ignored: the most private files are the ones open
+# while debugging).
+probe-results/
+apps/native/e2e-run/

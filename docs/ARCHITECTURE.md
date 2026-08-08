@@ -71,7 +71,18 @@ third one may appear:
 
 - **The function rail.** Every tool surface — files, review, dispatch,
   mailbox, connections, history, settings — enters from the same side as a
-  panel, stacked in depth order. A tool never opens above the text.
+  panel, stacked in depth order. A tool never opens above the text. The rail
+  is open from the first frame (the first-launch destination is Files), and
+  the files screen carries the destination tree at its top: all eight
+  destinations one click away, the chord printed on each row, the current one
+  highlighted — the same tree the command palette draws, from one source.
+  The rail also opens on hover (2.13): while the manuscript holds the full
+  width, a 4px probe strip at the window's left edge opens the rail to Files
+  on pointer enter — the same landing as the chord. A peeked rail closes
+  itself when the pointer leaves the whole rail width, but only if the
+  author never touched it; any interaction promotes it to a manual rail.
+  The hysteresis is the rail width itself — open at 4px, close past ~248px —
+  so the edge never flickers.
 - **The editing zone.** Text actions live on the text: the right-click menu
   and the key chords. The mouse stays where the words are. In-place anchors
   (the context menu, proposal dots, the verdict bento) attach to the exact
@@ -126,7 +137,7 @@ missing (see *The missing links*) · **○** not landed on the native surface.
 | **F5 · Search & jump** | `chinese_index`, `searchable_block`, `search_rank`, `inline_span` | `project/search`, `project/catalog` | — | `application` | `project.rs` | search box in `app_main`, `document_jump` | ● cross-document open-then-jump sequenced (M4 landed) |
 | **F6 · Settings** | — | `config` | — | `application::apply_config` | `project.rs` | settings screen in `app_main` | ● |
 | **F7 · Harnesses & connections** | — | `config` (connections) | `adapters`, `Tier` | `harness` | `project.rs` | connections screen | ● |
-| **F8 · Dispatch & edges** | `context_compiler`, `material_listing`, `upstream_work`, `persona` | `materials`, `orchestration` | `host`, `run_edge`, `staging`, `process`, `adapters` | `dispatch`, `scope`, `upstream`, `cancel` | `project.rs` | dispatch screen, `LaunchRun` | ● within one dispatch; relay and verify auto-launch across rounds (2.2, 2.11); the producer runner is unmade (M9) |
+| **F8 · Dispatch & edges** | `context_compiler`, `material_listing`, `upstream_work`, `persona` | `materials`, `orchestration` | `host`, `run_edge`, `staging`, `process`, `adapters` | `dispatch`, `scope`, `upstream`, `cancel`, `runner` | `project.rs` | dispatch screen, `LaunchRun` | ● the runner pumps on the `ReadHost` poll: dispatch / observe / `result.md` / `CompleteDispatch` are production-wired (M9 landed); relay and verify auto-launch across rounds (2.2, 2.11) |
 | **F9 · Collect, review & decide** | `agent_protocol`, `manuscript/review`, `manuscript/decision` | `ledger`, `history` | Run records in `host` | `collect`, `decide`, `review`, `journal` | `project.rs` | review screen | ● |
 | **F10 · The mailbox** | — | `mailbox` (standing rows) | — | `mailbox` (composition) | `project.rs` | mailbox screen | ● |
 | **F11 · History & rollback** | `manuscript/persist` | `history` | — | `history`, `RevertTo` in `native_document` | `INPUT_REVERT_TO` | history screen | ● |
@@ -151,17 +162,17 @@ refuses the rest; the refusal is enforced, not requested.
 
 | Layer | Holds | Never holds | Enforced by | Scale (modules / lines) |
 |---|---|---|---|---|
-| **L0 `refrain-core`** — the domain | Every product rule: manuscript, blocks, formats, line breaking, the agent protocol, ranking, KARA | A database, a filesystem path, a process, a window | `verify:core-purity`, `#![forbid(unsafe_code)]` | 32 / 11,762 |
-| **L1 `refrain-store`** — persistence | Both databases, every mutable disk path, the atomic writer, the Root guard, indexes, the Config file, trash | Domain rules, orchestration semantics | `verify:write-path`, `verify:trash-only` | 23 / 8,857 |
-| **L2 `refrain-host`** — orchestration | Task/Run/Authorization state, staging, workspaces, process launching, harness adapters | The database (it writes through the `HostJournal` trait); domain rules | INV-12 reviewed; the journal seam | 6 / 4,693 |
-| **L3 `refrain-app`** — use cases | The flows that need more than one layer below; the one `Application`; `DocumentSurface` | FFI, raw pointers, platform APIs | `#![forbid(unsafe_code)]` | 16 / 6,629 |
-| **L4 `apps/native/host`** — the bridge | The C ABI: one entry, generated layout, session table, bounded replies, the handshake | Product semantics (those are Rust enums below) | `verify:bridge`, the protocol generator's `--check` | 6 / 1,441 |
-| **L5 `apps/native/src`** — the surface | Markup & declarations, interface state, platform events, drawing | Manuscript bytes, product rules | `native check . --strict` (the layer table is in [AGENTS.md](AGENTS.md)) | 13 hand-written / 7,147 + tests |
+| **L0 `refrain-core`** — the domain | Every product rule: manuscript, blocks, formats, line breaking, the agent protocol, ranking, KARA | A database, a filesystem path, a process, a window | `verify:core-purity`, `#![forbid(unsafe_code)]` | 32 / 11,794 |
+| **L1 `refrain-store`** — persistence | Both databases, every mutable disk path, the atomic writer, the Root guard, indexes, the Config file, trash | Domain rules, orchestration semantics | `verify:write-path`, `verify:trash-only` | 23 / 8,893 |
+| **L2 `refrain-host`** — orchestration | Task/Run/Authorization state, staging, workspaces, process launching, harness adapters | The database (it writes through the `HostJournal` trait); domain rules | INV-12 reviewed; the journal seam | 6 / 4,751 |
+| **L3 `refrain-app`** — use cases | The flows that need more than one layer below; the one `Application`; `DocumentSurface` | FFI, raw pointers, platform APIs | `#![forbid(unsafe_code)]` | 17 / 8,493 |
+| **L4 `apps/native/host`** — the bridge | The C ABI: one entry, generated layout, session table, bounded replies, the handshake | Product semantics (those are Rust enums below) | `verify:bridge`, the protocol generator's `--check` | 6 / 1,660 |
+| **L5 `apps/native/src`** — the surface | Markup & declarations, interface state, platform events, drawing | Manuscript bytes, product rules | `native check . --strict` (the layer table is in [AGENTS.md](AGENTS.md)) | 19 hand-written / 13,785 + tests |
 
 Lines are counted over every source file under the layer's `src/`, hand-written
-only — generated files (`generated/protocol.*`, `generated/themes.zig`, 670
-lines) are excluded from L5, and L5's four test files (903 lines) are counted
-separately. The whole hand-written surface is 7,147 lines plus its tests; the
+only — generated files (`generated/protocol.*`, `generated/themes.zig`, 877
+lines) are excluded from L5, and L5's four test files (1,918 lines) are counted
+separately. The whole hand-written surface is 13,785 lines plus its tests; the
 Tauri/Solid surface it replaced was 27,175, and every product rule survived
 the move because the rules were never in the surface.
 
@@ -181,6 +192,20 @@ L5 is itself three strata, each with its own allowance (enforced by
 The single rule worth repeating here: **the manuscript lives in Rust.** Zig
 draws a borrowed projection, and the TypeScript core holds a revision number —
 neither holds the bytes.
+
+A second rule, learned the expensive way in v0.3.0: **`update` always returns
+`[Model, Cmd<Msg>]`.** The SDK documents the mixed shape (`Model | [Model,
+Cmd]`, "a bare model is sugar for `Cmd.none`"), but the facade narrows that
+union with `Array.isArray` in the compiled core — and on the ScriptC lane that
+test answers false for a tuple, so any effect-carrying arm committed the tuple
+itself as the model and the next `model_snapshot` retained 0x0/0x1. The window
+segfaulted on its first message; the Null platform and the node lane never saw
+it. Always-tuple routes the facade through the same `pair[0]/pair[1]` path
+`initialModel` already proved at boot. "No effect" is spelled
+`[model, Cmd.none]`, never a bare `return model`. The regression gate is
+`app_main.zig`'s "compiled lane: bare-sugar-free update snapshots after tuple
+and bare arms alike" — boot, then dispatch one arm of each shape, and every
+snapshot must come back clean.
 
 ---
 
@@ -255,6 +280,7 @@ in-module test blocks.
 | `native_document` | `DocumentSurface` — the native editing state machine: bytes, selection, IME composition, undo, and bounded block projections. Three operations: `open`, `apply`, `project` | `tests/editor_walkthrough`, `native_history`, `revert`; `verify:editor-kernel` |
 | `document` | Document lifecycle: open, continuity hydration, journal replay, save confirmation — and the DTOs | `tests/editor_walkthrough` |
 | `dispatch` | The dispatch use case: the *order* knowledge (draft → authorize → launch), never the rules | `tests/dispatch` |
+| `runner` | The producer pump: one non-blocking pass over a Root's Runs per `ReadHost` poll — launch what it can serve, dispatch through `HarnessAdapter`, land replies as `result.md` and collect them, kill trees a cancel left behind, fail orphan downstreams by name (`upstream-failed` / `upstream-cancelled`). An unconnected agent stays `Authorized` for the manual round trip | `tests/runner` — a scripted adapter over a real child process |
 | `collect` | Collecting an attempt: validate against the **frozen** request, then complete, then freeze proposals — in that order | `tests/collect`, `k3_full_flow` |
 | `decide` | Committing a decision batch and countermanding a merged one; both directions through the same compare-and-swap writer | `tests/decide_durability`, `countermand` |
 | `journal` | The entity↔row translation; `StoreJournal` implements the host's `HostJournal` | `tests/journal` round-trips entities field by field |
@@ -282,9 +308,9 @@ in-module test blocks.
 | Module | Owns | Proven by |
 |---|---|---|
 | `app.zon` | The shortcut and menu declaration — one command-id space for both | `verify:command-space` |
-| `app.native` | The markup: notice bar and status line, event bindings | compiled against the model contract at build time |
+| `app.native` | The markup: the notice bar and its event bindings (the status line is `statuslineText` in `app_main.zig`, not markup) | compiled against the model contract at build time |
 | `core.ts` | `Model`, `Msg`, `update`, `commandMsg`, `viewUnbound` — interface state only | `core.test.ts` on the Null platform |
-| `workbench.ts` | The eight destinations and the navigation rules: indices, the needs-a-document mask, layout fractions | `workbench.test.ts` |
+| `workbench.ts` | The eight destinations and the navigation rules: indices, the needs-a-document mask, layout fractions. The first-launch destination is Files, so the rail is open on the first frame | `workbench.test.ts` |
 | `roster.ts` | The roster cursor invariant: the cursor always points at an existing row, or −1 on an empty roster | `roster.test.ts` |
 | `wire_json.ts` | JSON byte mechanics for the core: concat, escape, unescape, ordinal field reads — the requests a key press or a timer must build without a Zig event | `wire_json.test.ts`; shape parity pinned by `verify:wire-shapes` |
 | `app_main.zig` | The shell: screens, fonts, menus, the context menu, KARA and theme wiring | in-file `test` blocks; e2e journals |
@@ -388,7 +414,7 @@ it. A ◐ in the function matrix points here.
 | **M6** | **The un-landed screens: PDF reading, diagrams.** The facts exist (`block_shape::Table` knows a table's shape; `ingest/pdf` extracts text), the screens do not. The table stays editor-aligned text by decision — the binding constraint outlives the old implementation, see *Why a table is aligned text*; PDF and diagrams move to the next version | the domain facts and the constraint essays | One screen each for PDF and diagrams, on the native surface, bound by the recorded constraints |
 | **M7** | **Icons have no consumer.** `icons.rs` normalises and content-addresses an author's image; nothing above the store reads it (the Universal Button is not on the native surface) | `icons.rs`, `tests/icons.rs` | The surface that offers and shows the icon |
 | **M8** | **Replay cannot verify the manuscript node.** The e2e journals replay with `--no-verify` because the projection lives in `host_bridge`'s module buffer, not in the core Model — the replayer feeds host answers to the core and the view has no path to the text | the journals, the a11y comparison (the only differing node is the manuscript textbox) | Moving the projection into the Model (~11.5 KiB per frame through core — measure before signing) and re-enabling `--verify` |
-| **M9** | **The producer runner.** Dispatch through authorization, `LaunchRun`, collect, review, and the downstream auto-launch are all wired and tested — but nothing in the shipped app runs the agent process: no production code calls `HarnessAdapter::dispatch`/`observe`, and no one writes `result.md` or completes the dispatch. The native host is a synchronous ABI with no background runner; the old desktop's Tauri runner was never re-grown. The manual round trip (L0) works: `LaunchRun` promotes the frozen request into the workspace, the author runs the agent by hand, and collect reads the artifact | `adapters.rs` (dispatch/observe), the workspace layout, `CompleteDispatch`, and every domain test that assumes the runner exists | A runner that launches authorized Runs, observes their output, writes `result.md`, and completes dispatches — plus the verifier-comments consumer (`AgentComment` is parsed and then silently dropped at collect) and the orphan-downstream cleanup (a failed upstream leaves its followers waiting forever) |
+| **M9** | **Landed in v0.3.0.** The producer runner exists and is production-wired: `runner.rs` pumps on the `ReadHost` poll — it launches each authorized Run it can serve through `HarnessAdapter::dispatch`, observes the stream on one thread per Run, lands the reply as `result.md` by atomic rename, and validates it through the same `collect_attempt` as the manual path. The two consumers it blocked landed with it: verifier comments (`AgentComment` now lands on the annotation surface at collect; an unknown target anchors on the first block, nothing is dropped) and the orphan-downstream cleanup (a `Follows`/`Verifies` Run whose upstream failed or was cancelled without an artifact is recorded `Failed` with the reason, transitively). The manual L0 round trip is unchanged: an unconnected agent stays `Authorized` for the author's `LaunchRun` | — | — |
 
 Wired but awaiting a real-machine signature, rather than a link: IME
 composition (`SetComposition` / `CommitComposition` / `CancelComposition` are
@@ -412,7 +438,12 @@ named, and each step names the link it rides.
    another may not start before that other is terminal. `upstream.rs` then adds
    the upstream artifact to the promoted copy — the frozen bytes are never
    touched. (L2, W9)
-5. **The producer runs** and writes `result.md`. (`HarnessAdapter`)
+5. **The producer runs** and writes `result.md`. `runner.rs` pumps on the
+   `ReadHost` poll: it launches each authorized Run through
+   `HarnessAdapter::dispatch`, observes the stream, lands the reply as
+   `result.md` by atomic rename, and completes the dispatch. An unconnected
+   agent stays `Authorized` for the author's explicit `LaunchRun` — the manual
+   round trip is unchanged. (`HarnessAdapter`, L3 `runner`)
 6. **`app::collect_attempt`** parses the artifact against the **frozen** request
    — never against the artifact's own claims — and turns replacements into
    proposals. (L3)
@@ -598,6 +629,7 @@ This table is the fastest path from a symptom to a module.
 | An agent's reply was rejected | `refrain-core/src/agent_protocol.rs` — the parser and its error codes |
 | A request carried the wrong context | `refrain-core/src/context_compiler.rs` |
 | A Run started too early, or not at all | `refrain-host/src/host.rs` — `LaunchRun` and the edge constraints |
+| A dispatched Run never advances | `refrain-app/src/runner.rs` — the pump rides the `ReadHost` poll; if the poll never fires, check the `IN_FLIGHT_*` counts in `core.ts` against the snapshot's real serde shape |
 | A downstream Run did not see the upstream's work | `refrain-app/src/upstream.rs`, `refrain-core/src/upstream_work.rs` |
 | A proposal could not be applied | `refrain-app/src/decide.rs`, `refrain-core/src/manuscript/review.rs` |
 | A countermand reverted the wrong text | `refrain-app/src/decide.rs` — the anchor is rebuilt by the merge rule itself |
@@ -660,7 +692,6 @@ window, never only by a rendered frame.
 
 - [README.md](../README.md) — what RefRain is, and how to install it
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to propose a change
-- [ROADMAP.md](ROADMAP.md) — what is planned (written in Chinese)
 - [AGENTS.md](AGENTS.md) — working discipline for agents in this repository
 - [SKILL.md](SKILL.md) — the agent protocol (generated)
 - [LICENSE](../LICENSE) — MPL 2.0

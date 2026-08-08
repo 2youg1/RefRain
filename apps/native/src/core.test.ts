@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { ScrollState } from "@native-sdk/core/events";
-import { commandMsg, frameMsg, keyMsg, type Model, update } from "./core.ts";
+import { commandMsg, frameMsg, keyMsg, type Model, update as updateCore } from "./core.ts";
 import {
   ACTION_APPLY_INPUT,
   ACTION_HEALTH,
@@ -14,6 +14,21 @@ import {
   PROTOCOL_VERSION,
   RESPONSE_HEADER_BYTES,
 } from "./generated/protocol.ts";
+
+// update 恒返 [Model, Cmd<Msg>]（编译车道没有混形糖，见 core.ts 签名注）。
+// 这套测试写于混形年代，读法随臂而异：裸 Model（result.status）、元组
+// （result[0]/result[1]）、引用同一性（toBe(model)）、还把返回值喂回
+// update。适配器按旧糖的原义还原混形——Cmd.none 剥壳回裸 Model，真效果
+// 保留元组——170 个调用点的语义与迁移前逐字相同。
+function update(model: Model, msg: Parameters<typeof updateCore>[1]): Model {
+  const out = updateCore(model, msg);
+  return (out[1].op === "none" ? out[0] : out) as unknown as Model;
+}
+
+// 效果有无的断言：适配器还原了混形，「这一臂产生了效果」等于拿到了元组。
+function hasEffect(r: unknown): boolean {
+  return Array.isArray(r);
+}
 
 // The SDK packs leading scalars in field-name order; these mirror the
 // offsets the generator publishes to Zig, so a renamed field fails here too.
@@ -44,6 +59,7 @@ const model: Model = {
   destinationIndex: 0,
   panelStack: 0,
   agentDestination: 3,
+  railPeek: 0,
   railFraction: 0.19,
   layoutFraction: 1,
   typographyTextSize: 17,
@@ -112,15 +128,15 @@ const model: Model = {
 
 test("undo enters the one host dispatch without optimistic document state", () => {
   const result = update(model, { kind: "document_undo" });
-  expect(Array.isArray(result)).toBe(true);
-  if (!Array.isArray(result)) throw new Error("document undo did not return an effect");
+  expect(hasEffect(result)).toBe(true);
+  if (!hasEffect(result)) throw new Error("document undo did not return an effect");
   expect(result[0]).toBe(model);
 });
 
 test("save enters the one host dispatch without carrying a path", () => {
   const result = update(model, { kind: "document_save" });
-  expect(Array.isArray(result)).toBe(true);
-  if (!Array.isArray(result)) throw new Error("document save did not return an effect");
+  expect(hasEffect(result)).toBe(true);
+  if (!hasEffect(result)) throw new Error("document save did not return an effect");
   // 2.6 起保存在答复回来前立着在飞标记（状态行「正在保存…」），其余不变。
   expect(result[0].savePending).toBe(true);
   expect(result[0].documentRevision).toBe(model.documentRevision);
@@ -136,13 +152,13 @@ test("a save flies pending and its reply marks the save point", () => {
   // 保存…」），答复落地后保存点盖到答复的 revision——「已保存」只认这份
   // 正面证据。
   const saving = update(model, { kind: "document_save" });
-  if (!Array.isArray(saving)) throw new Error("document save did not return an effect");
+  if (!hasEffect(saving)) throw new Error("document save did not return an effect");
   expect(saving[0].savePending).toBe(true);
   const reply = responseBytes(ACTION_APPLY_INPUT, 0);
   writeU32(reply, 20, 7); // session
   writeU32(reply, 24, 5); // revision
   const saved = update(saving[0], { kind: "save_ok", bytes: reply });
-  if (Array.isArray(saved)) throw new Error("a plain save reply unexpectedly chained an effect");
+  if (hasEffect(saved)) throw new Error("a plain save reply unexpectedly chained an effect");
   expect(saved.savePending).toBe(false);
   expect(saved.documentRevision).toBe(5);
   expect(saved.savedRevision).toBe(5);
@@ -156,7 +172,7 @@ test("a typing reply after the save leaves the save point behind", () => {
   writeU32(typed, 20, 7);
   writeU32(typed, 24, 6);
   const landed = update(saved, { kind: "dispatch_ok", bytes: typed });
-  if (Array.isArray(landed)) throw new Error("a typing reply unexpectedly chained an effect");
+  if (hasEffect(landed)) throw new Error("a typing reply unexpectedly chained an effect");
   expect(landed.documentRevision).toBe(6);
   expect(landed.savedRevision).toBe(5);
 });
@@ -166,7 +182,7 @@ test("a failed save clears the flight flag without marking anything saved", () =
     { ...model, savePending: true },
     { kind: "save_err", bytes: responseBytes(ACTION_APPLY_INPUT, 1) },
   );
-  if (Array.isArray(result)) throw new Error("a save failure unexpectedly chained an effect");
+  if (hasEffect(result)) throw new Error("a save failure unexpectedly chained an effect");
   expect(result.savePending).toBe(false);
   expect(result.savedRevision).toBe(model.savedRevision);
 });
@@ -177,8 +193,8 @@ test("text input enters the host dispatch without a TypeScript body copy", () =>
     kind: "document_input",
     event: { kind: "set_composition", text, cursor: text.length },
   });
-  expect(Array.isArray(result)).toBe(true);
-  if (!Array.isArray(result)) throw new Error("composition did not return an effect");
+  expect(hasEffect(result)).toBe(true);
+  if (!hasEffect(result)) throw new Error("composition did not return an effect");
   expect(result[0]).toBe(model);
   expect(Object.keys(result[0])).not.toContain("text");
   expect(Object.keys(result[0])).not.toContain("selection");
@@ -191,8 +207,8 @@ test("scroll sends the real offset without optimistic viewport authority", () =>
     { ...model, documentBlocks: 100_000 },
     { kind: "document_scroll", scroll: scroll(offsetY, 650, 3_600_000) },
   );
-  expect(Array.isArray(result)).toBe(true);
-  if (!Array.isArray(result)) throw new Error("document scroll did not return an effect");
+  expect(hasEffect(result)).toBe(true);
+  if (!hasEffect(result)) throw new Error("document scroll did not return an effect");
   expect(result[0].documentScroll).toBe(offsetY);
   expect(result[0].viewportFirstBlock).toBe(0);
   const command = result[1];
@@ -209,7 +225,7 @@ test("the host projection response supplies the authoritative first block", () =
   writeU32(response, 36, 5_976_883);
   writeU32(response, 40, 50_000);
   const result = update(model, { kind: "dispatch_ok", bytes: response });
-  if (Array.isArray(result)) throw new Error("projection response unexpectedly returned an effect");
+  if (hasEffect(result)) throw new Error("projection response unexpectedly returned an effect");
   expect(result.viewportFirstBlock).toBe(50_000);
   expect(result.projectionWindowStart).toBe(5_976_883);
 });
@@ -217,8 +233,8 @@ test("the host projection response supplies the authoritative first block", () =
 test("one opaque Project input enters one group dispatch", () => {
   const input = new TextEncoder().encode('{"kind":"chooseAndAdoptRoot","value":{"kind":"folder"}}');
   const result = update(model, { kind: "project_request", input });
-  expect(Array.isArray(result)).toBe(true);
-  if (!Array.isArray(result)) throw new Error("project input did not return an effect");
+  expect(hasEffect(result)).toBe(true);
+  if (!hasEffect(result)) throw new Error("project input did not return an effect");
   expect(result[0]).toBe(model);
   if (result[1].op !== "request") throw new Error("project input did not issue the host request");
   expect(readF64(result[1].payload, OFFSET_ACTION)).toBe(ACTION_PROJECT);
@@ -231,7 +247,7 @@ test("choosing a theme records the index and refuses one outside the table", () 
   // 选主题现在是两件事：立刻改 Model，并把它落盘——不落盘的话重开又回到濤，
   // 而作者会把那当成没保存成功。
   const result = update(model, { kind: "theme_select", index: 5 });
-  if (!Array.isArray(result)) throw new Error("theme_select must persist the choice");
+  if (!hasEffect(result)) throw new Error("theme_select must persist the choice");
   const chosen = result[0];
   if (result[1].op !== "request") throw new Error("theme_select did not issue the host request");
   expect(readF64(result[1].payload, OFFSET_ACTION)).toBe(ACTION_PROJECT);
@@ -244,7 +260,7 @@ test("choosing a theme records the index and refuses one outside the table", () 
   // 一次坏的选择不该把设置写成一个不存在的主题。
   for (const bad of [-1, 7, 1.5, Number.NaN]) {
     const fallback = update(chosen, { kind: "theme_select", index: bad });
-    if (!Array.isArray(fallback)) throw new Error("theme_select must persist the fallback");
+    if (!hasEffect(fallback)) throw new Error("theme_select must persist the fallback");
     expect(fallback[0].themeIndex).toBe(0);
     if (fallback[1].op !== "request") throw new Error("fallback did not issue the host request");
     expect(
@@ -257,8 +273,8 @@ test("a noop leaves the model untouched by reference", () => {
   // 排版滑杆没跨过一个步距时 Zig 送 noop：落地必须是「什么都不做」——
   // 引用不变地返回，界面不会因此多重建一次。
   const result = update(model, { kind: "noop" });
-  expect(Array.isArray(result)).toBe(false);
-  if (Array.isArray(result)) throw new Error("noop must not issue an effect");
+  expect(hasEffect(result)).toBe(false);
+  if (hasEffect(result)) throw new Error("noop must not issue an effect");
   expect(result).toBe(model);
 });
 
@@ -267,8 +283,8 @@ test("opening a chosen document sends a Root reference, not a filesystem path", 
   // request carries no absolute path — Rust resolves it inside the Root.
   const reference = new TextEncoder().encode("root-1\n\u7ae0.md");
   const result = update(model, { kind: "document_open", reference });
-  expect(Array.isArray(result)).toBe(true);
-  if (!Array.isArray(result)) throw new Error("document_open did not return an effect");
+  expect(hasEffect(result)).toBe(true);
+  if (!hasEffect(result)) throw new Error("document_open did not return an effect");
   if (result[1].op !== "request") throw new Error("document_open did not issue the host request");
   expect(readF64(result[1].payload, OFFSET_ACTION)).toBe(ACTION_OPEN_MANUSCRIPT);
   expect(result[1].payload.slice(OFFSET_TEXT, OFFSET_TEXT + reference.length)).toEqual(reference);
@@ -285,7 +301,7 @@ test("one Project response remains an immutable Rust projection", () => {
     kind: "dispatch_ok",
     bytes: responseBytes(ACTION_PROJECT, 0, payload),
   });
-  if (Array.isArray(result)) throw new Error("project response unexpectedly returned an effect");
+  if (hasEffect(result)) throw new Error("project response unexpectedly returned an effect");
   expect(result.projectResult).toEqual(payload);
   expect(result.documentRevision).toBe(model.documentRevision);
   expect(result.documentBytes).toBe(model.documentBytes);
@@ -294,7 +310,7 @@ test("one Project response remains an immutable Rust projection", () => {
 test("typed dispatch failure keeps the Rust boundary visible", () => {
   const response = responseBytes(ACTION_APPLY_INPUT, ERROR_UNKNOWN_SESSION);
   const result = update(model, { kind: "dispatch_err", bytes: response });
-  if (Array.isArray(result)) throw new Error("dispatch failure returned an effect");
+  if (hasEffect(result)) throw new Error("dispatch failure returned an effect");
   expect(decoder.decode(result.status)).toBe("Native document session was unknown.");
 });
 
@@ -321,7 +337,7 @@ test("the search box deletes whole characters, not bytes", () => {
     event: { kind: "insert_text", text: encoder.encode("克制") },
   });
   // 2.4 起 typing 挂防抖钟，返回带 Cmd 的对子。
-  if (!Array.isArray(typedResult)) throw new Error("typing did not arm the debounce");
+  if (!hasEffect(typedResult)) throw new Error("typing did not arm the debounce");
   const typed = typedResult[0];
   expect(new TextDecoder().decode(typed.searchQuery)).toBe("克制");
 
@@ -329,7 +345,7 @@ test("the search box deletes whole characters, not bytes", () => {
     kind: "search_typed",
     event: { kind: "delete_backward" },
   });
-  if (!Array.isArray(backspacedResult)) throw new Error("backspace did not re-arm");
+  if (!hasEffect(backspacedResult)) throw new Error("backspace did not re-arm");
   const backspaced = backspacedResult[0];
   // 一个汉字是三个字节：退一次必须剩下完整的「克」，不是「克」加两个字节。
   expect(new TextDecoder().decode(backspaced.searchQuery)).toBe("克");
@@ -340,12 +356,12 @@ test("the search box deletes whole characters, not bytes", () => {
     kind: "search_typed",
     event: { kind: "insert_text", text: encoder.encode("ab") },
   });
-  if (!Array.isArray(asciiResult)) throw new Error("typing did not arm");
+  if (!hasEffect(asciiResult)) throw new Error("typing did not arm");
   const cutResult = update(asciiResult[0], {
     kind: "search_typed",
     event: { kind: "delete_backward" },
   });
-  if (!Array.isArray(cutResult)) throw new Error("backspace did not re-arm");
+  if (!hasEffect(cutResult)) throw new Error("backspace did not re-arm");
   expect(new TextDecoder().decode(cutResult[0].searchQuery)).toBe("a");
 
   // 极值：空框上退格留在空，不越界（空查询回 idle：撤钟）。
@@ -353,13 +369,13 @@ test("the search box deletes whole characters, not bytes", () => {
     kind: "search_typed",
     event: { kind: "delete_backward" },
   });
-  if (!Array.isArray(emptyResult)) throw new Error("an empty box did not cancel");
+  if (!hasEffect(emptyResult)) throw new Error("an empty box did not cancel");
   expect(emptyResult[0].searchQuery.length).toBe(0);
   expect(emptyResult[1].op).toBe("cancel");
 
   // 清空就是清空。
   const clearedResult = update(typed, { kind: "search_typed", event: { kind: "clear" } });
-  if (!Array.isArray(clearedResult)) throw new Error("clear did not cancel");
+  if (!hasEffect(clearedResult)) throw new Error("clear did not cancel");
   const cleared = clearedResult[0];
   expect(cleared.searchQuery.length).toBe(0);
 });
@@ -729,7 +745,7 @@ test("a config reply lands the panel material only from a config reply", () => {
 
 test("choosing a panel material records the index and persists the kebab word", () => {
   const chosen = update(model, { kind: "material_select", index: 1 });
-  if (!Array.isArray(chosen)) throw new Error("material_select must persist the choice");
+  if (!hasEffect(chosen)) throw new Error("material_select must persist the choice");
   expect(chosen[0].panelMaterial).toBe(1);
   if (chosen[1].op !== "request") throw new Error("material_select did not issue the host request");
   expect(
@@ -738,7 +754,7 @@ test("choosing a panel material records the index and persists the kebab word", 
   // 越界与 NaN 回落实心，落盘的也是实心——与 theme_select 的越界同一句。
   for (const bad of [-1, 3, 1.5, Number.NaN]) {
     const fallback = update(model, { kind: "material_select", index: bad });
-    if (!Array.isArray(fallback)) throw new Error("material_select must persist the fallback");
+    if (!hasEffect(fallback)) throw new Error("material_select must persist the fallback");
     expect(fallback[0].panelMaterial).toBe(0);
     expect(
       decoder.decode(fallback[1].payload.slice(OFFSET_TEXT)).includes('"setPanelMaterial":"solid"'),
@@ -779,8 +795,8 @@ test("the startup handshake chains one config read", () => {
   writeU16(response, 12, API_VERSION);
   writeU32(response, 16, CAPABILITY_MASK);
   const result = update(model, { kind: "dispatch_ok", bytes: response });
-  expect(Array.isArray(result)).toBe(true);
-  if (!Array.isArray(result)) throw new Error("health handshake did not chain the config read");
+  expect(hasEffect(result)).toBe(true);
+  if (!hasEffect(result)) throw new Error("health handshake did not chain the config read");
   expect(result[0].hostReady).toBe(true);
   const command = result[1];
   if (command.op !== "request") throw new Error("health handshake did not issue the config read");
@@ -800,8 +816,8 @@ test("a config reply lands the typography triple and recolumns the manuscript", 
     kind: "dispatch_ok",
     bytes: responseBytes(ACTION_PROJECT, 0, json),
   });
-  expect(Array.isArray(result)).toBe(true);
-  if (!Array.isArray(result)) throw new Error("a smaller measure did not chain a re-projection");
+  expect(hasEffect(result)).toBe(true);
+  if (!hasEffect(result)) throw new Error("a smaller measure did not chain a re-projection");
   expect(result[0].typographyTextSize).toBe(18);
   expect(result[0].typographyLineHeightPercent).toBe(200);
   expect(result[0].typographyMeasureEm).toBe(50);
@@ -819,8 +835,7 @@ test("a project reply without typography keeps the current triple", () => {
     kind: "dispatch_ok",
     bytes: responseBytes(ACTION_PROJECT, 0, json),
   });
-  if (Array.isArray(result))
-    throw new Error("an unrelated reply unexpectedly chained a re-projection");
+  if (hasEffect(result)) throw new Error("an unrelated reply unexpectedly chained a re-projection");
   expect(result.typographyTextSize).toBe(17);
   expect(result.typographyLineHeightPercent).toBe(190);
   expect(result.typographyMeasureEm).toBe(65);
@@ -831,16 +846,15 @@ test("a frame recolumns the manuscript from the real window width", () => {
   // 稿子占整宽分栏（fraction 1）：(640 - 48) / 17 ≈ 34.8 < 作者行长 65，
   // 实测按住行长 → 连带重投影。视口高 = 帧高扣 chrome。
   const narrow = update(model, { kind: "frame", width: 640, height: 800 });
-  expect(Array.isArray(narrow)).toBe(true);
-  if (!Array.isArray(narrow)) throw new Error("a narrower window did not chain a re-projection");
+  expect(hasEffect(narrow)).toBe(true);
+  if (!hasEffect(narrow)) throw new Error("a narrower window did not chain a re-projection");
   expect(narrow[0].windowWidth).toBe(640);
   expect(narrow[0].documentColumnsEm).toBeCloseTo((640 - 48) / 17, 5);
   expect(narrow[0].documentViewportHeight).toBe(800 - 78);
   // 同一尺寸再来：行长没变，只落地，不重投影（变化检测在 frameMsg 已经
   // 挡过一次，update 再挡一次是双保险）。
   const same = update(narrow[0], { kind: "frame", width: 640, height: 800 });
-  if (Array.isArray(same))
-    throw new Error("an unchanged frame unexpectedly chained a re-projection");
+  if (hasEffect(same)) throw new Error("an unchanged frame unexpectedly chained a re-projection");
 });
 
 test("frameMsg only reports size changes", () => {
@@ -862,7 +876,7 @@ test("a kara reply lands the machine state and the quiet queue mask", () => {
     kind: "dispatch_ok",
     bytes: responseBytes(ACTION_PROJECT, 0, json),
   });
-  if (Array.isArray(result)) throw new Error("a kara reply unexpectedly chained a re-projection");
+  if (hasEffect(result)) throw new Error("a kara reply unexpectedly chained a re-projection");
   expect(result.karaState).toBe(2); // writing
   expect(result.karaQueued).toBe(1 | 4); // 已保存 + 提案到达；agent-completed 只在 effects 里
 });
@@ -874,8 +888,7 @@ test("a reply without a kara machine keeps the recorded state and queue", () => 
     kind: "dispatch_ok",
     bytes: responseBytes(ACTION_PROJECT, 0, json),
   });
-  if (Array.isArray(result))
-    throw new Error("an unrelated reply unexpectedly chained a re-projection");
+  if (hasEffect(result)) throw new Error("an unrelated reply unexpectedly chained a re-projection");
   expect(result.karaState).toBe(4);
   expect(result.karaQueued).toBe(8);
 });
@@ -884,8 +897,8 @@ test("a cross-document hit opens with a pending jump and the open reply fires it
   // 第一程：挂起块序号随打开一起记（v0.2.4 的 selectDocument→revealBlock）。
   const reference = new TextEncoder().encode("root-1\n章二.md");
   const opening = update(model, { kind: "document_open_jump", reference, block: 41 });
-  expect(Array.isArray(opening)).toBe(true);
-  if (!Array.isArray(opening)) throw new Error("open-jump did not return an effect");
+  expect(hasEffect(opening)).toBe(true);
+  if (!hasEffect(opening)) throw new Error("open-jump did not return an effect");
   expect(opening[0].pendingJumpBlock).toBe(41);
   expect(decoder.decode(opening[0].documentPath)).toBe("章二.md");
   if (opening[1].op !== "request") throw new Error("open-jump did not issue the open");
@@ -898,8 +911,8 @@ test("a cross-document hit opens with a pending jump and the open reply fires it
   writeU32(response, 28, 1000);
   writeU32(response, 32, 60);
   const jumped = update(opening[0], { kind: "dispatch_ok", bytes: response });
-  expect(Array.isArray(jumped)).toBe(true);
-  if (!Array.isArray(jumped)) throw new Error("the open reply did not chain the pending jump");
+  expect(hasEffect(jumped)).toBe(true);
+  if (!hasEffect(jumped)) throw new Error("the open reply did not chain the pending jump");
   expect(jumped[0].pendingJumpBlock).toBe(-1);
   expect(jumped[0].viewportFirstBlock).toBe(41);
   if (jumped[1].op !== "request") throw new Error("the open reply did not issue the jump");
@@ -914,19 +927,18 @@ test("an open reply without a pending jump does not chain one", () => {
   writeU32(response, 28, 1000);
   writeU32(response, 32, 60);
   const result = update(model, { kind: "dispatch_ok", bytes: response });
-  if (Array.isArray(result))
-    throw new Error("a plain open reply unexpectedly chained a projection");
+  if (hasEffect(result)) throw new Error("a plain open reply unexpectedly chained a projection");
   expect(result.pendingJumpBlock).toBe(-1);
 });
 
 test("a failed open clears the pending jump without firing it", () => {
   const reference = new TextEncoder().encode("root-1\n章二.md");
   const opening = update(model, { kind: "document_open_jump", reference, block: 41 });
-  if (!Array.isArray(opening)) throw new Error("open-jump did not return an effect");
+  if (!hasEffect(opening)) throw new Error("open-jump did not return an effect");
   const response = responseBytes(ACTION_OPEN_MANUSCRIPT, 0);
   writeU32(response, 20, 0); // session 0：没开成
   const result = update(opening[0], { kind: "dispatch_ok", bytes: response });
-  if (Array.isArray(result)) throw new Error("a failed open unexpectedly chained a jump");
+  if (hasEffect(result)) throw new Error("a failed open unexpectedly chained a jump");
   expect(result.pendingJumpBlock).toBe(-1);
 });
 
@@ -939,14 +951,13 @@ test("the bento forwards the prebuilt accept and reject bytes at keypress", () =
     reject: new TextEncoder().encode('{"kind":"judgeVerdict","value":{"kind":"reject"}}'),
     seed: new TextEncoder().encode("改后的样子。"),
   });
-  if (Array.isArray(opened)) throw new Error("opening the bento unexpectedly returned an effect");
+  if (hasEffect(opened)) throw new Error("opening the bento unexpectedly returned an effect");
   expect(decoder.decode(opened.verdictProposal)).toBe("proposal-1");
 
   // Alt+A → 接受：转发的正是预编字节，饭盒关上。
   const accepted = update(opened, { kind: "verdict_accept" });
-  expect(Array.isArray(accepted)).toBe(true);
-  if (!Array.isArray(accepted))
-    throw new Error("verdict_accept did not forward the prebuilt request");
+  expect(hasEffect(accepted)).toBe(true);
+  if (!hasEffect(accepted)) throw new Error("verdict_accept did not forward the prebuilt request");
   expect(accepted[0].verdictProposal.length).toBe(0);
   if (accepted[1].op !== "request") throw new Error("verdict_accept did not issue the request");
   const text = accepted[1].payload.slice(OFFSET_TEXT, accepted[1].payload.length - TRAILING_BYTES);
@@ -954,12 +965,12 @@ test("the bento forwards the prebuilt accept and reject bytes at keypress", () =
 
   // 关着的饭盒：Alt+B 原地不动（键位不猜默认动作）。
   const closed = update(accepted[0], { kind: "verdict_reject" });
-  if (Array.isArray(closed)) throw new Error("a closed bento unexpectedly answered a verdict key");
+  if (hasEffect(closed)) throw new Error("a closed bento unexpectedly answered a verdict key");
   expect(closed).toBe(accepted[0]);
 
   // Alt+E → 改写：提案与起笔进改写态。
   const revising = update(opened, { kind: "verdict_revise" });
-  if (Array.isArray(revising)) throw new Error("verdict_revise unexpectedly returned an effect");
+  if (hasEffect(revising)) throw new Error("verdict_revise unexpectedly returned an effect");
   expect(decoder.decode(revising.revisingProposal)).toBe("proposal-1");
   expect(decoder.decode(revising.revisionText)).toBe("改后的样子。");
 });
@@ -1034,8 +1045,8 @@ test("a proposals reply lands the roster facts and clears a stale panel", () => 
   };
   const reply = responseBytes(ACTION_PROJECT, 0, new TextEncoder().encode(PROPOSALS_REPLY));
   const landed = update(armed, { kind: "dispatch_ok", bytes: reply });
-  expect(Array.isArray(landed)).toBe(true); // 判后前进挂上了延迟
-  if (!Array.isArray(landed)) throw new Error("the proposals reply did not arm the advance");
+  expect(hasEffect(landed)).toBe(true); // 判后前进挂上了延迟
+  if (!hasEffect(landed)) throw new Error("the proposals reply did not arm the advance");
   expect(landed[0].rosterCount).toBe(3);
   expect(landed[0].rosterCursor).toBe(2);
   expect(landed[0].rosterHasRow).toBe(true);
@@ -1063,8 +1074,8 @@ test("Alt+A on the desk judges the cursor row and clears the reason", () => {
     reasonRecorded: true,
   };
   const judged = update(desk, { kind: "verdict_accept" });
-  expect(Array.isArray(judged)).toBe(true);
-  if (!Array.isArray(judged)) throw new Error("desk accept did not issue a request");
+  expect(hasEffect(judged)).toBe(true);
+  if (!hasEffect(judged)) throw new Error("desk accept did not issue a request");
   const text = judged[1].payload.slice(OFFSET_TEXT, judged[1].payload.length - TRAILING_BYTES);
   // 字节与 Rust 的 serde 形状逐字节一致（wire_shapes 的 stageVerdict 同款），
   // 理由经转义进槽。
@@ -1079,7 +1090,7 @@ test("Alt+A on the desk judges the cursor row and clears the reason", () => {
 test("Alt+B on the desk rejects the cursor row", () => {
   const desk: Model = { ...deskModel(), rosterCursor: 1 };
   const judged = update(desk, { kind: "verdict_reject" });
-  if (!Array.isArray(judged)) throw new Error("desk reject did not issue a request");
+  if (!hasEffect(judged)) throw new Error("desk reject did not issue a request");
   const text = judged[1].payload.slice(OFFSET_TEXT, judged[1].payload.length - TRAILING_BYTES);
   expect(decoder.decode(text)).toBe(
     '{"kind":"stageVerdict","value":{"rootId":"r1","path":"章.md","proposalId":"p2","kind":"reject","finalText":null,"reason":null}}',
@@ -1089,14 +1100,14 @@ test("Alt+B on the desk rejects the cursor row", () => {
 test("desk verdict keys stay still off the desk or without a live listing", () => {
   // 不在台上（栈顶是稿子）：原地不动。
   const offDesk = update(model, { kind: "verdict_accept" });
-  if (Array.isArray(offDesk)) throw new Error("a verdict key fired off the desk");
+  if (hasEffect(offDesk)) throw new Error("a verdict key fired off the desk");
   // 在台上但最新答复不是名录（旧答复）：也原地不动。
   const stale: Model = {
     ...deskModel(),
     projectResult: new TextEncoder().encode('{"kind":"decided","value":{"state":"durable"}}'),
   };
   const notLive = update(stale, { kind: "verdict_accept" });
-  if (Array.isArray(notLive)) throw new Error("a verdict key fired on a stale listing");
+  if (hasEffect(notLive)) throw new Error("a verdict key fired on a stale listing");
 });
 
 test("Alt+E on the desk opens the revision seeded from the cursor row", () => {
@@ -1133,7 +1144,7 @@ test("the reason round trip: open prefills, Enter records even empty, Escape kee
 test("verdict_settle commits the batch on the desk and chains a re-read", () => {
   const desk = deskModel();
   const settled = update(desk, { kind: "verdict_settle" });
-  if (!Array.isArray(settled)) throw new Error("the settle did not issue the commit");
+  if (!hasEffect(settled)) throw new Error("the settle did not issue the commit");
   const text = settled[1].payload.slice(OFFSET_TEXT, settled[1].payload.length - TRAILING_BYTES);
   expect(decoder.decode(text)).toBe(
     '{"kind":"commitVerdicts","value":{"rootId":"r1","path":"章.md"}}',
@@ -1145,7 +1156,7 @@ test("verdict_settle commits the batch on the desk and chains a re-read", () => 
     new TextEncoder().encode('{"kind":"decided","value":{"state":"durable"}}'),
   );
   const refreshed = update(settled[0], { kind: "dispatch_ok", bytes: decided });
-  if (!Array.isArray(refreshed)) throw new Error("the decided reply did not chain a re-read");
+  if (!hasEffect(refreshed)) throw new Error("the decided reply did not chain a re-read");
   const reread = refreshed[1].payload.slice(
     OFFSET_TEXT,
     refreshed[1].payload.length - TRAILING_BYTES,
@@ -1158,7 +1169,7 @@ test("verdict_settle commits the batch on the desk and chains a re-read", () => 
 test("verdict_settle on an empty batch says so instead of firing", () => {
   const desk: Model = { ...deskModel(), stagedCount: 0 };
   const still = update(desk, { kind: "verdict_settle" });
-  if (Array.isArray(still)) throw new Error("an empty batch unexpectedly fired a commit");
+  if (hasEffect(still)) throw new Error("an empty batch unexpectedly fired a commit");
   expect(decoder.decode(still.status)).toBe("No staged verdicts to commit.");
 });
 
@@ -1169,7 +1180,7 @@ test("verdict_settle while revising on the desk stages accept-modified", () => {
     revisionText: new TextEncoder().encode("作者改定的一句。"),
   };
   const settled = update(desk, { kind: "verdict_settle" });
-  if (!Array.isArray(settled)) throw new Error("the revision settle did not fire");
+  if (!hasEffect(settled)) throw new Error("the revision settle did not fire");
   const text = settled[1].payload.slice(OFFSET_TEXT, settled[1].payload.length - TRAILING_BYTES);
   expect(decoder.decode(text)).toBe(
     '{"kind":"stageVerdict","value":{"rootId":"r1","path":"章.md","proposalId":"p1","kind":"accept-modified","finalText":"作者改定的一句。","reason":null}}',
@@ -1188,7 +1199,7 @@ test("verdict_settle while revising in the bento judges accept-modified", () => 
     revisionText: new TextEncoder().encode("盒里改定的一句。"),
   };
   const settled = update(bento, { kind: "verdict_settle" });
-  if (!Array.isArray(settled)) throw new Error("the bento settle did not fire");
+  if (!hasEffect(settled)) throw new Error("the bento settle did not fire");
   const text = settled[1].payload.slice(OFFSET_TEXT, settled[1].payload.length - TRAILING_BYTES);
   expect(decoder.decode(text)).toBe(
     '{"kind":"judgeVerdict","value":{"rootId":"r1","path":"章.md","proposalId":"p9","kind":"accept-modified","finalText":"盒里改定的一句。","reason":null}}',
@@ -1291,7 +1302,7 @@ test("opening another document clears the block listing and the checks", () => {
     kind: "document_open",
     reference: new TextEncoder().encode("r1\n章二.md"),
   });
-  if (!Array.isArray(opening)) throw new Error("document_open did not return an effect");
+  if (!hasEffect(opening)) throw new Error("document_open did not return an effect");
   expect(opening[0].deskBlocks.length).toBe(0);
   expect(opening[0].deskBlocksNext).toBe(-1);
   expect(opening[0].dispatchChecked.length).toBe(0);
@@ -1361,13 +1372,13 @@ test("typing arms the 120ms debounce and firing sends the block search", () => {
     kind: "search_typed",
     event: { kind: "insert_text", text: new TextEncoder().encode("剑") },
   });
-  if (!Array.isArray(typed)) throw new Error("typing did not arm the debounce");
+  if (!hasEffect(typed)) throw new Error("typing did not arm the debounce");
   if (typed[1].op !== "delay") throw new Error("the debounce is not a delay");
   expect(typed[1].afterMs).toBe(120);
   expect(typed[1].msgKind).toBe("search_fire");
   // 到点开火：core 拼的块搜索请求与 Zig 写器同形。
   const fired = update(typed[0], { kind: "search_fire", at: 1 });
-  if (!Array.isArray(fired)) throw new Error("search_fire did not send the search");
+  if (!hasEffect(fired)) throw new Error("search_fire did not send the search");
   const text = fired[1].payload.slice(OFFSET_TEXT, fired[1].payload.length - TRAILING_BYTES);
   expect(decoder.decode(text)).toBe(
     '{"kind":"blockSearch","value":{"rootId":"r1","query":"剑","precision":"exact"}}',
@@ -1380,16 +1391,16 @@ test("an empty query goes idle instead of firing", () => {
     kind: "search_typed",
     event: { kind: "insert_text", text: new TextEncoder().encode("x") },
   });
-  if (!Array.isArray(typed)) throw new Error("typing did not arm");
+  if (!hasEffect(typed)) throw new Error("typing did not arm");
   const cleared = update(typed[0], {
     kind: "search_typed",
     event: { kind: "clear" },
   });
-  if (!Array.isArray(cleared)) throw new Error("clearing did not answer a Cmd");
+  if (!hasEffect(cleared)) throw new Error("clearing did not answer a Cmd");
   expect(cleared[1].op).toBe("cancel");
   // 空查询到点也不发。
   const fired = update(cleared[0], { kind: "search_fire", at: 2 });
-  if (Array.isArray(fired)) throw new Error("an empty query unexpectedly fired");
+  if (hasEffect(fired)) throw new Error("an empty query unexpectedly fired");
 });
 
 // —— 2.3a KARA 表面：焦点通道、补发事件、回来卡与打断 ——
@@ -1397,23 +1408,23 @@ test("an empty query goes idle instead of firing", () => {
 test("losing focus in writing arms the 8s away timer; refocus cancels it", () => {
   const writing: Model = { ...model, karaState: 2 };
   const blurred = update(writing, { kind: "app_focus", active: false });
-  if (!Array.isArray(blurred)) throw new Error("blur in writing did not arm the away timer");
+  if (!hasEffect(blurred)) throw new Error("blur in writing did not arm the away timer");
   if (blurred[1].op !== "delay") throw new Error("the away arm is not a delay");
   expect(blurred[1].afterMs).toBe(8000);
   expect(blurred[1].msgKind).toBe("kara_gone_away");
   // 8 秒内回来：撤钟（cancel 是单独的 Cmd）。
   const back = update(writing, { kind: "app_focus", active: true });
-  if (!Array.isArray(back)) throw new Error("refocus did not answer a Cmd");
+  if (!hasEffect(back)) throw new Error("refocus did not answer a Cmd");
   expect(back[1].op).toBe("cancel");
   // off 状态下失焦不挂钟。
   const idle = update(model, { kind: "app_focus", active: false });
-  if (Array.isArray(idle)) throw new Error("blur outside KARA unexpectedly armed a timer");
+  if (hasEffect(idle)) throw new Error("blur outside KARA unexpectedly armed a timer");
 });
 
 test("refocus while away sends returned", () => {
   const away: Model = { ...model, karaState: 4 };
   const back = update(away, { kind: "app_focus", active: true });
-  if (!Array.isArray(back)) throw new Error("refocus in Away did not send returned");
+  if (!hasEffect(back)) throw new Error("refocus in Away did not send returned");
   const text = back[1].payload.slice(OFFSET_TEXT, back[1].payload.length - TRAILING_BYTES);
   expect(decoder.decode(text)).toBe('{"kind":"karaStep","value":{"kind":"returned"}}');
 });
@@ -1421,20 +1432,20 @@ test("refocus while away sends returned", () => {
 test("the away timer only fires in writing or reviewing", () => {
   const writing: Model = { ...model, karaState: 3 };
   const fired = update(writing, { kind: "kara_gone_away", at: 1 });
-  if (!Array.isArray(fired)) throw new Error("gone_away did not fire in reviewing");
+  if (!hasEffect(fired)) throw new Error("gone_away did not fire in reviewing");
   const still = update(model, { kind: "kara_gone_away", at: 1 });
-  if (Array.isArray(still)) throw new Error("gone_away fired while off");
+  if (hasEffect(still)) throw new Error("gone_away fired while off");
 });
 
 test("entered and leaveFinished fire only inside their own states", () => {
   const entering: Model = { ...model, karaState: 1 };
   const entered = update(entering, { kind: "kara_entered", at: 1 });
-  if (!Array.isArray(entered)) throw new Error("entered did not fire in Entering");
+  if (!hasEffect(entered)) throw new Error("entered did not fire in Entering");
   const notEntering = update(model, { kind: "kara_entered", at: 1 });
-  if (Array.isArray(notEntering)) throw new Error("entered fired outside Entering");
+  if (hasEffect(notEntering)) throw new Error("entered fired outside Entering");
   const leaving: Model = { ...model, karaState: 5 };
   const finished = update(leaving, { kind: "kara_leave_finished", at: 1 });
-  if (!Array.isArray(finished)) throw new Error("leaveFinished did not fire in Leaving");
+  if (!hasEffect(finished)) throw new Error("leaveFinished did not fire in Leaving");
 });
 
 test("a kara reply with showReturnCard lands the card and arms its dismiss", () => {
@@ -1446,7 +1457,7 @@ test("a kara reply with showReturnCard lands the card and arms its dismiss", () 
     ),
   );
   const landed = update(model, { kind: "dispatch_ok", bytes: reply });
-  if (!Array.isArray(landed)) throw new Error("the return card did not arm a dismiss");
+  if (!hasEffect(landed)) throw new Error("the return card did not arm a dismiss");
   expect(landed[0].karaCard).toBe(true);
   expect(decoder.decode(landed[0].karaReturnTail)).toBe("光标的落点");
   if (landed[1].op !== "delay") throw new Error("the card dismiss is not a delay");
@@ -1466,7 +1477,7 @@ test("an interrupt lands its code and self-dismisses after 4s", () => {
     ),
   );
   const landed = update(model, { kind: "dispatch_ok", bytes: reply });
-  if (!Array.isArray(landed)) throw new Error("the interrupt did not arm a dismiss");
+  if (!hasEffect(landed)) throw new Error("the interrupt did not arm a dismiss");
   expect(decoder.decode(landed[0].karaInterrupt)).toBe("save-failed");
   if (landed[1].op !== "delay") throw new Error("the interrupt dismiss is not a delay");
   expect(landed[1].afterMs).toBe(4000);
@@ -1483,7 +1494,7 @@ test("a kara reply entering Entering arms the 700ms entered sender", () => {
     ),
   );
   const landed = update(model, { kind: "dispatch_ok", bytes: reply });
-  if (!Array.isArray(landed)) throw new Error("Entering did not arm the entered sender");
+  if (!hasEffect(landed)) throw new Error("Entering did not arm the entered sender");
   if (landed[1].op !== "delay") throw new Error("the entered arm is not a delay");
   expect(landed[1].afterMs).toBe(700);
   expect(landed[1].msgKind).toBe("kara_entered");
@@ -1497,11 +1508,11 @@ test("a host snapshot with an in-flight run arms the 2500ms tick", () => {
     ACTION_PROJECT,
     0,
     new TextEncoder().encode(
-      '{"kind":"host","value":{"tasks":[],"runs":[{"id":"run-1","progress":{"dispatched":{"receipt":"r"}}}],"authorizations":[],"runsAwaitingLaunch":[]}}',
+      '{"kind":"host","value":{"tasks":[],"runs":[{"id":"run-1","progress":{"kind":"dispatched","value":{"receipt":"r"}}}],"authorizations":[],"runsAwaitingLaunch":[]}}',
     ),
   );
   const landed = update(hosted, { kind: "dispatch_ok", bytes: snapshot });
-  if (!Array.isArray(landed)) throw new Error("an in-flight snapshot did not arm the tick");
+  if (!hasEffect(landed)) throw new Error("an in-flight snapshot did not arm the tick");
   expect(landed[0].deskHost.length).toBeGreaterThan(0);
   if (landed[1].op !== "delay") throw new Error("the tick is not a delay");
   expect(landed[1].afterMs).toBe(2500);
@@ -1514,23 +1525,23 @@ test("a settled host snapshot stops the polling chain", () => {
     ACTION_PROJECT,
     0,
     new TextEncoder().encode(
-      '{"kind":"host","value":{"tasks":[],"runs":[{"id":"run-1","progress":{"completed":{"artifactDigest":"d"}}}],"authorizations":[],"runsAwaitingLaunch":[]}}',
+      '{"kind":"host","value":{"tasks":[],"runs":[{"id":"run-1","progress":{"kind":"completed","value":{"artifactDigest":"d"}}}],"authorizations":[],"runsAwaitingLaunch":[]}}',
     ),
   );
   const landed = update(hosted, { kind: "dispatch_ok", bytes: snapshot });
-  if (Array.isArray(landed)) throw new Error("a settled snapshot unexpectedly armed a tick");
+  if (hasEffect(landed)) throw new Error("a settled snapshot unexpectedly armed a tick");
   expect(landed.deskHost.length).toBeGreaterThan(0);
 });
 
 test("runs_tick re-reads the host snapshot", () => {
   const hosted: Model = { ...model, rootId: new TextEncoder().encode("r1") };
   const ticked = update(hosted, { kind: "runs_tick", at: 1 });
-  if (!Array.isArray(ticked)) throw new Error("the tick did not issue a read");
+  if (!hasEffect(ticked)) throw new Error("the tick did not issue a read");
   const text = ticked[1].payload.slice(OFFSET_TEXT, ticked[1].payload.length - TRAILING_BYTES);
   expect(decoder.decode(text)).toBe('{"kind":"readHost","value":{"rootId":"r1"}}');
   // 没有项目时不发。
   const empty = update(model, { kind: "runs_tick", at: 1 });
-  if (Array.isArray(empty)) throw new Error("a tick without a project unexpectedly fired");
+  if (hasEffect(empty)) throw new Error("a tick without a project unexpectedly fired");
 });
 
 test("a dispatched reply chains a host snapshot read", () => {
@@ -1543,7 +1554,7 @@ test("a dispatched reply chains a host snapshot read", () => {
     ),
   );
   const landed = update(hosted, { kind: "dispatch_ok", bytes: reply });
-  if (!Array.isArray(landed)) throw new Error("a dispatched reply did not chain the snapshot read");
+  if (!hasEffect(landed)) throw new Error("a dispatched reply did not chain the snapshot read");
   const text = landed[1].payload.slice(OFFSET_TEXT, landed[1].payload.length - TRAILING_BYTES);
   expect(decoder.decode(text)).toBe('{"kind":"readHost","value":{"rootId":"r1"}}');
 });
@@ -1585,4 +1596,81 @@ test("the material draft editor opens with the body, types, and cancels", () => 
   const cancelled = update(typed, { kind: "material_draft_cancel" }) as Model;
   expect(cancelled.materialDraftId.length).toBe(0);
   expect(cancelled.materialDraftText.length).toBe(0);
+});
+
+// ── 2.13 悬停开栏（探头态）───────────────────────────────────────────
+// 交互设计：指针贴到窗口左缘 4px 的探头条就开栏到文件去处；开过之后只要
+// 作者没动过（railPeek 仍在），指针移出整个栏宽就收回稿子；动过就留下，
+// 变成手动栏。迟滞由栏宽天然提供——开 4px、关约 248px，栏不在边缘抖动。
+
+// 共享桩的 windowWidth 是 0：行长公式在轨道宽 ≤ 0 时回退行长上限（65），
+// 重投影判据因此恒「没变」。探头测试需要一个真实窗宽——栏开合改变分栏
+// 比例，行长跟着变，重投影效果才真的挂上。
+const peekSized: Model = { ...model, windowWidth: 1280 };
+
+test("rail_peek_open from the manuscript opens the file rail as a peek", () => {
+  // 稿子全宽（destinationIndex 0）下悬停：落到文件去处并立起探头标记。
+  // 栏宽变了行长跟着变，这一臂带重投影效果（元组）。
+  const result = update(peekSized, { kind: "rail_peek_open" });
+  expect(hasEffect(result)).toBe(true);
+  if (!hasEffect(result)) throw new Error("rail_peek_open did not re-project");
+  expect(result[0].destinationIndex).toBe(1);
+  expect(result[0].railPeek).toBe(1);
+});
+
+test("rail_peek_open is a no-op away from the manuscript", () => {
+  // 别的好去处下 rail 本来就在——探头只在稿子全宽时有意义。
+  const reviewing = update(model, { kind: "workbench_go", index: 2 }) as Model;
+  expect(reviewing.destinationIndex).toBe(2);
+  const stayed = update(reviewing, { kind: "rail_peek_open" }) as Model;
+  expect(stayed.destinationIndex).toBe(2);
+  expect(stayed.railPeek).toBe(0);
+});
+
+test("machine messages do not release the peek state", () => {
+  // 帧、轮询与答复是机器自己的动静：它们不解除探头态——否则轮询一跳就
+  // 把栏变手动栏，「移出收回」永远不触发。
+  const opened = update(peekSized, { kind: "rail_peek_open" });
+  if (!hasEffect(opened)) throw new Error("rail_peek_open did not re-project");
+  // 帧臂可能因窗口尺寸落地而带效果（元组）——每步都剥壳取 Model 再喂回去。
+  const step = (m: Model, msg: Parameters<typeof updateCore>[1]): Model => {
+    const out = update(m, msg);
+    return (Array.isArray(out) ? out[0] : out) as Model;
+  };
+  let peeked = step(opened[0], { kind: "frame", width: 800, height: 600 });
+  expect(peeked.railPeek).toBe(1);
+  peeked = step(peeked, { kind: "runs_tick", at: 0 });
+  expect(peeked.railPeek).toBe(1);
+  const reply = responseBytes(ACTION_OBTAIN_PROJECTION, 0);
+  writeU32(reply, 20, 7); // session
+  writeU32(reply, 24, 4); // revision
+  peeked = step(peeked, { kind: "dispatch_ok", bytes: reply });
+  expect(peeked.railPeek).toBe(1);
+});
+
+test("any interaction releases the peek state but keeps the rail", () => {
+  // 作者用过这栏（哪怕只是敲了搜索框）：栏留下，解除的只是「自动收回」
+  // 的资格——此后 rail_peek_close 不再能把它收走。
+  const opened = update(peekSized, { kind: "rail_peek_open" });
+  if (!hasEffect(opened)) throw new Error("rail_peek_open did not re-project");
+  // search_typed 会挂防抖效果（元组）——剥壳取 Model 再断言。
+  const touchedOut = update(opened[0], {
+    kind: "search_typed",
+    event: { kind: "insert_text", text: new TextEncoder().encode("a") },
+  });
+  const touched = (Array.isArray(touchedOut) ? touchedOut[0] : touchedOut) as Model;
+  expect(touched.railPeek).toBe(0);
+  expect(touched.destinationIndex).toBe(1);
+  const closed = update(touched, { kind: "rail_peek_close" }) as Model;
+  expect(closed.destinationIndex).toBe(1); // no-op：栏留下
+});
+
+test("rail_peek_close retracts an untouched peeked rail to the manuscript", () => {
+  // 指针移出整个栏宽而栏没被用过：收回稿子全宽，探头标记一起清。
+  const opened = update(peekSized, { kind: "rail_peek_open" });
+  if (!hasEffect(opened)) throw new Error("rail_peek_open did not re-project");
+  const closed = update(opened[0], { kind: "rail_peek_close" });
+  if (!hasEffect(closed)) throw new Error("rail_peek_close did not re-project");
+  expect(closed[0].destinationIndex).toBe(0);
+  expect(closed[0].railPeek).toBe(0);
 });

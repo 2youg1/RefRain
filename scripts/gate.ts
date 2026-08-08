@@ -13,7 +13,6 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["check", ["bun", "run", "check"]],
   ["test", ["bun", "run", "test"]],
   ["verify:no-spec-upload", ["bun", "scripts/verify-no-spec-upload.ts"]],
-  ["verify:readme-parity", ["bun", "scripts/verify-readme-parity.ts"]],
   ["verify:no-network", ["bun", "scripts/verify-no-network.ts"]],
   ["verify:bridge", ["bun", "scripts/verify-bridge.ts"]],
   ["verify:corner-authority", ["bun", "scripts/verify-corner-authority.ts"]],

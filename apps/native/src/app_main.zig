@@ -54,6 +54,27 @@ test {
     std.testing.refAllDecls(document_language);
 }
 
+test "compiled lane: bare-sugar-free update snapshots after tuple and bare arms alike" {
+    // 编译车道（ScriptC）没有混形糖：facade 对 `Model | [Model, Cmd]` 的窄化
+    // 在编译产物里断裂，凡带 Cmd 的臂都会把元组本身提交成模型，下一次
+    // model_snapshot 保留到 0x0/0x1（v0.3.0 真窗首派崩溃，windowed-only）。
+    // 纪律因此是：core.ts 的 update 恒返 [Model, Cmd<Msg>]，裸 Model 一律
+    // 配 Cmd.none。这个测试守住它——boot 后各派一类臂，快照都必须干净。
+    const initial = core.initialModel();
+    try std.testing.expect(initial.model.status.len > 0);
+    // 带 Cmd 的臂（改动模型 + 请求）：旧罪的第一现场。
+    const r1 = core.update(initial.model, .theme_next);
+    try std.testing.expect(r1.model.status.len > 0);
+    // 带 Cmd 但不改模型的臂（app_focus 回焦的 cancel）。
+    const r2 = core.update(r1.model, .{ .app_focus = true });
+    try std.testing.expect(r2.model.status.len > 0);
+    // 空臂与退层：跨臂连续派发的快照链。
+    const r3 = core.update(r2.model, .noop);
+    try std.testing.expect(r3.model.status.len > 0);
+    const r4 = core.update(r3.model, .panel_back);
+    try std.testing.expect(r4.model.status.len > 0);
+}
+
 test "generated C ABI layouts match the Rust repr C contract" {
     // The request borrows its text through a pointer instead of inlining a
     // 12,000-byte array and the response lends its projection instead of\n    // inlining 40 KiB, so one keystroke crosses the ABI in 80 + 128 bytes.
@@ -711,6 +732,10 @@ fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         // 还没有项目：这一屏是作者第一次打开软件看到的东西，所以它必须
         // 自己给出入口，而不是显示一句「没有项目」。
         return ui.column(.{ .gap = 12, .padding = 16 }, .{
+            // 「前往」节与命令面板同一份（paletteGoSection，单一来源）：
+            // 空项目时也画全八个去处——够不着的由 core 的 navigate 具名拒绝，
+            // 作者由此学会键位，而不是发现不了功能存在（v0.3.0 走查问题 1）。
+            paletteGoSection(ui, model, ""),
             ui.text(.{}, "还没有打开项目"),
             ui.row(.{ .gap = 8 }, .{
                 ui.button(.{
@@ -749,6 +774,10 @@ fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             ui.listItem(.{ .key = .{ .index = index }, .disabled = true }, "这一行读不出来");
     }
     return ui.column(.{ .gap = 8, .padding = 12 }, .{
+        // 「前往」节置顶：八个去处的鼠标入口与键位提示（paletteGoSection，
+        // 与命令面板同一份，单一来源）。树状排列与键位印行上，服务慢鼠标
+        // 画像——不大幅移鼠标也够得着全部功能（v0.3.0 走查问题 1）。
+        paletteGoSection(ui, model, ""),
         ui.row(.{ .gap = 8, .cross = .center }, .{
             ui.text(.{ .grow = 1 }, "文档"),
             // 画出来的与一共有多少分开说：作者据此知道还有没读到的。
@@ -3368,6 +3397,21 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             // 规则不许浮层），关掉回原来的去处。
             if (model.paletteOpen)
                 palettePanel(ui, model)
+            else if (model.railPeek == 1)
+                // 探头态的感应面（2.13）：栏是贴左缘探出来的且作者还没用过
+                // 它——指针移出整个栏宽发 `rail_peek_close` 收回稿子。感应面
+                // 只在探头态挂：手动开的栏（railPeek==0）永不自动收，这条
+                // 分支不进。迟滞 = 栏宽天然提供（开 4px、关约 248px）。
+                // 只挂 leave 即可：SDK 对链上元素先捕获配对的 leave 再谈
+                // enter，悬停对不因缺 enter 消息而哑（ui_app.zig 悬停批
+                // 处理注释）。
+                ui.el(.stack, .{
+                    .grow = 1,
+                    .on_hover_leave = .{ .rail_peek_close = {} },
+                    .semantics = .{ .label = "探头功能栏" },
+                }, .{
+                    destinationView(ui, model, track_with_card, model.destinationIndex),
+                })
             else
                 destinationView(ui, model, track_with_card, model.destinationIndex),
             switch (model.destinationIndex) {
@@ -3381,13 +3425,15 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
                     ui.el(.stack, .{ .grow = 1 }, .{}),
             },
         });
-    return ui.column(.{ .gap = 12, .padding = 16 }, .{
+    const root = ui.column(.{ .gap = 12, .padding = 16 }, .{
         CompiledView.build(ui, model),
         body,
         karaInterruptLine(ui, model),
         karaSummaryStrip(ui, model),
-        // 栏脚：状态行 + KARA 开关。状态行的每一句话都要值得那一行
-        // （2.6 语义化，调试脚手架已删）；键位印按钮上，读命令表同源。
+        // 栏脚：只有状态行（2.6 语义化，每一句话都要值得那一行）。
+        // 舞台规则：正文层之上不放交互件——KARA 的开关在设置页
+        // （settingsView）与快捷键/菜单（commands.zig "kara.toggle"），
+        // 栏脚不摆按钮。
         ui.row(.{ .gap = 8, .cross = .center }, .{
             // 呼吸墨线：保存答复未回时在状态行左侧起伏（2.7，ping_pong）。
             // 在飞才有，走了就撤——栏脚不为「没在等什么」留一条死线。
@@ -3401,12 +3447,24 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             else
                 ui.spacer(0),
             ui.text(.{ .grow = 1 }, statuslineText(ui, model, document)),
-            ui.button(.{
-                .on_press = @as(?Msg, .kara_toggle),
-                .semantics = .{ .label = "进入或离开专注写作" },
-            }, ui.fmt("{s} ({s})", .{ commands.labelOf("kara.toggle"), commands.hintOf("kara.toggle") })),
         }),
     });
+    // 悬停开栏（2.13）：稿子全宽且面板没开时，窗口最左缘叠一条 4px 宽的
+    // 探头条，指针贴上去（hover_enter）发 `rail_peek_open`——core 与 Ctrl+2
+    // 同一条落地开栏并立起探头标记。条只在「栏没开」时存在，栏一开它就
+    // 撤掉（去处下标不再是稿子），开与关的迟滞因此天然成立：开 4px、
+    // 关要移出整个栏宽（约 248px，感应面见 split 左 pane 的 railPeek 分支）。
+    // 高度取实窗高；窗尺寸未到时帧事件会立刻补上，不做无边界的猜测高度。
+    if (model.destinationIndex == 0 and !model.paletteOpen) {
+        const window_height: f32 = @floatFromInt(@max(model.windowHeight, 0));
+        const probe = ui.el(.stack, .{
+            .frame = native_sdk.geometry.RectF.init(0, 0, 4, window_height),
+            .on_hover_enter = .{ .rail_peek_open = {} },
+            .semantics = .{ .label = "悬停打开功能栏" },
+        }, .{});
+        return ui.el(.stack, .{}, .{ root, probe });
+    }
+    return root;
 }
 
 /// 状态行（2.6）：保存点、选中统计、活动句。
