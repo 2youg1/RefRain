@@ -48,7 +48,7 @@ rusqlite = { version = "=0.40.1", features = ["bundled"] }
 # The icon pipeline (C7): SVG needs a real parser (a hand-rolled one is the
 # DTD/entity surface the format exists to refuse) and a real rasteriser;
 # PNG needs a real decoder. All three are the exact versions usvg 0.47 pins.
-resvg = "=0.47.0"
+resvg = "=0.48.1"
 usvg = "=0.47.0"
 tiny-skia = "=0.12.0"
 image = "=0.25.10"
