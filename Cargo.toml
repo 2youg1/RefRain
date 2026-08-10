@@ -49,7 +49,7 @@ rusqlite = { version = "=0.40.1", features = ["bundled"] }
 # DTD/entity surface the format exists to refuse) and a real rasteriser;
 # PNG needs a real decoder. All three are the exact versions usvg 0.47 pins.
 resvg = "=0.47.0"
-usvg = "=0.47.0"
+usvg = "=0.48.1"
 tiny-skia = "=0.12.0"
 image = "=0.25.10"
 
