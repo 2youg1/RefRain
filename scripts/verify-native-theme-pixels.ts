@@ -31,7 +31,13 @@ const root = process.cwd();
 const nativeDir = join(root, "apps/native");
 const manifestPath = join(nativeDir, "app.zon");
 const nativeCli = join(nativeDir, "node_modules/.bin/native");
-const executable = join(nativeDir, "zig-out/bin/refrain");
+// 发布物在 Windows 上叫 `refrain.exe`。少了这个后缀，这道门禁在
+// **唯一的发布平台**上永远停在「no executable」——像素证据因此只在 Linux
+// 取得过，而产品从 Windows 发出去。命名规则与 `release-assets.test.ts` 同源。
+const executable = join(
+  nativeDir,
+  process.platform === "win32" ? "zig-out/bin/refrain.exe" : "zig-out/bin/refrain",
+);
 const automationDir = join(nativeDir, ".zig-cache/native-sdk-automation");
 
 const flag = (name: string, fallback: string): string => {
@@ -159,7 +165,23 @@ try {
   }
   if (!ready) throw new Error("the automation publisher never became ready");
 
-  /** 工具栏那个「Theme」按钮的 widget id。按名字找，不写死数字。 */
+  /**
+   * 换一套主题。
+   *
+   * 走 `theme.next` 这条**命令**，不去屏幕上找按钮。两个理由：一是命令空间
+   * （W1）本来就是菜单与键位共用的那条路，门禁走它就与作者真正按下
+   * Ctrl+Shift+T 时同一条链；二是原来那个写死的正则 `name="Theme"` 在一个
+   * 中文界面里永远匹配不上，而它又正好只在 Windows 上被触发（另一个
+   * 后缀 bug 先把这道门禁拦在了更早的一步）。
+   */
+  const nextTheme = () =>
+    spawnSync(nativeCli, ["automate", "shortcut", "theme.next"], {
+      cwd: nativeDir,
+      encoding: "utf8",
+      env: { ...process.env, DISPLAY: display },
+    });
+
+  /** 不再使用：保留定位能力供诊断。 */
   const themeButtonId = (): string => {
     const probe = spawnSync(nativeCli, ["automate", "snapshot"], {
       cwd: nativeDir,
@@ -184,14 +206,7 @@ try {
     throw new Error(`read ${slugs.length} slugs but ${papers.length} paper colours`);
   }
 
-  const clickTheme = () => {
-    const id = themeButtonId();
-    return spawnSync(nativeCli, ["automate", "widget-click", "document", id], {
-      cwd: nativeDir,
-      encoding: "utf8",
-      env: { ...process.env, DISPLAY: display },
-    });
-  };
+  void themeButtonId;
 
   const shoot = (): string => {
     const shot = spawnSync(nativeCli, ["automate", "screenshot", "document", "1"], {
@@ -222,7 +237,7 @@ try {
     let produced = shoot();
     painted = topLeftPixel(produced);
     while (painted !== expected && Bun.nanoseconds() < settle) {
-      if (index > 0) clickTheme();
+      if (index > 0) nextTheme();
       await Bun.sleep(400);
       produced = shoot();
       painted = topLeftPixel(produced);
@@ -253,6 +268,10 @@ try {
   await runtime.exited;
 }
 
+// 平台写进结论里：像素是在哪台机器上画出来的就只能代表哪台。
+// 旧文案只印 DISPLAY，而 DISPLAY 在 Windows 上是一个没有含义的字串（":100"），
+// 于是一份 Windows 证据读起来像一份 X11 证据。
+const where = process.platform === "win32" ? "windows" : `${process.platform} ${display}`;
 console.log(
-  `PASS  verify:native-theme-pixels  (${shots.length} themes rendered through the real window on ${display})`,
+  `PASS  verify:native-theme-pixels  (${shots.length} themes rendered through the real window on ${where})`,
 );

@@ -88,6 +88,18 @@ third one may appear:
   (the context menu, proposal dots, the verdict bento) attach to the exact
   line they act on; they are the zone's vocabulary, not floaters.
 
+The rail is a **column of the page, not a box on it**. It takes no corner and no
+outline: the rounded box is reserved for what the hand acts on (`corners.zig`'s
+`.control`) and for what floats beside the manuscript (`.bento`), and a whole
+column outlined on four sides reads as an object adrift on the paper. One
+full-height hairline divides the columns, and it belongs to the division rather
+than to any one layer, so stacking more layers never multiplies it. The panel
+material still owns the surface (`material.zig`); only the boundary moved out of
+`style.border`. Two things are still owed here: the rule is bounded by the body
+row, so it stops short of the window's top and bottom edges and the column still
+reads as a box with ends; and the rail paints `surface` rather than the theme's
+own `rail` — see M12.
+
 No new UI floats above the manuscript layer. There are two exemptions and
 there will never be a third: the agent-state recovery card (KARA's "you
 stopped here"), and the settings surface when the author asks for it

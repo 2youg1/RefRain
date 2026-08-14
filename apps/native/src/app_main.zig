@@ -3638,7 +3638,8 @@ fn layeredBody(
         @floatCast(@max(model.windowWidth, 0)),
         @floatCast(model.layoutFraction),
     );
-    var layers: [panel_stack.MAX_VISIBLE_LAYERS]Adapter.Ui.Node = undefined;
+    // +1 给分栏细线。
+    var layers: [panel_stack.MAX_VISIBLE_LAYERS + 1]Adapter.Ui.Node = undefined;
     var at: usize = 0;
     while (at < depth) : (at += 1) {
         const current = at == depth - 1;
@@ -3661,8 +3662,20 @@ fn layeredBody(
             panelMaterialKind(model),
             &themes.themes[currentThemeIndex(model)],
         );
+        // 功能区是页面的**一栏**，不是浮在纸上的一只盒子。去弧边、去外框：
+        // 弧边方盒留给手直接作用的控件与停在正文旁的小窗（corners.zig 的
+        // `.control` 与 `.bento`）。一条通高细线就够分栏，四边描边反而把
+        // 一栏读成一个漂着的物。材质仍管表面（material.zig 的配方），边界
+        // 改由分栏线说——两件事各有各的权威，不再共用 `style.border`。
+        panel.widget.style.radius = corners.squared;
+        panel.widget.style.border = transparent;
         layers[at] = panel;
     }
+    // 分栏线：一条通高的发丝，立在最右一层与正文之间。它是栏与栏的
+    // 分界，不是某一层的边；层叠得再深也只有这一条。
+    var rule = ui.el(.stack, .{ .width = 1 }, .{});
+    rule.widget.style.background = themes.themes[currentThemeIndex(model)].colors.border orelse transparent;
+    layers[depth] = rule;
     return ui.el(.stack, .{ .grow = 1 }, .{
         // 正文轨在底层，右滑多出的层宽的一半（v0.2.4 的 translateX 公式）。
         ui.el(.stack, .{
@@ -3678,7 +3691,7 @@ fn layeredBody(
         }, .{
             track,
         }),
-        ui.row(.{}, @as([]const Adapter.Ui.Node, layers[0..depth])),
+        ui.row(.{}, @as([]const Adapter.Ui.Node, layers[0 .. depth + 1])),
     });
 }
 
@@ -3717,11 +3730,18 @@ fn palettePanel(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             paletteCommandSection(ui, model, query, "系统", &.{"app.quit"}),
         }),
     });
+    // 命令面板住在功能区里，所以它与功能区同形：一栏，不是盒子。
+    // 否则它会在已经去了盒的栏里再套一只盒。
     material_paint.apply(
         &panel.widget,
         panelMaterialKind(model),
         &themes.themes[currentThemeIndex(model)],
     );
+    // 命令面板住在功能区里，所以它与功能区同形：一栏，不是盒子。否则它
+    // 会在已经去了盒的栏里再套一只盒。写在 `apply` 之后：那一步正是
+    // 按材质配方写 border 的地方，写在之前会被它盖掉。
+    panel.widget.style.radius = corners.squared;
+    panel.widget.style.border = transparent;
     return panel;
 }
 
@@ -3731,6 +3751,10 @@ fn palettePanel(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
 /// 这一行属于上一行。SDK 的 `tree_level` 只是语义层级（它自己的测试写明
 /// “logical hierarchy metadata, not renderer-owned spacing”），几何归我们。
 const rail_indent_px: f32 = 14;
+
+/// 完全透明。用在「这里不画东西」而不是「这里画白色」的地方——
+/// 白色在深色主题上是一道亮边，透明在七套主题上都是一样的无。
+const transparent = native_sdk.canvas.Color.rgba(0, 0, 0, 0);
 
 /// 导轨树一行的高度（px）。
 ///
