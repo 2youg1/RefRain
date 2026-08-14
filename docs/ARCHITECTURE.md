@@ -145,7 +145,7 @@ missing (see *The missing links*) · **○** not landed on the native surface.
 | **F13 · Materials & import** | `material_listing` | `ingest`, `materials` | — | import & disclosure in `application` | `project.rs` | import entries, disclosure menu, draft rows | ● drafts resolve to material or chapter (`CommitMaterialDraft`, M3 landed) |
 | **F14 · KARA** | `kara` | `config` (policy) | — | `application::kara_step` | `project.rs` | `veil.zig`, the mode strip and return card, Ctrl+Enter | ● quiet events produced at the facts; the machine drives the veil (M1 landed) |
 | **F15 · Width conversion** — full/half-width punctuation | `text_width` | `history` | — | `ConvertWidth` in `application`, `scope` | `project.rs` | context menu | ● |
-| **F16 · Themes & corners** | — | `config` (theme) | — | `application::apply_config` | `project.rs` | `generated/themes.zig`, `corners.zig`, `material.zig`, `material_paint.zig`, `workbench_view` | ● themes and materials both land (panel material consumed in v0.3.0) |
+| **F16 · Themes & corners** | — | `config` (theme) | — | `application::apply_config` | `project.rs` | `generated/themes.zig`, `corners.zig`, `material.zig`, `material_paint.zig`, `workbench_view` | ◐ themes, corners and panel material land; the four rail colours every theme derives have no consumer (M12) |
 | **F17 · Icons** | — | `icons` | — | — | — | — | ○ no consumer above the store (M7) |
 | **F18 · Health & the handshake** | `health` | — | — | `native` | `contract.rs`, `document.rs` | handshake in `core.ts` | ● |
 
@@ -320,7 +320,7 @@ in-module test blocks.
 | `workbench.ts` | The eight destinations and the navigation rules: indices, the needs-a-document mask, layout fractions. The first-launch destination is Files, so the rail is open on the first frame | `workbench.test.ts` |
 | `roster.ts` | The roster cursor invariant: the cursor always points at an existing row, or −1 on an empty roster | `roster.test.ts` |
 | `wire_json.ts` | JSON byte mechanics for the core: concat, escape, unescape, ordinal field reads — the requests a key press or a timer must build without a Zig event | `wire_json.test.ts`; shape parity pinned by `verify:wire-shapes` |
-| `app_main.zig` | The shell: screens, fonts, menus, the context menu, KARA and theme wiring | in-file `test` blocks; e2e journals |
+| `app_main.zig` | The shell: screens, fonts, menus, the context menu, KARA and theme wiring; `railTreeRow` owns what makes a rail row a tree row — no corner, a recorded semantic level, one indent step per level, one row rhythm | in-file `test` blocks; e2e journals |
 | `host_bridge.zig` | The ABI client: adopting the borrowed projection into module-lifetime storage | e2e; `verify:native-theme-pixels` |
 | `project_request.zig` | The write side of the surface: one function per `ProjectInput` entry, nothing decided | in-file tests; `verify:wire-shapes` |
 | `project_view.zig` | The read side: opaque reply bytes → rows (file tree, rosters); the Chinese labels | in-file tests |
@@ -423,6 +423,8 @@ it. A ◐ in the function matrix points here.
 | **M8** | **Replay cannot verify the manuscript node.** The e2e journals replay with `--no-verify` because the projection lives in `host_bridge`'s module buffer, not in the core Model — the replayer feeds host answers to the core and the view has no path to the text | the journals, the a11y comparison (the only differing node is the manuscript textbox) | Moving the projection into the Model (~11.5 KiB per frame through core — measure before signing) and re-enabling `--verify` |
 | **M9** | **Landed in v0.3.0.** The producer runner exists and is production-wired: `runner.rs` pumps on the `ReadHost` poll — it launches each authorized Run it can serve through `HarnessAdapter::dispatch`, observes the stream on one thread per Run, lands the reply as `result.md` by atomic rename, and validates it through the same `collect_attempt` as the manual path. The two consumers it blocked landed with it: verifier comments (`AgentComment` now lands on the annotation surface at collect; an unknown target anchors on the first block, nothing is dropped) and the orphan-downstream cleanup (a `Follows`/`Verifies` Run whose upstream failed or was cancelled without an artifact is recorded `Failed` with the reason, transitively). The manual L0 round trip is unchanged: an unconnected agent stays `Authorized` for the author's `LaunchRun` | — | — |
 
+| **M12** | **The rail's own colours have no consumer.** `scripts/generate-themes.ts` derives four rail variables per theme — `rail`, `rail-ink`, `rail-faint`, `rail-rule` — and states the intent in the generator itself ("A rail belongs to the room, so it carries the paper's hue at night"). Every theme ships them, and they are a genuinely different material rather than a lighter sheet: in the default theme the paper is `rgb(243,237,223)` while the rail is `rgb(34,59,96)`, and each rail arrives with the matched high-contrast `rail-ink`. Not one Zig file outside `generated/themes.zig` reads any of the four. The function rail therefore paints `surface`, which sits four levels off the paper — so the tool surfaces and the manuscript read as one continuous sheet separated by a hairline, and the stage rule's two zones stop being visible as zones | the four colours in every theme, `material_paint.apply` already on each panel | Painting the rail is the small half. Text colour does not inherit: `widget_render_style.zig` resolves each widget's ink as `widget.style.foreground orelse tokens.colors.text`, so a rail on `rail` needs `rail-ink` stamped on every text-bearing widget inside all seven tool screens, and `style_tokens` cannot scope it — it names SDK token fields only, and the rail four are RefRain-extra. The link is one authority that stamps the rail's ink as it stamps the rail's ground, so a screen cannot take one without the other |
+
 Wired but awaiting a real-machine signature, rather than a link: IME
 composition (`SetComposition` / `CommitComposition` / `CancelComposition` are
 implemented and `verify:native-ime` exists) on Windows and macOS.
@@ -506,7 +508,7 @@ Each of these exists exactly once. A second copy is a defect, not a convenience.
 | Error kinds | `refrain-core/src/error.rs` (`ErrorCode`) | An interface parsing an English message to decide behaviour (INV-15) |
 | Artifact rejections | `refrain-core/src/agent_protocol.rs` (`ArtifactErrorCode`) | Documentation that enumerates from memory (INV-16) |
 | Theme colours | The `THEMES` table in `scripts/generate-themes.ts` | A hand-kept copy. Four anchors per theme; everything else derives |
-| Corner geometry | `apps/native/src/corners.zig` | A bare radius number anywhere else |
+| Corner geometry, and which surfaces take no corner at all | `apps/native/src/corners.zig` — the five scales, plus `squared` for the absence | A bare radius number anywhere else; a bare `0` that the next reader cannot tell from an oversight |
 | Protocol layout | `apps/native/protocol/host.json` | A hand-edited offset in any generated file |
 
 ### Persisted state is discarded when it cannot be trusted

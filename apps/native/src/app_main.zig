@@ -786,7 +786,7 @@ fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         // 搜索与文件树在同一屏：作者找一份稿子时不必先想「该去哪个去处」。
         searchView(ui, model),
         ui.list(
-            .{ .gap = 2, .semantics = .{ .role = .tree, .label = "项目里的文档" } },
+            .{ .gap = rail_row_gap_px, .semantics = .{ .role = .tree, .label = "项目里的文档" } },
             @as([]const Adapter.Ui.Node, rows[0..window]),
         ),
         ui.row(.{ .gap = 8 }, .{
@@ -3732,6 +3732,15 @@ fn palettePanel(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
 /// “logical hierarchy metadata, not renderer-owned spacing”），几何归我们。
 const rail_indent_px: f32 = 14;
 
+/// 导轨树一行的高度（px）。
+///
+/// 行高 30 + 行间 6 = 36px 的步长。v0.3.0 是 24px（行高随字号 + gap 2），
+/// 在真窗上读作「挤」——一叠贴在一起的行不像一棵树，像一块文本。
+/// 36 是正文行高的量级：导轨与正文因此同一个呼吸，眼睛从稿子移到名录
+/// 不用重新对焦。
+const rail_row_height_px: f32 = 30;
+const rail_row_gap_px: f32 = 6;
+
 /// 导轨树里的一行。
 ///
 /// **它拥有的规则**：树里的一行不是盒子。行本体去角（`corners.squared`），
@@ -3743,10 +3752,18 @@ const rail_indent_px: f32 = 14;
 fn railTreeRow(ui: *Adapter.Ui, options: Adapter.Ui.ElementOptions, depth: u16, label: []const u8) Adapter.Ui.Node {
     var scoped = options;
     scoped.tree_level = depth;
+    scoped.height = rail_row_height_px;
+    // 根层不包缩进行，所以不能给 grow：它直接落在竖向的 column 里，
+    // 而 grow 说的是主轴——在 column 里那是竖向，一行会把整列撜开。
+    // 只有被横向的缩进行包住时，grow 才是「铺满剩下的宽」。
+    if (depth == 0) {
+        var root_item = ui.listItem(scoped, label);
+        root_item.widget.style.radius = corners.squared;
+        return root_item;
+    }
     scoped.grow = 1;
     var item = ui.listItem(scoped, label);
     item.widget.style.radius = corners.squared;
-    if (depth == 0) return item;
     return ui.row(.{ .key = options.key }, .{
         ui.el(.stack, .{ .width = rail_indent_px * @as(f32, @floatFromInt(depth)) }, .{}),
         item,
@@ -3773,9 +3790,9 @@ fn paletteGoSection(ui: *Adapter.Ui, model: *const Model, query: []const u8) Ada
         count += 1;
     }
     if (count == 0) return ui.el(.stack, .{ .height = 0 }, .{});
-    return ui.column(.{ .gap = 2, .semantics = .{ .role = .tree, .label = "前往" } }, .{
+    return ui.column(.{ .gap = rail_row_gap_px, .semantics = .{ .role = .tree, .label = "前往" } }, .{
         ui.text(.{}, "前往"),
-        ui.column(.{ .gap = 2 }, @as([]const Adapter.Ui.Node, rows[0..count])),
+        ui.column(.{ .gap = rail_row_gap_px }, @as([]const Adapter.Ui.Node, rows[0..count])),
     });
 }
 
