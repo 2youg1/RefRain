@@ -1,4 +1,4 @@
-import { asciiBytes, Cmd, hostRecordBytes } from "@native-sdk/core";
+import { asciiBytes, Cmd, hostRecordBytes, utf8Bytes } from "@native-sdk/core";
 import type { FrameEvent, KeyEvent, ScrollState } from "@native-sdk/core/events";
 import type { TextCaretDirection, TextInputEvent } from "@native-sdk/core/text";
 import {
@@ -1940,7 +1940,10 @@ export function update(previous: Model, msg: Msg): [Model, Cmd<Msg>] {
       const landed: Model = relayout({
         ...model,
         hostReady: true,
-        status: asciiBytes("100,000 blocks · viewport projection · Rust document authority"),
+        // 分隔符是 U+00B7，不是 ASCII：`asciiBytes` 会把这个码元截成另一串
+        // 字节，状态行读出乱码。SDK 0.9.0 的 NS1064 在编译期抓住了它，
+        // `utf8Bytes` 是同一条边界上的正确编码。
+        status: utf8Bytes("100,000 blocks · viewport projection · Rust document authority"),
         documentSession: session >= 0 && session <= 9007199254740991 ? Math.trunc(session) : 0,
         documentRevision: revision >= 0 && revision <= 9007199254740991 ? Math.trunc(revision) : 0,
         // 保存证据：native-save 通道只跑保存，它的落地就是落盘完成的时刻；

@@ -34,7 +34,11 @@ pub fn build(b: *std.Build) void {
     // tests。对 app_main 而言 core 的拼写不变：
     // `pub const core = @import("refrain_core")`——换的是编译通道，不是
     // core 的表面。
-    const core_stage = native_sdk.tsCoreStage(b, dep, ".", "refrain");
+    //
+    // 0.9.0 起登台要目标三元组：ScriptC 的编译支持按 host×target 判定，
+    // 不支持的组合在配置期就要教着失败，而不是拖到链接。目标取 exe 模块
+    // 已解析的那一个，两条链接线因此必然同源。
+    const core_stage = native_sdk.appTsCoreStage(b, dep, artifacts.exe.root_module.resolved_target.?, ".", "refrain");
     const mirror_root = core_stage.main_root.dirname().path(b, "core.zig");
     const exe_core = b.createModule(.{
         .root_source_file = mirror_root,

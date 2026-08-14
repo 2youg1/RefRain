@@ -167,12 +167,12 @@ refuses the rest; the refusal is enforced, not requested.
 | **L2 `refrain-host`** — orchestration | Task/Run/Authorization state, staging, workspaces, process launching, harness adapters | The database (it writes through the `HostJournal` trait); domain rules | INV-12 reviewed; the journal seam | 6 / 4,751 |
 | **L3 `refrain-app`** — use cases | The flows that need more than one layer below; the one `Application`; `DocumentSurface` | FFI, raw pointers, platform APIs | `#![forbid(unsafe_code)]` | 17 / 8,493 |
 | **L4 `apps/native/host`** — the bridge | The C ABI: one entry, generated layout, session table, bounded replies, the handshake | Product semantics (those are Rust enums below) | `verify:bridge`, the protocol generator's `--check` | 6 / 1,660 |
-| **L5 `apps/native/src`** — the surface | Markup & declarations, interface state, platform events, drawing | Manuscript bytes, product rules | `native check . --strict` (the layer table is in [AGENTS.md](AGENTS.md)) | 19 hand-written / 13,785 + tests |
+| **L5 `apps/native/src`** — the surface | Markup & declarations, interface state, platform events, drawing | Manuscript bytes, product rules | `native check . --strict` (the layer table is in [AGENTS.md](AGENTS.md)) | 19 hand-written / 13,961 + tests |
 
 Lines are counted over every source file under the layer's `src/`, hand-written
-only — generated files (`generated/protocol.*`, `generated/themes.zig`, 877
-lines) are excluded from L5, and L5's four test files (1,918 lines) are counted
-separately. The whole hand-written surface is 13,785 lines plus its tests; the
+only — generated files (`generated/protocol.*`, `generated/themes.zig`, 873
+lines) are excluded from L5, and L5's four test files (1,992 lines) are counted
+separately. The whole hand-written surface is 13,961 lines plus its tests; the
 Tauri/Solid surface it replaced was 27,175, and every product rule survived
 the move because the rules were never in the surface.
 
@@ -182,9 +182,16 @@ L5 is itself three strata, each with its own allowance (enforced by
 - **Declarations** — `app.zon` (shortcuts, menus) and `app.native` (structure
   and event bindings). No logic.
 - **Interface state** — `core.ts` and its two helpers, compiled through the
-  restricted subset: numbers, strings, `asciiBytes` literals, array tables,
-  interface-annotated records. Holds the `Model`, `Msg`, `update`; never holds
-  manuscript bytes or a document state machine.
+  restricted subset: numbers, strings, `asciiBytes` / `utf8Bytes` literals,
+  array tables, interface-annotated records. Holds the `Model`, `Msg`,
+  `update`; never holds manuscript bytes or a document state machine.
+  The two byte spellings are not interchangeable and the checker tells them
+  apart (NS1064): `asciiBytes` is for command names, keys, paths and protocol
+  values that are guaranteed ASCII, `utf8Bytes` for anything a person reads.
+  A JavaScript string is UTF-16 and the native boundary is UTF-8, so the wrong
+  spelling truncates a non-ASCII code unit into different bytes — which is what
+  the status line did with its U+00B7 separator until the SDK 0.9.0 checker
+  caught it.
 - **Platform & drawing** — the Zig files. Hold events, borrowed projections,
   non-ASCII labels, geometry; never hold a second copy of the text, the
   selection, the composition, or the undo stack.
@@ -706,7 +713,7 @@ The projects this one stands on. Versions are pinned exactly in
 | | |
 |---|---|
 | **Language** | [Rust](https://rust-lang.org) for the domain; [Zig](https://ziglang.org) for platform and drawing; a restricted [TypeScript](https://www.typescriptlang.org) subset for interface state |
-| **Application shell** | [Native SDK](https://native-sdk.dev) (`@native-sdk/cli` 0.8.1, patches carried in `patches/`) — native rendering, no WebView, no JavaScript runtime in the shipped binary |
+| **Application shell** | [Native SDK](https://native-sdk.dev) (`@native-sdk/cli` 0.9.0, increment carried in `patches/`) — native rendering, no WebView, no JavaScript runtime in the shipped binary. See *What the carried SDK increment holds* |
 | **Surface** | `.native` markup compiled against the model contract; [Biome](https://biomejs.dev) formats the TypeScript |
 | **Build tooling** | [ScriptC](https://github.com/vercel-labs/scriptc) compiles the tier A gates and release scripts to native binaries; [Bun](https://bun.sh) runs the rest. Build-time only — neither ships. |
 | **Storage** | [SQLite](https://sqlite.org) through [rusqlite](https://github.com/rusqlite/rusqlite) (bundled), FTS5 `unicode61`, and an application-level bigram tokeniser |
@@ -724,6 +731,29 @@ The projects this one stands on. Versions are pinned exactly in
 | **Process signals** | [nix](https://github.com/nix-rust/nix) on Unix, for cancelling a producer tree |
 | **Line breaking** | `refrain_core::typeset` — see *Why RefRain breaks its own lines* |
 | **Imported sources** | An imported PDF is rendered for reading only; RefRain never writes back to it |
+
+### What the carried SDK increment holds
+
+`patches/` is not a private fork of the Native SDK. It is a named increment on
+`@native-sdk/cli` 0.9.0, and every hunk in it answers three questions: what
+RefRain cannot do without it, why the SDK cannot supply it today, and where it
+leaves. A hunk that cannot answer all three is deleted at the next upgrade.
+
+| The increment | Why RefRain carries it | Exit |
+|---|---|---|
+| **The typeset's own breaks** — `hard_breaks` on the text layout (`text_layout*.zig`, `widget_metrics.zig`, `widget_text_input.zig`, `widgets.zig`) | `refrain_core::typeset` is the sole line-breaking authority (see *Why RefRain breaks its own lines*); the SDK's own search breaks at space and tab, which no Chinese paragraph contains. Non-empty offsets replace the search rather than competing with it, so not one byte enters the text | Offer upstream as a layout input: a caller that already knows its breaks should be able to hand them over |
+| **Per-widget text size and line height** — `widget_metrics.zig` | The manuscript's measure is set by the author's typography settings, which the token ladder cannot express per widget | Same PR as the breaks |
+| **The caret's real rectangle** — `text_caret_bounds` and `TextInputGeometrySnapshot` (`platform/types.zig`, `platform/root.zig`, the three platform hosts, `canvas_widget_display.zig`, both snapshot writers) | An IME candidate window must sit on the caret. Without this the platform host estimates from character count or from the editor's outer bounds, and shaped CJK text plus scrolling move the caret independently inside that frame | Offer upstream: the runtime already derives this geometry to paint the caret, so exporting it costs the SDK nothing |
+| **Change-aware dispatch** — `update_fx_changed`, `dispatchChanged`, `view_state_revision` (`ui_app.zig`, `ts_ui_app.zig`, `ts_core_host.zig`, `effects.zig`) | The projection lives in the bridge's module buffer, not in the Model, so a host callback can move what a view reads without changing the model root. The revision lets one dispatch rebuild from the real state without pulling a routed result across its next-drain boundary | This is M8's ground. It should shrink when the projection moves into the Model, and the seam may not survive that move at all |
+| **Staging a TypeScript core under a hand-written entry** — `appTsCoreStage` (`build/app.zig`, `build.zig`) | `addAppArtifacts` stages a TS core only when it also owns `src/main.zig`. RefRain draws its own shell in `app_main.zig` while `Model`/`Msg`/`update` stay in `core.ts`, and has no other route to the mirror module and the compiled archive | Offer upstream as an `AppOptions` field. Dies outright when the TypeScript lane does |
+| **Declaration-only type staging** — `compiler_typecheck.mjs`, `packages/core/package.json` | The SDK's `events.d.ts → "./text.js"` edge resolves to the `.ts` implementation, and the analyzer then typechecks SDK sources under RefRain's stricter settings, failing `native check` for reasons that are not RefRain's | Upstream bug; the `.d.ts` export map is the one-line half of the fix |
+| **Windows semantic-analysis object** — `build/app.zig` | Zig's COFF backend cannot merge several archives into one object, and this app links a Rust staticlib plus its import libraries. The cost is real and worth naming: on Windows, the development platform, `zig build test` never forces semantic analysis of the app module, so a type error in code no test reaches surfaces only on another platform's build | Zig backend limitation; retest each Zig release |
+
+The 0.9.0 upgrade removed one hunk outright: RefRain used to settle GPU input
+latency against whichever clock domain was nearer, because the platform hosts
+disagreed. 0.9.0 stamps the monotonic clock at the responding present's return
+and states that domain is now universal, so the workaround went with the defect
+it worked around.
 
 ### Why RefRain breaks its own lines
 

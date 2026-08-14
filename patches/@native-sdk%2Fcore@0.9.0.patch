@@ -1,8 +1,16 @@
 diff --git a/package.json b/package.json
-index 87039c0212a5e21db8862e00a60f38a7bd110d19..963950d664a59f3c71256fff70535580f372e9a1 100644
+index 775d777..ea081a0 100644
 --- a/package.json
 +++ b/package.json
-@@ -16,15 +16,15 @@
+@@ -9,22 +9,22 @@
+   },
+   "homepage": "https://native-sdk.dev",
+   "type": "module",
+-  "types": "./sdk/core.ts",
++  "types": "./sdk/core.d.ts",
+   "files": [
+     "sdk",
+     "compile-surface"
    ],
    "exports": {
      ".": {
