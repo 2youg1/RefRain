@@ -14,6 +14,7 @@ const motion = @import("motion.zig");
 // 名字避开派发台资料区的局部 `material`（materialAt 行）：这个模块是配方权威。
 const material_recipe = @import("material.zig");
 const material_paint = @import("material_paint.zig");
+const rail = @import("rail.zig");
 const panel_stack = @import("panel_stack.zig");
 const workbench_view = @import("workbench_view.zig");
 const snapshot = @import("snapshot.zig");
@@ -47,6 +48,7 @@ test {
     std.testing.refAllDecls(veil);
     std.testing.refAllDecls(commands);
     std.testing.refAllDecls(panel_stack);
+    std.testing.refAllDecls(rail);
     std.testing.refAllDecls(workbench_view);
     std.testing.refAllDecls(snapshot);
     std.testing.refAllDecls(project_request);
@@ -192,6 +194,10 @@ fn manuscriptTokens(model: *const Model) native_sdk.canvas.DesignTokens {
             // 圆角与颜色走同一条覆盖路径：SDK 自绘的菜单、下拉、对话框因此
             // 与正文旁边的表面同一套几何，不必为它们各写一遍描边。
             .radius = corners.radiusTokens(),
+            // 控件的色寄存器（M12 的一半）：行整类住在功能栏里，所以整类
+            // 走栏的墨；右键菜单浮在正文上，明写纸 register 挡住 SDK 的
+            // 逐字段回落。哪一类归哪一边的裁定在 `rail.controlTokens`。
+            .controls = rail.controlTokens(theme),
         },
     );
 }
@@ -3383,6 +3389,39 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     // 面板打开时是功能区的模式替换，不进栈；独占去处当前时没有侧层。
     const depth = panel_stack.visibleDepth(model.panelStack, model.destinationIndex);
     const layered = depth >= 2 and !model.paletteOpen;
+    // 左 pane 的内容：命令面板住在功能区（打开时整个换成它——模式替换，
+    // 舞台规则不许浮层，关掉回原来的去处），否则是当前去处。
+    const leading_content = if (model.paletteOpen)
+        palettePanel(ui, model)
+    else
+        destinationView(ui, model, track_with_card, model.destinationIndex);
+    // 探头态的感应面（2.13）：栏是贴左缘探出来的且作者还没用过它——
+    // 指针移出整个栏宽发 `rail_peek_close` 收回稿子。感应面只在探头态挂：
+    // 手动开的栏（railPeek==0）永不自动收，这条分支不进。迟滞 = 栏宽天然
+    // 提供（开 4px、关约 248px）。只挂 leave 即可：SDK 对链上元素先捕获
+    // 配对的 leave 再谈 enter，悬停对不因缺 enter 消息而哑（ui_app.zig
+    // 悬停批处理注释）。
+    const leading_hosted = if (!model.paletteOpen and model.railPeek == 1)
+        ui.el(.stack, .{
+            .grow = 1,
+            .on_hover_leave = .{ .rail_peek_close = {} },
+            .semantics = .{ .label = "探头功能栏" },
+        }, .{leading_content})
+    else
+        leading_content;
+    // 功能栏穿上自己的地与墨（M12）。稿子去处的左 pane 就是正文轨本身，
+    // 不着栏色——那一帧根本没有栏。
+    const leading = if (railOpen(model))
+        rail.dress(ui, &themes.themes[currentThemeIndex(model)], leading_hosted)
+    else
+        leading_hosted;
+    // 栏占掉的那一段宽：通知条与状态行都是正文那一栏的事（状态行报的是
+    // 稿子的保存点与选区），所以它们从栏的右缘开始，而不是铺到窗左缘
+    // 去压在栏上。
+    const rail_lead = if (railEdgeX(model, depth, layered)) |edge|
+        @max(0, edge - shell_padding_px)
+    else
+        0;
     const body: Adapter.Ui.Node = if (layered)
         layeredBody(ui, model, track_with_card, depth)
     else
@@ -3393,27 +3432,7 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             .on_resize = Adapter.Ui.translatedValueMsg(.split_resize, f64),
             .grow = 1,
         }, .{
-            // 命令面板住在功能区：打开时左 pane 整个换成它（模式替换，舞台
-            // 规则不许浮层），关掉回原来的去处。
-            if (model.paletteOpen)
-                palettePanel(ui, model)
-            else if (model.railPeek == 1)
-                // 探头态的感应面（2.13）：栏是贴左缘探出来的且作者还没用过
-                // 它——指针移出整个栏宽发 `rail_peek_close` 收回稿子。感应面
-                // 只在探头态挂：手动开的栏（railPeek==0）永不自动收，这条
-                // 分支不进。迟滞 = 栏宽天然提供（开 4px、关约 248px）。
-                // 只挂 leave 即可：SDK 对链上元素先捕获配对的 leave 再谈
-                // enter，悬停对不因缺 enter 消息而哑（ui_app.zig 悬停批
-                // 处理注释）。
-                ui.el(.stack, .{
-                    .grow = 1,
-                    .on_hover_leave = .{ .rail_peek_close = {} },
-                    .semantics = .{ .label = "探头功能栏" },
-                }, .{
-                    destinationView(ui, model, track_with_card, model.destinationIndex),
-                })
-            else
-                destinationView(ui, model, track_with_card, model.destinationIndex),
+            leading,
             switch (model.destinationIndex) {
                 // 除了稿子与裁决（独占），正文恒在右 pane——作者做任何事时
                 // 都不失去手上这一份（旧版正文让位同源）。
@@ -3425,7 +3444,11 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
                     ui.el(.stack, .{ .grow = 1 }, .{}),
             },
         });
-    const root = ui.column(.{ .gap = 12, .padding = 16 }, .{
+    const root = ui.column(.{ .gap = 12, .padding = shell_padding_px }, .{
+        // 通知条横跨整窗，不让位给功能栏：它报的是具名的拒绝（「那个去处要
+        // 先打开一份稿子」），而拒绝往往正发生在栏占满窗宽的时候——让位会
+        // 把它振成一个读不出的碎片（真窗探针拍到过：三层时只剩一个
+        // 「Dism」）。它自带地（`.alert` 的 chrome），所以跨在栏上也读得出。
         CompiledView.build(ui, model),
         body,
         karaInterruptLine(ui, model),
@@ -3435,6 +3458,7 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         // （settingsView）与快捷键/菜单（commands.zig "kara.toggle"），
         // 栏脚不摆按钮。
         ui.row(.{ .gap = 8, .cross = .center }, .{
+            ui.el(.stack, .{ .width = rail_lead }, .{}),
             // 呼吸墨线：保存答复未回时在状态行左侧起伏（2.7，ping_pong）。
             // 在飞才有，走了就撤——栏脚不为「没在等什么」留一条死线。
             if (model.savePending)
@@ -3449,22 +3473,71 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             ui.text(.{ .grow = 1 }, statuslineText(ui, model, document)),
         }),
     });
+    // 壳上的两件叠加物：分栏线与悬停探头条。两件都要窗口的上下缘，
+    // 而只有壳知道那两条缘在哪里。
+    var shell_layers: [4]Adapter.Ui.Node = undefined;
+    var shell_count: usize = 0;
+    const railband = if (railEdgeX(model, depth, layered)) |edge| rail.band(
+        ui,
+        panelMaterialKind(model),
+        &themes.themes[currentThemeIndex(model)],
+        edge,
+        @floatFromInt(@max(model.windowHeight, 0)),
+    ) else null;
+    // 地在最底层（栏内各层透它），线在最上层（它是分界，不能被任何
+    // 一层盖住）。
+    if (railband) |value| {
+        shell_layers[shell_count] = value.ground;
+        shell_count += 1;
+    }
+    shell_layers[shell_count] = root;
+    shell_count += 1;
+    if (railband) |value| {
+        shell_layers[shell_count] = value.rule;
+        shell_count += 1;
+    }
     // 悬停开栏（2.13）：稿子全宽且面板没开时，窗口最左缘叠一条 4px 宽的
     // 探头条，指针贴上去（hover_enter）发 `rail_peek_open`——core 与 Ctrl+2
     // 同一条落地开栏并立起探头标记。条只在「栏没开」时存在，栏一开它就
     // 撤掉（去处下标不再是稿子），开与关的迟滞因此天然成立：开 4px、
     // 关要移出整个栏宽（约 248px，感应面见 split 左 pane 的 railPeek 分支）。
     // 高度取实窗高；窗尺寸未到时帧事件会立刻补上，不做无边界的猜测高度。
-    if (model.destinationIndex == 0 and !model.paletteOpen) {
+    if (!railOpen(model)) {
         const window_height: f32 = @floatFromInt(@max(model.windowHeight, 0));
-        const probe = ui.el(.stack, .{
+        shell_layers[shell_count] = ui.el(.stack, .{
             .frame = native_sdk.geometry.RectF.init(0, 0, 4, window_height),
             .on_hover_enter = .{ .rail_peek_open = {} },
             .semantics = .{ .label = "悬停打开功能栏" },
         }, .{});
-        return ui.el(.stack, .{}, .{ root, probe });
+        shell_count += 1;
     }
-    return root;
+    if (shell_count == 1) return root;
+    return ui.el(.stack, .{}, @as([]const Adapter.Ui.Node, shell_layers[0..shell_count]));
+}
+
+/// 这一帧有没有功能栏。稿子去处且命令面板没开时正文占满全宽，没有栏——
+/// 地、墨与分栏线三件事都读这一个判据。
+fn railOpen(model: *const Model) bool {
+    return model.paletteOpen or model.destinationIndex != 0;
+}
+
+/// 功能栏的右缘在哪里（窗口坐标 px）。地、分栏线与页脚的让位共用这一个
+/// 几何权威，所以三者不可能对不齐。
+///
+/// **出处**：根栏左 padding + 可见层数 × 层宽，层宽走
+/// `panel_stack.layerWidth`——与 `veil.rect` 量正文轨宽时同一式，不新造
+/// 第二份版式算术。
+///
+/// **什么时候没有**：没有栏时；栏独占整屏时（`layoutFraction == 1`，稿子
+/// 与裁决）——没有第二栏就没有分界，也无从让位；窗尺寸未到时（不猜）。
+fn railEdgeX(model: *const Model, depth: usize, layered: bool) ?f32 {
+    if (!railOpen(model)) return null;
+    const fraction: f32 = @floatCast(model.layoutFraction);
+    if (fraction >= 0.999) return null;
+    const window_width: f32 = @floatCast(@max(model.windowWidth, 0));
+    if (window_width <= 0 or model.windowHeight <= 0) return null;
+    const columns: f32 = if (layered) @floatFromInt(depth) else 1;
+    return shell_padding_px + panel_stack.layerWidth(window_width, fraction) * columns;
 }
 
 /// 状态行（2.6）：保存点、选中统计、活动句。
@@ -3638,12 +3711,11 @@ fn layeredBody(
         @floatCast(@max(model.windowWidth, 0)),
         @floatCast(model.layoutFraction),
     );
-    // +1 给分栏细线。
-    var layers: [panel_stack.MAX_VISIBLE_LAYERS + 1]Adapter.Ui.Node = undefined;
+    var layers: [panel_stack.MAX_VISIBLE_LAYERS]Adapter.Ui.Node = undefined;
     var at: usize = 0;
     while (at < depth) : (at += 1) {
         const current = at == depth - 1;
-        var panel = ui.el(.panel, .{
+        const panel = ui.el(.panel, .{
             .key = .{ .index = at },
             .global_key = if (current) .{ .str = "panel-current" } else null,
             .width = width,
@@ -3655,27 +3727,11 @@ fn layeredBody(
                 at,
             )),
         });
-        // 面板材质（2.10）：透光度/背景模糊/描边按 material.zig 的配方表，
-        // 一行接上——侧层与当前层同质，五处消费点共用这一行。
-        material_paint.apply(
-            &panel.widget,
-            panelMaterialKind(model),
-            &themes.themes[currentThemeIndex(model)],
-        );
-        // 功能区是页面的**一栏**，不是浮在纸上的一只盒子。去弧边、去外框：
-        // 弧边方盒留给手直接作用的控件与停在正文旁的小窗（corners.zig 的
-        // `.control` 与 `.bento`）。一条通高细线就够分栏，四边描边反而把
-        // 一栏读成一个漂着的物。材质仍管表面（material.zig 的配方），边界
-        // 改由分栏线说——两件事各有各的权威，不再共用 `style.border`。
-        panel.widget.style.radius = corners.squared;
-        panel.widget.style.border = transparent;
-        layers[at] = panel;
+        // 功能栏穿上自己的地与墨（`rail.dress`）：材质配方、去弧边、去外框
+        // 与递归着墨四件事在那一处定。侧层与当前层同质，与单层时的左 pane
+        // 也同质——三处消费点共用这一行。
+        layers[at] = rail.dress(ui, &themes.themes[currentThemeIndex(model)], panel);
     }
-    // 分栏线：一条通高的发丝，立在最右一层与正文之间。它是栏与栏的
-    // 分界，不是某一层的边；层叠得再深也只有这一条。
-    var rule = ui.el(.stack, .{ .width = 1 }, .{});
-    rule.widget.style.background = themes.themes[currentThemeIndex(model)].colors.border orelse transparent;
-    layers[depth] = rule;
     return ui.el(.stack, .{ .grow = 1 }, .{
         // 正文轨在底层，右滑多出的层宽的一半（v0.2.4 的 translateX 公式）。
         ui.el(.stack, .{
@@ -3691,7 +3747,7 @@ fn layeredBody(
         }, .{
             track,
         }),
-        ui.row(.{}, @as([]const Adapter.Ui.Node, layers[0 .. depth + 1])),
+        ui.row(.{}, @as([]const Adapter.Ui.Node, layers[0..depth])),
     });
 }
 
@@ -3712,9 +3768,10 @@ fn layeredBody(
 fn palettePanel(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     const QueryInput = @FieldType(Msg, "palette_query");
     const query = model.paletteQuery;
-    // 命令面板住功能区成树（舞台规则），材质与面板同一份配方（2.10）：
-    // 包一层 .panel 吃 apply——它是唯一一个原本是裸 column 的消费点。
-    var panel = ui.el(.panel, .{ .grow = 1 }, .{
+    // 命令面板住功能区成树（舞台规则），所以它与功能栏同形：包一层 .panel
+    // 交给 `rail.dress`（调用处在 `documentView`）——地、墨、去盒三件事不
+    // 在这里再写一遍，否则它会在已经去了盒的栏里再套一只盒。
+    return ui.el(.panel, .{ .grow = 1 }, .{
         ui.column(.{ .gap = 8, .padding = 12 }, .{
             ui.textField(.{
                 .text = query,
@@ -3730,20 +3787,11 @@ fn palettePanel(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             paletteCommandSection(ui, model, query, "系统", &.{"app.quit"}),
         }),
     });
-    // 命令面板住在功能区里，所以它与功能区同形：一栏，不是盒子。
-    // 否则它会在已经去了盒的栏里再套一只盒。
-    material_paint.apply(
-        &panel.widget,
-        panelMaterialKind(model),
-        &themes.themes[currentThemeIndex(model)],
-    );
-    // 命令面板住在功能区里，所以它与功能区同形：一栏，不是盒子。否则它
-    // 会在已经去了盒的栏里再套一只盒。写在 `apply` 之后：那一步正是
-    // 按材质配方写 border 的地方，写在之前会被它盖掉。
-    panel.widget.style.radius = corners.squared;
-    panel.widget.style.border = transparent;
-    return panel;
 }
+
+/// 根栏的内边距（px）。版心列宽、层宽（`panel_stack.layerWidth`）与纱的
+/// 几何（`veil.rect`）都从它减起，所以它只能有一处。
+const shell_padding_px: f32 = 16;
 
 /// 导轨树里一行向右缩进一格的宽度。
 ///

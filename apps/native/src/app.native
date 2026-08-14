@@ -3,7 +3,7 @@
     <alert variant="secondary">
       <row gap="8" cross="center">
         <text grow="1">{notice}</text>
-        <button variant="secondary" on-press="notice_dismiss">Dismiss</button>
+        <button variant="secondary" on-press="notice_dismiss" icon="x" label="dismiss"/>
       </row>
     </alert>
   </if>

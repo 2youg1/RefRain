@@ -440,7 +440,7 @@ test("a destination that reads the manuscript refuses when none is open and says
   const refused = update(closed, { kind: "workbench_key", ordinal: 4 }) as Model;
   // 拒绝要留痕：去处不动，但作者看得见原因。
   expect(refused.destinationIndex).toBe(0);
-  expect(decoder.decode(refused.notice)).toBe("Open a manuscript first.");
+  expect(decoder.decode(refused.notice)).toBe("先打开一份稿子。");
 
   const allowed = update(model, { kind: "workbench_key", ordinal: 4 }) as Model;
   expect(allowed.destinationIndex).toBe(3);

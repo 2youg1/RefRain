@@ -51,10 +51,22 @@ fn paperOf(theme: *const Theme) Color {
 /// 表面色：向纸色折进 (1−mix) 份再盖上，alpha 取混合比本身
 /// （换算的理由见 `material.zig` 的模块头）。
 pub fn surfacePaint(kind: Kind, theme: *const Theme) Color {
+    return planePaint(kind, theme.colors.surface orelse paperOf(theme), theme);
+}
+
+/// 功能栏的地：同一份配方，折的是主题自己的 `rail` 那一面。
+///
+/// 分成两个入口而不是一个带参数的：调用点说的是「这是哪一面」，
+/// 不是「折哪个颜色」——两处读者各自具名，材质语言仍然只有一条。
+pub fn railPaint(kind: Kind, theme: *const Theme) Color {
+    return planePaint(kind, theme.rail, theme);
+}
+
+/// 配方折算本身：任何一面向纸色折进 (1−mix) 份再盖上，alpha 取混合比。
+fn planePaint(kind: Kind, plane: Color, theme: *const Theme) Color {
     const paper = paperOf(theme);
-    const surface = theme.colors.surface orelse paper;
     const mix = material.recipe(kind).surface_mix;
-    var paint = blend(paper, surface, mix);
+    var paint = blend(paper, plane, mix);
     paint.a = mix;
     return paint;
 }

@@ -954,6 +954,71 @@ index 8f5b0c7..7f22aa8 100644
          .wrap = if (widget.text_no_wrap) .none else .word,
          .alignment = widget.text_alignment,
          .typography = tokens.typography,
+diff --git a/src/primitives/canvas/widget_render_controls.zig b/src/primitives/canvas/widget_render_controls.zig
+index 29a6151..c869abd 100644
+--- a/src/primitives/canvas/widget_render_controls.zig
++++ b/src/primitives/canvas/widget_render_controls.zig
+@@ -74,6 +74,8 @@ const widgetBackgroundColor = widget_render_style.widgetBackgroundColor;
+ const widgetAccentColor = widget_render_style.widgetAccentColor;
+ const widgetBorderColor = widget_render_style.widgetBorderColor;
+ const widgetForegroundColor = widget_render_style.widgetForegroundColor;
++/// RefRain patch: the row register's ink, disabled included.
++const rowForegroundColor = widget_render_style.rowForegroundColor;
+ const widgetAccentForegroundColor = widget_render_style.widgetAccentForegroundColor;
+ const widgetRadius = widget_render_style.widgetRadius;
+ const controlRadius = widget_render_style.controlRadius;
+@@ -751,7 +753,7 @@ pub fn emitMenuItemWidget(builder: *Builder, widget: Widget, tokens: DesignToken
+     }
+     const text_size = widgetBodyTextSize(widget, tokens);
+     const text_inset = widgetControlInset(widget, tokens, tokens.spacing.md);
+-    const content_color = widgetForegroundColor(widget, tokens, visual.foreground orelse tokens.colors.text);
++    const content_color = rowForegroundColor(widget, tokens, visual);
+     // EVERY row reserves the trailing checkmark slot, committed or not,
+     // so labels measure and elide identically and moving the commit
+     // never reflows a row's text.
+@@ -836,7 +838,7 @@ pub fn emitListItemWidget(builder: *Builder, widget: Widget, tokens: DesignToken
+     if (widget.state.focused) try emitWidgetFocusRing(builder, widget, tokens, 2);
+     const text_size = widgetBodyTextSize(widget, tokens);
+     const text_inset = widgetControlInset(widget, tokens, tokens.spacing.md);
+-    const content_color = widgetForegroundColor(widget, tokens, visual.foreground orelse tokens.colors.text);
++    const content_color = rowForegroundColor(widget, tokens, visual);
+     // Leading icon slot: drawn as part of the row's own rendering
+     // so icon + label are one hit target with one tint, mirroring the
+     // button's inline icon. The label shifts right by the shared metric
+@@ -884,7 +886,7 @@ pub fn emitDataCellWidget(builder: *Builder, widget: Widget, tokens: DesignToken
+             .font_id = tokens.typography.font_id,
+             .size = text_size,
+             .origin = pixelSnapTextPoint(tokens, boundedTextOrigin(widget.frame, text_size, text_inset)),
+-            .color = widgetForegroundColor(widget, tokens, visual.foreground orelse tokens.colors.text),
++            .color = rowForegroundColor(widget, tokens, visual),
+             .text = widget.text,
+             .text_layout = boundedTextLayout(widget.frame, text_size, text_inset, widget.text_alignment, .none, widget.text_overflow, tokens),
+         });
+diff --git a/src/primitives/canvas/widget_render_style.zig b/src/primitives/canvas/widget_render_style.zig
+index ce8b03a..518f0e4 100644
+--- a/src/primitives/canvas/widget_render_style.zig
++++ b/src/primitives/canvas/widget_render_style.zig
+@@ -173,6 +173,20 @@ pub fn widgetForegroundColor(widget: Widget, tokens: DesignTokens, fallback: Col
+     return widget.style.foreground orelse fallback;
+ }
+ 
++/// RefRain patch: the ROW register's ink, disabled included.
++/// `ControlVisualTokens.disabled_foreground` documents itself as the
++/// control's "Disabled fill and ink", and the button and badge ladders
++/// honor it — but the row ladder (`list_item` / `menu_item` /
++/// `data_cell`) resolved through `widgetForegroundColor`, which knows
++/// only the global `text_muted`. An app that puts its rows on a second
++/// surface register (a dark function rail beside light paper) then has
++/// no channel at all for their disabled ink. Reads exactly like the
++/// expression it replaces in the enabled case.
++pub fn rowForegroundColor(widget: Widget, tokens: DesignTokens, visual: ControlVisualTokens) Color {
++    if (widget.state.disabled) return visual.disabled_foreground orelse tokens.colors.text_muted;
++    return widget.style.foreground orelse visual.foreground orelse tokens.colors.text;
++}
++
+ pub fn widgetAccentForegroundColor(widget: Widget, tokens: DesignTokens, fallback: Color) Color {
+     if (widget.state.disabled) return tokens.colors.text_muted;
+     return widget.style.accent_foreground orelse fallback;
 diff --git a/src/primitives/canvas/widget_text_input.zig b/src/primitives/canvas/widget_text_input.zig
 index 176d399..0f3477e 100644
 --- a/src/primitives/canvas/widget_text_input.zig

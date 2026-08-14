@@ -70,14 +70,18 @@ process.on("SIGINT", () => {
 });
 
 /**
- * PNG 左上角那个像素的十六进制色。
+ * PNG 第一行的像素（RGB 三元组数组）。
  *
- * 自己解而不是拉一个图像库：只需要第一行第一个像素，而这道验收的全部意义就是
+ * 自己解而不是拉一个图像库：只需要第一行，而这道验收的全部意义就是
  * 「屏幕上真的是这个颜色」——多一层依赖就多一处可能骗过自己的地方。
  * 只认 RGBA8（color type 6），SDK 的截图就是这一种；换了格式应当报错而不是
  * 猜一个值出来。
+ *
+ * **为什么只解第一行**：第一行的上方扫描线按 PNG 规范当全 0，所以五种
+ * filter 退化成只依赖左侧像素的形式，一行就能自含地还原。这比解整张图
+ * 少一大截代码，而验收要看的两栏（功能栏与纸）在第一行上就已经分开。
  */
-const topLeftPixel = (path: string): string => {
+const firstRowPixels = (path: string): number[][] => {
   const png = readFileSync(path);
   if (png.readUInt32BE(0) !== 0x89504e47) throw new Error(`${path} is not a PNG`);
   let offset = 8;
@@ -98,13 +102,29 @@ const topLeftPixel = (path: string): string => {
   if (colorType !== 6) throw new Error(`${path} has colour type ${colorType}, expected 6 (RGBA8)`);
   if (width === 0) throw new Error(`${path} declares no width`);
   const raw = inflateSync(Buffer.concat(idat));
-  // 第一行：一个 filter byte 之后就是像素。第一行的首像素在任何 filter 下都
-  // 是恒等的——左侧与上方都不存在参考像素。
-  const r = raw[1] ?? 0;
-  const g = raw[2] ?? 0;
-  const b = raw[3] ?? 0;
-  return [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
+  const filter = raw[0] ?? 0;
+  const bytes = new Uint8Array(width * 4);
+  for (let index = 0; index < bytes.length; index += 1) {
+    const encoded = raw[1 + index] ?? 0;
+    const left = index >= 4 ? (bytes[index - 4] ?? 0) : 0;
+    // 上方与左上恒为 0（第一行），所以 Up = 原值、Average = left>>1、
+    // Paeth = left。它们不是简化，是规范在这一行上的真值。
+    const predictor =
+      filter === 1 ? left : filter === 3 ? left >> 1 : filter === 4 ? left : filter === 2 ? 0 : 0;
+    bytes[index] = (encoded + predictor) & 0xff;
+  }
+  const row: number[][] = [];
+  for (let x = 0; x < width; x += 1) {
+    row.push([bytes[x * 4] ?? 0, bytes[x * 4 + 1] ?? 0, bytes[x * 4 + 2] ?? 0]);
+  }
+  return row;
 };
+
+const hex = (rgb: readonly number[]): string =>
+  rgb.map((v) => v.toString(16).padStart(2, "0")).join("");
+
+const distance = (a: readonly number[], b: readonly number[]): number =>
+  Math.hypot((a[0] ?? 0) - (b[0] ?? 0), (a[1] ?? 0) - (b[1] ?? 0), (a[2] ?? 0) - (b[2] ?? 0));
 
 writeFileSync(
   manifestPath,
@@ -181,32 +201,20 @@ try {
       env: { ...process.env, DISPLAY: display },
     });
 
-  /** 不再使用：保留定位能力供诊断。 */
-  const themeButtonId = (): string => {
-    const probe = spawnSync(nativeCli, ["automate", "snapshot"], {
-      cwd: nativeDir,
-      encoding: "utf8",
-      env: { ...process.env, DISPLAY: display },
-    });
-    if (probe.status !== 0) throw new Error("could not take a snapshot to find the Theme button");
-    const text = readFileSync(join(automationDir, "snapshot.txt"), "utf8");
-    const id = text.match(/#(\d+) role=button name="Theme"/u)?.[1];
-    if (id === undefined) throw new Error("no Theme button in the snapshot");
-    return id;
-  };
-
   /** 色表里每套的纸色，与 CSS 同源；用来对拍屏幕上真的画了这一套。 */
-  const papers = [...table.matchAll(/\.background = Color\.rgb8\((\d+), (\d+), (\d+)\)/gu)].map(
-    (m) =>
-      [Number(m[1]), Number(m[2]), Number(m[3])]
-        .map((v) => v.toString(16).padStart(2, "0"))
-        .join(""),
-  );
+  const rgbList = (field: string): number[][] =>
+    [
+      ...table.matchAll(new RegExp(`\\.${field} = Color\\.rgb8\\((\\d+), (\\d+), (\\d+)\\)`, "gu")),
+    ].map((m) => [Number(m[1]), Number(m[2]), Number(m[3])]);
+  const papers = rgbList("background");
+  // 功能栏自己的地（M12）。色表里 `rail` 每套只有一行，与 slug 同序。
+  const rails = rgbList("rail");
   if (papers.length !== slugs.length) {
     throw new Error(`read ${slugs.length} slugs but ${papers.length} paper colours`);
   }
-
-  void themeButtonId;
+  if (rails.length !== slugs.length) {
+    throw new Error(`read ${slugs.length} slugs but ${rails.length} rail colours`);
+  }
 
   const shoot = (): string => {
     const shot = spawnSync(nativeCli, ["automate", "screenshot", "document", "1"], {
@@ -224,7 +232,7 @@ try {
 
   const seen = new Set<string>();
   for (const [index, slug] of slugs.entries()) {
-    const expected = papers[index] ?? "";
+    const expected = hex(papers[index] ?? [0, 0, 0]);
 
     // **判据是 PNG 里的像素，不是 snapshot 的 gpu_sample。**
     //
@@ -233,20 +241,36 @@ try {
     // 所以这里反过来：先截图，再读 PNG 左上角那个像素，它就是这一帧真正画出
     // 来的纸色。视觉审核当场发现了那次错位，机器读数没有。
     let painted = "";
+    let row: number[][] = [];
     const settle = Bun.nanoseconds() + 40_000_000_000;
     let produced = shoot();
-    painted = topLeftPixel(produced);
+    row = firstRowPixels(produced);
+    painted = hex(row[row.length - 8] ?? [0, 0, 0]);
     while (painted !== expected && Bun.nanoseconds() < settle) {
       if (index > 0) nextTheme();
       await Bun.sleep(400);
       produced = shoot();
-      painted = topLeftPixel(produced);
+      row = firstRowPixels(produced);
+      painted = hex(row[row.length - 8] ?? [0, 0, 0]);
     }
     if (painted !== expected) {
       throw new Error(`${slug} painted #${painted} but the table says #${expected}`);
     }
     if (seen.has(painted)) throw new Error(`${slug} repeated an earlier theme's paper #${painted}`);
     seen.add(painted);
+
+    // **功能栏真的画了自己的地（M12 的像素证据）**。判据不能是一个硬值：
+    // 地要经材质配方折算再与纸合成，把那个公式在这里再写一遍就多了一个
+    // 权威。可机检的事实是方向：栏区那一点必须离主题的 `rail` 比离纸近。
+    // 把地换回 `surface`（M12 之前的形态）这一条就红。
+    const railPixel = row[8] ?? [0, 0, 0];
+    const paperRgb = papers[index] ?? [0, 0, 0];
+    const railRgb = rails[index] ?? [0, 0, 0];
+    if (distance(railPixel, railRgb) >= distance(railPixel, paperRgb)) {
+      throw new Error(
+        `${slug} painted the rail column #${hex(railPixel)}, which is nearer the paper #${hex(paperRgb)} than the rail #${hex(railRgb)}`,
+      );
+    }
 
     const bytes = readFileSync(produced);
     // 非空像素：一张全 0 的 PNG 会压得极小，那说明画布没画上去。
@@ -255,7 +279,9 @@ try {
     const target = join(outDir, `${index}-${slug}.png`);
     writeFileSync(target, bytes);
     shots.push(target);
-    console.log(`  ${slug}  #${painted}  ${bytes.length} bytes  →  ${target}`);
+    console.log(
+      `  ${slug}  paper #${painted}  rail #${hex(railPixel)}  ${bytes.length} bytes  →  ${target}`,
+    );
   }
 } catch (error) {
   console.error(

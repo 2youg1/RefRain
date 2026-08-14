@@ -91,14 +91,37 @@ third one may appear:
 The rail is a **column of the page, not a box on it**. It takes no corner and no
 outline: the rounded box is reserved for what the hand acts on (`corners.zig`'s
 `.control`) and for what floats beside the manuscript (`.bento`), and a whole
-column outlined on four sides reads as an object adrift on the paper. One
-full-height hairline divides the columns, and it belongs to the division rather
-than to any one layer, so stacking more layers never multiplies it. The panel
-material still owns the surface (`material.zig`); only the boundary moved out of
-`style.border`. Two things are still owed here: the rule is bounded by the body
-row, so it stops short of the window's top and bottom edges and the column still
-reads as a box with ends; and the rail paints `surface` rather than the theme's
-own `rail` — see M12.
+column outlined on four sides reads as an object adrift on the paper. Its ground
+and its rule are one band painted in the shell, from the window's top edge to its
+bottom, because only the shell knows where those edges are — a ground that
+follows the body row stops short of both and the column reads as a box with ends.
+The band belongs to the division rather than to any one layer, so stacking more
+layers never multiplies it, and every layer inside the rail is transparent.
+
+The rail carries **its own colour register**, which is what makes the stage rule's
+two zones visible as zones: the theme's `rail` is the desk, `rail-ink` and
+`rail-faint` are the ink on it, `rail-rule` is the division. `rail.zig` owns that
+rule — the ground and the rule together (`band`), the recursive ink stamp
+(`dress`), and the control register the tokens carry (`controlTokens`). Three
+planes, exactly as `generate-themes.ts` audits them: **the rail is the desk, a
+card on it is a sheet, the manuscript is the page.** A widget that owns a ground
+— a card, a panel, a code surface, a button, a text field — keeps the paper
+register inside it, so the ink stamp stops there; the desk carries only labels
+and rows. Rows are the one control class that lives *only* in the rail, so
+`controls.list_item` moves whole; the context menu floats over the manuscript and
+states the paper register field by field, because the SDK's merge falls back to
+`list_item` per field.
+
+The status line is the manuscript column's, so it starts at the rail's right
+edge. The notice bar is not: it announces a named refusal, refusals happen most
+often when the rail is widest, and letting it yield to the rail crushes it into an
+unreadable fragment — it spans the window and rides on its own `.alert` ground.
+
+One debt is named rather than hidden: the notice bar's dismiss control is
+icon-only with an ASCII accessible name, because `native check --strict`
+font-checks a markup `label=` attribute as if it were rendered text and refuses
+CJK there. It is the last English string on the surface, and it dies with
+`app.native` when the TypeScript lane goes.
 
 No new UI floats above the manuscript layer. There are two exemptions and
 there will never be a third: the agent-state recovery card (KARA's "you
@@ -157,7 +180,7 @@ missing (see *The missing links*) · **○** not landed on the native surface.
 | **F13 · Materials & import** | `material_listing` | `ingest`, `materials` | — | import & disclosure in `application` | `project.rs` | import entries, disclosure menu, draft rows | ● drafts resolve to material or chapter (`CommitMaterialDraft`, M3 landed) |
 | **F14 · KARA** | `kara` | `config` (policy) | — | `application::kara_step` | `project.rs` | `veil.zig`, the mode strip and return card, Ctrl+Enter | ● quiet events produced at the facts; the machine drives the veil (M1 landed) |
 | **F15 · Width conversion** — full/half-width punctuation | `text_width` | `history` | — | `ConvertWidth` in `application`, `scope` | `project.rs` | context menu | ● |
-| **F16 · Themes & corners** | — | `config` (theme) | — | `application::apply_config` | `project.rs` | `generated/themes.zig`, `corners.zig`, `material.zig`, `material_paint.zig`, `workbench_view` | ◐ themes, corners and panel material land; the four rail colours every theme derives have no consumer (M12) |
+| **F16 · Themes & corners** | — | `config` (theme) | — | `application::apply_config` | `project.rs` | `generated/themes.zig`, `corners.zig`, `material.zig`, `material_paint.zig`, `rail.zig`, `workbench_view` | ● themes, corners, panel material, and the rail's own four colours all land (M12 closed) |
 | **F17 · Icons** | — | `icons` | — | — | — | — | ○ no consumer above the store (M7) |
 | **F18 · Health & the handshake** | `health` | — | — | `native` | `contract.rs`, `document.rs` | handshake in `core.ts` | ● |
 
@@ -179,12 +202,12 @@ refuses the rest; the refusal is enforced, not requested.
 | **L2 `refrain-host`** — orchestration | Task/Run/Authorization state, staging, workspaces, process launching, harness adapters | The database (it writes through the `HostJournal` trait); domain rules | INV-12 reviewed; the journal seam | 6 / 4,751 |
 | **L3 `refrain-app`** — use cases | The flows that need more than one layer below; the one `Application`; `DocumentSurface` | FFI, raw pointers, platform APIs | `#![forbid(unsafe_code)]` | 17 / 8,493 |
 | **L4 `apps/native/host`** — the bridge | The C ABI: one entry, generated layout, session table, bounded replies, the handshake | Product semantics (those are Rust enums below) | `verify:bridge`, the protocol generator's `--check` | 6 / 1,660 |
-| **L5 `apps/native/src`** — the surface | Markup & declarations, interface state, platform events, drawing | Manuscript bytes, product rules | `native check . --strict` (the layer table is in [AGENTS.md](AGENTS.md)) | 19 hand-written / 13,961 + tests |
+| **L5 `apps/native/src`** — the surface | Markup & declarations, interface state, platform events, drawing | Manuscript bytes, product rules | `native check . --strict` (the layer table is in [AGENTS.md](AGENTS.md)) | 21 hand-written / 14,372 + tests |
 
 Lines are counted over every source file under the layer's `src/`, hand-written
 only — generated files (`generated/protocol.*`, `generated/themes.zig`, 873
 lines) are excluded from L5, and L5's four test files (1,992 lines) are counted
-separately. The whole hand-written surface is 13,961 lines plus its tests; the
+separately. The whole hand-written surface is 14,372 lines plus its tests; the
 Tauri/Solid surface it replaced was 27,175, and every product rule survived
 the move because the rules were never in the surface.
 
@@ -345,7 +368,8 @@ in-module test blocks.
 | `commands.zig` | The command table: id → Chinese label → key hint — one authority that buttons, menus, and shortcuts all read | `verify:command-space` |
 | `motion.zig` | Motion tokens: the named durations, the one easing pair (enter decelerate, exit near-accelerate), the breath loop — no animation carries its own numbers | in-file tests |
 | `material.zig` | The panel-material recipe table (solid/acrylic/liquid — surface blend, backdrop-blur radius, sheen stops); the manuscript track never takes it | in-file tests |
-| `material_paint.zig` | Recipes → pixels: surface/border blending, the one-line widget apply, the sheen plan | in-file tests |
+| `material_paint.zig` | Recipes → pixels: plane blending (the paper's surface and the rail's ground are one recipe folded onto different planes), border blending, the one-line widget apply, the sheen plan | in-file tests |
+| `rail.zig` | The rail's register: the ground band and its rule (`band`), the recursive ink stamp that stops at anything owning a ground (`dress`), and the control-token register rows and context menus take (`controlTokens`). Holds no colour of its own — every value comes from the theme table | in-file tests; `verify:native-theme-pixels` reads a rail pixel and a paper pixel per theme |
 | `generated/` | `protocol.ts` / `protocol.zig` / `themes.zig` — regenerated, never edited | `verify:themes-current`, protocol `--check` |
 
 ---
@@ -435,7 +459,7 @@ it. A ◐ in the function matrix points here.
 | **M8** | **Replay cannot verify the manuscript node.** The e2e journals replay with `--no-verify` because the projection lives in `host_bridge`'s module buffer, not in the core Model — the replayer feeds host answers to the core and the view has no path to the text | the journals, the a11y comparison (the only differing node is the manuscript textbox) | Moving the projection into the Model (~11.5 KiB per frame through core — measure before signing) and re-enabling `--verify` |
 | **M9** | **Landed in v0.3.0.** The producer runner exists and is production-wired: `runner.rs` pumps on the `ReadHost` poll — it launches each authorized Run it can serve through `HarnessAdapter::dispatch`, observes the stream on one thread per Run, lands the reply as `result.md` by atomic rename, and validates it through the same `collect_attempt` as the manual path. The two consumers it blocked landed with it: verifier comments (`AgentComment` now lands on the annotation surface at collect; an unknown target anchors on the first block, nothing is dropped) and the orphan-downstream cleanup (a `Follows`/`Verifies` Run whose upstream failed or was cancelled without an artifact is recorded `Failed` with the reason, transitively). The manual L0 round trip is unchanged: an unconnected agent stays `Authorized` for the author's `LaunchRun` | — | — |
 
-| **M12** | **The rail's own colours have no consumer.** `scripts/generate-themes.ts` derives four rail variables per theme — `rail`, `rail-ink`, `rail-faint`, `rail-rule` — and states the intent in the generator itself ("A rail belongs to the room, so it carries the paper's hue at night"). Every theme ships them, and they are a genuinely different material rather than a lighter sheet: in the default theme the paper is `rgb(243,237,223)` while the rail is `rgb(34,59,96)`, and each rail arrives with the matched high-contrast `rail-ink`. Not one Zig file outside `generated/themes.zig` reads any of the four. The function rail therefore paints `surface`, which sits four levels off the paper — so the tool surfaces and the manuscript read as one continuous sheet separated by a hairline, and the stage rule's two zones stop being visible as zones | the four colours in every theme, `material_paint.apply` already on each panel | Painting the rail is the small half. Text colour does not inherit: `widget_render_style.zig` resolves each widget's ink as `widget.style.foreground orelse tokens.colors.text`, so a rail on `rail` needs `rail-ink` stamped on every text-bearing widget inside all seven tool screens, and `style_tokens` cannot scope it — it names SDK token fields only, and the rail four are RefRain-extra. The link is one authority that stamps the rail's ink as it stamps the rail's ground, so a screen cannot take one without the other |
+| **M12** | **Landed.** The rail's four colours have a consumer: `rail.zig` paints the ground and its rule as one full-height band and stamps `rail-ink` through the rail's text leaves, while `manuscriptTokens` hands the row register `rail-ink` / `rail-faint`. The measurement that made the ink half non-optional is worth keeping: on four of the seven themes `tokens.colors.text_muted` reads at \|Lc\| 8–20 against that theme's own `rail`, so a disabled row on a rail ground was invisible until the row ladder learned to read `ControlVisualTokens.disabled_foreground` — see the increment table | — | — |
 
 Wired but awaiting a real-machine signature, rather than a link: IME
 composition (`SetComposition` / `CommitComposition` / `CancelComposition` are
@@ -761,6 +785,7 @@ leaves. A hunk that cannot answer all three is deleted at the next upgrade.
 | **Change-aware dispatch** — `update_fx_changed`, `dispatchChanged`, `view_state_revision` (`ui_app.zig`, `ts_ui_app.zig`, `ts_core_host.zig`, `effects.zig`) | The projection lives in the bridge's module buffer, not in the Model, so a host callback can move what a view reads without changing the model root. The revision lets one dispatch rebuild from the real state without pulling a routed result across its next-drain boundary | This is M8's ground. It should shrink when the projection moves into the Model, and the seam may not survive that move at all |
 | **Staging a TypeScript core under a hand-written entry** — `appTsCoreStage` (`build/app.zig`, `build.zig`) | `addAppArtifacts` stages a TS core only when it also owns `src/main.zig`. RefRain draws its own shell in `app_main.zig` while `Model`/`Msg`/`update` stay in `core.ts`, and has no other route to the mirror module and the compiled archive | Offer upstream as an `AppOptions` field. Dies outright when the TypeScript lane does |
 | **Declaration-only type staging** — `compiler_typecheck.mjs`, `packages/core/package.json` | The SDK's `events.d.ts → "./text.js"` edge resolves to the `.ts` implementation, and the analyzer then typechecks SDK sources under RefRain's stricter settings, failing `native check` for reasons that are not RefRain's | Upstream bug; the `.d.ts` export map is the one-line half of the fix |
+| **The row register's disabled ink** — `rowForegroundColor` (`widget_render_style.zig`, read by the `list_item` / `menu_item` / `data_cell` emitters in `widget_render_controls.zig`) | RefRain's function rail is a second surface register beside the paper (M12). `ControlVisualTokens.disabled_foreground` already documents itself as that control's "Disabled fill and ink" and the button and badge ladders honour it, but the row ladder resolved through `widgetForegroundColor`, which knows only the global `tokens.colors.text_muted` — and on four of seven themes that ink reads at \|Lc\| 8–20 against their own rail | Offer upstream as a bug fix: the token's own documentation already promises this, so no new API is needed. Delete the day it lands |
 | **Windows semantic-analysis object** — `build/app.zig` | Zig's COFF backend cannot merge several archives into one object, and this app links a Rust staticlib plus its import libraries. The cost is real and worth naming: on Windows, the development platform, `zig build test` never forces semantic analysis of the app module, so a type error in code no test reaches surfaces only on another platform's build | Zig backend limitation; retest each Zig release |
 
 The 0.9.0 upgrade removed one hunk outright: RefRain used to settle GPU input

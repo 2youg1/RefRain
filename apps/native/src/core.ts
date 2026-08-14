@@ -3415,7 +3415,7 @@ export function update(previous: Model, msg: Msg): [Model, Cmd<Msg>] {
         {
           ...model,
           dispatchStash: stash,
-          notice: asciiBytes("Stashed into the next dispatch."),
+          notice: utf8Bytes("攒进了下一次派发。"),
           noticeShown: true,
         },
         Cmd.none,
@@ -3598,7 +3598,7 @@ function goTo(model: Model, target: number, remember: boolean, stackAfterPop: nu
   if (result === NAVIGATION_NEEDS_DOCUMENT) {
     // 拒绝要留下痕迹：默默不动会让作者以为快捷键坏了。去处名不进这条消息
     // ——它是中文，而 core 子集不允许非 ASCII 进 rodata。
-    return { ...model, notice: asciiBytes("Open a manuscript first."), noticeShown: true };
+    return { ...model, notice: utf8Bytes("先打开一份稿子。"), noticeShown: true };
   }
   if (result === NAVIGATION_CLOSE) {
     // 同键再按 = 关这一层。2.9 的多层语义：关掉的是最上层，下面那层
