@@ -111,14 +111,21 @@ sent back, sentence by sentence.
 
 ### Scale
 
-Measured on the development machine, not estimated:
+Measured, not estimated — and each row says which platform measured it, because
+the two disagree where the filesystem does the work:
 
-| | |
-|---|---|
-| 1GB Markdown | opens — 7.2 million blocks |
-| 11.4MB manuscript, 100k blocks | open to JSON, p95 68ms |
-| 100MB PDF import | parses in 195ms |
-| 100k-file project directory | warm, p95 404ms |
+| | | |
+|---|---|---|
+| 1GB Markdown | opens — 7.2 million blocks | Linux |
+| 11.4MB manuscript, 100k blocks | open to JSON, p95 68ms | Linux |
+| 100MB PDF import | parses in 195ms | Linux |
+| 100k-file project directory | warm refresh, p95 404ms | Linux |
+| 100k-file project directory | warm refresh, p95 **1032ms**; open one page, p95 810ms | **Windows — the release platform** |
+
+The last row is the one to read before judging the others: a warm refresh is a
+metadata walk of every file, and NTFS charges several times what ext4 charges
+for it. `crates/refrain-store/tests/project_performance.rs` therefore holds a
+budget per platform, each carrying the reading that set it.
 
 ## How the code is organised
 

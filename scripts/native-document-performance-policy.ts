@@ -68,12 +68,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const machineIdWarning =
   /^\(refrain:\d+\): Gtk-WARNING \*\*: \d{2}:\d{2}:\d{2}\.\d{3}: Unable to acquire session bus: Cannot spawn a message bus without a machine-id: Unable to load \/var\/lib\/dbus\/machine-id or \/etc\/machine-id: Failed to open file [“”‘’'"?]?\/(?:var\/lib\/dbus|etc)\/machine-id[“”‘’'"?]?: No such file or directory$/u;
 
-const runtimeEvent = /^ts=\d+ level=info kind=event name="runtime\.event" event="[a-z0-9_]+"$/;
+// Command ids carry dots (`go.2`, `document.undo`) — the same one-space W1
+// names `app.zon` declares. The old shape admitted only `[a-z0-9_]+`, so the
+// first command this lane sent read as unexpected stderr.
+const runtimeEvent = /^ts=\d+ level=info kind=event name="runtime\.event" event="[a-z0-9_.]+"$/;
 
 /**
- * Reject every Native runtime stderr payload except event telemetry and the one
+ * The SDK's own note that Windows has no live status-item presentation. It is a
+ * platform capability statement, not a fault: the menu still updates, and the
+ * app never claimed the live channel. Accepted verbatim, so a different warning
+ * still fails.
+ */
+const statusItemWarning =
+  "warning(zero_ui_app): status item presentation updates unsupported on this platform: the menu keeps updating";
+
+/**
+ * Reject every Native runtime stderr payload except event telemetry, the one
  * complete warning produced when the rootless Linux evidence environment has
- * no machine-id.
+ * no machine-id, and the one Windows capability note.
  */
 export function assertNativeRuntimeStderr(stderr: string): void {
   const message = stderr
@@ -81,7 +93,9 @@ export function assertNativeRuntimeStderr(stderr: string): void {
     .map((line) => line.trim())
     .filter((line) => line.length > 0 && !runtimeEvent.test(line))
     .join("\n");
-  if (message.length === 0 || machineIdWarning.test(message)) return;
+  if (message.length === 0 || machineIdWarning.test(message) || message === statusItemWarning) {
+    return;
+  }
   throw new Error(`unexpected native runtime stderr:\n${message}`);
 }
 
@@ -91,10 +105,17 @@ export function assertNativeAutomationStderr(
   command: string,
   automationDir: string,
 ): void {
-  const expectedDelivery = `delivered ${command} -> ${automationDir}\n`;
+  // Compare the delivery path separator-insensitively: the CLI prints the
+  // platform's own path, and this file must not decide that one platform's
+  // separator is the true one.
+  const samePath = (left: string, right: string): boolean =>
+    left.replaceAll("\\", "/") === right.replaceAll("\\", "/");
+  const delivered = stderr.match(/^delivered (?<command>[a-z-]+) -> (?<dir>.+)\n$/);
+  const expectedDelivery =
+    delivered?.groups?.command === command && samePath(delivered.groups.dir ?? "", automationDir);
   const expectedAssertion =
     command === "assert" &&
     /^assert ok: \d+ pattern\(s\) (?:absent|matched) after \d+ms\n$/.test(stderr);
-  if (stderr.length === 0 || stderr === expectedDelivery || expectedAssertion) return;
+  if (stderr.length === 0 || expectedDelivery || expectedAssertion) return;
   throw new Error(`native automate ${command} wrote unexpected stderr\n${stderr}`);
 }

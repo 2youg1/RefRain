@@ -96,7 +96,6 @@ const model: Model = {
   rosterCursor: -1,
   rootId: new Uint8Array(0),
   documentCursor: new Uint8Array(0),
-  documentCount: 0,
   documentTotal: 0,
   searchQuery: new Uint8Array(0),
   searchExact: true,

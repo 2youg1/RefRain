@@ -211,7 +211,7 @@ fn truncate_output(output: &mut ProjectOutput) -> bool {
             if page.documents.pop().is_none() {
                 return false;
             }
-            page.next = page.documents.last().map(|document| document.path.clone());
+            page.document_cursor = page.documents.last().map(|document| document.path.clone());
             true
         }
         ProjectOutput::Documents(documents) => {

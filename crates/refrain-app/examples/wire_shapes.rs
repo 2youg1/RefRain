@@ -14,12 +14,15 @@
 //! 注入验红：把任何一条期望改成看起来更「规律」的拼写（`runId`、
 //! `outlineOnly`），这道门禁当场指名失败。
 
-use refrain_app::{ProjectInput, RootKind, SearchPrecision};
+use refrain_app::{
+    ProjectInput, ProjectOpened, ProjectOutput, ProjectPage, RootKind, SearchPrecision,
+};
 use refrain_core::material_listing::Disclosure;
 use refrain_core::persona::Persona;
 use refrain_core::{DocumentRole, Id};
 use refrain_host::host::HostCommand;
 use refrain_store::config::{AgentProfile, ConfigChange};
+use refrain_store::project::BackupStatus;
 
 /// 一条期望：`ProjectInput` 序列化之后必须逐字节等于它。
 struct Expected {
@@ -659,12 +662,60 @@ fn main() {
         eprintln!("      serde wants {actual}");
     }
 
+    // ---- the reply direction -------------------------------------------
+    //
+    // The request half above has always been checked. The reply half was not,
+    // and the cost was concrete: the surface read `"documentCount"` out of
+    // every catalogue answer, `ProjectOpened` never emitted a field by that
+    // name, so the count was always zero and the file tree drew zero rows —
+    // an author who adopted a project saw nothing. Nothing failed; the screen
+    // was simply empty.
+    //
+    // The two catalogue answers are checked together because they state the
+    // same two facts and the surface reads both with one pair of names. When
+    // they drift, every page after an adopt silently loses its total and its
+    // cursor.
+    let opened = ProjectOutput::Opened(ProjectOpened {
+        root_id: "r1".into(),
+        backup: BackupStatus::AlreadyPresent,
+        documents: Vec::new(),
+        document_total: 7,
+        document_cursor: Some("章一.md".into()),
+        opened_path: None,
+    });
+    let page = ProjectOutput::Page(ProjectPage {
+        documents: Vec::new(),
+        document_total: 7,
+        document_cursor: Some("章一.md".into()),
+    });
+    for (what, output, expected) in [
+        (
+            "opened",
+            opened,
+            r#"{"kind":"opened","value":{"rootId":"r1","backup":{"kind":"alreadyPresent"},"documents":[],"documentTotal":7,"documentCursor":"章一.md","openedPath":null}}"#,
+        ),
+        (
+            "page",
+            page,
+            r#"{"kind":"page","value":{"documents":[],"documentTotal":7,"documentCursor":"章一.md"}}"#,
+        ),
+    ] {
+        let actual = serde_json::to_string(&output).expect("the catalogue reply serialises");
+        checked += 1;
+        if actual != expected {
+            failed += 1;
+            eprintln!("FAIL  verify:wire-shapes: the {what} reply does not match");
+            eprintln!("      the surface reads {expected}");
+            eprintln!("      serde writes      {actual}");
+        }
+    }
+
     if failed > 0 {
         eprintln!("      update apps/native/src/project_request.zig to match serde");
         std::process::exit(1);
     }
     println!(
-        "PASS  verify:wire-shapes  ({} project inputs match serde byte for byte)",
+        "PASS  verify:wire-shapes  ({} project inputs and catalogue replies match serde byte for byte)",
         checked
     );
 }

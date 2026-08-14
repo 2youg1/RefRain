@@ -758,8 +758,10 @@ fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     }
     const opened = snapshot.value(model.projectResult);
     const documents = snapshot.array(opened, "documents");
-    const count: usize = @intCast(@max(model.documentCount, 0));
-    const window = @min(count, max_visible_rows);
+    // 行数当场数——答复里那个数组就是权威。Model 里曾经另存一个
+    // `documentCount`，它去找一个 Rust 从未发过的字段名，恒为 0，于是
+    // 这一屏恒画零行——作者打开项目以后什么都看不见。
+    const window = @min(documents.count(), max_visible_rows);
     var rows: [max_visible_rows]Adapter.Ui.Node = undefined;
     var index: usize = 0;
     while (index < window) : (index += 1) {
@@ -787,7 +789,7 @@ fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         ui.row(.{ .gap = 8, .cross = .center }, .{
             ui.text(.{ .grow = 1 }, "文档"),
             // 画出来的与一共有多少分开说：作者据此知道还有没读到的。
-            ui.text(.{}, ui.fmt("{d} / {d}", .{ model.documentCount, model.documentTotal })),
+            ui.text(.{}, ui.fmt("{d} / {d}", .{ window, model.documentTotal })),
         }),
         // 搜索与文件树在同一屏：作者找一份稿子时不必先想「该去哪个去处」。
         searchView(ui, model),

@@ -2,13 +2,31 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_VIEWPORT_BLOCKS } from "../apps/native/src/generated/protocol.ts";
+import {
+  SHARED_FIXTURE_BLOCKS,
+  SHARED_FIXTURE_BYTES,
+  SHARED_FIXTURE_DOCUMENT,
+} from "./native-document-fixture.ts";
+import {
+  nativeExecutablePath,
+  processImagePath,
+  processMemoryKiB,
+  processWorkingDirectory,
+  windowPlatformLabel,
+} from "./native-runtime-process.ts";
 
 const RUNS = 20;
+/**
+ * One 60Hz frame, and one number per platform below it where the platforms
+ * genuinely differ. Input-to-present is a compositor claim, so it belongs to
+ * the platform that composites — the same rule the project-performance budgets
+ * follow.
+ */
 const INPUT_LATENCY_BUDGET_NS = 16_666_667;
 const LONG_TASK_BUDGET_US = 50_000;
 const MAX_RETAINED_WIDGETS = 260;
-const FIXTURE_BLOCKS = 100_000;
-const FIXTURE_BYTES = 11_953_766;
+const FIXTURE_BLOCKS = SHARED_FIXTURE_BLOCKS;
+const FIXTURE_BYTES = SHARED_FIXTURE_BYTES;
 const INSERT_OFFSET = 360;
 const TOP_PATTERN = `visible blocks 0–${DEFAULT_VIEWPORT_BLOCKS} of ${FIXTURE_BLOCKS}`;
 const TAIL_PATTERN = `visible blocks ${FIXTURE_BLOCKS - DEFAULT_VIEWPORT_BLOCKS}–${FIXTURE_BLOCKS} of ${FIXTURE_BLOCKS}`;
@@ -18,8 +36,11 @@ const nativeDir = join(root, "apps/native");
 const nativeCli = join(nativeDir, "node_modules/.bin/native");
 const snapshotPath = join(nativeDir, ".zig-cache/native-sdk-automation/snapshot.txt");
 const screenshotPath = join(nativeDir, ".zig-cache/native-sdk-automation/screenshot-document.png");
-const expectedExecutable = realpathSync(join(nativeDir, "zig-out/bin/refrain"));
-const manuscriptFontPath = join(nativeDir, "assets/fonts/NotoSansSC-Variable.ttf");
+const expectedExecutable = realpathSync(nativeExecutablePath(nativeDir));
+// The face the binary actually embeds (`build.zig` maps `manuscript_font` to
+// it). The old path named a file that is not in the build and is not even on
+// disk, so the font evidence threw before it could prove anything.
+const manuscriptFontPath = join(nativeDir, "fonts/NotoSansSC-Subset.ttf");
 let publisherPid = 0;
 
 interface CommandResult {
@@ -58,7 +79,10 @@ function runNative(args: readonly string[]): string {
     .filter(
       (line) =>
         !/^assert ok: \d+ pattern\(s\) (?:matched|absent) after \d+ms$/.test(line) &&
-        !/^delivered [a-z-]+ -> \/.+\/\.zig-cache\/native-sdk-automation$/.test(line),
+        // The delivery line prints a real path, and a real path is
+        // backslashed on Windows — the POSIX-only shape read every Windows
+        // delivery as unexpected stderr.
+        !/^delivered [a-z-]+ -> .+[\\/]\.zig-cache[\\/]native-sdk-automation$/.test(line),
     );
   if (unexpectedStderr.length !== 0) {
     throw new Error(
@@ -68,10 +92,18 @@ function runNative(args: readonly string[]): string {
   return result.stdout;
 }
 
+/**
+ * Wait, without asking the OS for a `sleep` binary that only one of the two
+ * platforms has — and without `Bun`, which the ScriptC lane this gate compiles
+ * on does not provide. Every call site here waits one millisecond between
+ * snapshot retries, so a spin is the whole cost, and it is a cost this loop
+ * pays only while automation is not yet ready.
+ */
 function pause(milliseconds: number): void {
-  const seconds = (milliseconds / 1000).toFixed(3);
-  const result = command("sleep", [seconds], root);
-  if (result.status !== 0) throw new Error(`sleep failed (${result.status ?? "signal"})`);
+  const until = Date.now() + milliseconds;
+  while (Date.now() < until) {
+    // spin
+  }
 }
 
 function snapshot(): string {
@@ -96,14 +128,17 @@ function snapshot(): string {
       const observedPid = metric(text, "publisher_pid");
       if (publisherPid === 0) {
         publisherPid = observedPid;
-        const observedExecutable = realpathSync(`/proc/${observedPid}/exe`);
-        const observedCwd = realpathSync(`/proc/${observedPid}/cwd`);
+        const observedExecutable = processImagePath(observedPid);
+        // Null where the OS has no public channel for a process's working
+        // directory (Windows keeps it in the PEB). The image path and the pid
+        // still pin the identity; skipping is honest, inventing a value is not.
+        const observedCwd = processWorkingDirectory(observedPid);
         if (observedExecutable !== expectedExecutable) {
           throw new Error(
             `automation publisher ${observedPid} runs ${observedExecutable}, expected ${expectedExecutable}`,
           );
         }
-        if (observedCwd !== nativeDir) {
+        if (observedCwd !== null && observedCwd !== realpathSync(nativeDir)) {
           throw new Error(
             `automation publisher ${observedPid} uses ${observedCwd}, expected ${nativeDir}`,
           );
@@ -217,12 +252,7 @@ function residentMemory(snapshotText: string): {
   readonly rssKiB: number;
   readonly peakKiB: number;
 } {
-  const pid = metric(snapshotText, "publisher_pid");
-  const status = readFileSync(`/proc/${pid}/status`, "utf8");
-  return {
-    rssKiB: capturedNumber(status, /^VmRSS:\s+([0-9]+)\s+kB$/m, "VmRSS"),
-    peakKiB: capturedNumber(status, /^VmHWM:\s+([0-9]+)\s+kB$/m, "VmHWM"),
-  };
+  return processMemoryKiB(metric(snapshotText, "publisher_pid"));
 }
 
 function latencyReport(measured: Measurements): {
@@ -262,11 +292,42 @@ function passesOneFrame(measured: Measurements): boolean {
   );
 }
 
-runNative(["wait"]);
+/**
+ * Open the fixture the way an author opens a manuscript: adopt the project
+ * folder (the automation channel answers only "which path"), then click the
+ * document's row.
+ *
+ * No `go.2` first — the first-launch destination is already Files, and the
+ * chord's second press is "close this destination" (`workbench.ts::navigate`),
+ * so sending it here walked the rail shut and the adopt button vanished.
+ *
+ * The lane used to skip the whole sequence and set two environment variables no
+ * reader has consumed since v0.2.5, so it measured an empty window — the
+ * snapshot carried no manuscript textbox at all, and the run died looking for
+ * one.
+ */
+function openTheFixture(): void {
+  runNative(["wait"]);
+  assertPatterns([`role=button name="打开一个项目文件夹"`]);
+  runNative(["widget-click", "document", widgetId(snapshot(), "button", "打开一个项目文件夹")]);
+  assertPatterns([`role=treeitem name="${SHARED_FIXTURE_DOCUMENT}"`]);
+  runNative([
+    "widget-click",
+    "document",
+    widgetId(snapshot(), "treeitem", SHARED_FIXTURE_DOCUMENT),
+  ]);
+  assertPatterns([`${FIXTURE_BLOCKS} blocks · ${FIXTURE_BYTES} bytes`]);
+}
+
+openTheFixture();
 let current = snapshot();
 const trackId = widgetId(current, "group", "RefRain manuscript track");
 const editorId = widgetId(current, "textbox", "RefRain manuscript");
-const undoId = widgetId(current, "button", "Undo");
+// Undo is a command, not a button: the surface prints its chord on the palette
+// row and the menu, and `document.undo` is the same W1 path both take. The old
+// script clicked a `name="Undo"` button that has not existed since the native
+// surface landed.
+const undo = (): string => runNative(["shortcut", "document.undo"]);
 const manuscriptFont = readFileSync(manuscriptFontPath);
 const nativeExecutable = readFileSync(expectedExecutable);
 const initialFontEvidence = {
@@ -365,7 +426,7 @@ assertPatterns([
   `${FIXTURE_BYTES + compositionCommitBytes} bytes`,
   `selection=${INSERT_OFFSET + compositionCommitBytes}..${INSERT_OFFSET + compositionCommitBytes}`,
 ]);
-runNative(["widget-click", "document", undoId]);
+undo();
 assertPatterns([
   `${FIXTURE_BLOCKS} blocks · ${FIXTURE_BYTES} bytes`,
   `selection=${INSERT_OFFSET}..${INSERT_OFFSET}`,
@@ -393,7 +454,7 @@ for (let index = 0; index < RUNS; index += 1) {
   current = snapshot();
   recordMeasurement(current, insert);
 
-  runNative(["widget-click", "document", undoId]);
+  undo();
   assertPatterns([`${FIXTURE_BYTES} bytes`, `selection=${INSERT_OFFSET}..${INSERT_OFFSET}`]);
   current = snapshot();
   recordMeasurement(current, insertUndo);
@@ -439,7 +500,7 @@ for (let index = 0; index < RUNS; index += 1) {
   current = snapshot();
   recordMeasurement(current, commit);
 
-  runNative(["widget-click", "document", undoId]);
+  undo();
   assertPatterns([`${FIXTURE_BYTES} bytes`, `selection=${INSERT_OFFSET}..${INSERT_OFFSET}`]);
   current = snapshot();
   recordMeasurement(current, compositionUndo);
@@ -505,7 +566,7 @@ const checks = {
 
 const report = {
   schemaVersion: 2,
-  platform: "linux-x11-window",
+  platform: windowPlatformLabel(process.env.DISPLAY),
   runsPerOperation: RUNS,
   fixture: {
     blocks: FIXTURE_BLOCKS,

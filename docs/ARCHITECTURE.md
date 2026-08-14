@@ -423,7 +423,7 @@ never does.
 | **W2 · request path** — `update` → `Cmd.request` → `host_bridge` → the C ABI | ABI scalars + a bounded payload (≤ 12,000 bytes of event text) | JSON the core parsed itself (the subset has no parser); non-ASCII in rodata | protocol `--check`; NS9001 |
 | **W3 · response path** — Rust → `dispatch_ok` / `dispatch_err` → `update` | Revision, status, projection *metadata*; a pointer into Rust memory for the text | The manuscript as data — see below | `verify:bridge` |
 | **W4 · view read** — Zig reads the `Model` + `host_bridge.documentView()` | Indices and counts from the Model; the borrowed projection text from the bridge | Manuscript bytes inside the Model | the e2e journals; `verify:native-theme-pixels` |
-| **W5 · project channel** — `project_request.zig` → `host/project.rs` → `Application::project` | One `ProjectInput` JSON in; one bounded `ProjectOutput` JSON out (overflow degraded by rule, not by cutting) | A second way to reach a use case; filesystem paths composed in the core | `verify:wire-shapes` |
+| **W5 · project channel** — `project_request.zig` → `host/project.rs` → `Application::project` | One `ProjectInput` JSON in; one bounded `ProjectOutput` JSON out (overflow degraded by rule, not by cutting) | A second way to reach a use case; filesystem paths composed in the core; a reply field name the surface reads and no Rust type emits | `verify:wire-shapes`, both directions |
 | **W6 · document channel** — `host/document.rs` → `DocumentSurface` | `open` / `apply` / `project` against a session id; the projection lent back | A second document state machine | `verify:editor-kernel` |
 | **W7 · store access** — use cases → `ProjectStore` & friends | Rust calls, typed errors | SQL outside the store crate | `verify:write-path` |
 | **W8 · host access** — use cases → `AgentHost` | `HostCommand`s in; facts out | A Run write from anywhere but the host (INV-12) | reviewed; the journal seam |
@@ -538,6 +538,8 @@ Each of these exists exactly once. A second copy is a defect, not a convenience.
 | Line breaking | `refrain-core/src/typeset.rs` | A second set of rules. The SDK breaks only at space and tab, which no Chinese paragraph contains, so this is ours by necessity |
 | Full/half-width conversion | `refrain-core/src/text_width.rs` | A conversion table in the surface |
 | Which output a project input produces | `ProjectOutput::into_opened` / `into_imported` | Rebuilding the mismatch error behind a catch-all arm at each call site, which also hides a new variant from review |
+| How many documents a catalogue reply carries | The reply's own `documents` array, counted where it is drawn | A count field beside it. The surface used to keep `Model.documentCount` and fill it from a `"documentCount"` field no Rust type ever emitted, so it was always zero and the file tree always drew zero rows — an author who adopted a project saw nothing, and nothing reported it |
+| The page's size and cursor, in every reply that states them | `documentTotal` / `documentCursor`, spelled the same by `ProjectOpened` and `ProjectPage` | A second spelling per reply (`total` / `next`), which forces the reader to know which answer it is holding before it can find the fact |
 | Settings | `ConfigStore::apply`, reached through `Application::apply_config` | A string key/value update path. The change set is an exhaustive enum |
 | An agent's persona (work / cosplay) | `refrain-core/src/persona.rs` | A Boolean "is cosplay" flag; the author's bytes pass through untouched in both modes |
 | What the mailbox shows | `refrain-app/src/mailbox.rs` | A second place that merges proposals with the author's arrangement |
@@ -701,7 +703,12 @@ drifts. Run the command to see it.
 Two evidence sets are split out of the blocking gate because a data-layer
 assertion cannot make their claims: `bun run evidence:pixels` (real-window
 pixel checks — today that is `verify:native-theme-pixels`, which needs a GPU
-view) and `bun run evidence:performance` (the measured performance gates). A
+view) and `bun run evidence:performance` (the measured performance gates).
+Performance budgets are stated **per platform**, each carrying the reading that
+set it: a warm catalogue refresh is a metadata walk of every file, NTFS charges
+several times what ext4 charges for it, and one cross-platform number cannot be
+honest on both — it was measured on Linux and left the release platform
+permanently red while nothing had regressed. A
 green `gate` run is therefore not the whole story. The tier A gates run as
 compiled binaries, never from source: run `bun run scriptc:build` first — a
 missing artifact fails the gate rather than falling back to the interpreter.
@@ -721,6 +728,30 @@ function was caught only by clippy while the gate was fully green.
 A gate here is expected to be **injection-verified**: break the thing it guards,
 watch it go red, restore, watch it go green. A gate that has never been seen to
 fail is a gate that has proven nothing — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+### A gate that cannot run proves nothing either
+
+`verify:native-document-performance` is the product's only interaction-latency
+evidence — the Rust scale tests measure algorithms, and only this lane measures a
+key press reaching the screen. It had stopped being able to run at all, and the
+reasons are worth naming because each is a different way for a check to die
+quietly while still being listed:
+
+- it read process identity and resident memory out of `/proc`, and required
+  `DISPLAY`, on the one platform RefRain ships from;
+- it opened its fixture by setting `REFRAIN_NATIVE_ROOT` and
+  `REFRAIN_NATIVE_DOCUMENT`, two names no reader has consumed since v0.2.5, so
+  it measured an empty window;
+- it clicked a `name="Undo"` button the native surface never had, and read a font
+  file that is not in the build.
+
+The first three are fixed: `native-runtime-process.ts` owns the per-OS answers,
+the lane opens its fixture through the production path (adopt the folder, click
+the row), and undo goes through the `document.undo` command like every other
+caller. One thing is still owed, and it is the honest reason the lane is not yet
+green: its assertions name status-line text (`N blocks · M bytes`, `visible
+blocks a–b of c`) that the current status line no longer prints. Rewriting them
+against today's snapshot vocabulary is the remaining work.
 
 ### A red gate can be the environment, not the code
 

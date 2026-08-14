@@ -375,20 +375,28 @@ pub struct ProjectOpened {
     pub opened_path: Option<String>,
 }
 
+/// One page of a Root's catalogue.
+///
+/// The field names are deliberately the same three `ProjectOpened` carries.
+/// They were `total` / `next`, which meant the surface had to know which of
+/// two replies it was reading before it could find the page's own size and
+/// cursor — and it did not: it read `documentTotal` from both, so every page
+/// after an adopt reported a total of zero and lost its cursor. One name per
+/// fact, across every reply that states the fact.
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectPage {
     pub documents: Vec<DocumentRow>,
-    pub total: u32,
-    pub next: Option<String>,
+    pub document_total: u32,
+    pub document_cursor: Option<String>,
 }
 
 impl From<DocumentPage> for ProjectPage {
     fn from(page: DocumentPage) -> Self {
         Self {
             documents: page.documents,
-            total: page.total,
-            next: page.next,
+            document_total: page.total,
+            document_cursor: page.next,
         }
     }
 }

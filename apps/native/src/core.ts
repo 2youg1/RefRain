@@ -471,17 +471,14 @@ export interface Model {
    */
   readonly documentCursor: Uint8Array;
   /**
-   * 文件树这一页的行数，与名录的 `rosterCount` 分开。
-   *
-   * 两个计数不合成一个：作者可以一边在文件树里翻页，一边在裁决台上停在
-   * 某一行。合成一个的表现是换去处时文件树的位置被名录冲掉。
-   */
-  readonly documentCount: number;
-  /**
    * 项目里一共有多少份文档，包括没装进这一页的。
    *
-   * 与 `documentCount` 分开是同一条纪律：界面数得到的是「装得下的那些」，
-   * 而作者读成的是「一共这么多」。截断因此是可见事实，不是静默损失。
+   * 这一页**画了几行**不在 Model 里：那是答复里 `documents` 那个数组自己
+   * 的长度，Zig 当场数就行（`snapshot.Array.count`）。曾经这里有一个
+   * `documentCount` 字段，它去答复里找一个名叫 `"documentCount"` 的字段——
+   * 而 Rust 从来没发过这个名字，于是它恒为 0，文件树恒画零行：
+   * 作者打开项目以后什么也看不见。一个事实只能有一个权威，而行数
+   * 的权威是那个数组本身。
    */
   readonly documentTotal: number;
   /**
@@ -1129,7 +1126,6 @@ export const viewUnbound = [
   // 同名字段一直由答复落地覆盖。）
   "rootId",
   "documentCursor",
-  "documentCount",
   "documentTotal",
   // 搜索框的字由 Zig 的输入部件送进来；精度键也在 Zig 侧（中文标签）。
   "searchQuery",
@@ -1394,7 +1390,6 @@ function checkingModel(): Model {
     rosterCursor: NO_ROW | 0,
     rootId: new Uint8Array(0),
     documentCursor: new Uint8Array(0),
-    documentCount: 0,
     documentTotal: 0,
     searchQuery: new Uint8Array(0),
     searchExact: true,
@@ -1473,7 +1468,7 @@ function numberField(text: Uint8Array, name: Uint8Array): number {
 /**
  * `numberField` 的 tenths 变体：170 → 17.0（tenths_px → px、tenths_em → em）。
  * 独立一份而不是除以 `numberField` 的返回值——函数的返回槽是整数锁定的
- * （documentCount 那边按整数用），对它做除法会把分数流进整数槽（NS1016）。
+ * （documentTotal 那边按整数用），对它做除法会把分数流进整数槽（NS1016）。
  * 累加器以 0.0 播种：这个局部从出生就是分数，除法不构成混型。
  */
 function tenthsField(text: Uint8Array, name: Uint8Array): number {
@@ -1744,8 +1739,9 @@ export function update(previous: Model, msg: Msg): [Model, Cmd<Msg>] {
           rootId: rootId.length > 0 ? rootId : model.rootId,
           documentCursor: quotedField(text, asciiBytes('"documentCursor"')),
           // 计数是整数槽（i64）：numberField 的循环改写证明不了 wholeness，
-          // 槽位 `| 0` 表整（SC4022，int32 安全的量级）。
-          documentCount: numberField(text, asciiBytes('"documentCount"')) | 0,
+          // 槽位 `| 0` 表整（SC4022，int32 安全的量级）。两个名字在
+          // `ProjectOpened` 与 `ProjectPage` 两条答复上同形，所以这里不必先
+          // 分辨自己在读哪一条。
           documentTotal: numberField(text, asciiBytes('"documentTotal"')) | 0,
           typographyTextSize: textSizePx > 0 ? textSizePx : model.typographyTextSize,
           typographyLineHeightPercent:
