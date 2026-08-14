@@ -98,6 +98,18 @@ pub const Scale = enum {
     }
 };
 
+/// 不取角。
+///
+/// 这不是又一档角，是角的缺席，所以它不在 `Scale` 里。它存在是为了让
+/// 「这个表面不是盒子」也有一个可引用的名字——写 `0` 只是一个数，
+/// 下一个人不知道那是裁定还是漏写。
+///
+/// **裁定**：只有手直接作用的东西才取盒子的形状——按钮与输入框
+/// （`.control`），以及浮在正文旁边的小窗（`.bento`、`.panel`）。
+/// 导轨树里的一行不是盒子：它靠向右缩进和行底色说自己在哪一层。
+/// 给每一行一个圆角方块，整屏就读成一叠饭盒，层级反而看不出来。
+pub const squared: f32 = 0;
+
 /// 每个角采样多少点。
 ///
 /// 12 点在 12px 的角上已经看不出与更密采样的差别，而元素数量随之线性增长——
@@ -178,6 +190,16 @@ pub fn radiusTokens() native_sdk.canvas.RadiusTokenOverrides {
         .lg = Scale.panel.radius(),
         .xl = Scale.bento.radius(),
     };
+}
+
+test "不取角是裁定，不是某一档角碰巧为零" {
+    // 这条守的是「树里的一行不是盒子」：`squared` 必须真的是零，而五档角
+    // 必须都不是零——若哪天某一档被调成 0，调用点就会分不清自己要的是
+    // 「没有角」还是「那一档刚好为零」，两个意思一旦重叠就再也分不开。
+    try std.testing.expectEqual(@as(f32, 0), squared);
+    inline for (.{ Scale.bento, Scale.panel, Scale.card, Scale.control, Scale.pill }) |scale| {
+        try std.testing.expect(scale.radius() != squared);
+    }
 }
 
 test "the SDK radius tokens come from the one corner authority" {

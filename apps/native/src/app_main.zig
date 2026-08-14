@@ -760,7 +760,7 @@ fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         const row = documents.at(index);
         const rendered = if (row) |entry| project_view.documentRow(entry) else null;
         rows[index] = if (rendered) |shown|
-            ui.listItem(.{
+            railTreeRow(ui, .{
                 .key = .{ .index = index },
                 .on_press = openDocumentMsg(model, shown.label),
                 // Enter 打开：与点击同一条消息（list_item 键图的行主键）。
@@ -768,10 +768,10 @@ fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
                 // 对这一行做的事属于这一行：打开、删除、改披露都在菜单里，
                 // 作者不必先选中再去屏幕底部瞄一排按钮。
                 .context_menu = documentRowMenu(ui, model, shown.label),
-                .semantics = .{ .role = .listitem, .label = shown.label },
-            }, ui.fmt("{s} · {s}", .{ shown.label, shown.detail }))
+                .semantics = .{ .role = .treeitem, .label = shown.label },
+            }, 1, ui.fmt("{s} · {s}", .{ shown.label, shown.detail }))
         else
-            ui.listItem(.{ .key = .{ .index = index }, .disabled = true }, "这一行读不出来");
+            railTreeRow(ui, .{ .key = .{ .index = index }, .disabled = true }, 1, "这一行读不出来");
     }
     return ui.column(.{ .gap = 8, .padding = 12 }, .{
         // 「前往」节置顶：八个去处的鼠标入口与键位提示（paletteGoSection，
@@ -786,7 +786,7 @@ fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         // 搜索与文件树在同一屏：作者找一份稿子时不必先想「该去哪个去处」。
         searchView(ui, model),
         ui.list(
-            .{ .gap = 2, .semantics = .{ .role = .list, .label = "项目里的文档" } },
+            .{ .gap = 2, .semantics = .{ .role = .tree, .label = "项目里的文档" } },
             @as([]const Adapter.Ui.Node, rows[0..window]),
         ),
         ui.row(.{ .gap = 8 }, .{
@@ -3725,6 +3725,34 @@ fn palettePanel(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     return panel;
 }
 
+/// 导轨树里一行向右缩进一格的宽度。
+///
+/// 14px 是一个 CJK 字的大致半宽：窄到不把行推出版心，宽到一眼能看出
+/// 这一行属于上一行。SDK 的 `tree_level` 只是语义层级（它自己的测试写明
+/// “logical hierarchy metadata, not renderer-owned spacing”），几何归我们。
+const rail_indent_px: f32 = 14;
+
+/// 导轨树里的一行。
+///
+/// **它拥有的规则**：树里的一行不是盒子。行本体去角（`corners.squared`），
+/// 层级靠左侧的空格说，选中靠行底色说——三件事在这一处定，不在每个
+/// 调用点各写一遍。调用点只说「这一行在第几层」。
+///
+/// 保留 `list_item` 而不自绘：命中、键盘主键、右键菜单、无障碍角色都在
+/// 它身上，为了一个形状把这些重建一遍是把一条规则换成四条。
+fn railTreeRow(ui: *Adapter.Ui, options: Adapter.Ui.ElementOptions, depth: u16, label: []const u8) Adapter.Ui.Node {
+    var scoped = options;
+    scoped.tree_level = depth;
+    scoped.grow = 1;
+    var item = ui.listItem(scoped, label);
+    item.widget.style.radius = corners.squared;
+    if (depth == 0) return item;
+    return ui.row(.{ .key = options.key }, .{
+        ui.el(.stack, .{ .width = rail_indent_px * @as(f32, @floatFromInt(depth)) }, .{}),
+        item,
+    });
+}
+
 /// 「前往」节：八个去处，标签归去处表，键位是它的反查（裁决/派发没有
 /// 固定键位，不印）。
 fn paletteGoSection(ui: *Adapter.Ui, model: *const Model, query: []const u8) Adapter.Ui.Node {
@@ -3733,19 +3761,19 @@ fn paletteGoSection(ui: *Adapter.Ui, model: *const Model, query: []const u8) Ada
     for (workbench_view.destinations, 0..) |destination, index| {
         if (query.len > 0 and std.mem.indexOf(u8, destination.label, query) == null) continue;
         const chord = workbench_view.destinationChord(index);
-        rows[count] = ui.listItem(.{
+        rows[count] = railTreeRow(ui, .{
             .key = .{ .index = index },
             .selected = model.destinationIndex == @as(i32, @intCast(index)),
             .on_press = .{ .workbench_go = @intCast(index) },
-            .semantics = .{ .role = .listitem, .label = destination.label },
-        }, if (chord.len > 0)
+            .semantics = .{ .role = .treeitem, .label = destination.label },
+        }, 1, if (chord.len > 0)
             ui.fmt("{s}　{s}", .{ destination.label, chord })
         else
             destination.label);
         count += 1;
     }
     if (count == 0) return ui.el(.stack, .{ .height = 0 }, .{});
-    return ui.column(.{ .gap = 2 }, .{
+    return ui.column(.{ .gap = 2, .semantics = .{ .role = .tree, .label = "前往" } }, .{
         ui.text(.{}, "前往"),
         ui.column(.{ .gap = 2 }, @as([]const Adapter.Ui.Node, rows[0..count])),
     });
@@ -3787,11 +3815,11 @@ fn paletteCommandRow(ui: *Adapter.Ui, model: *const Model, id: []const u8) Adapt
         ui.fmt("{s}　{s}", .{ label, hint })
     else
         label;
-    return ui.listItem(.{
+    return railTreeRow(ui, .{
         .disabled = !available or msg == null,
         .on_press = if (available) msg else null,
-        .semantics = .{ .role = .listitem, .label = label },
-    }, shown);
+        .semantics = .{ .role = .treeitem, .label = label },
+    }, 1, shown);
 }
 
 /// 命令 id → Msg。与 core.ts `commandMsg` 同一个落点：直接发它翻译出的
