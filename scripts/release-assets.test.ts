@@ -88,6 +88,26 @@ function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+/**
+ * Whether this run's temporary directory keeps two names that differ only in
+ * case as two files.
+ *
+ * The collision fixture needs that property, and the property belongs to the
+ * filesystem rather than to the platform name: macOS is POSIX and its default
+ * APFS volume is case-insensitive, so `ALPHA.TXT` overwrote `alpha.txt`, one
+ * member reached the packager, the packager was right to accept it, and the
+ * assertion that it must refuse failed on a correct program. Ask the disk
+ * instead of guessing from `process.platform`.
+ */
+function temporaryFilesystemKeepsCase(): boolean {
+  const probe = mkdtempSync(join(tmpdir(), "refrain-release-assets-case-"));
+  temporaryRoots.push(probe);
+  writeFileSync(join(probe, "case-probe.txt"), "probe\n");
+  return !existsSync(join(probe, "CASE-PROBE.TXT"));
+}
+
+const caseSensitiveTemporaries = temporaryFilesystemKeepsCase();
+
 interface ZipLocation {
   readonly centralOffset: number;
   readonly contentOffset: number;
@@ -285,10 +305,12 @@ describe("ScriptC release archive", () => {
     },
   );
 
-  // 夹具要在同一目录里造出 ALPHA.TXT 与 alpha.txt 两个成员：Windows 的
-  // 大小写不敏感文件系统让这份夹具根本造不出来（写 ALPHA.TXT 会覆盖
-  // alpha.txt），所以这道断言只在大小写敏感的 CI 上跑得起来。
-  test.skipIf(process.platform === "win32")(
+  // 夹具要在同一目录里造出 ALPHA.TXT 与 alpha.txt 两个成员：大小写不敏感的
+  // 文件系统让这份夹具根本造不出来（写 ALPHA.TXT 会覆盖 alpha.txt，只剩一个
+  // 成员，打包器接受它是对的），所以这道断言只在大小写敏感的盘上跑得起来。
+  // 条件问的是盘而不是平台名：macOS 是 POSIX，而它默认的 APFS 卷不区分大小写
+  // ——按 `win32` 判断会让这道断言在 macOS 上对着一个正确的程序报红。
+  test.skipIf(!caseSensitiveTemporaries)(
     "rejects source members that collide on a Windows filesystem",
     () => {
       const item = fixture();

@@ -129,7 +129,13 @@ jobs:
           if [ -n "$fails" ]; then
             echo "::error title=gate stages that failed::$(escape "$fails")"
           fi
-          echo "::error title=gate output, last 80 lines::$(escape "$(tail -80 "$log")")"
+          # The stage that failed printed its reason long before the summary,
+          # so a tail alone reports the summary and loses the reason.
+          reasons=$(grep -nE '^\(fail\)|^error:|error: expect|Expected:|Received:|panic|thread .* panicked' "$log" | head -40)
+          if [ -n "$reasons" ]; then
+            echo "::error title=gate failure lines::$(escape "$reasons")"
+          fi
+          echo "::error title=gate output, last 200 lines::$(escape "$(tail -200 "$log")")"
           exit 1
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
