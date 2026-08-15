@@ -1,14 +1,14 @@
 use crate::protocol::{
     ACTION_APPLY_INPUT, ACTION_HEALTH, ACTION_OBTAIN_PROJECTION, ACTION_OPEN_MANUSCRIPT,
-    ACTION_PROJECT, ANCHOR_RANGE_CAPACITY, API_VERSION, AnchorRangeWire, CAPABILITY_MASK,
-    CARET_END, CARET_EXTEND_FLAG, CARET_NEXT, CARET_NEXT_WORD, CARET_PREVIOUS, CARET_PREVIOUS_WORD,
-    CARET_START, DEFAULT_VIEWPORT_BLOCKS, ERROR_DOMAIN_REFUSAL, ERROR_HOST_FAILURE,
-    ERROR_INVALID_REQUEST, ERROR_PROTOCOL_MISMATCH, ERROR_STALE_REVISION, ERROR_UNKNOWN_SESSION,
-    INPUT_CANCEL_COMPOSITION, INPUT_CLEAR, INPUT_COMMIT_COMPOSITION, INPUT_DELETE_BACKWARD,
-    INPUT_DELETE_FORWARD, INPUT_DELETE_WORD_BACKWARD, INPUT_DELETE_WORD_FORWARD, INPUT_INSERT_TEXT,
-    INPUT_MOVE_CARET, INPUT_REVERT_TO, INPUT_SAVE, INPUT_SET_COMPOSITION, INPUT_SET_SELECTION,
-    INPUT_UNDO, PROJECTION_BYTES, PROTOCOL_VERSION, RefrainNativeRequest, RefrainNativeResponse,
-    VIRTUAL_BLOCK_HEIGHT,
+    ACTION_PROJECT, ACTION_SCROLL_PROJECTION, ANCHOR_RANGE_CAPACITY, API_VERSION, AnchorRangeWire,
+    CAPABILITY_MASK, CARET_END, CARET_EXTEND_FLAG, CARET_NEXT, CARET_NEXT_WORD, CARET_PREVIOUS,
+    CARET_PREVIOUS_WORD, CARET_START, DEFAULT_VIEWPORT_BLOCKS, ERROR_DOMAIN_REFUSAL,
+    ERROR_HOST_FAILURE, ERROR_INVALID_REQUEST, ERROR_PROTOCOL_MISMATCH, ERROR_STALE_REVISION,
+    ERROR_UNKNOWN_SESSION, INPUT_CANCEL_COMPOSITION, INPUT_CLEAR, INPUT_COMMIT_COMPOSITION,
+    INPUT_DELETE_BACKWARD, INPUT_DELETE_FORWARD, INPUT_DELETE_WORD_BACKWARD,
+    INPUT_DELETE_WORD_FORWARD, INPUT_INSERT_TEXT, INPUT_MOVE_CARET, INPUT_REVERT_TO, INPUT_SAVE,
+    INPUT_SET_COMPOSITION, INPUT_SET_SELECTION, INPUT_UNDO, PROJECTION_BYTES, PROTOCOL_VERSION,
+    RefrainNativeRequest, RefrainNativeResponse, VIRTUAL_BLOCK_HEIGHT,
 };
 use refrain_app::native_document::{
     AnchoredRange, ByteSelection, CaretDirection, DocumentAnchor, DocumentError, DocumentInput,
@@ -79,7 +79,10 @@ fn dispatch_with(
     match request.action {
         ACTION_HEALTH => return RefrainNativeResponse::empty(0, request.action),
         ACTION_PROJECT => return crate::project::dispatch(&request, text),
-        ACTION_OPEN_MANUSCRIPT | ACTION_APPLY_INPUT | ACTION_OBTAIN_PROJECTION => {}
+        ACTION_OPEN_MANUSCRIPT
+        | ACTION_APPLY_INPUT
+        | ACTION_OBTAIN_PROJECTION
+        | ACTION_SCROLL_PROJECTION => {}
         _ => return RefrainNativeResponse::empty(ERROR_INVALID_REQUEST, request.action),
     }
 
@@ -292,27 +295,30 @@ fn projection_response(
     request: &RefrainNativeRequest,
     status: u32,
 ) -> RefrainNativeResponse {
-    // The action selects the anchor. Each request carries the last scroll
-    // offset of the surface, thus an offset alone cannot decide: after one
-    // scroll, that offset would have priority over each later caret, and the
-    // caret could not bring the window back. An action that moves the caret
-    // anchors on the caret. A view request anchors on the offset, or on the
-    // block when there is no offset.
+    // The action selects the anchor, and only the action. Each request carries
+    // the last scroll offset of the surface, thus a value cannot decide: after
+    // one scroll, that offset would have priority over each later caret, and
+    // the caret could not bring the window back. A value also cannot say "the
+    // author scrolled to the very top", because zero is the same byte as "I
+    // sent no offset" — that magic value left the window on the tail block
+    // after each large wheel toward the head (M13).
+    //
+    // An action that moves the caret anchors on the caret. The wheel action
+    // anchors on the offset, at any offset including zero. Every other view
+    // request keeps the block it was given.
     let first_block = match to_usize(request.viewport_first_block) {
         Ok(value) => value,
         Err(_) => return RefrainNativeResponse::empty(ERROR_INVALID_REQUEST, action),
     };
-    let anchor = if action == ACTION_APPLY_INPUT {
-        DocumentAnchor::Caret {
+    let anchor = match action {
+        ACTION_APPLY_INPUT => DocumentAnchor::Caret {
             window_first_block: first_block,
-        }
-    } else if request.scroll_offset_y > 0.0 {
-        DocumentAnchor::Scroll {
+        },
+        ACTION_SCROLL_PROJECTION => DocumentAnchor::Scroll {
             offset: request.scroll_offset_y,
             block_height: VIRTUAL_BLOCK_HEIGHT,
-        }
-    } else {
-        DocumentAnchor::Block(first_block)
+        },
+        _ => DocumentAnchor::Block(first_block),
     };
     let viewport = DocumentViewport {
         anchor,
@@ -641,6 +647,60 @@ mod tests {
         let stale = send(apply(opened.session, opened.revision + 1, INPUT_UNDO));
         assert_eq!(stale.status, ERROR_STALE_REVISION);
         assert_eq!(stale.revision, opened.revision);
+    }
+
+    /// M13's wheel half: the action decides the anchor, so an offset of zero is
+    /// an offset like any other.
+    ///
+    /// The SDK clamps a scroll offset at the head of the track, thus one large
+    /// wheel toward the head reports exactly zero. While the anchor came from
+    /// the value, that zero read as "keep the block you have" and the window
+    /// stayed on the tail block for ever. Injection proof: return
+    /// `DocumentAnchor::Block(first_block)` for `ACTION_SCROLL_PROJECTION` and
+    /// the first assertion fails with 50,000.
+    #[test]
+    fn the_action_selects_the_anchor_and_a_zero_offset_is_the_head() {
+        let opened = send(request(ACTION_OPEN_MANUSCRIPT));
+
+        let mut wheel_to_head = request(ACTION_SCROLL_PROJECTION);
+        wheel_to_head.session = opened.session;
+        wheel_to_head.viewport_first_block = 50_000;
+        wheel_to_head.scroll_offset_y = 0.0;
+        let head = send(wheel_to_head);
+        assert_eq!(head.status, 0);
+        assert_eq!(
+            head.first_block, 0,
+            "a wheel that reports offset zero asks for the head of the manuscript"
+        );
+
+        let mut wheel_to_tail = request(ACTION_SCROLL_PROJECTION);
+        wheel_to_tail.session = opened.session;
+        wheel_to_tail.viewport_first_block = 0;
+        wheel_to_tail.scroll_offset_y = 4_000_000.0;
+        // The production core sends this count in every request, and the last
+        // window follows from it: 100,000 - 96 is the 99,904 the performance
+        // lane reported as M13's standing evidence.
+        wheel_to_tail.viewport_block_count = DEFAULT_VIEWPORT_BLOCKS;
+        let tail = send(wheel_to_tail);
+        assert_eq!(tail.status, 0);
+        assert_eq!(
+            tail.first_block,
+            (DOCUMENT_FIXTURE_BLOCKS - DEFAULT_VIEWPORT_BLOCKS as usize) as u64,
+            "a wheel past the end stops at the last full window"
+        );
+
+        // The same offset under a view action changes nothing: the window is
+        // the one the request named.
+        let mut view = request(ACTION_OBTAIN_PROJECTION);
+        view.session = opened.session;
+        view.viewport_first_block = 50_000;
+        view.scroll_offset_y = 4_000_000.0;
+        let kept = send(view);
+        assert_eq!(kept.status, 0);
+        assert_eq!(
+            kept.first_block, 50_000,
+            "a view request keeps the block it was given whatever the offset says"
+        );
     }
 
     #[test]

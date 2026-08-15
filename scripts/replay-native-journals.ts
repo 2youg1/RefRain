@@ -15,7 +15,14 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { type JournalName, journalNames, journalPath, journalPlans } from "./native-journals.ts";
+import { PROTOCOL_VERSION } from "../apps/native/src/generated/protocol.ts";
+import {
+  type JournalName,
+  journalNames,
+  journalPath,
+  journalPlans,
+  recordedProtocolVersions,
+} from "./native-journals.ts";
 import { nativeExecutablePath } from "./native-runtime-process.ts";
 
 const root = join(import.meta.dir, "..");
@@ -45,6 +52,20 @@ const replayed: Replayed[] = [];
 for (const name of journalNames) {
   const plan = journalPlans[name];
   const flag = plan.tier.mode === "verify" ? "--verify" : "--no-verify";
+  // 先问录制能不能判这个二进制。回放把录制的答复当世界喂回去，核心拿
+  // 编译进去的协议版本逐字比；版本不同时每一条答复都走「坏契约」分支，
+  // 而指纹依旧能对上——车道会在没在判产品的情况下报绿。实测于协议
+  // 4→5：八条全绿。陈旧的录制必须在这里具名地红，而不是静默地绿。
+  const recorded = recordedProtocolVersions(name);
+  const stale = recorded.filter((version) => version !== PROTOCOL_VERSION);
+  if (stale.length > 0) {
+    const detail =
+      `recorded under protocol ${stale.join(", ")}, this binary speaks ${PROTOCOL_VERSION}; ` +
+      "re-record with `bun run e2e:record`";
+    failures.push(`${name}: ${detail}`);
+    console.error(`FAIL  ${name.padEnd(12)} ${detail}`);
+    continue;
+  }
   const child = Bun.spawn(
     [nativeCli, "automate", "replay", journalPath(name), flag, "--", executable],
     { cwd: nativeDir, stdout: "pipe", stderr: "pipe" },

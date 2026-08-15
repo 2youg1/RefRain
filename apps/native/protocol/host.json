@@ -2,7 +2,7 @@
   "schemaVersion": 3,
   "magic": "RFRN",
   "service": "refrain.host",
-  "protocolVersion": 4,
+  "protocolVersion": 5,
   "apiVersion": 1,
   "capabilityMask": 1,
   "layout": {
@@ -49,6 +49,10 @@
     {
       "name": "project",
       "code": 5
+    },
+    {
+      "name": "scrollProjection",
+      "code": 6
     }
   ],
   "inputs": [

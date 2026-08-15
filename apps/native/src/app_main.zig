@@ -108,7 +108,7 @@ test "the latin and japanese slots parse and cover their own scripts" {
     }
 }
 
-test "document track preserves one bounded projection at the top and tail" {
+test "the document track inverts the projection's scroll anchor" {
     const text = "a\n\nb";
     // 视口高与行高由调用方按 Model 换算后传入；这里沿用旧的 650/18 直接给值，
     // 几何断言不变——换签名不换语义。
@@ -126,15 +126,14 @@ test "document track preserves one bounded projection at the top and tail" {
         .format = 0,
         .ranges = &.{},
         .line_starts = &.{},
-    }, 100, 650, 18);
+    }, 100_000, 650, 18);
     try std.testing.expectEqual(@as(f32, 0), top.leading);
-    try std.testing.expectApproxEqAbs(@as(f32, 3600), top.leading + top.projection + top.trailing, 0.001);
 
     const tail = documentLayout(.{
         .text = text,
         .window_start = 1000 - text.len,
         .window_end = 1000,
-        .first_block = 98,
+        .first_block = 50_000,
         .block_count = 2,
         .document_selection_start = 0,
         .document_selection_end = 0,
@@ -144,9 +143,51 @@ test "document track preserves one bounded projection at the top and tail" {
         .format = 0,
         .ranges = &.{},
         .line_starts = &.{},
-    }, 100, 650, 18);
-    try std.testing.expectApproxEqAbs(@as(f32, 3600), tail.leading + tail.projection + tail.trailing, 0.001);
-    try std.testing.expectEqual(@as(f32, 0), tail.trailing);
+    }, 100_000, 650, 18);
+    // 互逆：把前导空白当成一次滚轮的偏移交回 Rust 的映射，得回同一块。
+    // 注入证明：把 `leading` 改回按比例摊，这一条立刻报出别的块号。
+    try std.testing.expectEqual(
+        @as(u64, 50_000),
+        @as(u64, @intFromFloat(@floor(tail.leading / document_block_height))),
+    );
+    // 末窗之后没有可滚的余量：拖尾归零，轨底恰是最后一屏的底。
+    const at_last_window = documentLayout(.{
+        .text = text,
+        .window_start = 0,
+        .window_end = text.len,
+        .first_block = 99_904,
+        .block_count = 96,
+        .document_selection_start = 0,
+        .document_selection_end = 0,
+        .selection = null,
+        .composition = null,
+        .line_count = 3,
+        .format = 0,
+        .ranges = &.{},
+        .line_starts = &.{},
+    }, 100_000, 650, 18);
+    try std.testing.expectEqual(@as(f32, 0), at_last_window.trailing);
+    try std.testing.expectEqual(@as(f32, 99_904 * 36), at_last_window.leading);
+
+    // 一屏装得下整份稿子：没有行程，轨高就是投影实高。
+    const short = documentLayout(.{
+        .text = text,
+        .window_start = 0,
+        .window_end = text.len,
+        .first_block = 0,
+        .block_count = 2,
+        .document_selection_start = 0,
+        .document_selection_end = 0,
+        .selection = null,
+        .composition = null,
+        .line_count = 3,
+        .format = 0,
+        .ranges = &.{},
+        .line_starts = &.{},
+    }, 2, 650, 18);
+    try std.testing.expectEqual(@as(f32, 0), short.leading);
+    try std.testing.expectEqual(@as(f32, 0), short.trailing);
+    try std.testing.expectEqual(@as(f32, 650), short.projection);
 }
 
 /// 把 Model 选中的那套 RefRain 主题交给 SDK。
@@ -389,21 +430,27 @@ fn documentColumnWidthPx(model: *const Model) f32 {
 /// 滚动轨道的几何：投影窗口的真实内容高、窗口前后的空白。行高与视口高
 /// 由调用方按 Model 换算——本函数是纯几何，不认识排版配置（同一式只有
 /// `documentLineHeightPx` 一处，这里与测试都不抄第二遍）。
+///
+/// **刻度与锚定互逆**：Rust 的滚动锚点算 `首块 = floor(偏移 / 虚拟块高)`
+/// （`DocumentAnchor::Scroll`），这里的前导空白就得是 `首块 × 虚拟块高`——
+/// 一次滚轮落在哪一块，那一块的顶边就落在同一个偏移上。旧式按
+/// `travel × 首块 / 末窗` 摊，摊的是「轨高减投影实高」，而投影实高只有绘制
+/// 侧知道：两边各算一套映射，滚动条与窗口因此对不上（M13 的后半）。
+///
+/// 末窗 = 总块数 − 一屏块数，与 Rust 的 `anchor_block` 同式；一屏块数取
+/// 协议常量，因为核心每条请求都发它。轨高随之是「末窗的滚动行程 + 投影
+/// 实高」，可滚区间恰好覆盖 Rust 认得的 `[0, 末窗 × 虚拟块高]`，越界的
+/// 钳制仍只有 Rust 一份。
 fn documentLayout(document: host_bridge.DocumentView, total_blocks: u64, viewport_height: f32, line_height: f32) DocumentLayout {
-    const track = @max(viewport_height, @as(f32, @floatFromInt(total_blocks)) * document_block_height);
     const projection_height = @max(viewport_height, @as(f32, @floatFromInt(document.line_count)) * line_height);
-    const bounded_projection_height = @min(track, projection_height);
-    const max_first_block = total_blocks -| @as(u64, document.block_count);
-    const travel = track - bounded_projection_height;
-    const leading = if (max_first_block == 0)
-        0
-    else
-        travel * @as(f32, @floatFromInt(@min(document.first_block, max_first_block))) /
-            @as(f32, @floatFromInt(max_first_block));
+    const last_window = total_blocks -| @as(u64, protocol.default_viewport_blocks);
+    const first_block = @min(document.first_block, last_window);
+    const leading = @as(f32, @floatFromInt(first_block)) * document_block_height;
+    const trailing = @as(f32, @floatFromInt(last_window - first_block)) * document_block_height;
     return .{
         .leading = leading,
-        .projection = bounded_projection_height,
-        .trailing = @max(0, track - leading - bounded_projection_height),
+        .projection = projection_height,
+        .trailing = trailing,
     };
 }
 

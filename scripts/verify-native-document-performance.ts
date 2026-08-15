@@ -316,12 +316,24 @@ function assertPatterns(patterns: readonly string[]): void {
   runNative(["assert", "--timeout-ms", "30000", ...patterns]);
 }
 
-/** 等一帧，再拿快照在本地判形状。形状不对就报出它期待什么。 */
+/**
+ * 等到快照真的说出那句话为止，等不到就报出它期待什么。
+ *
+ * 旧形是「`wait` 一帧，读一次快照」——本车道里唯一一处只读一次就放弃的
+ * 等待，其余断言都走 `assert --timeout-ms` 轮询。焦点落地比一帧晚的那些
+ * 回合因此报「正稿没有焦点」，下一次又绿——交替红绿的车道教人忽略它。
+ * 实测：五次跑里两次停在这一句，两次在不同的测量循环。现在按同一个
+ * 上限轮询：真的没拿到焦点仍然红，只是不再把一帧的早晚当成缺陷。
+ */
 function snapshotShowing(pattern: RegExp, label: string): string {
-  runNative(["wait"]);
-  const text = snapshot();
-  if (!pattern.test(text)) throw new Error(`snapshot does not show ${label}`);
-  return text;
+  const until = Date.now() + 30_000;
+  let text = "";
+  do {
+    runNative(["wait"]);
+    text = snapshot();
+    if (pattern.test(text)) return text;
+  } while (Date.now() < until);
+  throw new Error(`snapshot does not show ${label} within 30000ms`);
 }
 
 function residentMemory(snapshotText: string): {
@@ -609,10 +621,10 @@ for (let index = 0; index < RUNS; index += 1) {
 
 // Sign convention, measured rather than assumed: a negative delta walks this
 // track toward the head and a positive one toward the tail. Four million pixels
-// is past either end of a 100k-block manuscript. Where a wheel lands is not
-// asserted — see M13 above; what is asserted is that wheeling reaches the
-// screen at all, and the window it left behind is reported as that defect's
-// standing evidence.
+// is past either end of a 100k-block manuscript, thus each wheel must land on
+// an end: the head is block 0 and the tail is the last full window. This is
+// M13's acceptance, and it is asserted, not only reported — the defect was
+// exactly that every wheel left the window where it already was.
 const WHEEL_TO_HEAD = "-4000000";
 const WHEEL_TO_TAIL = "4000000";
 const scroll = measurements();
@@ -624,7 +636,14 @@ for (let index = 0; index < RUNS; index += 1) {
   scrollWindowStarts.push(firstProjectedBlock(current));
   recordMeasurement(current, scroll);
 }
-const scrollMovedTheWindow = new Set(scrollWindowStarts).size > 1;
+// The last window Rust anchors to: the same subtraction `anchor_block` makes,
+// from the same two protocol constants the surface sends.
+const LAST_WINDOW = FIXTURE_BLOCKS - DEFAULT_VIEWPORT_BLOCKS;
+const scrollReachesBothEnds =
+  scrollWindowStarts.length === RUNS &&
+  scrollWindowStarts.every((start, index) =>
+    index % 2 === 0 ? start === LAST_WINDOW : start === 0,
+  );
 
 const profile = requiredMatch(current, /^frame_profile .*$/m, "frame profile")[0];
 const stageMaximumsUs = {
@@ -686,6 +705,7 @@ const checks = {
     crossParagraphSelection.focus === FIXTURE_BYTES &&
     crossParagraphSelection.selectedBytes === FIXTURE_BYTES,
   compositionGeometryStable: true,
+  scrollReachesBothEnds,
   realFont:
     initialFontEvidence.sourceBytes > 0 &&
     initialFontEvidence.embeddedOffset >= 0 &&
@@ -713,13 +733,15 @@ const report = {
   commitInputToPresentNs: latencyReport(commit),
   compositionUndoInputToPresentNs: latencyReport(compositionUndo),
   crossParagraphSelection,
-  // M13's evidence, reported and not gated while M13 is open: where twenty
-  // alternating wheels left the window, and whether the window moved at all.
-  // A wheel of 4,000,000 px in each direction leaves it on one block, because
-  // `scrollOffsetY: 0` means "anchor by block" on the wire, so a scroll to the
-  // very top cannot be told from "keep the block you have".
+  // Where twenty alternating wheels left the window. A wheel toward the tail
+  // must leave it on the last full window and a wheel toward the head on block
+  // zero. Both directions used to leave it on one block, because
+  // `scrollOffsetY: 0` meant "anchor by block" on the wire and a scroll to the
+  // very top could not be told from "keep the block you have"; the wheel now
+  // carries its own action code (M13).
   scrollWindowStarts,
-  scrollMovedTheWindow,
+  scrollReachesBothEnds,
+  lastWindowBlock: LAST_WINDOW,
   presentPath: { backend: presentPath[1], path: presentPath[2] },
   presentIntervalNs,
   inputLatencyBudgetNs,

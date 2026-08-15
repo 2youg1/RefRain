@@ -472,7 +472,8 @@ Each fact below has one authority. A second copy is a defect.
 | Theme colours | The `THEMES` table in `scripts/generate-themes.ts` | A copy kept by hand. Four anchors for each theme |
 | Corner geometry | `apps/native/src/corners.zig` | A radius number in another file. A bare `0` |
 | Protocol layout | `apps/native/protocol/host.json` | An offset edited by hand in a generated file |
-| The anchor of a projection | `projection_response` in `apps/native/host/src/document.rs` | An anchor chosen from a value instead of from the action. Each request carries the last scroll offset of the surface, thus an offset alone would have priority over each later caret and the caret could not bring the window back. An action that moves the caret anchors on the caret. A range selection keeps the window, because the author selected text and did not ask to go somewhere |
+| The anchor of a projection | `projection_response` in `apps/native/host/src/document.rs` | An anchor chosen from a value instead of from the action. Each request carries the last scroll offset of the surface, thus an offset alone would have priority over each later caret and the caret could not bring the window back, and a zero offset could not be told from "I sent no offset". `applyInput` anchors on the caret; `scrollProjection` anchors on the offset at any value, zero included; every other view action keeps the block it was given. A range selection keeps the window, because the author selected text and did not ask to go somewhere |
+| The scale of the virtual scroll track | `virtualBlockHeight` and `defaultViewportBlocks` in `apps/native/protocol/host.json` | A second mapping between a pixel offset and a block. Rust reads `floor(offset / virtualBlockHeight)` and stops at the last window (`total − defaultViewportBlocks`); `documentLayout` in `app_main.zig` inverts the same two constants for the leading spacer. A spacer that is placed by a proportion of the projected height is a second mapping, and only the drawing side knows that height |
 | The interface font | `manuscript_font` in `apps/native/build.zig` | A second face for interface text. The SDK selects a face for each run, not for each codepoint, thus an uncovered character shows a block. `verify:font-coverage` compares the label tables against the cmap of this face |
 
 Two more rules:
@@ -568,6 +569,13 @@ rest of the current frame, and then it needs the next present. Measured on this
 machine: the interval p50 is 24.12 ms, and each p95 is between 1.17 and 1.75
 intervals.
 
+The present interval of this machine is not stable between runs: readings of
+30.3 ms, 36.5 ms and 38.7 ms came from three runs of one binary. The budget
+moves with it, thus an action near two intervals passes in one run and fails in
+the next. Wait for a state with a bounded poll, never with one read of the
+screen: the focus step read the screen one time and reported "the manuscript has
+no focus" in two runs of five, and the next run was green.
+
 Run these commands in this order. Run all of them for each change.
 
 ```sh
@@ -623,6 +631,15 @@ same host answers in the same order. For the journals that verify, it must also
 draw a tree with the same fingerprint. Three journals verify today. The other
 five give M8 as the reason.
 
+A journal also states which protocol it was recorded under. Replay feeds the
+recorded answers to the core, and the core compares each answer against the
+`PROTOCOL_VERSION` that is compiled into it. A journal from another protocol
+makes each answer a broken contract, and the fingerprints still agree, thus the
+lane reports green while it judges nothing. Measured at protocol 4 → 5: eight of
+eight replayed green with every host answer refused. `recordedProtocolVersions`
+now reads the version out of the file, and a stale journal fails by name.
+Re-record with `bun run e2e:record` after a protocol change.
+
 ---
 
 ## Open items
@@ -634,8 +651,7 @@ closes it. A ◐ or ○ in the function matrix points here.
 |---|---|---|---|
 | **M6** | **The PDF screen and the diagram screen do not exist.** The facts exist: `block_shape::Table` knows the shape of a table, and `ingest/pdf` extracts the text | the domain facts | One screen for PDF and one for diagrams. A table stays aligned text: a caret offset is a byte offset, and a table adds a second coordinate system. An imported PDF is read-only, because `.refrain-source/` is never written |
 | **M7** | **Icons have no consumer.** `icons.rs` normalises and content-addresses an image. No module above the store reads it | `icons.rs`, `tests/icons.rs` | The surface that offers and shows the icon |
-| **M8** | **Replay cannot verify a frame that holds the manuscript.** The projection is in the module buffer of `host_bridge`, not in the Model. The replayer feeds the host answers to the core, and the view has no path to the text. Measured: the three journals that open no document verify all 17 fingerprint checkpoints. Each journal that opens a document differs from the frame after the click on the document row | the eight journals and the tier table in `scripts/native-journals.ts` | Move the projection into the Model. Measure the cost first: approximately 11.5 KiB for each frame through the core. Then change `tier` in the one table |
-| **M13** | **A large wheel saturates the projection window, and the window does not come back.** `scrollOffsetY: 0` means "anchor by block" on the wire, thus a scroll to the very top cannot be told from "keep the block that you have". Measured: twenty wheels of 4,000,000 px in alternate directions leave the window on block 99,904 each time, and `verify:native-document-performance` reports that sequence. The caret half of this defect is closed: an action that moves the caret anchors on the caret (`DocumentAnchor::Caret`), thus a caret at byte 0 brings the window home from the tail | `DocumentAnchor` has `Scroll`, `Block`, and `Caret`. The report field `scrollWindowStarts` shows the window after each wheel | A discriminator for a scroll that does not use a magic value: an action code or a request flag. Also make the virtual track scale agree with the projected height, because the leading spacer and the anchor use two different mappings today |
+| **M8** | **Replay cannot verify a frame that holds the manuscript.** The projection is in the module buffer of `host_bridge`, not in the Model. The replayer feeds the host answers to the core, and the view has no path to the text. Measured: the three journals that open no document verify all 28 fingerprint checkpoints. Each journal that opens a document differs from the frame after the click on the document row | the eight journals and the tier table in `scripts/native-journals.ts` | Move the projection into the Model. Measure the cost first: approximately 11.5 KiB for each frame through the core. Then change `tier` in the one table |
 
 Wired, but with no signature from a real machine: IME composition on Windows and
 macOS. `SetComposition`, `CommitComposition`, and `CancelComposition` exist, and
@@ -644,8 +660,8 @@ macOS. `SetComposition`, `CommitComposition`, and `CancelComposition` exist, and
 Closed in this version: KARA events and the veil, typography in the projection,
 material drafts, the cross-document jump, anchored ranges (M1 to M5); the
 producer runner (M9); the rail colour register (M12); the caret half of the
-projection anchor (M13); the interface font coverage (M14); the panel material
-against the rail register (M15).
+projection anchor and its wheel half (M13); the interface font coverage (M14);
+the panel material against the rail register (M15).
 
 ---
 
@@ -794,6 +810,7 @@ Use these words. SPEC §2 requires one word for each concept.
 | A corner has the wrong shape | `apps/native/src/corners.zig` |
 | The rail loses its colour, or a material stops the drawing | `apps/native/src/rail.zig` and `material.zig`. The rail ground takes no material |
 | An input reaches the screen late | `verify:native-document-performance`. Compare the p95 with the present interval in the same report, not with 16.67 ms |
+| A wheel does not move the window, or the scrollbar disagrees with the text | `projection_response` chooses the anchor from the action; `documentLayout` in `apps/native/src/app_main.zig` places the spacers on the same scale |
 | A roster cursor points at a row that is gone | `apps/native/src/roster.ts` |
 | A character draws as a block | `verify:font-coverage`, then `manuscript_font` in `apps/native/build.zig` |
 | A panel covers the manuscript, or the stage is too small | `apps/native/src/panel_stack.zig`, `layeredBody` in `app_main.zig` |

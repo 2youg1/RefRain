@@ -7,6 +7,7 @@ import {
   ACTION_OBTAIN_PROJECTION,
   ACTION_OPEN_MANUSCRIPT,
   ACTION_PROJECT,
+  ACTION_SCROLL_PROJECTION,
   API_VERSION,
   CAPABILITY_MASK,
   CARET_END,
@@ -1920,7 +1921,8 @@ export function update(previous: Model, msg: Msg): [Model, Cmd<Msg>] {
       if (
         action !== ACTION_OPEN_MANUSCRIPT &&
         action !== ACTION_APPLY_INPUT &&
-        action !== ACTION_OBTAIN_PROJECTION
+        action !== ACTION_OBTAIN_PROJECTION &&
+        action !== ACTION_SCROLL_PROJECTION
       ) {
         return [
           { ...model, status: asciiBytes("Native host returned an unknown dispatch action.") },
@@ -2049,12 +2051,16 @@ export function update(previous: Model, msg: Msg): [Model, Cmd<Msg>] {
       if (model.documentSession === 0 || msg.scroll.offsetY === model.documentScroll) {
         return [scrolled, Cmd.none];
       }
+      // 滚轮是唯一按像素锚定的请求，因此它有自己的动作码。旧形是
+      // `ACTION_OBTAIN_PROJECTION` + 非零 offset，于是「滚到最顶」（SDK 把
+      // 偏移钳到 0）与「保持当前块」在线上是同一串字节：一次向头部的大
+      // 滚轮什么也不动（M13）。动作码一分，0 就只是最顶。
       return [
         scrolled,
         Cmd.request(
           /* @generated:host-service */ "refrain.host",
           hostRecordBytes({
-            action: ACTION_OBTAIN_PROJECTION,
+            action: ACTION_SCROLL_PROJECTION,
             anchor: 0,
             columnsEm: projectionColumnsEm(scrolled),
             cursor: 0,

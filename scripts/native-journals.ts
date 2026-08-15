@@ -16,7 +16,11 @@
  * 是录制用的临时项目内容，断言直接引用其中的正文，所以两者不会各说各的。
  */
 
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
+
+/** 一条主机答复在字节流里的开头，同 `protocol_magic`。 */
+const RESPONSE_MAGIC = Buffer.from("RFRN", "ascii");
 
 /** 八条 journal 的名字，同 `workbench.ts` 的去处常量小写形。 */
 export type JournalName =
@@ -73,6 +77,31 @@ export const journalDirectory = join(import.meta.dir, "../e2e/native");
 /** 这条 journal 的文件路径。 */
 export function journalPath(name: JournalName): string {
   return join(journalDirectory, `${name}.journal`);
+}
+
+/**
+ * 这条录制里的主机答复声明的协议版本。
+ *
+ * **为什么要问**：回放把录制的字节当作世界喂给核心，而核心的
+ * `isDispatchResponse` 拿编译进去的 `PROTOCOL_VERSION` 逐字比。两者不等时
+ * 每一条答复都被当成坏契约，而指纹检查点依旧对得上——车道因此会在
+ * 根本没在判产品的情况下报绿。实测：协议 4 →5 那一步上，八条全绿。
+ *
+ * 字段位置不在这里第二次定义：魔数与头部布局都是生成的（`RFRN`，
+ * 版本在 [4..6]），与 `generated/protocol.ts` 同源。
+ */
+export function recordedProtocolVersions(name: JournalName): readonly number[] {
+  const bytes = readFileSync(journalPath(name));
+  const versions = new Set<number>();
+  for (
+    let at = bytes.indexOf(RESPONSE_MAGIC);
+    at >= 0;
+    at = bytes.indexOf(RESPONSE_MAGIC, at + 4)
+  ) {
+    if (at + 6 > bytes.length) break;
+    versions.add(bytes.readUInt16LE(at + 4));
+  }
+  return [...versions].sort((left, right) => left - right);
 }
 
 /**

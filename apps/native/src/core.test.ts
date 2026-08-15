@@ -7,6 +7,7 @@ import {
   ACTION_OBTAIN_PROJECTION,
   ACTION_OPEN_MANUSCRIPT,
   ACTION_PROJECT,
+  ACTION_SCROLL_PROJECTION,
   API_VERSION,
   CAPABILITY_MASK,
   ERROR_UNKNOWN_SESSION,
@@ -213,6 +214,23 @@ test("scroll sends the real offset without optimistic viewport authority", () =>
   const command = result[1];
   if (command.op !== "request") throw new Error("document scroll did not issue the host request");
   expect(readF64(command.payload, OFFSET_SCROLL_OFFSET_Y)).toBe(offsetY);
+  // 滚轮有自己的动作码：锚点来源由动作说，不由数值猜。
+  expect(readF64(command.payload, OFFSET_ACTION)).toBe(ACTION_SCROLL_PROJECTION);
+});
+
+test("a wheel back to the head is a scroll to zero, not an absent offset", () => {
+  // M13：SDK 把向头部的大滚轮钳成 offset 0。这一臂必须照发，且发的是滚轮
+  // 动作——旧形是 `obtain_projection` + 0，Rust 读成「保持当前块」，于是
+  // 二十次滚轮之后窗口还钉在尾部。
+  const atTail = { ...model, documentBlocks: 100_000, documentScroll: 3_596_544 };
+  const result = update(atTail, { kind: "document_scroll", scroll: scroll(0, 650, 3_600_000) });
+  expect(hasEffect(result)).toBe(true);
+  if (!hasEffect(result)) throw new Error("a scroll to the head did not return an effect");
+  expect(result[0].documentScroll).toBe(0);
+  const command = result[1];
+  if (command.op !== "request") throw new Error("a scroll to the head issued no host request");
+  expect(readF64(command.payload, OFFSET_ACTION)).toBe(ACTION_SCROLL_PROJECTION);
+  expect(readF64(command.payload, OFFSET_SCROLL_OFFSET_Y)).toBe(0);
 });
 
 test("the host projection response supplies the authoritative first block", () => {

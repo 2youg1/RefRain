@@ -249,7 +249,10 @@ fn validateRequest(request_value: *const protocol.RefrainNativeRequest) bool {
             if (request_value.input != 0 or request_value.flags != 0) return false;
             if (request_value.text_len > protocol.event_text_bytes) return false;
         },
-        .obtain_projection => {
+        // 两个取投影的动作形状相同，差别只在锚点来源（Rust 侧）：
+        // `obtain_projection` 按块，`scroll_projection` 按像素偏移。把滑轮
+        // 分出一个动作码，是因为「滚到最顶」与「保持当前块」在数值上同为 0。
+        .obtain_projection, .scroll_projection => {
             if (request_value.input != 0 or request_value.text_len != 0 or request_value.flags != 0) return false;
         },
         .project => {
@@ -330,7 +333,7 @@ fn Callbacks(comptime Effects: type) type {
 fn updatesDocumentProjection(action: u16) bool {
     const resolved = std.enums.fromInt(protocol.Action, action) orelse return false;
     return switch (resolved) {
-        .open_manuscript, .apply_input, .obtain_projection => true,
+        .open_manuscript, .apply_input, .obtain_projection, .scroll_projection => true,
         .health, .project => false,
     };
 }
@@ -345,7 +348,7 @@ fn updatesDocumentProjection(action: u16) bool {
 fn carriesWireText(action: u16) bool {
     const resolved = std.enums.fromInt(protocol.Action, action) orelse return false;
     return switch (resolved) {
-        .project, .open_manuscript, .apply_input, .obtain_projection => true,
+        .project, .open_manuscript, .apply_input, .obtain_projection, .scroll_projection => true,
         .health => false,
     };
 }
@@ -461,14 +464,14 @@ test "open keeps the 11.4 MiB source in Rust and returns the requested block vie
     try std.testing.expect(view.composition == null);
 }
 
-test "scroll offset selects the bounded Rust block projection" {
+test "the wheel action selects the bounded Rust block projection, offset zero included" {
     var effects: StubEffects = .{};
     bind(&effects);
     var payload = request(.open_manuscript);
     call(&effects, 8, &payload);
     try std.testing.expect(effects.response_ok);
 
-    payload = request(.obtain_projection);
+    payload = request(.scroll_projection);
     writeF64(&payload, protocol.offset_revision, @floatFromInt(projection.revision));
     writeF64(&payload, protocol.offset_scroll_offset_y, 1_800_000);
     writeF64(&payload, protocol.offset_session, @floatFromInt(projection.session));
@@ -482,6 +485,19 @@ test "scroll offset selects the bounded Rust block projection" {
     try std.testing.expect(effects.response_ok);
     try std.testing.expectEqual(@as(u64, 99_904), projection.first_block);
     try std.testing.expectEqual(@as(u32, 96), projection.block_count);
+
+    // M13：SDK 把向头部的大滚轮钳成 offset 0。滚轮动作下 0 就是最顶——
+    // 从尾窗一次回到块 0，正是这条车道从前回不来的那一步。
+    writeF64(
+        &payload,
+        protocol.offset_text + protocol.trailing_offset_viewport_first_block,
+        99_904,
+    );
+    writeF64(&payload, protocol.offset_scroll_offset_y, 0);
+    call(&effects, 11, &payload);
+    try std.testing.expect(effects.response_ok);
+    try std.testing.expectEqual(@as(u64, 0), projection.first_block);
+    try std.testing.expectEqual(@as(u64, 0), projection.window_start);
 }
 
 test "document view borrows the Rust projection without copying or reinterpreting it" {

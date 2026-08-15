@@ -2,14 +2,14 @@
 const std = @import("std");
 
 pub const host_service = "refrain.host";
-pub const protocol_version: u16 = 4;
+pub const protocol_version: u16 = 5;
 pub const api_version: u16 = 1;
 pub const capability_mask: u32 = 1;
 pub const projection_bytes: usize = 40960;
 pub const event_text_bytes: usize = 12000;
 pub const default_viewport_blocks: u32 = 96;
 pub const virtual_block_height: f64 = 36.0;
-pub const protocol_fingerprint = "a5c7d63aa2474df25a9a0127689a58d74d2840025f38b3f0c0747629f23fe66f";
+pub const protocol_fingerprint = "0f89ca2fcf2614ac0974c5ad794a951e4520692fec9ed308a3e6c8fda98e4f7b";
 pub const protocol_magic = [4]u8{ 82, 70, 82, 78 };
 pub const response_header_bytes: usize = 88;
 /// 锚定区间的线容量：区间挂在投影文本之后（计数 u32 + 每条 12 字节三元组），
@@ -31,7 +31,7 @@ const empty_line_starts = [_]u32{};
 const empty_anchor_ranges = [_]AnchorRangeWire{};
 
 pub const ProtocolError = enum(u32) { protocol_mismatch = 1, invalid_request = 2, unknown_session = 3, domain_refusal = 4, host_failure = 5, stale_revision = 6 };
-pub const Action = enum(u16) { health = 1, open_manuscript = 2, apply_input = 3, obtain_projection = 4, project = 5 };
+pub const Action = enum(u16) { health = 1, open_manuscript = 2, apply_input = 3, obtain_projection = 4, project = 5, scroll_projection = 6 };
 pub const Input = enum(u16) { set_selection = 1, insert_text = 2, delete_backward = 3, delete_forward = 4, delete_word_backward = 5, delete_word_forward = 6, clear = 7, move_caret = 8, set_composition = 9, commit_composition = 10, cancel_composition = 11, undo = 12, save = 13, revert_to = 14 };
 pub const CaretDirection = enum(u16) { previous = 1, next = 2, previous_word = 3, next_word = 4, start = 5, end = 6 };
 
