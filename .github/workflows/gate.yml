@@ -80,7 +80,7 @@ jobs:
         if: runner.os == 'Windows'
         run: rustup target add x86_64-pc-windows-gnu
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
 
       # GTK4 is the Linux window host for the Native SDK. This is the whole
       # platform dependency list now: no embedded browser, no app indicator,
