@@ -14,15 +14,12 @@
 //! 注入验红：把任何一条期望改成看起来更「规律」的拼写（`runId`、
 //! `outlineOnly`），这道门禁当场指名失败。
 
-use refrain_app::{
-    ProjectInput, ProjectOpened, ProjectOutput, ProjectPage, RootKind, SearchPrecision,
-};
+use refrain_app::{ProjectInput, RootKind, SearchPrecision};
 use refrain_core::material_listing::Disclosure;
 use refrain_core::persona::Persona;
 use refrain_core::{DocumentRole, Id};
 use refrain_host::host::HostCommand;
 use refrain_store::config::{AgentProfile, ConfigChange};
-use refrain_store::project::BackupStatus;
 
 /// 一条期望：`ProjectInput` 序列化之后必须逐字节等于它。
 struct Expected {
