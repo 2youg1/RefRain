@@ -35,14 +35,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `build_flags` carries the CPU pin, and only the release platform
+          # gets one. Naming a target makes Zig's query non-native, which on
+          # Linux also turns off the system-library search the GTK/X11 link
+          # needs; Windows links no system libraries that way, and it is the
+          # only platform that ships, so it is the only one that must match the
+          # instruction set the release is built for.
           - platform: linux
             os: ubuntu-latest
             binary: zig-out/bin/refrain
-            zig_target: x86_64-linux-gnu
+            build_flags: ""
           - platform: windows
             os: windows-latest
             binary: zig-out/bin/refrain.exe
-            zig_target: x86_64-windows-gnu
+            build_flags: "-Dtarget=x86_64-windows-gnu -Dcpu=x86_64_v2"
           # macOS is not a target. RefRain publishes a Windows artifact, and no
           # macOS build has ever succeeded, so the row gated every release on a
           # platform nobody builds for: `release.yml` requires a successful gate
@@ -201,16 +207,16 @@ jobs:
           bun scripts/generate-themes.ts --check
           git diff --exit-code -- apps/native/src/generated
 
-      # The target and the CPU baseline are named, never inherited. Without
-      # `-Dtarget` the SDK's `b.standardTargetOptions(.{})` resolves to the
-      # build machine's own CPU features, so what CI produces is an artifact for
-      # whatever silicon happened to run the job. v0.3.3 shipped that way: the
-      # AMD runner emitted `INSERTQ` (SSE4a, AMD only) and the binary died with
-      # 0xC000001D on the author's Intel laptop, while every gate stayed green
-      # because a machine can always run what it just compiled for itself.
+      # The Windows row builds for the same named CPU floor the release does,
+      # so the journals below replay the instruction set that ships. Without a
+      # pin the SDK's `b.standardTargetOptions(.{})` resolves to the build
+      # machine's own features: v0.3.3 was built on an AMD runner, picked up
+      # `INSERTQ` (SSE4a, AMD only), and died with 0xC000001D on the author's
+      # Intel laptop while every gate stayed green — a machine can always run
+      # what it just compiled for itself.
       - name: Build the Native platform binary
         working-directory: apps/native
-        run: bun x native build . --yes -Dplatform=${{ matrix.platform }} -Dtarget=${{ matrix.zig_target }} -Dcpu=x86_64_v2
+        run: bun x native build . --yes -Dplatform=${{ matrix.platform }} ${{ matrix.build_flags }}
 
       # Eight journals, one per destination, recorded on a real window by
       # `bun run e2e:record` and replayed here headlessly (null platform: the
