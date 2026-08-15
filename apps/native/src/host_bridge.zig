@@ -662,6 +662,38 @@ test "host record offsets stay derived from the generated field order" {
     try std.testing.expectEqual(@intFromEnum(protocol.Action.obtain_projection), decoded.action);
 }
 
+test "the Zig core's encoder and this decoder read one generated offset table" {
+    // The seam that a Zig core sends through (`replay_seam.encode`) and the
+    // decoder the bridge answers with are two ends of one wire. Both read the
+    // offsets from `generated/protocol.zig`, so this test is what makes
+    // "one authority" a fact instead of a claim: encode here, decode there,
+    // every field agrees. A hand-edited offset on either side fails it.
+    const replay_seam = @import("replay_seam.zig");
+    var buffer: [replay_seam.max_record_bytes]u8 = undefined;
+    const bytes = try replay_seam.encode(&buffer, .{
+        .action = .apply_input,
+        .input = @intFromEnum(protocol.Input.insert_text),
+        .session = 7,
+        .revision = 42,
+        .cursor = 13,
+        .columns_em = 65,
+        .viewport_first_block = 3,
+        .window_start = 99904,
+        .text = "\u{4e2d}\u{6587}",
+    });
+    const decoded = decodeBridgeRequest(bytes) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@intFromEnum(protocol.Action.apply_input), decoded.action);
+    try std.testing.expectEqual(@intFromEnum(protocol.Input.insert_text), decoded.input);
+    try std.testing.expectEqual(@as(u16, protocol.protocol_version), decoded.protocol_version);
+    try std.testing.expectEqual(@as(u64, 7), decoded.session);
+    try std.testing.expectEqual(@as(u64, 42), decoded.revision);
+    try std.testing.expectEqual(@as(u64, 13), decoded.cursor);
+    try std.testing.expectEqual(@as(u64, 3), decoded.viewport_first_block);
+    try std.testing.expectEqual(@as(u64, 99904), decoded.window_start);
+    try std.testing.expectEqual(@as(u32, protocol.default_viewport_blocks), decoded.viewport_block_count);
+    try std.testing.expectEqualStrings("\u{4e2d}\u{6587}", decoded.text[0..decoded.text_len]);
+}
+
 test "protocol mismatch, malformed, and unknown service requests remain typed failures" {
     var effects: StubEffects = .{};
     bind(&effects);

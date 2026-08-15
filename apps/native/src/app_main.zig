@@ -21,6 +21,9 @@ const snapshot = @import("snapshot.zig");
 const project_request = @import("project_request.zig");
 const project_view = @import("project_view.zig");
 const document_language = @import("document_language.zig");
+// P2 的回放缝：Zig 核心问 Rust 的出口。今天只有它自己的测试是读者——
+// 车道切换在 P5，届时 update_fx 成为第二个读者、TS 车道成为零个。
+const replay_seam = @import("replay_seam.zig");
 
 pub const panic = std.debug.FullPanic(native_sdk.debug.capturePanic);
 pub const Model = core.Model;
@@ -54,6 +57,7 @@ test {
     std.testing.refAllDecls(project_request);
     std.testing.refAllDecls(project_view);
     std.testing.refAllDecls(document_language);
+    std.testing.refAllDecls(replay_seam);
 }
 
 test "compiled lane: bare-sugar-free update snapshots after tuple and bare arms alike" {

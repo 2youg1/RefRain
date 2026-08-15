@@ -365,6 +365,7 @@ module with no test file has test blocks in the module.
 | `wire_json.ts` | The JSON byte mechanics for the core | `wire_json.test.ts`; `verify:wire-shapes` |
 | `app_main.zig` | The shell: screens, fonts, menus, the context menu, KARA, and the theme wiring. `railTreeRow` makes a rail row: no corner, a semantic level, one indent step for each level | in-file tests; the e2e journals |
 | `host_bridge.zig` | The ABI client. It adopts the borrowed projection into module-lifetime storage | e2e; `verify:native-theme-pixels` |
+| `replay_seam.zig` | The one exit a Zig core uses to ask Rust: the two channel keys, the host-record encoding, and the result routing. It has no production reader today. The lane switch in P5 makes `update_fx` its reader | in-file tests, with one round trip against `host_bridge`'s decoder |
 | `project_request.zig` | The write side: one function for each `ProjectInput` entry | in-file tests; `verify:wire-shapes` |
 | `project_view.zig` | The read side: reply bytes to rows, and the Chinese labels | in-file tests |
 | `snapshot.zig` | The cursor over opaque JSON, with arrays | in-file tests |
@@ -727,9 +728,16 @@ different engine than the product is not a tested lane.
 a defect that passes each test and fails only in a real window. The spike must
 end with a recorded journal that replays `--verify` green through a real window.
 
-**The largest unknown is answered.** The plan put one question before the work:
-does a Zig core have the seam that a journal records and replays for a host
-answer? It does, and it is the seam that RefRain already uses. The SDK records
+**The largest unknown is answered, and now it runs.** The plan put one question
+before the work: does a Zig core have the seam that a journal records and
+replays for a host answer? It does, and it is the seam that RefRain already
+uses. `replay_seam.zig` is that seam, and four tests drive it through a real
+`UiApp(Model, Msg)`: a request parks with the module's channel key and the
+generated service name, one fed answer delivers exactly one Msg, the two
+channels stay in flight together, and the error route delivers one Msg and
+then refuses a second. A fifth test encodes a record here and decodes it with
+the bridge's own decoder, so both ends prove they read one generated offset
+table. The SDK records
 each effect result in the journal by kind, and `.host` is one of those kinds
 (`runtime/session_replay.zig`: a `.host` record feeds on replay unless its exit
 reason is `rejected`, which is the deterministic admission refusal that the
