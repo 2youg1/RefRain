@@ -2059,3 +2059,167 @@ test "裁决台的按钮把编好的请求原样送出，并立起判后前进�
     try h.dispatch(.{ .desk_verdict = "" });
     try testing.expectEqual(before, h.app_state.effects.pendingHostCount());
 }
+
+// ------------------------------------------------------------------ 三个入口
+//
+// `update` 之外，SDK 还要三条把平台事件译成 `Msg` 的路。它们不是臂，所以
+// `pending_arms` 那条计数器数不到它们——单元 12 的 74/74 说的是臂，不是入口。
+//
+// 三条都**必须由接线显式设置**（`app_main.zig` 的 `Adapter.Options`）。转译核心
+// 那条车道按导出名 comptime 探测 `frameMsg`／`keyMsg`，Zig 核心没有那层探测：
+// 少写一行接线，快捷键全部静默，而这些函数的单元测试仍然全绿——因为它们测的是
+// 翻译，不是接线。真窗口探针正是这样抓到 `on_command` 漏接的。
+
+/// 一个命令 id 变成一条消息。
+///
+/// **接上哪个功能**：`app.zon` 声明的快捷键与系统菜单。SDK 把两者送到同一个入口，
+/// 所以「Ctrl+3 去稿子」与「菜单里点稿子」必然是同一件事——两条路各写一份分派，
+/// 它们就会漂开。
+///
+/// **只做 id → Msg 的翻译。** 「这个去处现在够不够得着」由 `update` 里的
+/// `workbench.navigate` 判，这里不复制那条规则；不认识的 id 交出 `null`，由 SDK
+/// 忽略，而不是猜一个默认动作。
+///
+/// id 的全集与它们的中文标签、键位显示串住在 `commands.zig`，`verify:command-space`
+/// 钉住那张表与 `app.zon` 的交集。这里只管落点。
+pub fn commandMsg(name: []const u8) ?Msg {
+    if (std.mem.startsWith(u8, name, "go.") and name.len == 4) {
+        const digit = name[3];
+        if (digit >= '1' and digit <= '8') return .{ .workbench_key = digit - '0' };
+        return null;
+    }
+    if (std.mem.eql(u8, name, "palette")) return .palette_toggle;
+    if (std.mem.eql(u8, name, "kara.toggle")) return .kara_toggle;
+    if (std.mem.eql(u8, name, "panel.back")) return .panel_back;
+    if (std.mem.eql(u8, name, "panel.back.bracket")) return .panel_back;
+    if (std.mem.eql(u8, name, "roster.next")) return .{ .roster_step = 1 };
+    if (std.mem.eql(u8, name, "roster.previous")) return .{ .roster_step = -1 };
+    if (std.mem.eql(u8, name, "document.save")) return .document_save;
+    if (std.mem.eql(u8, name, "document.undo")) return .document_undo;
+    // 搜索框住在文件树去处（键位序号 2）：直达即去那里，不新开一个去处。
+    if (std.mem.eql(u8, name, "search")) return .{ .workbench_key = 2 };
+    if (std.mem.eql(u8, name, "theme.next")) return .theme_next;
+    if (std.mem.eql(u8, name, "app.quit")) return .app_quit;
+    return null;
+}
+
+/// 一帧落地成一条消息。
+///
+/// SDK 每帧都调它，所以变化检测在这里而不在 `update`：尺寸没变交出 `null`，
+/// `update` 不会被每秒六十次的空转打扰。换算规则（分栏表、宽度余量、字身宽）
+/// 归 `projectionColumnsEm`／`viewportHeightPx`，这里不复制。
+pub fn frameMsg(model: *const Model, frame: native_sdk.GpuFrame) ?Msg {
+    if (frame.size.width == model.window.width and frame.size.height == model.window.height) {
+        return null;
+    }
+    return .{ .frame = frame.size };
+}
+
+/// 一个原始键位变成一条消息。
+///
+/// **接上哪个功能**：饭盒的就地裁决键（Alt+A 接受 / Alt+B 退回 / Alt+E 改写）与
+/// 裁决台的键盘流（Alt+J/K 移动、Alt+R 理由、Alt+P 竞争稿、Alt+Enter 落定）。
+///
+/// 只认按下那一相：`on_key` 默认不送抬起，但送不送由接线的 `key_release_events`
+/// 决定，而一次抬起会让名字上唯一的动作发两遍。相由自己判，不靠接线的缺省。
+///
+/// 「现在开没开盒、在不在台上」由 `update` 判（饭盒字段空、游标无行、去处不是
+/// 裁决台都原地不动），这里只翻译。
+pub fn keyMsg(keyboard: canvas.WidgetKeyboardEvent) ?Msg {
+    if (keyboard.phase != .key_down) return null;
+    if (!keyboard.modifiers.alt) return null;
+    if (std.mem.eql(u8, keyboard.key, "a")) return .verdict_accept;
+    if (std.mem.eql(u8, keyboard.key, "b")) return .verdict_reject;
+    if (std.mem.eql(u8, keyboard.key, "e")) return .verdict_revise;
+    // 裁决台的移动与名录键同一条路：四个去处共用的游标不变量在 `core/roster.zig`，
+    // 台上台下由 `update` 按去处判。
+    if (std.mem.eql(u8, keyboard.key, "j")) return .{ .roster_step = 1 };
+    if (std.mem.eql(u8, keyboard.key, "k")) return .{ .roster_step = -1 };
+    if (std.mem.eql(u8, keyboard.key, "r")) return .review_reason_open;
+    if (std.mem.eql(u8, keyboard.key, "p")) return .review_peer;
+    if (std.mem.eql(u8, keyboard.key, "enter")) return .verdict_settle;
+    return null;
+}
+
+/// 生命周期事件翻成焦点两面。
+///
+/// `activate`／`deactivate` 是 KARA 失焦计时（8s 判离开）的事实来源；
+/// `start`／`frame`／`stop` 不译——核心只认焦点两面，把别的也译过来等于让
+/// 一次启动看起来像一次回到窗前。
+pub fn lifecycleMsg(event: native_sdk.LifecycleEvent) ?Msg {
+    return switch (event) {
+        .activate => .{ .app_focus = true },
+        .deactivate => .{ .app_focus = false },
+        else => null,
+    };
+}
+
+test "命令 id 的落点：八个去处、两个返回同义、不认识的交出 null" {
+    try testing.expectEqual(@as(u8, 3), commandMsg("go.3").?.workbench_key);
+    try testing.expectEqual(@as(u8, 8), commandMsg("go.8").?.workbench_key);
+    // 越界的序号不是一个去处：`go.9` 不在 app.zon 里，来了也不接管。
+    try testing.expect(commandMsg("go.9") == null);
+    try testing.expect(commandMsg("go.0") == null);
+    try testing.expect(commandMsg("go.") == null);
+    // 查找就是去文件树，不是第九个去处。
+    try testing.expectEqual(@as(u8, 2), commandMsg("search").?.workbench_key);
+    // Escape 与 Ctrl+[ 是同一件事的两个键。
+    try testing.expectEqual(Msg.panel_back, commandMsg("panel.back").?);
+    try testing.expectEqual(Msg.panel_back, commandMsg("panel.back.bracket").?);
+    try testing.expectEqual(@as(i32, -1), commandMsg("roster.previous").?.roster_step);
+    try testing.expect(commandMsg("nope") == null);
+}
+
+test "app.zon 声明的每一个快捷键 id 都有落点" {
+    // 这条钉住的是接线的另一半：`commands.zig` 的表与 `app.zon` 由
+    // `verify:command-space` 钉住，而「表里的 id 在核心里有没有落点」只有这里问。
+    // 少一个落点的表现是按下去毫无反应，而翻译的单元测试仍然全绿。
+    const commands = @import("commands.zig");
+    for (&commands.commands) |command| {
+        // Alt 系走 `keyMsg`，不在 app.zon 的 id 空间里。
+        if (std.mem.startsWith(u8, command.id, "verdict.") or
+            std.mem.startsWith(u8, command.id, "review.") or
+            std.mem.startsWith(u8, command.id, "roster.step.")) continue;
+        if (commandMsg(command.id) == null) {
+            std.debug.print("commands.zig 里的 `{s}` 在核心里没有落点\n", .{command.id});
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
+test "帧只在尺寸真的变了时才成为一条消息" {
+    const model: Model = .{ .window = geometry.SizeF.init(400, 300) };
+    // 同一个尺寸：不送，免得每秒六十次空转。
+    try testing.expect(frameMsg(&model, .{ .size = geometry.SizeF.init(400, 300) }) == null);
+    const resized = frameMsg(&model, .{ .size = geometry.SizeF.init(500, 300) }).?;
+    try testing.expectEqual(@as(f32, 500), resized.frame.width);
+}
+
+test "台内键位只认按下那一相，且只认带 Alt 的" {
+    // 抬起不该让同一个动作再发一遍。
+    try testing.expect(keyMsg(.{ .phase = .key_up, .key = "a", .modifiers = .{ .alt = true } }) == null);
+    // 不带 Alt 的 a 是作者在打字。
+    try testing.expect(keyMsg(.{ .phase = .key_down, .key = "a" }) == null);
+    try testing.expectEqual(
+        Msg.verdict_accept,
+        keyMsg(.{ .phase = .key_down, .key = "a", .modifiers = .{ .alt = true } }).?,
+    );
+    try testing.expectEqual(
+        @as(i32, 1),
+        keyMsg(.{ .phase = .key_down, .key = "j", .modifiers = .{ .alt = true } }).?.roster_step,
+    );
+    try testing.expectEqual(
+        Msg.verdict_settle,
+        keyMsg(.{ .phase = .key_down, .key = "enter", .modifiers = .{ .alt = true } }).?,
+    );
+    try testing.expect(keyMsg(.{ .phase = .key_down, .key = "z", .modifiers = .{ .alt = true } }) == null);
+}
+
+test "生命周期只译焦点两面" {
+    try testing.expect(lifecycleMsg(.activate).?.app_focus);
+    try testing.expect(!lifecycleMsg(.deactivate).?.app_focus);
+    // 启动不是一次回到窗前。
+    try testing.expect(lifecycleMsg(.start) == null);
+    try testing.expect(lifecycleMsg(.frame) == null);
+    try testing.expect(lifecycleMsg(.stop) == null);
+}
