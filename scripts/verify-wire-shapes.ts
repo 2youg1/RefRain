@@ -64,63 +64,19 @@ if (found.length > 0) {
 }
 
 /*
- * `core.ts` 从答复里挑的字段名，每一个都写出它的出处。
+ * 答复方向不再需要这道门禁——它没有对象了。
  *
- * 这不是重复一份 serde 规则——出处一栏说的是「哪个 Rust 类型发这个名字」，
- * 而那句话只有人能写。新增一个字节针必须在这里加一行，加行的那一刻正是
- * 「Rust 真的发这个名字吗」被问出口的时刻。
+ * 单元 11 之前，界面从答复里挑字段名（`core.ts` 在字节里找引号，后来 Zig 核心
+ * 按路径取值），而拼错一个名字不是编译错误，是一屏静默的空白：界面曾经读
+ * `"documentCount"`，而 Rust 从未发过这个名字，于是文件树恒画零行。这半道门禁
+ * 就是为那件事立的。
+ *
+ * 现在答复是生成的结构体（`protocol/host.json` → `wire.zig` / `wire.rs`），
+ * 两侧读同一张表：读一个不存在的成员**编译不过**。一道判据强过一张需要人工
+ * 维护的出处表，所以那张表连同它的扫描一起删掉了，而不是留着空转。
+ *
+ * **请求方向仍然是 JSON**（`project_request.zig` 写，serde 解），serde 在那一侧
+ * 的口径并不统一——那一半留着，就是上面这些。
  */
-const REPLY_FIELD_SOURCES: Readonly<Record<string, string>> = {
-  kind: "serde 的内部标签（ProjectOutput／KaraState／RunProgress 共用这一个字）",
-  code: "RefrainError 的 ErrorCode",
-  detail: "RefrainError 的 detail",
-  id: "ProposalView / DocumentBlockRow 的 id",
-  next: "DocumentBlocks 的翻页游标",
-  rootId: "ProjectOpened.root_id",
-  documentTotal: "ProjectOpened / ProjectPage 的 document_total",
-  documentCursor: "ProjectOpened / ProjectPage 的 document_cursor",
-  staged: "ProjectProposals.staged",
-  recovery: "StaleProposal 的恢复步骤",
-  afterText: "ProposalView.after_text",
-  sentenceTail: "KaraEffect::ShowReturnCard",
-  queued: "KaraMachine.queued 的安静事件队列",
-  panel_material: "Config 的面板材质（Config 保持 Rust 拼写）",
-  text_size_tenths_px: "Config 的排版三值（同上）",
-  line_height_percent: "Config 的排版三值（同上）",
-  measure_tenths_em: "Config 的排版三值（同上）",
-  // 以下四条是单元 13 后才看得见的层次：`core.ts` 在字节里找针，根本不经过
-  // 父字段；Zig 核心按路径取值，于是每一层都要说出它是谁发的。
-  appearance: "Config.appearance（AppearanceConfig）",
-  typography: "AppearanceConfig.typography（TypographyConfig）",
-  state: "KaraMachine.state",
-  effects: "KaraStep 答复的 effects 列",
-  returnPoint: "KaraEffect::ShowReturnCard.return_point",
-  runs: "HostSnapshot.runs",
-  progress: "RunRow.progress（RunProgress 的 serde 标签）",
-  proposals: "ProjectProposals.proposals",
-};
-
-// 单元 13 之前这里读的是 `core.ts` 的字节针（`asciiBytes('"name"')`）。Zig 核心按
-// 路径取值（`snapshot.stringField(value, "rootId")`），所以这一条改成数取值的字段名。
-// 问题不变：界面读的每一个答复字段，都要说得出是哪个 Rust 类型发的它。
-const core = readFileSync("apps/native/src/core.zig", "utf8");
-const needles = [
-  ...core.matchAll(
-    /snapshot\.(?:string|unsigned|bool)?[Ff]ield\([^,]+, "([A-Za-z_][A-Za-z0-9_]*)"\)/gu,
-  ),
-  ...core.matchAll(/snapshot\.array\([^,]+, "([A-Za-z_][A-Za-z0-9_]*)"\)/gu),
-].map((m) => m[1]);
-const unaccounted = [...new Set(needles)].filter(
-  (name) => name !== undefined && !(name in REPLY_FIELD_SOURCES),
-);
-if (unaccounted.length > 0) {
-  console.error("FAIL  verify:wire-shapes: core.zig reads reply fields with no stated source");
-  for (const name of unaccounted) {
-    console.error(
-      `      "${name}"  add it to REPLY_FIELD_SOURCES with the Rust type that emits it`,
-    );
-  }
-  process.exit(1);
-}
 
 console.log(`PASS  verify:wire-shapes  (${(probe.stdout ?? "").trim().split("(")[1] ?? "checked"}`);

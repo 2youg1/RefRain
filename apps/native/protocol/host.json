@@ -2,7 +2,7 @@
   "schemaVersion": 3,
   "magic": "RFRN",
   "service": "refrain.host",
-  "protocolVersion": 5,
+  "protocolVersion": 6,
   "apiVersion": 1,
   "capabilityMask": 1,
   "layout": {
@@ -164,5 +164,144 @@
       "name": "staleRevision",
       "code": 6
     }
-  ]
+  ],
+  "enums": {
+    "DocumentRole": ["unknown", "chapter", "document", "material"],
+    "RunProgress": [
+      "unknown",
+      "queued",
+      "authorized",
+      "launching",
+      "dispatched",
+      "completed",
+      "failed",
+      "cancelled"
+    ],
+    "Disclosure": ["retrievable", "outlineOnly", "full", "unknown"],
+    "HarnessState": ["unknown", "ready", "notInstalled", "unreadable"],
+    "HarnessTier": ["none", "file", "launch", "usage"],
+    "HarnessSkill": ["unknown", "none", "current", "stale"],
+    "MailboxBox": ["unknown", "draft", "unread", "done"],
+    "PersonaMode": ["none", "work", "cosplay", "unknown"],
+    "DecisionState": ["none", "durable", "bodyDurable", "conflict"],
+    "CollectState": ["none", "waiting", "completed", "failed"],
+    "KaraState": ["off", "entering", "writing", "reviewing", "away", "leaving"],
+    "Tokens": ["unknown", "actual", "estimated"],
+    "PanelMaterial": ["solid", "acrylic", "liquid"]
+  },
+  "rows": {
+    "DocumentRow": [["path", "str"], ["title", "str"], ["role", "DocumentRole"]],
+    "RunRow": [
+      ["id", "str"],
+      ["document", "str"],
+      ["workspace", "str"],
+      ["failure", "str"],
+      ["progress", "RunProgress"],
+      ["needsRecovery", "bool"]
+    ],
+    "ProposalRow": [
+      ["id", "str"],
+      ["scope", "str"],
+      ["beforeText", "str"],
+      ["afterText", "str"],
+      ["staged", "bool"]
+    ],
+    "HitRow": [["path", "str"], ["text", "str"], ["ordinal", "u32"], ["block", "bool"]],
+    "DeskBlockRow": [
+      ["id", "str"],
+      ["kind", "str"],
+      ["peek", "str"],
+      ["ordinal", "u32"],
+      ["chars", "u32"]
+    ],
+    "MaterialRow": [["path", "str"], ["disclosure", "Disclosure"]],
+    "MaterialDraftRow": [["id", "str"], ["title", "str"], ["kind", "str"], ["body", "str"]],
+    "HarnessRow": [
+      ["id", "str"],
+      ["program", "str"],
+      ["version", "str"],
+      ["state", "HarnessState"],
+      ["tier", "HarnessTier"],
+      ["skill", "HarnessSkill"]
+    ],
+    "ChangeRow": [["id", "str"], ["cause", "str"], ["ordinal", "u32"], ["undone", "bool"]],
+    "MailboxRow": [
+      ["id", "str"],
+      ["document", "str"],
+      ["scope", "str"],
+      ["beforeText", "str"],
+      ["afterText", "str"],
+      ["rank", "u32"],
+      ["boxName", "MailboxBox"],
+      ["pinned", "bool"],
+      ["ranked", "bool"]
+    ],
+    "ManifestRow": [["section", "str"], ["source", "str"], ["bytes", "u32"], ["tokens", "Tokens"]],
+    "AgentRow": [
+      ["id", "str"],
+      ["name", "str"],
+      ["personaBody", "str"],
+      ["connectionId", "str"],
+      ["argvCount", "u32"],
+      ["mode", "PersonaMode"]
+    ],
+    "ConnectionRow": [["adapter", "str"], ["executable", "str"], ["argvCount", "u32"]],
+    "AnnotationRow": [["quote", "str"], ["body", "str"], ["comment", "bool"]]
+  },
+  "replies": {
+    "cancelled": [],
+    "opened": [
+      ["rootId", "str"],
+      ["documentCursor", "str"],
+      ["documentTotal", "u32"],
+      ["documents", "rows:DocumentRow"]
+    ],
+    "documentOpened": [["rootId", "str"]],
+    "imported": [["documents", "rows:DocumentRow"]],
+    "page": [
+      ["documentCursor", "str"],
+      ["documentTotal", "u32"],
+      ["documents", "rows:DocumentRow"]
+    ],
+    "documents": [["documents", "rows:DocumentRow"]],
+    "blocks": [["hits", "rows:HitRow"]],
+    "documentBlocks": [["blocks", "rows:DeskBlockRow"], ["next", "u32"]],
+    "materials": [["materials", "rows:MaterialRow"], ["truncated", "bool"]],
+    "deleted": [["documents", "rows:DocumentRow"]],
+    "disclosureSet": [["documents", "rows:DocumentRow"]],
+    "config": [
+      ["theme", "str"],
+      ["fontLatin", "str"],
+      ["fontChinese", "str"],
+      ["fontJapanese", "str"],
+      ["textSizeTenthsPx", "u32"],
+      ["measureTenthsEm", "u32"],
+      ["lineHeightPercent", "u32"],
+      ["agents", "rows:AgentRow"],
+      ["connections", "rows:ConnectionRow"],
+      ["panelMaterial", "PanelMaterial"]
+    ],
+    "kara": [
+      ["returnTail", "str"],
+      ["interrupt", "str"],
+      ["queuedMask", "u32"],
+      ["state", "KaraState"],
+      ["card", "bool"]
+    ],
+    "host": [["runs", "rows:RunRow"], ["runTotal", "u32"]],
+    "history": [["changes", "rows:ChangeRow"]],
+    "annotations": [["annotations", "rows:AnnotationRow"]],
+    "harnesses": [["harnesses", "rows:HarnessRow"]],
+    "dispatched": [["runCount", "u32"]],
+    "proposals": [["proposals", "rows:ProposalRow"], ["stagedCount", "u32"]],
+    "decided": [["state", "DecisionState"]],
+    "collected": [["state", "CollectState"]],
+    "mailbox": [["entries", "rows:MailboxRow"]],
+    "dispatchPreview": [
+      ["digest", "str"],
+      ["prefixBytes", "u32"],
+      ["manifest", "rows:ManifestRow"]
+    ],
+    "materialDrafts": [["drafts", "rows:MaterialDraftRow"]]
+  }
 }

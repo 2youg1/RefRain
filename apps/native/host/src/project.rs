@@ -155,42 +155,45 @@ fn invalid_json(error: serde_json::Error) -> String {
 // and a process-wide buffer let parallel test dispatches rewrite each other's
 // replies (single-threaded runs went 10/10 green while parallel runs raced).
 thread_local! {
-    static REPLY: RefCell<String> = const { RefCell::new(String::new()) };
+    static REPLY: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Store `bytes` as the current reply and point `response` at them.
+///
+/// 缓冲是 `Vec<u8>` 而不是 `String`：答复现在是结构化字节，里面的 `Str` 偏移
+/// 指向缓冲内部，而 `from_utf8_lossy` 会把任何非 UTF-8 字节替换成三字节的 U+FFFD
+/// ——每替换一次，它后面所有偏移就错位一次。
 fn lend_reply(response: &mut RefrainNativeResponse, bytes: &[u8]) {
     REPLY.with(|reply| {
         let mut reply = reply.borrow_mut();
         reply.clear();
-        reply.push_str(&String::from_utf8_lossy(bytes));
-        response.text_len = reply.len() as u32;
+        reply.extend_from_slice(bytes);
+        response.text_len = u32::try_from(reply.len()).unwrap_or(0);
         response.text = reply.as_ptr();
     });
 }
 
+/// 一条成功的答复：按 `protocol/host.json` 的答复表填成行，装不下就先丢尾。
+///
+/// 丢尾的规矩没变（`truncate_output` 决定丢哪一头、丢完怎么把游标收回去），
+/// 变的只是量什么——以前量 JSON 的长度，现在量线上字节的长度。
 fn success(output: &ProjectOutput) -> RefrainNativeResponse {
     let mut bounded = output.clone();
     loop {
-        match serde_json::to_vec(&bounded) {
-            Ok(bytes) if bytes.len() <= PROJECTION_BYTES => {
-                let mut response = RefrainNativeResponse::empty(0, ACTION_PROJECT);
-                lend_reply(&mut response, &bytes);
-                return response;
-            }
-            Ok(bytes) if truncate_output(&mut bounded) => {
-                debug_assert!(bytes.len() > PROJECTION_BYTES);
-            }
-            Ok(bytes) => {
-                return failure(
-                    ERROR_HOST_FAILURE,
-                    &format!(
-                        "project output is {} bytes; the ABI bound is {PROJECTION_BYTES}",
-                        bytes.len()
-                    ),
-                );
-            }
-            Err(error) => return failure(ERROR_HOST_FAILURE, &error.to_string()),
+        let bytes = crate::project_wire::encode(&bounded);
+        if bytes.len() <= PROJECTION_BYTES {
+            let mut response = RefrainNativeResponse::empty(0, ACTION_PROJECT);
+            lend_reply(&mut response, &bytes);
+            return response;
+        }
+        if !truncate_output(&mut bounded) {
+            return failure(
+                ERROR_HOST_FAILURE,
+                &format!(
+                    "project output is {} bytes; the ABI bound is {PROJECTION_BYTES}",
+                    bytes.len()
+                ),
+            );
         }
     }
 }
@@ -361,8 +364,26 @@ fn application_data_dir() -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::staticlib::borrow_response_text as response_text;
+    use crate::staticlib::borrow_response_bytes as reply_bytes;
+    use crate::wire::{self, Reply};
     use std::fs;
+
+    /// 一条答复的线上字节。
+    ///
+    /// 成功的答复不再是 UTF-8 文本（行里的 `u32` 成员就不是），所以走
+    /// `borrow_response_bytes`；领域拒绝仍旧是一段 JSON（它带 code／recovery），
+    /// 那一半不在单元 11 的范围里，走 `refusal_text`。
+    fn reply(response: &RefrainNativeResponse) -> Reply<'_> {
+        Reply::new(reply_bytes(response))
+    }
+
+    fn refusal_text(response: &RefrainNativeResponse) -> &str {
+        std::str::from_utf8(reply_bytes(response)).unwrap()
+    }
+
+    fn kind_of(response: &RefrainNativeResponse) -> u32 {
+        reply(response).kind_code()
+    }
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -432,24 +453,27 @@ mod tests {
         let read = encode(&ProjectInput::ReadConfig);
         let before = dispatch_with(&application, &platform, &request(&read), &read);
         assert_eq!(before.status, 0);
-        let json: serde_json::Value = serde_json::from_str(response_text(&before)).unwrap();
-        assert_eq!(json["kind"], "config");
-        assert_eq!(json["value"]["appearance"]["theme"], "tou");
+        assert_eq!(kind_of(&before), wire::Kind::Config as u32);
+        let view = reply(&before);
+        let head: wire::ConfigHead = view.head().unwrap();
+        assert_eq!(view.text(head.theme), "tou");
 
         let change = encode(&ProjectInput::ChangeConfig(
             refrain_app::ConfigChange::SetTheme("sumi".to_owned()),
         ));
         let after = dispatch_with(&application, &platform, &request(&change), &change);
         assert_eq!(after.status, 0);
-        let json: serde_json::Value = serde_json::from_str(response_text(&after)).unwrap();
-        assert_eq!(json["value"]["appearance"]["theme"], "sumi");
+        let view = reply(&after);
+        let head: wire::ConfigHead = view.head().unwrap();
+        assert_eq!(view.text(head.theme), "sumi");
 
         // 近失手：只更新内存那一份，重开就回到 tou。这一句抓的正是它。
         drop(application);
         let reopened = Application::open(&data).unwrap();
         let again = dispatch_with(&reopened, &platform, &request(&read), &read);
-        let json: serde_json::Value = serde_json::from_str(response_text(&again)).unwrap();
-        assert_eq!(json["value"]["appearance"]["theme"], "sumi");
+        let view = reply(&again);
+        let head: wire::ConfigHead = view.head().unwrap();
+        assert_eq!(view.text(head.theme), "sumi");
 
         drop(reopened);
         fs::remove_dir_all(data).unwrap();
@@ -488,8 +512,10 @@ mod tests {
             &request(&adopt),
             &adopt,
         );
-        let json: serde_json::Value = serde_json::from_str(response_text(&opened)).unwrap();
-        let root_id = json["value"]["rootId"].as_str().unwrap().to_owned();
+        let view = reply(&opened);
+        let head: wire::OpenedHead = view.head().unwrap();
+        let root_id = view.text(head.root_id).to_owned();
+        assert!(!root_id.is_empty());
 
         let read = encode(&ProjectInput::ReadHost { root_id });
         let snapshot = dispatch_with(
@@ -499,18 +525,17 @@ mod tests {
             &read,
         );
         assert_eq!(snapshot.status, 0);
-        let json: serde_json::Value = serde_json::from_str(response_text(&snapshot)).unwrap();
-        assert_eq!(json["kind"], "host");
-        // 新 Root 上四个列表都空，但它们必须存在——缺字段与空列表在界面上
-        // 是两回事。
-        for field in ["tasks", "runs", "authorizations", "runsAwaitingLaunch"] {
-            assert!(json["value"][field].is_array(), "{field} must be an array");
-        }
-        // 名录的真实条数由快照自己带，不由界面数 `runs.len()`：越界时
+        assert_eq!(kind_of(&snapshot), wire::Kind::Host as u32);
+        let view = reply(&snapshot);
+        let head: wire::HostHead = view.head().unwrap();
+        // 新 Root 上名录是空的，而「空」与「读不出来」在界面上是两回事：
+        // 前者是一个可以画的事实，后者应当早已被具名拒绝。
+        assert!(view.rows::<wire::RunRow>(head.runs).is_empty());
+        // 名录的真实条数由快照自己带，不由界面数行：越界时
         // `truncate_output` 丢最旧的 Run，数出来的是「装得下的那些」。
         // 新 Root 上两者相等，这条守的是它们此后不许漂开。
         assert_eq!(
-            json["value"]["runTotal"], 0,
+            head.run_total, 0,
             "the snapshot must state how many Runs exist, including any dropped to fit the ABI"
         );
 
@@ -537,14 +562,14 @@ mod tests {
 
         assert_eq!(response.status, 0);
         assert_eq!(response.action, ACTION_PROJECT);
-        let json: serde_json::Value = serde_json::from_str(response_text(&response)).unwrap();
-        assert_eq!(json["kind"], "opened");
-        assert!(json.to_string().contains("正文.md"));
-        assert!(
-            !json
-                .to_string()
-                .contains(&root.to_string_lossy().to_string())
-        );
+        assert_eq!(kind_of(&response), wire::Kind::Opened as u32);
+        let view = reply(&response);
+        let head: wire::OpenedHead = view.head().unwrap();
+        let documents = view.rows::<wire::DocumentRow>(head.documents);
+        assert!(documents.iter().any(|row| view.text(row.path) == "正文.md"));
+        // 绝对路径永远不过河：跨界的是一个 Root id 加一段相对路径。
+        let selected = root.to_string_lossy().to_string();
+        assert!(!String::from_utf8_lossy(reply_bytes(&response)).contains(&selected));
 
         drop(application);
         fs::remove_dir_all(data).unwrap();
@@ -579,9 +604,14 @@ mod tests {
 
         assert_eq!(response.status, 0);
         assert_eq!(response.action, ACTION_PROJECT);
-        let json: serde_json::Value = serde_json::from_str(response_text(&response)).unwrap();
-        assert_eq!(json["kind"], "opened");
-        assert!(json.to_string().contains("正文.md"));
+        assert_eq!(kind_of(&response), wire::Kind::Opened as u32);
+        let view = reply(&response);
+        let head: wire::OpenedHead = view.head().unwrap();
+        assert!(
+            view.rows::<wire::DocumentRow>(head.documents)
+                .iter()
+                .any(|row| view.text(row.path) == "正文.md")
+        );
 
         drop(application);
         fs::remove_dir_all(data).unwrap();
@@ -606,18 +636,31 @@ mod tests {
             &bytes,
         );
 
-        assert_eq!(response.status, 0, "{}", response_text(&response));
+        assert_eq!(response.status, 0);
         assert!((response.text_len as usize) <= PROJECTION_BYTES);
-        let output: serde_json::Value = serde_json::from_str(response_text(&response)).unwrap();
-        assert_eq!(output["kind"], "opened");
-        let documents = output["value"]["documents"].as_array().unwrap();
+        assert_eq!(kind_of(&response), wire::Kind::Opened as u32);
+        let view = reply(&response);
+        let head: wire::OpenedHead = view.head().unwrap();
+        let documents = view.rows::<wire::DocumentRow>(head.documents);
         assert!(!documents.is_empty());
-        assert!(documents.len() < 256);
-        assert_eq!(output["value"]["documentTotal"], 256);
-        assert_eq!(
-            output["value"]["documentCursor"],
-            documents.last().unwrap()["path"]
-        );
+        // 真实条数由答复自己带，不由界面数行。
+        assert_eq!(head.document_total, 256);
+        // 游标恒指本页末行，不管有没有丢尾——下一页从那里再起，丢掉的
+        // 行因此还读得到。
+        //
+        // **不再断言「一定被截断」**：单元 11 把一坨 JSON 换成定长行之后，
+        // 256 行装得进同一道 ABI 界（这正是换形状的收益之一）。把旧的
+        // `documents.len() < 256` 留着，守的就不再是不变量，而是一个已经不成立
+        // 的尺寸。
+        let last = documents.last().copied().unwrap();
+        let cursor = view.text(head.document_cursor);
+        if documents.len() < 256 {
+            assert_eq!(cursor, view.text(last.path));
+        } else {
+            // 一页装下了全部：没有下一页，所以也没有游标。给一个非空游标，
+            // 界面会去读一页不存在的后续。
+            assert_eq!(cursor, "");
+        }
 
         drop(application);
         fs::remove_dir_all(data).unwrap();
@@ -656,7 +699,7 @@ mod tests {
         );
 
         assert_eq!(response.status, ERROR_DOMAIN_REFUSAL);
-        let detail = response_text(&response);
+        let detail = refusal_text(&response);
         let refusal: serde_json::Value = serde_json::from_str(detail).unwrap();
         // 码与恢复步骤过界，界面按它们出文案；运维细节（可能带路径）不出界。
         assert!(refusal["code"].is_string());

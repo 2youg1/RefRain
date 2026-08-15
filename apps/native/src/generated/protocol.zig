@@ -2,14 +2,14 @@
 const std = @import("std");
 
 pub const host_service = "refrain.host";
-pub const protocol_version: u16 = 5;
+pub const protocol_version: u16 = 6;
 pub const api_version: u16 = 1;
 pub const capability_mask: u32 = 1;
 pub const projection_bytes: usize = 40960;
 pub const event_text_bytes: usize = 12000;
 pub const default_viewport_blocks: u32 = 96;
 pub const virtual_block_height: f64 = 36.0;
-pub const protocol_fingerprint = "0f89ca2fcf2614ac0974c5ad794a951e4520692fec9ed308a3e6c8fda98e4f7b";
+pub const protocol_fingerprint = "2be82cd976501fb657b6db59d738537fcaf6dba256c3e85ee74bc34d8a66c033";
 pub const protocol_magic = [4]u8{ 82, 70, 82, 78 };
 pub const response_header_bytes: usize = 88;
 /// 锚定区间的线容量：区间挂在投影文本之后（计数 u32 + 每条 12 字节三元组），

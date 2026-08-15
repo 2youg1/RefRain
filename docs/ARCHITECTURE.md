@@ -371,8 +371,8 @@ module with no test file has test blocks in the module.
 | `core/model.zig` | The whole interface state: 29 top-level fields against the budget of 40, with a test that fails if a field is added past it. The reply bytes are not among them — they live in `core/replies.zig`, because two copies of "the latest reply" only agree until one update forgets to write both | in-file tests |
 | `core/roster.zig` | The roster cursor invariant: the cursor points at a row that exists, or it is `null`. `null` replaces the `-1` convention that each reader had to remember | in-file tests, carrying the vectors the deleted `roster.test.ts` held |
 | `project_request.zig` | The write side: one function for each `ProjectInput` entry | in-file tests; `verify:wire-shapes` |
-| `project_view.zig` | The read side: reply bytes to rows, and the Chinese labels | in-file tests |
-| `snapshot.zig` | The cursor over opaque JSON, with arrays | in-file tests |
+| `project_view.zig` | The read side: what a row means — the Chinese labels, the actions a Run allows, the excerpt around a hit. It no longer parses anything | in-file tests |
+| `generated/wire.zig` | The reply shapes, generated from `protocol/host.json`. `Reply` bounds every offset against the header's own stated length, so a truncated reply reads as empty rather than as its neighbour | in-file tests; `protocol:native --check` |
 | `workbench_view.zig` | The destination names and hints, in the order of `core/workbench.zig`'s `Destination` | index agreement by review |
 | `document_language.zig` | Wire code to SDK syntax grammar. An unknown code falls back to plain | in-file tests |
 | `corners.zig` | The corner geometry: five scales and `squared` for the absence of a corner | `verify:corner-authority` |
@@ -724,9 +724,11 @@ deleted, 7,149 lines in all.
 had no JSON parser, no `TextEncoder`, no `Number()`, and fixed-length strings.
 Thus the surface read each fact from a reply with a scan for a quoted byte
 pattern. A pattern that no Rust type emits gives zero, and each test stays
-green. Zig reads the same replies through `snapshot.zig`, by path — which is how
-`verify:wire-shapes` found four reply layers (`appearance`, `typography`,
-`effects`, `returnPoint`) that the needle scan had skipped without noticing.
+green. Zig read the same replies by path, which is how `verify:wire-shapes`
+found four reply layers (`appearance`, `typography`, `effects`, `returnPoint`)
+that the needle scan had skipped without noticing. Unit 11 then removed reading
+altogether: the replies are typed rows now, and a field name is not a string on
+either side.
 
 **The refused alternative.** Keep the TypeScript lane and correct it in place.
 That was the cheaper move and the stated fallback. It was refused because the
@@ -763,25 +765,45 @@ means the `Model`, `Msg`, and `update` of the shell only.
 
 ### The bridge leaves opaque JSON for typed rows
 
-**The decision.** The reply channel carries rows generated from
-`protocol/host.json`: `repr(C)` structs in Rust and matching declarations in
-Zig. Neither side parses.
+**The decision — taken, protocol 6.** The reply channel carries rows generated
+from `protocol/host.json`. One schema emits both sides: `wire.rs` writes little‑
+endian members, `wire.zig` declares the matching `extern struct`. Neither side
+parses. `snapshot.zig` and the reading half of `project_view.zig` are deleted.
 
-**What this removes.** One reply shape has two readers: serde in Rust and the
-cursor in `snapshot.zig`. It had three until the lane switch deleted the byte
-patterns in `core.ts` — and that deletion is what made the third reader's blind
-spots visible, since `verify:wire-shapes` immediately named four layers the
-needle scan had never looked at. `verify:wire-shapes` exists because there is
-more than one reader; with one reader the gate is not necessary.
+**What the shape is.** A 16‑byte header, then a fixed head for the kind, then
+fixed‑size rows, then the bytes strings point into. `Str` and `Rows` are both
+`{off,len}` relative to the buffer, so borrowing is free and drawing one screen
+of a thousand‑row roster never builds an intermediate table. The generator sorts
+four‑byte members before one‑byte members and pads the tail, so there is no
+implicit padding for the two layouts to disagree about.
+
+**What this removes.** One reply shape had two readers — serde in Rust and a
+cursor in Zig — and three before the lane switch. Now it has none: reading a
+member that does not exist fails to compile. Four scans that guessed at facts
+Rust already knew are gone with it: the tasks×runs join behind "which Runs
+belong to this document", the recovery‑list scan, the staged‑proposal scan, and
+the walk over KARA's effect list. Each is now a member on the row.
+
+Thirteen closed sets cross as one byte instead of a word, so every reading table
+is an exhaustive `switch`: adding a Run state without saying how to draw it is a
+compile error, not a row that reads "unknown".
 
 **The refused alternative.** A JSON parser in the surface. This makes the
-reading correct, but it keeps three authorities. The difference between the
+reading correct, but it keeps the authorities apart. The distance between the
 authorities is the defect class.
+
+**What this cost.** `verify:wire-shapes` loses its reply half — that half
+existed because a reply field name was a string, and it is not one now. The
+request direction is still JSON (`project_request.zig` writes it, serde parses
+it) and serde's spelling is not uniform there, so that half stays. Journals
+carry the protocol number they were recorded against, so all eight were
+re‑recorded in the same commit.
 
 **What reverses the decision.** The row structs become a second place for
 product vocabulary. If a screen text or a paging rule moves into the schema, the
 shape moved the problem. Rows carry only what is drawn. Paging and truncation
-stay with `truncate_output`.
+stay with `truncate_output`, which now measures encoded bytes instead of JSON
+length — the same rule about which end to drop, applied to a denser format.
 
 ---
 

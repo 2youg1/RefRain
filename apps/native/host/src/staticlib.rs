@@ -37,11 +37,21 @@ fn borrow_request_text(request: &RefrainNativeRequest) -> &[u8] {
 /// `text_len` and read it before the next dispatch replaces the buffer.
 #[cfg(test)]
 pub(crate) fn borrow_response_text(response: &RefrainNativeResponse) -> &str {
+    std::str::from_utf8(borrow_response_bytes(response)).expect("a projection is always UTF-8")
+}
+
+/// Read the bytes a response lends to its caller.
+///
+/// A project reply is structured rows, not text, so it cannot go through
+/// `borrow_response_text` — that one asserts UTF-8, and a row's `u32` members
+/// are not. Both readers live here so the whole `unsafe` surface stays in one
+/// registered file (`verify:unsafe-surface` counts the lines in it).
+#[cfg(test)]
+pub(crate) fn borrow_response_bytes(response: &RefrainNativeResponse) -> &[u8] {
     if response.text_len == 0 {
-        return "";
+        return &[];
     }
-    // SAFETY: the response borrows the projection string owned by the session
-    // that produced it, which stays alive until that session projects again.
-    let bytes = unsafe { std::slice::from_raw_parts(response.text, response.text_len as usize) };
-    std::str::from_utf8(bytes).expect("a projection is always UTF-8")
+    // SAFETY: the response borrows the reply buffer owned by the thread that
+    // produced it, which stays valid until that thread dispatches again.
+    unsafe { std::slice::from_raw_parts(response.text, response.text_len as usize) }
 }

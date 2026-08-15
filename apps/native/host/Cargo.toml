@@ -15,3 +15,8 @@ refrain-app = { workspace = true }
 rfd = { workspace = true }
 serde_json = { workspace = true }
 refrain-core = { workspace = true }
+# 答复投影按封闭集过界，所以这两处的枚举要**穷尽匹配**（新增一个变体就是编译
+# 错误）。走 refrain-app 的重导出只能拿到部分类型，而重导出一份自己的别名就是
+# 第二处权威——直接依赖那两个 crate 更便宜。
+refrain-store = { workspace = true }
+refrain-host = { workspace = true }

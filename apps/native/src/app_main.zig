@@ -20,7 +20,7 @@ const material_paint = @import("material_paint.zig");
 const rail = @import("rail.zig");
 const panel_stack = @import("panel_stack.zig");
 const workbench_view = @import("workbench_view.zig");
-const snapshot = @import("snapshot.zig");
+const wire = @import("generated/wire.zig");
 const project_request = @import("project_request.zig");
 const project_view = @import("project_view.zig");
 const document_language = @import("document_language.zig");
@@ -63,7 +63,7 @@ test {
     std.testing.refAllDecls(panel_stack);
     std.testing.refAllDecls(rail);
     std.testing.refAllDecls(workbench_view);
-    std.testing.refAllDecls(snapshot);
+    std.testing.refAllDecls(wire);
     std.testing.refAllDecls(project_request);
     std.testing.refAllDecls(project_view);
     std.testing.refAllDecls(document_language);
@@ -462,7 +462,7 @@ fn mailboxView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             ui.text(.{}, "先打开一个项目"),
         });
     }
-    const reply = snapshot.value(replies.borrow(.project));
+    const reply = replies.borrow(.project);
     var children: [2 * mailbox_rows + 2]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     // 页签决定读哪份投影；未读数只在默认列表有意义，回收站里数它
@@ -473,7 +473,7 @@ fn mailboxView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         var walk: usize = 0;
         while (walk < mailbox_rows) : (walk += 1) {
             const entry = project_view.mailboxEntryAt(reply, walk) orelse break;
-            if (std.mem.eql(u8, entry.box_name, "unread")) seen += 1;
+            if (entry.box == .unread) seen += 1;
         }
         break :blk seen;
     };
@@ -508,11 +508,14 @@ fn mailboxView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     var found = drawn;
     // Run 段：同一屏的另一半。`runs` 只在 host 形状的答复里有，信箱形状
     // 的答复里它是空数组——两段不会同时满，也不会因为另一段而错位。
-    const runs = snapshot.array(reply, "runs");
+    const host = replies.borrow(.host);
+    const runs: []const wire.RunRow = if (host.head(.host)) |head|
+        host.rows(wire.RunRow, head.runs)
+    else
+        &[_]wire.RunRow{};
     var run_index: usize = 0;
-    while (run_index < mailbox_rows) : (run_index += 1) {
-        const row = runs.at(run_index) orelse break;
-        children[count] = runCard(ui, model, reply, row, run_index);
+    while (run_index < @min(mailbox_rows, runs.len)) : (run_index += 1) {
+        children[count] = runCard(ui, model, host, runs[run_index], run_index);
         count += 1;
     }
     found += run_index;
@@ -544,7 +547,7 @@ fn mailboxCard(
     next: ?project_view.MailboxEntry,
     discarded: bool,
 ) Adapter.Ui.Node {
-    const done = std.mem.eql(u8, entry.box_name, "done");
+    const done = entry.box == .done;
     const can_move = !discarded and entry.rank != null;
     return ui.el(.card, .{ .key = .{ .index = index }, .padding = 8 }, .{
         ui.column(.{ .gap = 2 }, .{
@@ -608,18 +611,14 @@ fn mailboxCard(
 fn runCard(
     ui: *Adapter.Ui,
     model: *const Model,
-    host: snapshot.Value,
-    row: snapshot.Value,
+    host: wire.Reply,
+    row: wire.RunRow,
     index: usize,
 ) Adapter.Ui.Node {
-    const run_id = snapshot.stringField(row, "id") orelse
+    const run_id = host.text(row.id);
+    const rendered = project_view.runRow(host, row) orelse
         return ui.listItem(.{ .key = .{ .index = index }, .disabled = true }, "这一行读不出来");
-    const rendered = project_view.runRow(row) orelse
-        return ui.listItem(.{ .key = .{ .index = index }, .disabled = true }, "这一行读不出来");
-    const actions = project_view.runActions(
-        snapshot.field(row, "progress"),
-        project_view.needsRecovery(host, run_id),
-    );
+    const actions = project_view.runActions(row);
     return ui.el(.card, .{ .key = .{ .index = index }, .padding = 8 }, .{
         ui.column(.{ .gap = 2 }, .{
             ui.text(.{}, ui.fmt("{s} · {s}", .{ rendered.label, rendered.detail })),
@@ -703,7 +702,7 @@ fn mailboxPinMsg(model: *const Model, entry: project_view.MailboxEntry) ?Msg {
         &writer,
         model.root_id.slice(),
         entry.id,
-        entry.box_name,
+        project_view.boxWireName(entry.box),
         !entry.pinned,
     ) orelse return null;
     return .{ .project_request = request.bytes };
@@ -717,7 +716,7 @@ fn mailboxDiscardMsg(model: *const Model, entry: project_view.MailboxEntry) ?Msg
         &writer,
         model.root_id.slice(),
         entry.id,
-        entry.box_name,
+        project_view.boxWireName(entry.box),
     ) orelse return null;
     return .{ .project_request = request.bytes };
 }
@@ -798,17 +797,21 @@ fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             }),
         });
     }
-    const opened = snapshot.value(replies.borrow(.project));
-    const documents = snapshot.array(opened, "documents");
+    const opened = replies.borrow(.project);
+    // 文件树只画 `opened` 形状的答复：一次搜索会把公共槽换成命中，而在
+    // 命中里数出来的行数会让这一屏画出别的东西。
+    const documents: []const wire.DocumentRow = if (opened.head(.opened)) |head|
+        opened.rows(wire.DocumentRow, head.documents)
+    else
+        &[_]wire.DocumentRow{};
     // 行数当场数——答复里那个数组就是权威。Model 里曾经另存一个
     // `documentCount`，它去找一个 Rust 从未发过的字段名，恒为 0，于是
     // 这一屏恒画零行——作者打开项目以后什么都看不见。
-    const window = @min(documents.count(), max_visible_rows);
+    const window = @min(documents.len, max_visible_rows);
     var rows: [max_visible_rows]Adapter.Ui.Node = undefined;
     var index: usize = 0;
     while (index < window) : (index += 1) {
-        const row = documents.at(index);
-        const rendered = if (row) |entry| project_view.documentRow(entry) else null;
+        const rendered = project_view.documentRow(opened, documents[index]);
         rows[index] = if (rendered) |shown|
             railTreeRow(ui, .{
                 .key = .{ .index = index },
@@ -1003,12 +1006,8 @@ fn settingsView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     // 公共槽，一次搜索就把它换成搜索结果——设置页随作者上一把操作漂移，
     // 「还没读到」其实是读错了槽。configReply 只收 config 答复（core 按
     // kind 落槽），换主题、改排版、切身份的答复都会刷新它。
-    const config = snapshot.value(replies.borrow(.config));
-    const appearance = snapshot.field(config, "appearance");
-    const theme = if (appearance) |shown|
-        snapshot.stringField(shown, "theme") orelse ""
-    else
-        "";
+    const config = replies.borrow(.config);
+    const theme = if (config.head(.config)) |shown| config.text(shown.theme) else "";
     const theme_grid = themeButtons(ui, model);
     return ui.column(.{ .gap = 12, .padding = 16 }, .{
         ui.text(.{}, "设置"),
@@ -1123,8 +1122,8 @@ fn materialButton(
 /// **接上哪个功能**：`ConfigChange::ToggleAgentPersona`——干活 ↔ 扮演，
 /// 身份原文由 Rust 带过去，界面只按 id 点名。答复是刷新后的整份 Config，
 /// 所以切换之后不必再发一条读。
-fn agentsSection(ui: *Adapter.Ui, model: *const Model, config: snapshot.Value) Adapter.Ui.Node {
-    const agents = snapshot.field(config, "agents") orelse "";
+fn agentsSection(ui: *Adapter.Ui, model: *const Model, config: wire.Reply) Adapter.Ui.Node {
+    const agents = config;
     var rows: [mailbox_rows]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     while (count < rows.len) : (count += 1) {
@@ -1179,17 +1178,13 @@ fn agentsSection(ui: *Adapter.Ui, model: *const Model, config: snapshot.Value) A
 /// **接上哪个功能**：`Config.appearance.fonts`（设置面板读的同一份 Config）。
 /// 只读——「改字体」需要枚举机器字库的选择器（`list_fonts` 通道尚未接），
 /// 这里先让作者看见现在用的是什么；字号行高在排版三行那里调。
-fn fontsSection(ui: *Adapter.Ui, config: snapshot.Value) Adapter.Ui.Node {
-    const appearance = snapshot.field(config, "appearance");
-    // fonts 住在 appearance.typography.fonts（Config 的层级），不是
-    // appearance.fonts——读错层级会把「有字体」读成「还没读到」。
-    const fonts = if (appearance) |shown|
-        snapshot.field(snapshot.field(shown, "typography") orelse "", "fonts")
-    else
-        null;
-    const latin = if (fonts) |shown| snapshot.stringField(shown, "latin") orelse "" else "";
-    const chinese = if (fonts) |shown| snapshot.stringField(shown, "chinese") orelse "" else "";
-    const japanese = if (fonts) |shown| snapshot.stringField(shown, "japanese") orelse "" else "";
+fn fontsSection(ui: *Adapter.Ui, config: wire.Reply) Adapter.Ui.Node {
+    // 三面字体在答复的头上各占一格：以前要走 appearance.typography.fonts
+    // 三层，而读错一层会把「有字体」读成「还没读到」。
+    const head = config.head(.config);
+    const latin = if (head) |shown| config.text(shown.font_latin) else "";
+    const chinese = if (head) |shown| config.text(shown.font_chinese) else "";
+    const japanese = if (head) |shown| config.text(shown.font_japanese) else "";
     return ui.column(.{ .gap = 4 }, .{
         ui.text(.{}, "字体"),
         if (latin.len + chinese.len + japanese.len == 0)
@@ -1208,8 +1203,8 @@ fn fontsSection(ui: *Adapter.Ui, config: snapshot.Value) Adapter.Ui.Node {
 /// **接上哪个功能**：`Config.harness_connections`（设置面板读的同一份
 /// Config）。只读——编辑走伙伴编辑（agent 级 argv）或直接改 `config.toml`；
 /// 连接级 argv 的图形编辑入口尚未接，这里先让作者看见「有没有参数」。
-fn connectionsConfigSection(ui: *Adapter.Ui, config: snapshot.Value) Adapter.Ui.Node {
-    const connections = snapshot.field(config, "harnessConnections") orelse "";
+fn connectionsConfigSection(ui: *Adapter.Ui, config: wire.Reply) Adapter.Ui.Node {
+    const connections = config;
     var rows: [8]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     while (count < rows.len) : (count += 1) {
@@ -1438,32 +1433,45 @@ fn readConfigMsg() ?Msg {
 /// 走焦点、Enter 跳过去（on_submit）、Space 选择激活，都是 SDK 的 list
 /// 键图原生行为。
 fn searchView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    const results = snapshot.value(replies.borrow(.project));
-    const kind = snapshot.kind(replies.borrow(.project));
-    const is_blocks = std.mem.eql(u8, kind, "blocks");
-    const rows = snapshot.array(results, if (is_blocks) "blocks" else "documents");
+    const results = replies.borrow(.project);
+    const is_blocks = results.kind() == .blocks;
+    const hits: []const wire.HitRow = if (results.head(.blocks)) |head|
+        results.rows(wire.HitRow, head.hits)
+    else
+        &[_]wire.HitRow{};
+    const paths: []const wire.DocumentRow = if (results.head(.documents)) |head|
+        results.rows(wire.DocumentRow, head.documents)
+    else
+        &[_]wire.DocumentRow{};
     // 空查询不画旧结果：按 searchQuery 判空，不按答复判空。
     const searching = model.search.query.slice().len > 0;
-    const count = if (searching) @min(rows.count(), max_visible_rows) else 0;
+    const found = if (is_blocks) hits.len else paths.len;
+    const count = if (searching) @min(found, max_visible_rows) else 0;
     var nodes: [max_visible_rows]Adapter.Ui.Node = undefined;
     var index: usize = 0;
     while (index < count) : (index += 1) {
-        const row = rows.at(index).?;
         // 块命中：路径 + 以命中为中心的摘录。高亮用「」标出命中段——
         // list_item 只渲染纯文本标签（children 不进它的绘制），而三截上色
         // 的 row 又丢掉 list_item 的键图（Enter 提交只认这个 kind）。SDK 的
         // per-text 颜色通道（style_tokens.foreground）与键盘导航不可兼得，
         // 取键图、「」标出（任务许的退路）。
         const label = if (is_blocks) blk: {
-            const path = snapshot.stringField(row, "path") orelse "";
-            const text = snapshot.stringField(row, "text") orelse "";
+            const hit = hits[index];
+            const path = results.text(hit.path);
+            const text = results.text(hit.text);
             const excerpt_buf = ui.arena.alloc(u8, 4 * 60 + 12) catch break :blk path;
             break :blk ui.fmt("{s} · {s}", .{
                 path,
                 project_view.excerptAround(excerpt_buf, text, model.search.query.slice(), 60),
             });
-        } else snapshot.stringField(row, "path") orelse "这一行读不出来";
-        const jump = searchHitMsg(model, row, is_blocks);
+        } else pathBlk: {
+            const path = results.text(paths[index].path);
+            break :pathBlk if (path.len > 0) path else "这一行读不出来";
+        };
+        const jump = if (is_blocks)
+            searchHitMsg(model, results, hits[index])
+        else
+            openDocumentMsg(model, results.text(paths[index].path));
         nodes[index] = ui.listItem(.{
             .key = .{ .index = index },
             .on_press = jump,
@@ -1523,10 +1531,10 @@ fn searchMsg(model: *const Model, comptime blocks: bool) ?Msg {
 /// 跨文档的跳块要等打开后的新一轮投影才点得名——那是另一段接线；先打开
 /// 文档是今天就有用的那半步。块序号 clamp 归 Rust（越界钳到尾窗），这里
 /// 原样送回。
-fn searchHitMsg(model: *const Model, row: snapshot.Value, blocks: bool) ?Msg {
-    const path = snapshot.stringField(row, "path") orelse "";
-    if (blocks and path.len > 0) {
-        const ordinal = snapshot.unsignedField(row, "ordinal") orelse return null;
+fn searchHitMsg(model: *const Model, reply: wire.Reply, hit: wire.HitRow) ?Msg {
+    const path = reply.text(hit.path);
+    if (path.len > 0) {
+        const ordinal = hit.ordinal;
         if (model.document.session != 0 and std.mem.eql(u8, path, model.document.path.slice())) {
             return .{ .document_jump = @intCast(ordinal) };
         }
@@ -1670,7 +1678,7 @@ fn reviewView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             ui.text(.{}, "先打开一份稿子"),
         });
     }
-    const listing = snapshot.value(replies.borrow(.project));
+    const listing = replies.borrow(.project);
     const total = project_view.proposalCount(listing);
     const window = @min(total, max_visible_rows);
     var rows: [max_visible_rows]Adapter.Ui.Node = undefined;
@@ -1790,7 +1798,7 @@ fn stalePanel(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
 /// （`annotationDraft`），与派发框同一条路径；「这段字够不够清楚」不是
 /// 这一屏能判的，范围对不上块由 Rust 在入口具名拒绝。
 fn annotationsSection(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    const listing = snapshot.value(replies.borrow(.project));
+    const listing = replies.borrow(.project);
     var rows: [mailbox_rows]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     while (count < rows.len) : (count += 1) {
@@ -1921,7 +1929,7 @@ fn readAnnotationsMsg(model: *const Model) ?Msg {
 fn proposalRow(
     ui: *Adapter.Ui,
     model: *const Model,
-    listing: snapshot.Value,
+    listing: wire.Reply,
     index: usize,
 ) Adapter.Ui.Node {
     const proposal = project_view.proposalAt(listing, index) orelse
@@ -2106,11 +2114,11 @@ fn verdictMsg(model: *const Model, proposal_id: []const u8, kind: []const u8) ?M
 /// 开始改写一条提案：以 Agent 建议的改后文字为起点。
 ///
 /// **接上哪个功能**：改写型裁决。起点在这里读而不是在 core 读——core 子集
-/// 没有 JSON 解析器，那份答复只有 `snapshot.zig` 读得动。
+/// 答复是结构化的行（`generated/wire.zig`），种类对不上就交出 null。
 ///
 /// 起点用建议而不是空白：作者多数时候只改一两个词。从空白开始等于让他
 /// 重打一遍，那会把「改写」变成「拒绝后自己重写」。
-fn beginRevisionMsg(listing: snapshot.Value, index: usize) ?Msg {
+fn beginRevisionMsg(listing: wire.Reply, index: usize) ?Msg {
     const proposal = project_view.proposalAt(listing, index) orelse return null;
     return .{ .revision_begin = .{
         .id = proposal.id,
@@ -2214,7 +2222,7 @@ fn launchRunMsg(model: *const Model, run_id: []const u8) ?Msg {
 /// **在全局逻辑中负责什么**：只画与只派 Msg。已撤销的行仍然显示（灰着），
 /// 因为它们是作者做过的事；从列表里消失会让他以为自己记错了。
 fn historyView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    const listing = snapshot.value(replies.borrow(.project));
+    const listing = replies.borrow(.project);
     var rows: [24]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     while (count < rows.len) : (count += 1) {
@@ -2280,7 +2288,7 @@ fn readHistoryMsg(model: *const Model) ?Msg {
 /// **在全局逻辑中负责什么**：只画与只派 Msg。「装了没有」「能做到哪一层」
 /// 都由 Rust 探测，这里一条也不猜。中文标签住在 `project_view` 的翻译里。
 fn connectionsView(ui: *Adapter.Ui) Adapter.Ui.Node {
-    const listing = snapshot.value(replies.borrow(.project));
+    const listing = replies.borrow(.project);
     var rows: [8]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     while (count < rows.len) : (count += 1) {
@@ -2302,7 +2310,7 @@ fn connectionsView(ui: *Adapter.Ui) Adapter.Ui.Node {
                 // 装协议是 Root 之外唯一的写路径，按钮是它的唯一入口。
                 if (harness.ready)
                     ui.row(.{ .gap = 8, .cross = .center }, .{
-                        ui.text(.{ .grow = 1 }, project_view.skillLabel(harness.skill)),
+                        ui.text(.{ .grow = 1 }, harness.skill),
                         ui.button(.{
                             .on_press = installSkillMsg(harness.id),
                             .semantics = .{ .label = "把当前协议装进这个 harness 的 skill 目录" },
@@ -2537,8 +2545,8 @@ fn firstChars(text: []const u8, n: usize) []const u8 {
 }
 
 /// config 答复里的 agents 数组原文。没有答复时是空数组。
-fn configAgents() snapshot.Value {
-    return snapshot.field(snapshot.value(replies.borrow(.config)), "agents") orelse "[]";
+fn configAgents() wire.Reply {
+    return replies.borrow(.config);
 }
 
 /// 手动往返的哨兵词（agent id 是 uuid，这个词不会撞）：空 dispatchAgent
@@ -2592,7 +2600,7 @@ fn deskTicket(ui: *Adapter.Ui, model: *const Model, selected: []const u8, span: 
 /// core 的 `deskBlocks` 槽是替换语义（每页答复换掉整槽），位图跨页
 /// 存活——翻页不丢勾选，显示的是当前这页。
 fn deskBlockList(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    const listing = snapshot.value(replies.borrow(.blocks));
+    const listing = replies.borrow(.blocks);
     var rows: [desk_block_rows]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     while (count < rows.len) : (count += 1) {
@@ -2660,7 +2668,7 @@ fn deskBlockList(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
 /// 回去。勾选态住在 Model（`dispatchMaterials`，\n 分隔），这一节一条
 /// 规则也不复制。
 fn deskMaterials(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    if (replies.borrow(.materials).len == 0) {
+    if (replies.borrow(.materials).kind() != .materials) {
         return ui.row(.{ .gap = 8, .cross = .center }, .{
             ui.text(.{ .grow = 1 }, "资料"),
             ui.button(.{
@@ -2669,7 +2677,7 @@ fn deskMaterials(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             }, "读取资料"),
         });
     }
-    const listing = snapshot.value(replies.borrow(.materials));
+    const listing = replies.borrow(.materials);
     var rows: [mailbox_rows]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     while (count < rows.len) : (count += 1) {
@@ -2824,7 +2832,7 @@ fn deskCarryRow(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
 /// 轮询链与下游自动发射都不在这里——core 与领域层各管各的，这一节只读
 /// 快照。
 fn deskRunRoster(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    if (replies.borrow(.host).len == 0) {
+    if (replies.borrow(.host).kind() != .host) {
         return ui.row(.{ .gap = 8, .cross = .center }, .{
             ui.text(.{ .grow = 1 }, "Run 名录"),
             ui.button(.{
@@ -2833,7 +2841,7 @@ fn deskRunRoster(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             }, "读取 Run 名录"),
         });
     }
-    const host = snapshot.value(replies.borrow(.host));
+    const host = replies.borrow(.host);
     var rows: [mailbox_rows]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     while (count < rows.len) : (count += 1) {
@@ -2862,19 +2870,20 @@ fn deskRunRoster(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
 fn deskRunRow(
     ui: *Adapter.Ui,
     model: *const Model,
-    host: snapshot.Value,
-    row: snapshot.Value,
+    host: wire.Reply,
+    row: wire.RunRow,
     index: usize,
 ) Adapter.Ui.Node {
-    const run_id = snapshot.stringField(row, "id") orelse
+    const run_id = host.text(row.id);
+    if (run_id.len == 0) {
         return ui.listItem(.{ .key = .{ .index = index }, .disabled = true }, "这一行读不出来");
-    const progress = snapshot.field(row, "progress");
-    const actions = project_view.runActions(progress, project_view.needsRecovery(host, run_id));
-    const workspace = snapshot.stringField(row, "workspace") orelse "";
+    }
+    const actions = project_view.runActions(row);
+    const workspace = host.text(row.workspace);
     return ui.el(.card, .{ .key = .{ .index = index }, .padding = 8 }, .{
         ui.column(.{ .gap = 2 }, .{
             // 状态措辞的唯一权威是 progressLabel（七态表），这里不另写。
-            ui.text(.{}, project_view.progressLabel(progress)),
+            ui.text(.{}, project_view.progressLabel(host, row)),
             if (workspace.len > 0)
                 ui.text(.{}, workspace)
             else
@@ -2914,12 +2923,13 @@ fn deskRunRow(
 /// `deskPreview`（审计 #8）：刷新名录/读取资料不再把它冲掉，清单活到被
 /// 消费（送出成功清槽）或被下一次预览替换。
 fn dispatchPreviewSection(ui: *Adapter.Ui) Adapter.Ui.Node {
-    if (!std.mem.eql(u8, snapshot.kind(replies.borrow(.preview)), "dispatchPreview")) {
+    if (replies.borrow(.preview).kind() != .dispatch_preview) {
         return ui.el(.stack, .{ .height = 0 }, .{});
     }
-    const package = snapshot.value(replies.borrow(.preview));
-    const digest = snapshot.stringField(package, "digest") orelse "";
-    const prefix_bytes = snapshot.unsignedField(package, "prefixBytes") orelse 0;
+    const package = replies.borrow(.preview);
+    const preview_head = package.head(.dispatch_preview);
+    const digest = if (preview_head) |head| package.text(head.digest) else "";
+    const prefix_bytes: u64 = if (preview_head) |head| head.prefix_bytes else 0;
     var rows: [mailbox_rows]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     while (count < rows.len) : (count += 1) {
@@ -2954,8 +2964,8 @@ fn dispatchPreviewSection(ui: *Adapter.Ui) Adapter.Ui.Node {
 /// `draftAfterEdit` 路径；编辑中的行把「收进资料区／收成正文」换成带
 /// 编辑后正文的版本（`edited_body` 通道，M3 备好的那条）。
 fn materialDraftsSection(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    const is_drafts = std.mem.eql(u8, snapshot.kind(replies.borrow(.project)), "materialDrafts");
-    const listing = snapshot.value(replies.borrow(.project));
+    const is_drafts = replies.borrow(.project).kind() == .material_drafts;
+    const listing = replies.borrow(.project);
     var rows: [mailbox_rows]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     if (is_drafts) {
@@ -3085,8 +3095,9 @@ fn selectedText(document: host_bridge.DocumentView) []const u8 {
 /// 不再把它冲掉；槽空（没预览过、或上次送出已消费）时交出空切片——
 /// 「送出去」因此带不上核对，Rust 按无核对处理。
 fn previewedDigest() []const u8 {
-    if (!std.mem.eql(u8, snapshot.kind(replies.borrow(.preview)), "dispatchPreview")) return "";
-    return snapshot.stringField(snapshot.value(replies.borrow(.preview)), "digest") orelse "";
+    const preview = replies.borrow(.preview);
+    const head = preview.head(.dispatch_preview) orelse return "";
+    return preview.text(head.digest);
 }
 
 /// 送出去。
@@ -3299,8 +3310,8 @@ fn verdictBeginMsg(model: *const Model, range: protocol.AnchorRangeWire) ?Msg {
 
 /// 从裁决名录里按 id 读起笔（agent 的建议）。名录没在读就空起笔。
 fn proposalSeedById(id: []const u8) []const u8 {
-    if (!std.mem.eql(u8, snapshot.kind(replies.borrow(.project)), "proposals")) return "";
-    const listing = snapshot.value(replies.borrow(.project));
+    if (replies.borrow(.project).kind() != .proposals) return "";
+    const listing = replies.borrow(.project);
     var index: usize = 0;
     while (index < mailbox_rows) : (index += 1) {
         const proposal = project_view.proposalAt(listing, index) orelse break;

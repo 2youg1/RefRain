@@ -64,7 +64,17 @@ const contracts: readonly Contract[] = [
       "NATIVE_SDK_IME_EVIDENCE",
       "Set-WinDefaultInputMethodOverride",
       "Invoke-NativeAutomation",
-      "Push-Location $NativeDir",
+      // The runtime publishes its automation channel under its own working
+      // directory, so both the app and every `native automate` call must be
+      // started in apps/native. Launched from the repository root this lane
+      // read a previous run's snapshot for thirty seconds and reported a
+      // timeout (Memo D45); `Push-Location` used to carry half of this.
+      "-WorkingDirectory $NativeDir",
+      // Naming the keyboard layout and reading the conversion mode back, in
+      // place of blind Shift / Ctrl+Space toggles that flip a mode which was
+      // already correct (Memo D47).
+      "WM_INPUTLANGCHANGEREQUEST",
+      "Set-ImeChineseMode",
       "Capture-Screen",
       "capture-native-identity.ts",
       "assert-native.ts",

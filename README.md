@@ -182,12 +182,19 @@ one beside it.
 
 Releases are published on
 [GitHub](https://github.com/kaile9/RefRain/releases). The current release is
-v0.2.5. v0.3.0 and v0.3.1 were tagged and never published: the release workflow
+v0.3.3. v0.3.0 and v0.3.1 were tagged and never published: the release workflow
 requires a successful gate run on the tagged commit, and the gate had never
-once been green on a runner. It is green now, on Linux and Windows, so the next
-tag can mean what it claims — and the version faces stay at 0.3.1 until that
-tag exists, because a repository that calls itself a version nobody can
-download is the same fault under a different name.
+once been green on a runner. It is green now, on Linux and Windows, so v0.3.3
+is the first tag since v0.2.5 that means what it claims.
+
+v0.3.3 stays on the patch position on purpose. The change behind it is large —
+the state machine is Zig and the 7,149 lines of TypeScript that used to hold it
+are gone; the reply channel carries typed rows generated from one schema instead
+of opaque JSON, so neither side parses. But nothing an installed copy exchanges
+with anything else moved: the host protocol is internal to the one binary, and
+the on-disk formats are unchanged, so this build is a drop-in replacement for
+v0.2.5. It exists to be used and reported against. The version position is the
+author's call pending that round of use.
 
 Most measurements in this repository come from Linux, and nothing is claimed
 for a platform until it has been measured there. The exception is the Windows

@@ -24,7 +24,7 @@ const host_bridge = @import("host_bridge.zig");
 const replay_seam = @import("replay_seam.zig");
 const project_request = @import("project_request.zig");
 const project_view = @import("project_view.zig");
-const snapshot = @import("snapshot.zig");
+const wire = @import("generated/wire.zig");
 const protocol = @import("generated/protocol.zig");
 
 const canvas = native_sdk.canvas;
@@ -383,7 +383,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             // 提案没有改后正文：键原地不动，与按钮的灰掉同款。
             if (model.destination != .review) return;
             const row = model.roster_cursor orelse return;
-            const proposal = project_view.proposalAt(replies.proposalListing(), row) orelse return;
+            const proposal = project_view.proposalAt(replies.borrow(.project), row) orelse return;
             if (proposal.after_text.len == 0) return;
             setEditing(&model.revising, .{ .id = proposal.id, .seed = proposal.after_text });
         },
@@ -730,7 +730,7 @@ fn settleVerdict(model: *Model, fx: *Effects, verdict: Verdict) void {
 fn deskProposalId(model: *const Model) ?[]const u8 {
     if (model.destination != .review) return null;
     const row = model.roster_cursor orelse return null;
-    const proposal = project_view.proposalAt(replies.proposalListing(), row) orelse return null;
+    const proposal = project_view.proposalAt(replies.borrow(.project), row) orelse return null;
     if (proposal.id.len == 0) return null;
     return proposal.id;
 }
@@ -996,36 +996,43 @@ fn responseText(response: protocol.RefrainNativeResponse) []const u8 {
 /// 字节先落槽（`core/replies.zig`），然后从落好的那一份里读事实——不从线上字节读，
 /// 因为界面下一帧要看的是落好的那份，两者必须是同一个东西。
 ///
-/// **读法是结构化的**（`snapshot.zig`）：TS 车道在字节里找引号（`"state":{"kind":"away"`
-/// 这类针），于是一个同名字段出现在另一层就读错。这里按路径取值，层次是真的。
+/// **单元 11 之后读法是类型化的**：种类是一个枚举，字段是结构体成员。以前这里
+/// 逐个字段名去取值（更早的 TS 车道甚至在字节里找引号），于是一个同名字段出现在
+/// 另一层就读错；现在读错一个名字是编译错误。
 fn landProject(model: *Model, response: protocol.RefrainNativeResponse, fx: *Effects) void {
     model.host_ready = true;
     setStatus(model, "Rust 的项目用例完成了。");
-    const wire = responseText(response);
-    const kind = snapshot.kind(wire);
-    const kept = replies.store(replies.slotForKind(kind), wire);
-    const value = snapshot.value(kept);
+    const bytes = responseText(response);
+    const kept = replies.store(replies.slotForKind(wire.kindOf(bytes)), bytes);
+    const kind = kept.kind();
 
-    // rootId 只在带 Root 的答复里出现（读设置与 KARA 的不带），缺席即保留现值。
-    if (snapshot.stringField(value, "rootId")) |root| model.root_id.set(root) catch {};
-    if (snapshot.stringField(value, "documentCursor")) |cursor| model.document.cursor.set(cursor) catch {};
-    if (snapshot.unsignedField(value, "documentTotal")) |total| model.document.total = @intCast(total);
+    // 带 Root 的答复才动 root_id（读设置与 KARA 的不带），缺席即保留现值——
+    // 写一个空的进去，下一次「按 root 读」就失去了收件人。
+    const facts = project_view.facts(kept);
+    if (facts.carries_root) model.root_id.set(facts.root_id) catch {};
+    if (facts.carries_documents) {
+        model.document.cursor.set(facts.document_cursor) catch {};
+        model.document.total = facts.document_total;
+    }
 
-    if (std.mem.eql(u8, kind, "config")) landConfig(model, value);
-    if (std.mem.eql(u8, kind, "kara")) {
-        landKara(model, value, fx);
-        return;
+    switch (kind) {
+        .config => landConfig(model, kept),
+        .kara => {
+            landKara(model, kept, fx);
+            return;
+        },
+        .proposals => landProposals(model, kept, fx),
+        .document_blocks => {
+            // 下一页游标：答复里 `next` 恒 ≥ 1，0 即没有下一页。
+            const next = if (kept.head(.document_blocks)) |head| head.next else 0;
+            model.dispatch.blocks_next = if (next > 0) next else null;
+        },
+        // 送出成功：这次预览已被消费，再送必须重新预览。
+        .dispatched => replies.clear(.preview),
+        // 草稿名录刷新 = 一次成稿／退回落了地：行内编辑态随名录换新收起。
+        .material_drafts => model.material_draft = .{},
+        else => {},
     }
-    if (std.mem.eql(u8, kind, "proposals")) landProposals(model, kept, fx);
-    if (std.mem.eql(u8, kind, "documentBlocks")) {
-        // 下一页游标：答复里 `next` 恒 ≥ 1，缺席即没有下一页。
-        const next = snapshot.unsignedField(value, "next") orelse 0;
-        model.dispatch.blocks_next = if (next > 0) @intCast(next) else null;
-    }
-    // 送出成功：这次预览已被消费，再送必须重新预览。
-    if (std.mem.eql(u8, kind, "dispatched")) replies.clear(.preview);
-    // 草稿名录刷新 = 一次成稿／退回落了地：行内编辑态随名录换新收起。
-    if (std.mem.eql(u8, kind, "materialDrafts")) model.material_draft = .{};
     // 任何一次项目用例成功，上一次失败的说辞就过期了。
     model.review.stale_frozen.clear();
     model.review.stale_recovery.clear();
@@ -1033,7 +1040,7 @@ fn landProject(model: *Model, response: protocol.RefrainNativeResponse, fx: *Eff
     // 合并落盘后名录必须重读：已判的提案已被领域层收走，不重读台面上就停着
     // 一排判过的鬼影。
     var writer: project_request.Writer = .{};
-    if (std.mem.eql(u8, kind, "decided")) {
+    if (kind == .decided) {
         if (model.root_id.isEmpty() or model.document.path.isEmpty()) return;
         const encoded = project_request.readProposals(
             &writer,
@@ -1044,17 +1051,17 @@ fn landProject(model: *Model, response: protocol.RefrainNativeResponse, fx: *Eff
         return;
     }
     // 收取与送出之后连锁读一次编排快照：Run 名录与等待队列都变了。
-    if (std.mem.eql(u8, kind, "collected") or std.mem.eql(u8, kind, "dispatched")) {
+    if (kind == .collected or kind == .dispatched) {
         if (model.root_id.isEmpty()) return;
         const encoded = project_request.readHost(&writer, model.root_id.slice()) orelse return;
         sendProject(fx, model, encoded.bytes);
         return;
     }
     // 编排快照落地：有在飞 Run 就挂下一跳（链式——没有新在飞就不挂，轮询自己停）。
-    if (std.mem.eql(u8, kind, "host")) {
-        model.roster_count = @intCast(snapshot.array(value, "runs").count());
+    if (kind == .host) {
+        model.roster_count = facts.roster_count;
         model.roster_cursor = roster.settle(model.roster_cursor, model.roster_count);
-        if (inFlightRuns(value) and !model.root_id.isEmpty()) {
+        if (inFlightRuns(kept) and !model.root_id.isEmpty()) {
             fx.startTimer(.{
                 .key = timer_key.runs_tick,
                 .interval_ms = runs_poll_ms,
@@ -1071,23 +1078,23 @@ fn landProject(model: *Model, response: protocol.RefrainNativeResponse, fx: *Eff
 }
 
 /// 设置答复里的排版三值与面板材质。它们只在这一种答复里出现。
-fn landConfig(model: *Model, value: snapshot.Value) void {
-    const appearance = snapshot.field(value, "appearance") orelse return;
-    if (snapshot.stringField(appearance, "panel_material")) |material| {
-        model.panel_material = if (std.mem.eql(u8, material, "acrylic"))
-            1
-        else if (std.mem.eql(u8, material, "liquid")) 2 else 0;
-    }
-    const typography = snapshot.field(appearance, "typography") orelse return;
+fn landConfig(model: *Model, reply: wire.Reply) void {
+    const head = reply.head(.config) orelse return;
+    model.panel_material = switch (head.panel_material) {
+        .solid => 0,
+        .acrylic => 1,
+        .liquid => 2,
+    };
     // 十分之一储存（`*_tenths_*`）：持久化的数字不带小数点，单位写在字段名里。
-    if (snapshot.unsignedField(typography, "text_size_tenths_px")) |tenths| {
-        if (tenths > 0) model.typography.text_size = @as(f64, @floatFromInt(tenths)) / 10;
+    // 0 是「没读到」而不是「作者把字号调成了 0」——后者读进去屏幕会空白。
+    if (head.text_size_tenths_px > 0) {
+        model.typography.text_size = @as(f64, @floatFromInt(head.text_size_tenths_px)) / 10;
     }
-    if (snapshot.unsignedField(typography, "measure_tenths_em")) |tenths| {
-        if (tenths > 0) model.typography.measure_em = @as(f64, @floatFromInt(tenths)) / 10;
+    if (head.measure_tenths_em > 0) {
+        model.typography.measure_em = @as(f64, @floatFromInt(head.measure_tenths_em)) / 10;
     }
-    if (snapshot.unsignedField(typography, "line_height_percent")) |percent| {
-        if (percent > 0) model.typography.line_height_percent = @intCast(percent);
+    if (head.line_height_percent > 0) {
+        model.typography.line_height_percent = @intCast(head.line_height_percent);
     }
 }
 
@@ -1095,20 +1102,21 @@ fn landConfig(model: *Model, value: snapshot.Value) void {
 ///
 /// 一次至多挂一口钟（优先状态钟——它是机器活下去的腿；回来卡与打断是自消
 /// 展示，下一口答复会再挂）。
-fn landKara(model: *Model, value: snapshot.Value, fx: *Effects) void {
-    const state = snapshot.field(value, "state") orelse "";
-    const named = snapshot.stringField(state, "kind") orelse "";
-    const next: KaraState = if (std.mem.eql(u8, named, "entering"))
-        .entering
-    else if (std.mem.eql(u8, named, "writing"))
-        .writing
-    else if (std.mem.eql(u8, named, "reviewing"))
-        .reviewing
-    else if (std.mem.eql(u8, named, "away"))
-        .away
-    else if (std.mem.eql(u8, named, "leaving")) .leaving else .off;
+fn landKara(model: *Model, reply: wire.Reply, fx: *Effects) void {
+    const head = reply.head(.kara) orelse return;
+    const next: KaraState = switch (head.state) {
+        .entering => .entering,
+        .writing => .writing,
+        .reviewing => .reviewing,
+        .away => .away,
+        .leaving => .leaving,
+        .off => .off,
+    };
     model.kara.state = @intFromEnum(next);
-    model.kara.queued = queuedMask(value);
+    // 安静事件队列的位掩码由 Rust 数好（`QuietEvent` 的变体序，穷尽匹配守着）。
+    // 界面以前自己走一遍 `queued` 数组，而 effects 里也提这些名字——按名字找针
+    // 的读法分不开「队列里有」与「效果里提到」。
+    model.kara.queued = @intCast(head.queued_mask & 0xff);
 
     // 回 Off 时三者一起清：机器下台了，它的展示不该留在屏上。
     if (next == .off) {
@@ -1117,19 +1125,15 @@ fn landKara(model: *Model, value: snapshot.Value, fx: *Effects) void {
         model.kara.interrupt.clear();
         return;
     }
-    const effects = snapshot.field(value, "effects") orelse "";
-    const card = firstEffect(effects, "showReturnCard");
-    if (card) |payload| {
+    // 两件自消展示：Rust 侧已经把「第一条叫这个名字的效果」找出来了，这里只
+    // 落地它们的内容。
+    if (head.card) {
         model.kara.card = true;
-        const point = snapshot.field(payload, "returnPoint") orelse payload;
-        _ = model.kara.return_tail.setTruncated(snapshot.stringField(point, "sentenceTail") orelse "");
+        _ = model.kara.return_tail.setTruncated(reply.text(head.return_tail));
     }
-    const interrupt = firstEffect(effects, "interruptNow");
-    if (interrupt) |payload| {
-        _ = model.kara.interrupt.setTruncated(if (payload.len >= 2 and payload[0] == '"')
-            payload[1 .. payload.len - 1]
-        else
-            payload);
+    const interrupt_text = reply.text(head.interrupt);
+    if (interrupt_text.len > 0) {
+        _ = model.kara.interrupt.setTruncated(interrupt_text);
     }
 
     if (next == .entering) {
@@ -1148,7 +1152,7 @@ fn landKara(model: *Model, value: snapshot.Value, fx: *Effects) void {
         });
         return;
     }
-    if (card != null) {
+    if (head.card) {
         fx.startTimer(.{
             .key = timer_key.kara_card,
             .interval_ms = kara_card_ms,
@@ -1156,7 +1160,7 @@ fn landKara(model: *Model, value: snapshot.Value, fx: *Effects) void {
         });
         return;
     }
-    if (interrupt != null) {
+    if (interrupt_text.len > 0) {
         fx.startTimer(.{
             .key = timer_key.kara_interrupt,
             .interval_ms = kara_interrupt_ms,
@@ -1165,40 +1169,13 @@ fn landKara(model: *Model, value: snapshot.Value, fx: *Effects) void {
     }
 }
 
-/// 安静事件队列的掩码：1 已保存 / 2 agent 完成 / 4 提案到达 / 8 索引刷新。
-///
-/// 只数 `queued` 那一列：effects 里也提这些名字（queueForDebrief），它们不是队列。
-/// 按字段取值而不是全文找针，那条区分因此是结构上的，不是数字距离上的。
-fn queuedMask(value: snapshot.Value) u8 {
-    const names = [_][]const u8{ "save-succeeded", "agent-completed", "proposal-arrived", "index-refreshed" };
-    const queued = snapshot.array(value, "queued");
-    var mask: u8 = 0;
-    var index: usize = 0;
-    while (queued.at(index)) |entry| : (index += 1) {
-        if (entry.len < 2 or entry[0] != '"') continue;
-        const name = entry[1 .. entry.len - 1];
-        for (names, 0..) |candidate, bit| {
-            if (std.mem.eql(u8, name, candidate)) mask |= @as(u8, 1) << @intCast(bit);
-        }
-    }
-    return mask;
-}
-
-/// KARA 答复里第一条叫这个名字的效果的载荷。没有就是 null。
-fn firstEffect(effects: snapshot.Value, name: []const u8) ?snapshot.Value {
-    const rows = snapshot.arrayOf(effects);
-    var index: usize = 0;
-    while (rows.at(index)) |row| : (index += 1) {
-        if (std.mem.eql(u8, snapshot.kind(row), name)) return snapshot.value(row);
-    }
-    return null;
-}
-
 /// 提案名录落地：行数、批次数与游标钳制。
-fn landProposals(model: *Model, kept: snapshot.Value, fx: *Effects) void {
-    const listing = snapshot.value(kept);
-    model.roster_count = @intCast(project_view.proposalCount(listing));
-    model.review.staged_count = @intCast(snapshot.array(listing, "staged").count());
+fn landProposals(model: *Model, kept: wire.Reply, fx: *Effects) void {
+    model.roster_count = @intCast(project_view.proposalCount(kept));
+    model.review.staged_count = if (kept.head(.proposals)) |head|
+        @intCast(head.staged_count)
+    else
+        0;
     // 游标钳进新长度：连着判三条不必每次重新找位置。
     model.roster_cursor = roster.settle(model.roster_cursor, model.roster_count);
     // 名录变了，A／B 跟着行走。
@@ -1213,18 +1190,21 @@ fn landProposals(model: *Model, kept: snapshot.Value, fx: *Effects) void {
 }
 
 /// 编排快照里还有在飞的 Run 吗。authorized／launching／dispatched 算在飞，queued 不算。
-fn inFlightRuns(value: snapshot.Value) bool {
-    const runs = snapshot.array(value, "runs");
-    var index: usize = 0;
-    while (runs.at(index)) |run| : (index += 1) {
-        const progress = snapshot.field(run, "progress") orelse continue;
-        const state = snapshot.kind(progress);
-        if (std.mem.eql(u8, state, "authorized") or
-            std.mem.eql(u8, state, "launching") or
-            std.mem.eql(u8, state, "dispatched")) return true;
+///
+/// 这是一条**轮询决定**，不是领域规则，所以它留在界面这一侧：改成 Rust 送一个
+/// bool，就等于把「多久问一次」也交出去了。
+fn inFlightRuns(reply: wire.Reply) bool {
+    const head = reply.head(.host) orelse return false;
+    for (reply.rows(wire.RunRow, head.runs)) |run| {
+        switch (run.progress) {
+            .authorized, .launching, .dispatched => return true,
+            else => {},
+        }
     }
     return false;
 }
+
+
 
 /// 一条投影答复里的会话事实。
 ///
@@ -1711,6 +1691,53 @@ fn readScalarU16(payload: []const u8, offset: usize) u16 {
     return @intFromFloat(value);
 }
 
+
+/// 一条答复的线上字节，测试专用。
+///
+/// 与 Rust 的 `wire::Writer` 同一条纪律：头留在最前面，行与文本追加在它后面，
+/// 最后头被填回去——所以 `Rows` 与 `Str` 的偏移在写下它们的那一刻就是最终值。
+/// 手写一份 fixture 而不是调 Rust，是为了让核心的测试仍然只依赖 null 平台。
+const WireBuilder = struct {
+    buf: []u8,
+    len: usize,
+
+    fn init(buffer: []u8, comptime kind: wire.Kind) WireBuilder {
+        const total = @sizeOf(wire.Header) + @sizeOf(wire.headType(kind));
+        @memset(buffer[0..total], 0);
+        return .{ .buf = buffer, .len = total };
+    }
+
+    fn text(self: *WireBuilder, value: []const u8) wire.Str {
+        if (value.len == 0) return .{};
+        const off = self.len;
+        @memcpy(self.buf[off..][0..value.len], value);
+        self.len += value.len;
+        return .{ .off = @intCast(off), .len = @intCast(value.len) };
+    }
+
+    fn rows(self: *WireBuilder, comptime Row: type, list: []const Row) wire.Rows {
+        while (self.len % 4 != 0) : (self.len += 1) self.buf[self.len] = 0;
+        const off = self.len;
+        for (list) |row| {
+            @memcpy(self.buf[self.len..][0..@sizeOf(Row)], std.mem.asBytes(&row));
+            self.len += @sizeOf(Row);
+        }
+        return .{ .off = @intCast(off), .len = @intCast(list.len) };
+    }
+
+    fn finish(self: *WireBuilder, comptime kind: wire.Kind, head: wire.headType(kind)) []const u8 {
+        const Head = wire.headType(kind);
+        const header = wire.Header{
+            .magic = wire.magic,
+            .kind = @intFromEnum(kind),
+            .bytes = @intCast(self.len),
+        };
+        @memcpy(self.buf[0..@sizeOf(wire.Header)], std.mem.asBytes(&header));
+        @memcpy(self.buf[@sizeOf(wire.Header)..][0..@sizeOf(Head)], std.mem.asBytes(&head));
+        return self.buf[0..self.len];
+    }
+};
+
 /// 一条项目答复的线上字节。测试专用——真实的字节由 Rust 发。
 fn projectResponse(buffer: []u8, text: []const u8) []const u8 {
     var response = protocol.emptyResponse(@intFromEnum(protocol.Action.project));
@@ -1833,10 +1860,15 @@ test "KARA：失焦挂钟、回焦撤钟，离场之后回来发 returned" {
 test "KARA 答复：状态、队列与自消的展示一起落地" {
     var h = try CoreHarness.create();
     defer h.destroy();
+    var wire_buffer: [4096]u8 = undefined;
     var buffer: [4096]u8 = undefined;
-    const entering = projectResponse(&buffer,
-        \\{"kind":"kara","value":{"state":{"kind":"entering"},"queued":["save-succeeded","proposal-arrived"],"effects":[]}}
-    );
+    var entering_builder = WireBuilder.init(&wire_buffer, .kara);
+    // 1 已保存 | 4 提案到达。位序由 Rust 的 `QuietEvent` 变体序决定，
+    // 而那一侧的穷尽匹配守着它——界面不再自己走一遍名字表。
+    const entering = projectResponse(&buffer, entering_builder.finish(.kara, .{
+        .state = .entering,
+        .queued_mask = 1 | 4,
+    }));
     try h.answer(.dispatch, entering);
     try testing.expectEqual(@intFromEnum(KaraState.entering), h.model().kara.state);
     // 1 已保存 | 4 提案到达。掩码位序与 kara.rs 的声明序同。
@@ -1850,10 +1882,15 @@ test "KARA 答复：状态、队列与自消的展示一起落地" {
     );
 
     // 回来卡：卡文从 returnPoint 读出，600ms 后自消。
+    var card_wire: [4096]u8 = undefined;
     var card_buffer: [4096]u8 = undefined;
-    const card = projectResponse(&card_buffer,
-        \\{"kind":"kara","value":{"state":{"kind":"writing"},"queued":[],"effects":[{"kind":"showReturnCard","value":{"returnPoint":{"sentenceTail":"写到这里。"}}}]}}
-    );
+    var card_builder = WireBuilder.init(&card_wire, .kara);
+    const card_tail = card_builder.text("写到这里。");
+    const card = projectResponse(&card_buffer, card_builder.finish(.kara, .{
+        .state = .writing,
+        .card = true,
+        .return_tail = card_tail,
+    }));
     try h.answer(.dispatch, card);
     try testing.expect(h.model().kara.card);
     try testing.expectEqualStrings("写到这里。", h.model().kara.return_tail.slice());
@@ -1862,10 +1899,10 @@ test "KARA 答复：状态、队列与自消的展示一起落地" {
     try testing.expect(h.model().kara.return_tail.isEmpty());
 
     // 回 Off：展示不该留在屏上。
+    var off_wire: [4096]u8 = undefined;
     var off_buffer: [4096]u8 = undefined;
-    const off = projectResponse(&off_buffer,
-        \\{"kind":"kara","value":{"state":{"kind":"off"},"queued":[],"effects":[]}}
-    );
+    var off_builder = WireBuilder.init(&off_wire, .kara);
+    const off = projectResponse(&off_buffer, off_builder.finish(.kara, .{ .state = .off }));
     try h.answer(.dispatch, off);
     try testing.expectEqual(@intFromEnum(KaraState.off), h.model().kara.state);
     try testing.expect(h.model().kara.interrupt.isEmpty());
@@ -1874,18 +1911,25 @@ test "KARA 答复：状态、队列与自消的展示一起落地" {
 test "设置答复：排版三值与面板材质按层次取，不在字节里找引号" {
     var h = try CoreHarness.create();
     defer h.destroy();
+    var wire_buffer: [4096]u8 = undefined;
     var buffer: [4096]u8 = undefined;
-    const config = projectResponse(&buffer,
-        \\{"kind":"config","value":{"appearance":{"theme":"sumi","panel_material":"acrylic","typography":{"text_size_tenths_px":185,"line_height_percent":170,"measure_tenths_em":600}}}}
-    );
+    var builder = WireBuilder.init(&wire_buffer, .config);
+    const theme = builder.text("sumi");
+    const config = projectResponse(&buffer, builder.finish(.config, .{
+        .theme = theme,
+        .panel_material = .acrylic,
+        .text_size_tenths_px = 185,
+        .line_height_percent = 170,
+        .measure_tenths_em = 600,
+    }));
     try h.answer(.dispatch, config);
     try testing.expectEqual(@as(f64, 18.5), h.model().typography.text_size);
     try testing.expectEqual(@as(u32, 170), h.model().typography.line_height_percent);
     try testing.expectEqual(@as(f64, 60), h.model().typography.measure_em);
     try testing.expectEqual(@as(u8, 1), h.model().panel_material);
     // 答复落进设置槽，而不是把公共槽冲掉。
-    try testing.expectEqualStrings("config", snapshot.kind(replies.borrow(.config)));
-    try testing.expectEqualStrings("", replies.borrow(.project));
+    try testing.expectEqual(wire.Kind.config, replies.borrow(.config).kind());
+    try testing.expectEqual(wire.Kind.none, replies.borrow(.project).kind());
 }
 
 test "提案名录落地：行数、批次数、游标钳制与判后前进" {
@@ -1896,10 +1940,22 @@ test "提案名录落地：行数、批次数、游标钳制与判后前进" {
     h.model().roster_cursor = 5;
     h.model().review.advance_armed = true;
 
+    var wire_buffer: [4096]u8 = undefined;
     var buffer: [4096]u8 = undefined;
-    const listing = projectResponse(&buffer,
-        \\{"kind":"proposals","value":{"proposals":[{"id":"p-1","afterText":"甲"},{"id":"p-2","afterText":"乙"}],"staged":["p-1"]}}
-    );
+    var builder = WireBuilder.init(&wire_buffer, .proposals);
+    // 「判过了吗」现在是行上的一个 bool（Rust 侧按账本配过对），界面不再
+    // 为每一行走一遍 staged 名单。
+    const first = wire.ProposalRow{
+        .id = builder.text("p-1"),
+        .after_text = builder.text("甲"),
+        .staged = true,
+    };
+    const second = wire.ProposalRow{ .id = builder.text("p-2"), .after_text = builder.text("乙") };
+    const proposal_rows = builder.rows(wire.ProposalRow, &.{ first, second });
+    const listing = projectResponse(&buffer, builder.finish(.proposals, .{
+        .proposals = proposal_rows,
+        .staged_count = 1,
+    }));
     try h.answer(.dispatch, listing);
     try testing.expectEqual(@as(u32, 2), h.model().roster_count);
     try testing.expectEqual(@as(u32, 1), h.model().review.staged_count);
@@ -1924,10 +1980,13 @@ test "裁决台的接受：主语是游标那一行，理由只骑一次裁决" 
     _ = h.model().document.path.setTruncated("章一.md");
     try h.dispatch(.{ .workbench_go = .review });
 
+    var wire_buffer: [4096]u8 = undefined;
     var buffer: [4096]u8 = undefined;
-    const listing = projectResponse(&buffer,
-        \\{"kind":"proposals","value":{"proposals":[{"id":"p-1","afterText":"甲"},{"id":"p-2","afterText":"乙"}],"staged":[]}}
-    );
+    var builder = WireBuilder.init(&wire_buffer, .proposals);
+    const first = wire.ProposalRow{ .id = builder.text("p-1"), .after_text = builder.text("甲") };
+    const second = wire.ProposalRow{ .id = builder.text("p-2"), .after_text = builder.text("乙") };
+    const proposal_rows = builder.rows(wire.ProposalRow, &.{ first, second });
+    const listing = projectResponse(&buffer, builder.finish(.proposals, .{ .proposals = proposal_rows }));
     try h.answer(.dispatch, listing);
     h.model().roster_cursor = 1;
 
@@ -2007,20 +2066,30 @@ test "编排快照：有在飞就挂下一跳，没有就停" {
     defer h.destroy();
     try h.model().root_id.set("r-1");
 
+    var idle_wire: [4096]u8 = undefined;
     var idle_buffer: [4096]u8 = undefined;
-    const idle = projectResponse(&idle_buffer,
-        \\{"kind":"host","value":{"runs":[{"id":"a","progress":{"kind":"completed"}}]}}
-    );
+    var idle_builder = WireBuilder.init(&idle_wire, .host);
+    const idle_run = wire.RunRow{ .id = idle_builder.text("a"), .progress = .completed };
+    const idle_rows = idle_builder.rows(wire.RunRow, &.{idle_run});
+    const idle = projectResponse(&idle_buffer, idle_builder.finish(.host, .{
+        .runs = idle_rows,
+        .run_total = 1,
+    }));
     try h.answer(.dispatch, idle);
     try testing.expectEqual(@as(u32, 1), h.model().roster_count);
     // 没有在飞：轮询自己停下，被拒的一跳也不发请求。
     try h.dispatch(.{ .runs_tick = .{ .key = timer_key.runs_tick, .outcome = .rejected } });
     try testing.expect(h.parkedPayload() == null);
 
+    var busy_wire: [4096]u8 = undefined;
     var busy_buffer: [4096]u8 = undefined;
-    const busy = projectResponse(&busy_buffer,
-        \\{"kind":"host","value":{"runs":[{"id":"a","progress":{"kind":"dispatched"}}]}}
-    );
+    var busy_builder = WireBuilder.init(&busy_wire, .host);
+    const busy_run = wire.RunRow{ .id = busy_builder.text("a"), .progress = .dispatched };
+    const busy_rows = busy_builder.rows(wire.RunRow, &.{busy_run});
+    const busy = projectResponse(&busy_buffer, busy_builder.finish(.host, .{
+        .runs = busy_rows,
+        .run_total = 1,
+    }));
     try h.answer(.dispatch, busy);
     try h.dispatch(.{ .runs_tick = .{ .key = timer_key.runs_tick, .outcome = .fired } });
     try testing.expectEqualStrings(
@@ -2034,10 +2103,10 @@ test "合并落盘之后名录必须重读，否则台上停着一排判过的�
     defer h.destroy();
     try h.model().root_id.set("r-1");
     _ = h.model().document.path.setTruncated("章一.md");
+    var wire_buffer: [4096]u8 = undefined;
     var buffer: [4096]u8 = undefined;
-    const decided = projectResponse(&buffer,
-        \\{"kind":"decided","value":{"committed":2}}
-    );
+    var builder = WireBuilder.init(&wire_buffer, .decided);
+    const decided = projectResponse(&buffer, builder.finish(.decided, .{ .state = .durable }));
     try h.answer(.dispatch, decided);
     try testing.expectEqualStrings(
         "{\"kind\":\"readProposals\",\"value\":{\"rootId\":\"r-1\",\"path\":\"章一.md\"}}",

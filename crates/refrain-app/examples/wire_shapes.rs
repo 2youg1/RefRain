@@ -662,60 +662,25 @@ fn main() {
         eprintln!("      serde wants {actual}");
     }
 
-    // ---- the reply direction -------------------------------------------
+    // ---- the reply direction is no longer serde's ------------------------
     //
-    // The request half above has always been checked. The reply half was not,
-    // and the cost was concrete: the surface read `"documentCount"` out of
-    // every catalogue answer, `ProjectOpened` never emitted a field by that
-    // name, so the count was always zero and the file tree drew zero rows —
-    // an author who adopted a project saw nothing. Nothing failed; the screen
-    // was simply empty.
+    // Unit 11 replaced the opaque JSON reply with typed rows: Rust fills the
+    // shapes generated from `protocol/host.json` and the surface reads the same
+    // shapes, so a reply field name is not a string on either side any more.
+    // The defect this half used to guard — the surface reading `"documentCount"`
+    // out of a catalogue answer that never emitted it, so the file tree drew
+    // zero rows in silence — cannot be written now: `OpenedHead` has no such
+    // member, and asking for one does not compile.
     //
-    // The two catalogue answers are checked together because they state the
-    // same two facts and the surface reads both with one pair of names. When
-    // they drift, every page after an adopt silently loses its total and its
-    // cursor.
-    let opened = ProjectOutput::Opened(ProjectOpened {
-        root_id: "r1".into(),
-        backup: BackupStatus::AlreadyPresent,
-        documents: Vec::new(),
-        document_total: 7,
-        document_cursor: Some("章一.md".into()),
-        opened_path: None,
-    });
-    let page = ProjectOutput::Page(ProjectPage {
-        documents: Vec::new(),
-        document_total: 7,
-        document_cursor: Some("章一.md".into()),
-    });
-    for (what, output, expected) in [
-        (
-            "opened",
-            opened,
-            r#"{"kind":"opened","value":{"rootId":"r1","backup":{"kind":"alreadyPresent"},"documents":[],"documentTotal":7,"documentCursor":"章一.md","openedPath":null}}"#,
-        ),
-        (
-            "page",
-            page,
-            r#"{"kind":"page","value":{"documents":[],"documentTotal":7,"documentCursor":"章一.md"}}"#,
-        ),
-    ] {
-        let actual = serde_json::to_string(&output).expect("the catalogue reply serialises");
-        checked += 1;
-        if actual != expected {
-            failed += 1;
-            eprintln!("FAIL  verify:wire-shapes: the {what} reply does not match");
-            eprintln!("      the surface reads {expected}");
-            eprintln!("      serde writes      {actual}");
-        }
-    }
-
+    // What still needs guarding lives above: the **request** direction is still
+    // JSON (`project_request.zig` writes it, serde parses it), and serde's
+    // spelling rules there are not uniform. That half stays.
     if failed > 0 {
         eprintln!("      update apps/native/src/project_request.zig to match serde");
         std::process::exit(1);
     }
     println!(
-        "PASS  verify:wire-shapes  ({} project inputs and catalogue replies match serde byte for byte)",
+        "PASS  verify:wire-shapes  ({} project inputs match serde byte for byte)",
         checked
     );
 }

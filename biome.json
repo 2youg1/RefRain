@@ -12,7 +12,8 @@
       "!**/.tmp",
       "!legacy",
       "!tests/corpora",
-      "!probe-results"
+      "!probe-results",
+      "!e2e/ime/results"
     ]
   },
   "formatter": {

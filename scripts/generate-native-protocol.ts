@@ -41,6 +41,25 @@ interface ProtocolSchema {
   readonly inputs: readonly ProtocolCode[];
   readonly caretDirections: readonly ProtocolCode[];
   readonly errors: readonly ProtocolError[];
+
+  /** Closed value sets that cross as one byte instead of a word. */
+  readonly enums: ReplyEnums;
+  /** Fixed-size row shapes a reply's lists are made of. */
+  readonly rows: ReplyStructs;
+  /** One head shape per `ProjectOutput` variant, keyed by its serde tag. */
+  readonly replies: ReplyStructs;
+}
+
+/** `[fieldName, type]`; type is `str`, `u32`, `bool`, `rows:<Row>`, or an enum name. */
+type ReplyField = readonly [string, string];
+type ReplyStructs = Readonly<Record<string, readonly ReplyField[]>>;
+type ReplyEnums = Readonly<Record<string, readonly string[]>>;
+
+/** One laid-out member: the generator owns the offsets, both sides read them. */
+interface Member {
+  readonly name: string;
+  readonly type: string;
+  readonly bytes: number;
 }
 
 const scalarBytes = 8;
@@ -101,6 +120,14 @@ const outputs: readonly Output[] = [
     path: resolve(root, "apps/native/src/generated/protocol.ts"),
     content: renderTypeScript(schema, fingerprint),
   },
+  {
+    path: resolve(root, "apps/native/src/generated/wire.zig"),
+    content: renderWireZig(schema, fingerprint),
+  },
+  {
+    path: resolve(root, "apps/native/host/src/wire.rs"),
+    content: renderWireRust(schema, fingerprint),
+  },
 ];
 
 const check = process.argv.includes("--check");
@@ -142,6 +169,9 @@ function protocolSchema(value: unknown): ProtocolSchema {
     inputs: codes(value.inputs, "inputs"),
     caretDirections: codes(value.caretDirections, "caretDirections"),
     errors: codes(value.errors, "errors"),
+    enums: replyEnums(value.enums),
+    rows: replyStructs(value.rows, "rows"),
+    replies: replyStructs(value.replies, "replies"),
   };
   if (result.magic.length !== 4) throw new Error("native protocol magic must be four ASCII bytes");
   return result;
@@ -892,6 +922,600 @@ function readU32(bytes: Uint8Array, offset: number): number {
     byte(bytes, offset + 2) * 65536 +
     byte(bytes, offset + 3) * 16777216
   );
+}
+`;
+}
+
+// ---------------------------------------------------------------- reply wire
+
+/**
+ * 一条答复的线上形状：定长 head + 定长行 + 尾部字节。
+ *
+ * **为什么由这里排布，而不是让两侧各自声明。** `#[repr(C)]` 与 `extern struct`
+ * 都跟随同一套 C 规则，所以只要成员序列相同，两边的偏移就相同——难点从来不是
+ * 规则，是「两处声明会各自漂开」。生成器把四字节成员排在前、单字节成员排在后、
+ * 末尾补到四的倍数，因此**中间不存在隐式 padding**：偏移只由 `host.json` 那张表
+ * 决定，改一处两侧一起变。
+ *
+ * 字符串与名录不进结构体：`Str` 与 `Rows` 都是 `{off,len}`，指向同一段缓冲里
+ * 别处的字节。借用因此是免费的，Zig 侧读一列一千行不会先建一份一千行的中间表。
+ */
+function layout(fields: readonly ReplyField[], enums: ReplyEnums): readonly Member[] {
+  const sized = fields.map(
+    ([name, type]): Member => ({ name, type, bytes: memberBytes(type, enums) }),
+  );
+  const wide = sized.filter((member) => member.bytes >= 4);
+  const narrow = sized.filter((member) => member.bytes < 4);
+  const used = wide.reduce((total, member) => total + member.bytes, 0) + narrow.length;
+  const padding = (4 - (used % 4)) % 4;
+  return padding === 0
+    ? [...wide, ...narrow]
+    : [...wide, ...narrow, { name: "_pad", type: `pad:${padding}`, bytes: padding }];
+}
+
+function memberBytes(type: string, enums: ReplyEnums): number {
+  if (type === "str" || type.startsWith("rows:")) return 8;
+  if (type === "u32") return 4;
+  if (type === "bool") return 1;
+  if (type in enums) return 1;
+  throw new Error(`reply member type ${type} is not str, u32, bool, rows:<Row> or an enum`);
+}
+
+function structBytes(members: readonly Member[]): number {
+  return members.reduce((total, member) => total + member.bytes, 0);
+}
+
+function replyEnums(value: unknown): ReplyEnums {
+  if (!isRecord(value)) throw new Error("native protocol schema must declare enums");
+  const parsed: Record<string, readonly string[]> = {};
+  for (const [name, members] of Object.entries(value)) {
+    if (!Array.isArray(members) || members.length === 0) {
+      throw new Error(`enum ${name} must list at least one member`);
+    }
+    if (members.length > 256) throw new Error(`enum ${name} does not fit in one byte`);
+    parsed[name] = members.map((member: unknown) => string(member, `enum ${name} member`));
+  }
+  return parsed;
+}
+
+function replyStructs(value: unknown, label: string): ReplyStructs {
+  if (!isRecord(value)) throw new Error(`native protocol schema must declare ${label}`);
+  const parsed: Record<string, readonly ReplyField[]> = {};
+  for (const [name, fields] of Object.entries(value)) {
+    if (!Array.isArray(fields)) throw new Error(`${label}.${name} must be an array of members`);
+    parsed[name] = fields.map((field: unknown) => {
+      if (!Array.isArray(field) || field.length !== 2) {
+        throw new Error(`${label}.${name} members are [name, type] pairs`);
+      }
+      return [
+        string(field[0], `${label}.${name} member name`),
+        string(field[1], `${label}.${name} member type`),
+      ] as const;
+    });
+  }
+  return parsed;
+}
+
+function pascal(name: string): string {
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+function zigMemberType(type: string): string {
+  if (type === "str") return "Str";
+  if (type.startsWith("rows:")) return "Rows";
+  if (type.startsWith("pad:")) return `[${type.slice("pad:".length)}]u8`;
+  return type;
+}
+
+function rustMemberType(type: string): string {
+  if (type === "str") return "Str";
+  if (type.startsWith("rows:")) return "Rows";
+  if (type.startsWith("pad:")) return `[u8; ${type.slice("pad:".length)}]`;
+  return type;
+}
+
+/** Every kind gets a code; 0 stays free so an unwritten buffer reads as "none". */
+function replyKinds(schema: ProtocolSchema): readonly ProtocolCode[] {
+  return Object.keys(schema.replies).map((name, index) => ({ name, code: index + 1 }));
+}
+
+function zigDefault(type: string): string {
+  if (type === "str" || type.startsWith("rows:")) return ".{}";
+  if (type === "u32") return "0";
+  if (type === "bool") return "false";
+  return "@enumFromInt(0)";
+}
+
+function zigStruct(name: string, members: readonly Member[]): string {
+  const body = members
+    .map((member) =>
+      member.type.startsWith("pad:")
+        ? `    _pad: ${zigMemberType(member.type)} = @splat(0),`
+        : `    ${snake(member.name)}: ${zigMemberType(member.type)} = ${zigDefault(member.type)},`,
+    )
+    .join("\n");
+  const size = structBytes(members);
+  return `pub const ${name} = extern struct {
+${body === "" ? "    unused: u32 = 0," : body}
+
+    comptime {
+        std.debug.assert(@sizeOf(${name}) == ${size === 0 ? 4 : size});
+    }
+};`;
+}
+
+function renderWireZig(schema: ProtocolSchema, hash: string): string {
+  const enums = Object.entries(schema.enums)
+    .map(
+      ([name, members]) =>
+        `pub const ${name} = enum(u8) { ${members
+          .map((member, index) => `${snake(member)} = ${index}`)
+          .join(", ")} };`,
+    )
+    .join("\n");
+  const rows = Object.entries(schema.rows)
+    .map(([name, fields]) => zigStruct(name, layout(fields, schema.enums)))
+    .join("\n\n");
+  const heads = Object.entries(schema.replies)
+    .map(([name, fields]) => zigStruct(`${pascal(name)}Head`, layout(fields, schema.enums)))
+    .join("\n\n");
+  const kinds = replyKinds(schema)
+    .map((kind) => `${snake(kind.name)} = ${kind.code}`)
+    .join(", ");
+  const headFor = Object.keys(schema.replies)
+    .map((name) => `        .${snake(name)} => ${pascal(name)}Head,`)
+    .join("\n");
+  return `// @generated by scripts/generate-native-protocol.ts; do not edit.
+//! 项目答复的线上形状。Rust 按同一张表填，这里按同一张表读，两边都不解析。
+//!
+//! 偏移由生成器排布（四字节成员在前、单字节在后、末尾补齐），所以这里的
+//! \`extern struct\` 与 Rust 那侧的手写序列化逐字节相同。\`Str\` 与 \`Rows\` 是
+//! {off,len}，指向同一段缓冲里别处的字节——借用因此是免费的。
+//!
+//! 读不出来的一律交出空视图而不是猜一个：一份读错的名录比一份空名录危险得多。
+const std = @import("std");
+
+pub const magic: u32 = 0x5257_4652;
+pub const protocol_fingerprint = "${hash}";
+
+/// 一段字节：偏移与长度都相对整段缓冲。
+pub const Str = extern struct { off: u32 = 0, len: u32 = 0 };
+
+/// 一列定长行：偏移相对整段缓冲，\`len\` 是行数而不是字节数。
+pub const Rows = extern struct { off: u32 = 0, len: u32 = 0 };
+
+pub const Header = extern struct {
+    magic: u32 = 0,
+    kind: u32 = 0,
+    /// 整段缓冲的字节数。越界检查按它做，不按调用方递来的切片长度。
+    bytes: u32 = 0,
+    reserved: u32 = 0,
+};
+
+/// 答复的种类。0 空出来：没落过槽的缓冲读成 \`.none\`，而不是第一种答复的空形态。
+pub const Kind = enum(u32) { none = 0, ${kinds}, _ };
+
+${enums}
+
+${rows}
+
+${heads}
+
+/// 一段落好槽的答复。
+///
+/// 每一次取值都对着 \`Header.bytes\` 验界：线上字节可能被截断或写坏，而一个越界的
+/// \`Str\` 会让界面读到相邻答复的内容——那比一片空白危险得多。
+pub const Reply = struct {
+    bytes: []align(4) const u8,
+
+    pub const empty = Reply{ .bytes = &[_]u8{} };
+
+    fn header(self: Reply) ?*const Header {
+        if (self.bytes.len < @sizeOf(Header)) return null;
+        const stated: *const Header = @ptrCast(self.bytes.ptr);
+        if (stated.magic != magic) return null;
+        if (stated.bytes > self.bytes.len) return null;
+        return stated;
+    }
+
+    pub fn kind(self: Reply) Kind {
+        const stated = self.header() orelse return .none;
+        return @enumFromInt(stated.kind);
+    }
+
+    fn span(self: Reply, off: u32, len: u32) ?[]const u8 {
+        const stated = self.header() orelse return null;
+        if (@as(u64, off) + @as(u64, len) > stated.bytes) return null;
+        return self.bytes[off..][0..len];
+    }
+
+    /// 一段文本。越界或没填过都是空——空文本与读不出在界面上同形。
+    pub fn text(self: Reply, value: Str) []const u8 {
+        return self.span(value.off, value.len) orelse "";
+    }
+
+    /// 这条答复的头。种类对不上就是 null，调用方据此保留当前状态。
+    pub fn head(self: Reply, comptime want: Kind) ?*const headType(want) {
+        if (self.kind() != want) return null;
+        const Head = headType(want);
+        if (self.bytes.len < @sizeOf(Header) + @sizeOf(Head)) return null;
+        return @ptrCast(@alignCast(self.bytes.ptr + @sizeOf(Header)));
+    }
+
+    /// 一列行。对不齐或越界都交出空列，不交半行。
+    pub fn rows(self: Reply, comptime Row: type, value: Rows) []const Row {
+        if (value.off % @alignOf(Row) != 0) return &[_]Row{};
+        const wanted = @as(u64, value.len) * @sizeOf(Row);
+        if (wanted > std.math.maxInt(u32)) return &[_]Row{};
+        const bytes = self.span(value.off, @intCast(wanted)) orelse return &[_]Row{};
+        const aligned: []align(@alignOf(Row)) const u8 = @alignCast(bytes);
+        return std.mem.bytesAsSlice(Row, aligned);
+    }
+
+    /// 第 index 行。越界是 null，不是最后一行——把「没有那么多行」读成末行，
+    /// 会让一次裁决落在别人身上。
+    pub fn row(self: Reply, comptime Row: type, value: Rows, index: usize) ?Row {
+        const list = self.rows(Row, value);
+        return if (index < list.len) list[index] else null;
+    }
+};
+
+/// 一段**还没落槽**的线上字节自称的种类。
+///
+/// 收包缓冲不保证四字节对齐，所以这里逐字节读头，而不是 \`@alignCast\` 一个
+/// 指针——那一句在真实的收包缓冲上会 panic，而它只在测试夹具里恰好对齐。
+/// 落槽之后的读法走 \`Reply\`（模块缓冲声明成 \`align(4)\`）。
+pub fn kindOf(bytes: []const u8) Kind {
+    if (bytes.len < @sizeOf(Header)) return .none;
+    if (std.mem.readInt(u32, bytes[0..4], .little) != magic) return .none;
+    return @enumFromInt(std.mem.readInt(u32, bytes[4..8], .little));
+}
+
+/// 种类到头类型。新增一种答复而忘了给它一个头，是编译错误。
+pub fn headType(comptime want: Kind) type {
+    return switch (want) {
+${headFor}
+        else => @compileError("this reply kind has no head"),
+    };
+}
+`;
+}
+
+function rustStruct(name: string, members: readonly Member[]): string {
+  const declared = members.filter((member) => !member.type.startsWith("pad:"));
+  const fields = declared
+    .map((member) => `    pub ${snake(member.name)}: ${rustMemberType(member.type)},`)
+    .join("\n");
+  const writes = members
+    .map((member) => {
+      if (member.type.startsWith("pad:")) {
+        return `        out.extend_from_slice(&[0u8; ${member.bytes}]);`;
+      }
+      if (member.type === "str") return `        push_str_field(out, self.${snake(member.name)});`;
+      if (member.type.startsWith("rows:")) {
+        return `        push_rows_field(out, self.${snake(member.name)});`;
+      }
+      if (member.type === "u32") return `        push_u32(out, self.${snake(member.name)});`;
+      if (member.type === "bool") {
+        return `        out.push(u8::from(self.${snake(member.name)}));`;
+      }
+      return `        out.push(self.${snake(member.name)} as u8);`;
+    })
+    .join("\n");
+  // The reader walks the same member order the writer wrote, so a member added
+  // to the schema moves both halves at once. Anything short or malformed reads
+  // as None: a misread row is worse than an absent one.
+  let cursor = 0;
+  const reads = members
+    .filter((member) => !member.type.startsWith("pad:"))
+    .map((member) => {
+      const at = cursor;
+      cursor += member.bytes;
+      const field = snake(member.name);
+      if (member.type === "str") return `            ${field}: read_str(bytes, ${at})?,`;
+      if (member.type.startsWith("rows:")) return `            ${field}: read_rows(bytes, ${at})?,`;
+      if (member.type === "u32") return `            ${field}: read_u32(bytes, ${at})?,`;
+      if (member.type === "bool") return `            ${field}: read_u8(bytes, ${at})? != 0,`;
+      return `            ${field}: ${member.type}::from_code(read_u8(bytes, ${at})?),`;
+    })
+    .join("\n");
+  const size = structBytes(members);
+  return `#[derive(Debug, Clone, Copy, Default)]
+pub struct ${name} {
+${fields === "" ? "    pub unused: u32," : fields}
+}
+
+impl WireRow for ${name} {
+    const BYTES: usize = ${size === 0 ? 4 : size};
+
+    fn write(&self, out: &mut Vec<u8>) {
+${writes === "" ? "        push_u32(out, self.unused);" : writes}
+    }
+
+    fn read(bytes: &[u8]) -> Option<Self> {
+        Some(Self {
+${reads === "" ? "            unused: read_u32(bytes, 0)?," : reads}
+        })
+    }
+}`;
+}
+
+function renderWireRust(schema: ProtocolSchema, hash: string): string {
+  const enums = Object.entries(schema.enums)
+    .map(([name, members]) => {
+      const variants = members
+        .map((member, index) =>
+          index === 0
+            ? `    #[default]\n    ${pascal(member)} = ${index},`
+            : `    ${pascal(member)} = ${index},`,
+        )
+        .join("\n");
+      const arms = members
+        .map((member, index) => `            ${index} => Self::${pascal(member)},`)
+        .join("\n");
+      return `#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum ${name} {
+${variants}
+}
+
+impl ${name} {
+    /// 认不出的码落到第一个变体（各表的第一个都是「未知」或「默认」）——
+    /// 一个读不懂的值被当成某个已知值，比说不出来危险得多。
+    #[must_use]
+    pub fn from_code(code: u8) -> Self {
+        match code {
+${arms}
+            _ => Self::default(),
+        }
+    }
+}`;
+    })
+    .join("\n\n");
+  const rows = Object.entries(schema.rows)
+    .map(([name, fields]) => rustStruct(name, layout(fields, schema.enums)))
+    .join("\n\n");
+  const heads = Object.entries(schema.replies)
+    .map(([name, fields]) => rustStruct(`${pascal(name)}Head`, layout(fields, schema.enums)))
+    .join("\n\n");
+  const kinds = replyKinds(schema)
+    .map((kind) => `    ${pascal(kind.name)} = ${kind.code},`)
+    .join("\n");
+  return `// @generated by scripts/generate-native-protocol.ts; do not edit.
+//! 项目答复的线上形状，Rust 这一侧。
+//!
+//! 每个成员自己把小端字节推进缓冲，所以这里**不需要 \`unsafe\`，也不需要
+//! \`repr(C)\`**：字节顺序由 \`protocol/host.json\` 那张表决定，而 Zig 侧的
+//! \`extern struct\` 由同一张表排布——两者一起改，或者一起不改。
+#![allow(
+    dead_code,
+    reason = "generated: not every reply shape has a reader yet"
+)]
+
+pub const MAGIC: u32 = 0x5257_4652;
+pub const PROTOCOL_FINGERPRINT: &str =
+    "${hash}";
+pub const HEADER_BYTES: usize = 16;
+
+/// 一段字节在缓冲里的位置。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Str {
+    pub off: u32,
+    pub len: u32,
+}
+
+/// 一列定长行在缓冲里的位置。\`len\` 是行数，不是字节数。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Rows {
+    pub off: u32,
+    pub len: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum Kind {
+${kinds}
+}
+
+${enums}
+
+${rows}
+
+${heads}
+
+/// 一条答复的缓冲。
+///
+/// 头留在最前面，行与字节追加在它后面，最后头被填回去——所以 \`Rows\` 与 \`Str\`
+/// 的偏移在写下它们的那一刻就已经是最终值，不需要第二遍修补。
+pub struct Writer {
+    buf: Vec<u8>,
+    kind: Kind,
+}
+
+impl Writer {
+    pub fn new(kind: Kind, head_bytes: usize) -> Self {
+        let mut buf = vec![0u8; HEADER_BYTES];
+        buf.resize(HEADER_BYTES.saturating_add(head_bytes), 0);
+        Self { buf, kind }
+    }
+
+    /// 追加一段文本。空文本不占缓冲——一个 {0,0} 的 \`Str\` 读出来就是空。
+    pub fn text(&mut self, value: &str) -> Str {
+        if value.is_empty() {
+            return Str::default();
+        }
+        let off = u32::try_from(self.buf.len()).unwrap_or(0);
+        let len = u32::try_from(value.len()).unwrap_or(0);
+        if off == 0 || len == 0 {
+            return Str::default();
+        }
+        self.buf.extend_from_slice(value.as_bytes());
+        Str { off, len }
+    }
+
+    /// 追加一列行，先对齐到四字节——Zig 侧按对齐取切片，对不齐整列作废。
+    pub fn rows<T: WireRow>(&mut self, rows: &[T]) -> Rows {
+        while !self.buf.len().is_multiple_of(4) {
+            self.buf.push(0);
+        }
+        let off = u32::try_from(self.buf.len()).unwrap_or(0);
+        let len = u32::try_from(rows.len()).unwrap_or(0);
+        if off == 0 {
+            return Rows::default();
+        }
+        for row in rows {
+            row.write(&mut self.buf);
+        }
+        Rows { off, len }
+    }
+
+    /// 填回头并交出整段缓冲。
+    pub fn finish<H: WireRow>(mut self, head: &H) -> Vec<u8> {
+        let mut encoded = Vec::with_capacity(H::BYTES);
+        head.write(&mut encoded);
+        let end = HEADER_BYTES.saturating_add(encoded.len());
+        if let Some(slot) = self.buf.get_mut(HEADER_BYTES..end) {
+            slot.copy_from_slice(&encoded);
+        }
+        let total = u32::try_from(self.buf.len()).unwrap_or(0);
+        let mut header = Vec::with_capacity(HEADER_BYTES);
+        push_u32(&mut header, MAGIC);
+        push_u32(&mut header, self.kind as u32);
+        push_u32(&mut header, total);
+        push_u32(&mut header, 0);
+        if let Some(slot) = self.buf.get_mut(0..HEADER_BYTES) {
+            slot.copy_from_slice(&header);
+        }
+        self.buf
+    }
+}
+
+/// 一个能把自己写成线上字节、也能从线上字节读回来的形状。
+///
+/// 读回来这一半是给**这一侧自己的测试**用的：把编码器的产物读回来断言，
+/// 比按字节偏移手抄一份期望值可靠——手抄的那份会在 schema 变动时静默漂开。
+pub trait WireRow: Sized {
+    const BYTES: usize;
+    fn write(&self, out: &mut Vec<u8>);
+    fn read(bytes: &[u8]) -> Option<Self>;
+}
+
+/// 一段线上答复的读法，与 Zig 的 \`wire.Reply\` 同规。
+#[derive(Debug, Clone, Copy)]
+pub struct Reply<'a> {
+    bytes: &'a [u8],
+}
+
+impl<'a> Reply<'a> {
+    pub fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes }
+    }
+
+    fn stated_len(&self) -> Option<usize> {
+        if read_u32(self.bytes, 0)? != MAGIC {
+            return None;
+        }
+        let stated = usize::try_from(read_u32(self.bytes, 8)?).ok()?;
+        (stated <= self.bytes.len()).then_some(stated)
+    }
+
+    /// 这条答复自称的种类码。读不出就是 0。
+    #[must_use]
+    pub fn kind_code(&self) -> u32 {
+        self.stated_len()
+            .and_then(|_| read_u32(self.bytes, 4))
+            .unwrap_or(0)
+    }
+
+    /// 这条答复的头。
+    #[must_use]
+    pub fn head<H: WireRow>(&self) -> Option<H> {
+        let end = HEADER_BYTES.checked_add(H::BYTES)?;
+        (end <= self.stated_len()?).then_some(())?;
+        H::read(self.bytes.get(HEADER_BYTES..end)?)
+    }
+
+    /// 一段文本。越界交出空，不交相邻答复的内容。
+    #[must_use]
+    pub fn text(&self, value: Str) -> &'a str {
+        let start = usize::try_from(value.off).unwrap_or(0);
+        let end = start.saturating_add(usize::try_from(value.len).unwrap_or(0));
+        match self.stated_len() {
+            Some(stated) if end <= stated => self
+                .bytes
+                .get(start..end)
+                .and_then(|raw| std::str::from_utf8(raw).ok()),
+            _ => None,
+        }
+        .unwrap_or_default()
+    }
+
+    /// 一列行。对不齐或越界都交出空列，不交半行。
+    #[must_use]
+    pub fn rows<R: WireRow>(&self, value: Rows) -> Vec<R> {
+        let start = usize::try_from(value.off).unwrap_or(0);
+        let count = usize::try_from(value.len).unwrap_or(0);
+        let Some(stated) = self.stated_len() else {
+            return Vec::new();
+        };
+        let mut out = Vec::with_capacity(count);
+        for index in 0..count {
+            let Some(at) = index
+                .checked_mul(R::BYTES)
+                .and_then(|off| start.checked_add(off))
+            else {
+                return out;
+            };
+            let Some(end) = at.checked_add(R::BYTES) else {
+                return out;
+            };
+            if end > stated {
+                return out;
+            }
+            match self.bytes.get(at..end).and_then(R::read) {
+                Some(row) => out.push(row),
+                None => return out,
+            }
+        }
+        out
+    }
+}
+
+fn read_u8(bytes: &[u8], at: usize) -> Option<u8> {
+    bytes.get(at).copied()
+}
+
+fn read_u32(bytes: &[u8], at: usize) -> Option<u32> {
+    let end = at.checked_add(4)?;
+    Some(u32::from_le_bytes(bytes.get(at..end)?.try_into().ok()?))
+}
+
+fn read_str(bytes: &[u8], at: usize) -> Option<Str> {
+    Some(Str {
+        off: read_u32(bytes, at)?,
+        len: read_u32(bytes, at.checked_add(4)?)?,
+    })
+}
+
+fn read_rows(bytes: &[u8], at: usize) -> Option<Rows> {
+    Some(Rows {
+        off: read_u32(bytes, at)?,
+        len: read_u32(bytes, at.checked_add(4)?)?,
+    })
+}
+
+fn push_u32(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_str_field(out: &mut Vec<u8>, value: Str) {
+    push_u32(out, value.off);
+    push_u32(out, value.len);
+}
+
+fn push_rows_field(out: &mut Vec<u8>, value: Rows) {
+    push_u32(out, value.off);
+    push_u32(out, value.len);
 }
 `;
 }
