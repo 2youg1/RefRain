@@ -57,6 +57,7 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["verify:native-document-performance", ["bun", "scripts/run-native-document-performance.ts"]],
   ["verify:docs-current", ["bun", "scripts/verify-docs-current.ts"]],
   ["verify:themes-current", ["bun", "scripts/verify-themes-current.ts"]],
+  ["verify:font-coverage", ["bun", "scripts/verify-font-coverage.ts"]],
   ["verify:command-space", ["bun", "scripts/verify-command-space.ts"]],
   ["verify:wire-shapes", ["bun", "scripts/verify-wire-shapes.ts"]],
   ["verify:native-theme-pixels", ["bun", "scripts/verify-native-theme-pixels.ts"]],

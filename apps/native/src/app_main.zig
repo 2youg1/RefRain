@@ -310,11 +310,11 @@ pub fn main(init: std.process.Init) !void {
         .fonts = &.{
             .{
                 .id = manuscript_font_id,
-                // 名字必须与 `build.zig` 真正嵌进来的那份字节一致：这里曾写
-                // 「Variable」而嵌的是 8,127 码位的子集，于是「界面字体已经
-                // 内嵌」读起来像「什么字都画得出」——濤（默认主题自己的名字）、
-                // 侘与减号 U+2212 都不在子集里，画成豆腐块（M14）。
-                .name = "NotoSansSC-Subset.ttf",
+                // 这个名字必须与 `build.zig` 嵌入的字节相同。
+                // 界面的每一个字都由这一副字面画（`typography.font_id`），
+                // 而 SDK 不做逐码位跨字面回落：缺一个码位就画一个方块。
+                // `verify:font-coverage` 逐字对这副字面的 cmap 验界面词表。
+                .name = "NotoSansSC-Variable.ttf",
                 .ttf = manuscript_font_bytes,
             },
             .{
@@ -2572,10 +2572,12 @@ fn deskBlockList(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             .key = .{ .index = count },
             // 勾选态用前缀字符而不是 SDK 的 checkbox 部件：它不画标签，
             // 用了行会变成「框一个命中、字一个命中」两个目标。
+            // 字取 ■/□ 而不是 ☑/☐：后者不在界面字面里，画出来是方块，
+            // 而方块恰好长得像个空框——`verify:font-coverage` 抓到的第二处。
             .on_press = .{ .dispatch_block_toggle = @intCast(block.ordinal) },
             .semantics = .{ .label = "勾选或取消这一块" },
         }, ui.fmt("{s}b{d} · {s} · {d} 字", .{
-            if (checked) "☑ " else "☐ ",
+            if (checked) "■ " else "□ ",
             block.ordinal + 1,
             block.peek,
             block.chars,
@@ -2653,7 +2655,7 @@ fn deskMaterials(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             .on_press = .{ .dispatch_material_toggle = material.path },
             .semantics = .{ .label = "勾选或取消这份资料" },
         }, ui.fmt("{s}{s} · {s}", .{
-            if (checked) "☑ " else "☐ ",
+            if (checked) "■ " else "□ ",
             material.path,
             material.disclosure_label,
         }));

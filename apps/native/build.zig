@@ -14,13 +14,13 @@ pub fn build(b: *std.Build) void {
     // 放在 assets 下会让打包以 `StreamTooLong` 失败；而且它已经在二进制里，
     // 再拷一份进安装包等于凭空多 17 MiB。分发许可 `assets/fonts/OFL.txt`
     // 仍随包走（OFL 要求许可与字面同行）。
-    const manuscript_font = b.path("fonts/NotoSansSC-Subset.ttf");
+    const manuscript_font = b.path("fonts/NotoSansSC-Variable.ttf");
     artifacts.exe.root_module.addAnonymousImport("manuscript_font", .{ .root_source_file = manuscript_font });
     artifacts.tests.root_module.addAnonymousImport("manuscript_font", .{ .root_source_file = manuscript_font });
     // 三槽的另外两张：Latin 用 Antic Didone，日文用 Zen Kaku Gothic New。
     // 嵌入即注册（app_main.zig 的 fonts 表），SDK 一个文本节点一张字面，
     // 逐字回退要 SDK 支持后才能在正稿上生效——目前它们是已注册的可用面。
-    const latin_font = b.path("fonts/AnticDidone-Regular.ttf");
+    const latin_font = b.path("fonts/NotoSansSC-Variable.ttf");
     const japanese_font = b.path("fonts/ZenKakuGothicNew-Regular.ttf");
     artifacts.exe.root_module.addAnonymousImport("latin_font", .{ .root_source_file = latin_font });
     artifacts.exe.root_module.addAnonymousImport("japanese_font", .{ .root_source_file = japanese_font });

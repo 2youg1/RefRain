@@ -36,6 +36,7 @@
     "verify:core-purity": "bun scripts/verify-core-purity.ts",
     "verify:native-theme-pixels": "bun scripts/verify-native-theme-pixels.ts",
     "verify:themes-current": "bun scripts/verify-themes-current.ts",
+    "verify:font-coverage": "bun scripts/verify-font-coverage.ts",
     "verify:unsafe-surface": "bun scripts/verify-unsafe-surface.ts",
     "verify:no-html-sink": "bun scripts/verify-no-html-sink.ts",
     "verify:trash-only": "bun scripts/verify-trash-only.ts",

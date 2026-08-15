@@ -64,7 +64,7 @@ const expectedExecutable = realpathSync(nativeExecutablePath(nativeDir));
 // The face the binary actually embeds (`build.zig` maps `manuscript_font` to
 // it). The old path named a file that is not in the build and is not even on
 // disk, so the font evidence threw before it could prove anything.
-const manuscriptFontPath = join(nativeDir, "fonts/NotoSansSC-Subset.ttf");
+const manuscriptFontPath = join(nativeDir, "fonts/NotoSansSC-Variable.ttf");
 let publisherPid = 0;
 
 interface CommandResult {
