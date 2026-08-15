@@ -135,6 +135,17 @@ fn linkRustRuntime(module: *std.Build.Module) void {
         // gate run and on no other platform, and nobody saw it, because the
         // author's machine is Windows and the runner could not report why.
         .macos => {
+            // Zig refuses any macOS dylib that is not libSystem with "unable to
+            // find dynamic system library ... searched paths: none": the pass
+            // carries the Xcode sysroot but registers no library directory, so
+            // there is nowhere to look. Name the SDK's own lib directory, which
+            // is where Apple keeps the `.tbd` stubs that `libobjc` resolves
+            // from. Without it the link ends in the whole Objective-C runtime
+            // surface being undefined.
+            const owner = module.owner;
+            if (owner.sysroot) |sysroot| {
+                module.addLibraryPath(.{ .cwd_relative = owner.fmt("{s}/usr/lib", .{sysroot}) });
+            }
             inline for ([_][]const u8{ "System", "m", "objc" }) |library| {
                 module.linkSystemLibrary(library, .{ .use_pkg_config = .no });
             }
