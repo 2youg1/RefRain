@@ -727,6 +727,19 @@ different engine than the product is not a tested lane.
 a defect that passes each test and fails only in a real window. The spike must
 end with a recorded journal that replays `--verify` green through a real window.
 
+**The largest unknown is answered.** The plan put one question before the work:
+does a Zig core have the seam that a journal records and replays for a host
+answer? It does, and it is the seam that RefRain already uses. The SDK records
+each effect result in the journal by kind, and `.host` is one of those kinds
+(`runtime/session_replay.zig`: a `.host` record feeds on replay unless its exit
+reason is `rejected`, which is the deterministic admission refusal that the
+replayed channel regenerates). `Effects.hostRequest` is the same keyed named
+host call that a transpiled core's `request` wire record rides today, and it is
+available to any core that takes the effects channel, thus a Zig `update` sends
+it and receives one `EffectHostResult` Msg. `host_bridge.zig` answers it with
+`feedHostResult` in both lanes. No second implementation and no double seam is
+needed for the replay feed.
+
 **What must not follow.** The domain does not move. `refrain-core`,
 `refrain-store`, `refrain-host`, and `refrain-app` stay in Rust. "Zig core"
 means the `Model`, `Msg`, and `update` of the shell only.
