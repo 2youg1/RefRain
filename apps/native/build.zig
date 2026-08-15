@@ -142,9 +142,11 @@ fn linkRustRuntime(module: *std.Build.Module) void {
             // is where Apple keeps the `.tbd` stubs that `libobjc` resolves
             // from. Without it the link ends in the whole Objective-C runtime
             // surface being undefined.
-            const owner = module.owner;
-            if (owner.sysroot) |sysroot| {
-                module.addLibraryPath(.{ .cwd_relative = owner.fmt("{s}/usr/lib", .{sysroot}) });
+            // The path is sysroot-relative: Zig prefixes the sysroot itself,
+            // so spelling it here produced `<sysroot>/<sysroot>/usr/lib` and a
+            // FileNotFound warning followed by the same unresolved `objc`.
+            if (module.owner.sysroot != null) {
+                module.addLibraryPath(.{ .cwd_relative = "/usr/lib" });
             }
             inline for ([_][]const u8{ "System", "m", "objc" }) |library| {
                 module.linkSystemLibrary(library, .{ .use_pkg_config = .no });
