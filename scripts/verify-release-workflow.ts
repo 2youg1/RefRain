@@ -92,10 +92,17 @@ requireLiteral(
   "pass only the portable ZIP to gh release create",
 );
 
+// The gate builds the platforms RefRain targets. macOS is not one of them: the
+// published artifact is Windows, no macOS build has ever succeeded, and while
+// this list demanded a macOS row the row was red on every run - which gated
+// every release, because `release.yml` requires a successful gate run on the
+// tagged commit. v0.3.0 and v0.3.1 were tagged and never published for exactly
+// that reason. macOS returns to this list when there is a machine to prove it
+// on, not before: a row that is red forever teaches nothing except to ignore
+// the colour.
 const gateRequirements: ReadonlyArray<readonly [string, string]> = [
   ["platform: linux", "define the Native Linux build"],
   ["platform: windows", "define the Native Windows build"],
-  ["platform: macos", "define the Native macOS build"],
   ["rustup target add x86_64-pc-windows-gnu", "match the Windows Cargo and Native SDK ABIs"],
   ["x86_64-w64-mingw32-dlltool.cmd", "expose Zig dlltool under Rust's prefixed name"],
   [

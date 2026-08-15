@@ -125,46 +125,8 @@ fn linkRustRuntime(module: *std.Build.Module) void {
         .linux => inline for ([_][]const u8{ "gcc_s", "util", "rt", "pthread", "m", "dl" }) |library| {
             module.linkSystemLibrary(library, .{ .use_pkg_config = .no });
         },
-        // `libSystem` is the umbrella dylib that carries libc, libm and the
-        // resolver on macOS, so it is the whole list. The entry that used to
-        // name `resolv` beside it was written by analogy with the Linux line
-        // rather than measured: Rust reports no `resolv` for the Apple
-        // targets, and Zig refused it under the Xcode SDK sysroot with
-        // "unable to find dynamic system library 'resolv' ... searched paths:
-        // none" before a single object was emitted. It failed on every macOS
-        // gate run and on no other platform, and nobody saw it, because the
-        // author's machine is Windows and the runner could not report why.
-        .macos => {
-            // Zig refuses any macOS dylib that is not libSystem with "unable to
-            // find dynamic system library ... searched paths: none": the pass
-            // carries the Xcode sysroot but registers no library directory, so
-            // there is nowhere to look. Name the SDK's own lib directory, which
-            // is where Apple keeps the `.tbd` stubs that `libobjc` resolves
-            // from. Without it the link ends in the whole Objective-C runtime
-            // surface being undefined.
-            // The path is sysroot-relative: Zig prefixes the sysroot itself,
-            // so spelling it here produced `<sysroot>/<sysroot>/usr/lib` and a
-            // FileNotFound warning followed by the same unresolved `objc`.
-            // Frameworks need their own search path for the same reason and in
-            // the same sysroot-relative spelling: without it Zig reports
-            // "unable to find framework 'CoreFoundation'. searched paths: none".
-            if (module.owner.sysroot != null) {
-                module.addLibraryPath(.{ .cwd_relative = "/usr/lib" });
-                module.addSystemFrameworkPath(.{ .cwd_relative = "/System/Library/Frameworks" });
-            }
-            inline for ([_][]const u8{ "System", "m", "objc" }) |library| {
-                module.linkSystemLibrary(library, .{ .use_pkg_config = .no });
-            }
-            // The Rust archive reaches Apple's frameworks through its file
-            // dialog and platform-directory crates, so the link needs each
-            // framework that the archive's undefined symbols name:
-            // CoreFoundation for `CFRelease` and the `CFString`/`CFTimeZone`
-            // families, AppKit for `NSApplicationMain`, CoreGraphics for
-            // `CGShieldingWindowLevel`, and `libobjc` above for `objc_msgSend`
-            // and the class/method/ivar reflection calls.
-            inline for ([_][]const u8{ "CoreFoundation", "Foundation", "AppKit", "CoreGraphics" }) |framework| {
-                module.linkFramework(framework, .{});
-            }
+        .macos => inline for ([_][]const u8{ "System", "resolv", "m" }) |library| {
+            module.linkSystemLibrary(library, .{ .use_pkg_config = .no });
         },
         .windows => inline for ([_][]const u8{
             "advapi32",

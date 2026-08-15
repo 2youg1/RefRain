@@ -619,7 +619,7 @@ asks a machine for something the machine does not have, comes out.
 
 | Workflow | The question | When |
 |---|---|---|
-| `gate.yml` | Does this commit pass every blocking gate on Linux, Windows and macOS? | each push and each pull request |
+| `gate.yml` | Does this commit pass every blocking gate on Linux and Windows? | each push and each pull request |
 | `evidence.yml` | Does the data layer stay inside the budget that each platform states? | weekly, on request, and when a budget file changes |
 | `ime-gate.yml` | Does a real Windows input method reach the manuscript? | weekly and on request, while the lane is under construction (P7) |
 | `release.yml` | Does this tag point at a green commit, and does the archive read back? | a tag that starts with `v` |
@@ -632,7 +632,10 @@ Two rules hold this shape:
   the release workflow checked the version surfaces and the archive, and nothing
   asked whether the code passes.
 - **One reader for each fact.** `gate.yml` runs `bun test` and `bun run check:ts`
-  on three platforms, thus no other workflow repeats them.
+  on the two platforms that build, thus no other workflow repeats them. macOS is
+  not in the matrix: the published artifact is Windows, no macOS build has
+  succeeded, and a row that is red forever gated every release instead of
+  reporting anything. It returns when a machine can prove it.
 
 **A red gate can be the environment.** Before you call a red result a defect,
 run the same gate on the base commit with no local changes. The same failure

@@ -41,9 +41,17 @@ jobs:
           - platform: windows
             os: windows-latest
             binary: zig-out/bin/refrain.exe
-          - platform: macos
-            os: macos-latest
-            binary: zig-out/bin/refrain
+          # macOS is not a target. RefRain publishes a Windows artifact, and no
+          # macOS build has ever succeeded, so the row gated every release on a
+          # platform nobody builds for: `release.yml` requires a successful gate
+          # run on the tagged commit, one job red makes the run red, and v0.3.0
+          # and v0.3.1 were tagged and never published for that reason.
+          #
+          # The macOS support in `build.zig` and in the IME lane stays where it
+          # is, untouched and unclaimed. It gets judged when there is a machine
+          # to judge it on; a green row bought by guessing at another platform's
+          # linker is not evidence, and this gate's whole defect was colour
+          # without evidence behind it.
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
