@@ -145,8 +145,12 @@ fn linkRustRuntime(module: *std.Build.Module) void {
             // The path is sysroot-relative: Zig prefixes the sysroot itself,
             // so spelling it here produced `<sysroot>/<sysroot>/usr/lib` and a
             // FileNotFound warning followed by the same unresolved `objc`.
+            // Frameworks need their own search path for the same reason and in
+            // the same sysroot-relative spelling: without it Zig reports
+            // "unable to find framework 'CoreFoundation'. searched paths: none".
             if (module.owner.sysroot != null) {
                 module.addLibraryPath(.{ .cwd_relative = "/usr/lib" });
+                module.addSystemFrameworkPath(.{ .cwd_relative = "/System/Library/Frameworks" });
             }
             inline for ([_][]const u8{ "System", "m", "objc" }) |library| {
                 module.linkSystemLibrary(library, .{ .use_pkg_config = .no });
