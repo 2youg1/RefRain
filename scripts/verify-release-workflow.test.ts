@@ -61,7 +61,7 @@ describe("Native portable release workflows", () => {
     expect(release).toContain("release-assets/refrain-windows-x64.zip");
     expect(release).toContain("python3 -m zipfile -t");
     expect(gate).toContain("bun x native build . --yes -Dplatform=$" + "{{ matrix.platform }}");
-    expect(gate).toContain("bun run e2e:app");
+    expect(gate).toContain("bun run e2e:journals");
     expect(ime).toContain("-Shell native");
     expect(ime).toContain("apps/native/zig-out/bin/refrain.exe");
 

@@ -102,9 +102,7 @@ const gateRequirements: ReadonlyArray<readonly [string, string]> = [
     "bun x native build . --yes -Dplatform=$" + "{{ matrix.platform }}",
     "build the Native platform binary",
   ],
-  ["bun run e2e:app", "exercise Native writing automation"],
-  ["bun run e2e:review", "exercise Native review automation"],
-  ["bun run e2e:dispatch", "exercise Native dispatch automation"],
+  ["bun run e2e:journals", "replay one journal per destination through Native automation"],
   ["apps/native/$" + "{{ matrix.binary }}", "upload the Native Windows debug binary"],
 ];
 for (const [literal, meaning] of gateRequirements) {
@@ -193,22 +191,17 @@ requireLiteral(
 );
 
 const packageRequirements: ReadonlyArray<readonly [string, string]> = [
-  // 三条 journal 走 `--no-verify`：回放本身已验（三条都报
-  // `session replay verified: deterministic`），但逐帧的可访问性哈希比对
-  // 当前差在正稿 textbox 一个节点上——SDK 回放把主机结果直接喂给 core，
-  // 不经 host_bridge 的回调，而正稿住在 host_bridge 的模块变量里。
-  // 详见 e2e/native/README.md。投影搬进 core 模型后改回 `--verify`。
+  // 八条 journal（八去处各一条）的分档住在 `scripts/native-journals.ts` 的表里，
+  // 不在这里第二次声明：不开稿子的三条逐帧对指纹，开了稿子的五条走
+  // `--no-verify`，因为正稿住在 host_bridge 的模块变量里而回放把主机答复直接
+  // 喂给 core（M8）。详见 e2e/native/README.md。
   [
-    "bun x native automate replay ../../e2e/native/writing-slice.journal --no-verify",
-    "route writing E2E through Native automation",
+    '"e2e:journals": "bun scripts/replay-native-journals.ts"',
+    "route every destination's E2E through one replay lane",
   ],
   [
-    "bun x native automate replay ../../e2e/native/review-loop.journal --no-verify",
-    "route review E2E through Native automation",
-  ],
-  [
-    "bun x native automate replay ../../e2e/native/dispatch-loop.journal --no-verify",
-    "route dispatch E2E through Native automation",
+    '"e2e:record": "bun scripts/record-native-journals.ts"',
+    "keep the recording lane beside the replay lane",
   ],
   [
     "-Shell native -Binary apps/native/zig-out/bin/refrain.exe",

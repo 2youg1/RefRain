@@ -62,7 +62,8 @@ own unit and integration tests; a **link** is proven by a gate or a round-trip
 test across the seam; a **layer** is proven by a boundary gate
 (`verify:core-purity`, `verify:write-path`, `native check --strict`); a
 **function** is proven by a use-case test that walks it end to end
-(`tests/k3_full_flow.rs`, `tests/edge_end_to_end.rs`, the e2e journals).
+(`tests/k3_full_flow.rs`, `tests/edge_end_to_end.rs`, the eight e2e journals —
+one per destination).
 
 ### The stage rule
 
@@ -444,7 +445,7 @@ never does.
 | **W1 · command space** — `app.zon`/menus/markup → `commandMsg` → `Msg` → `update` | A command id becomes one `Msg`; keyboard and menu are the same path | A second dispatch table (the old frontend had two; they drifted) | `verify:command-space` |
 | **W2 · request path** — `update` → `Cmd.request` → `host_bridge` → the C ABI | ABI scalars + a bounded payload (≤ 12,000 bytes of event text) | JSON the core parsed itself (the subset has no parser); non-ASCII in rodata | protocol `--check`; NS9001 |
 | **W3 · response path** — Rust → `dispatch_ok` / `dispatch_err` → `update` | Revision, status, projection *metadata*; a pointer into Rust memory for the text | The manuscript as data — see below | `verify:bridge` |
-| **W4 · view read** — Zig reads the `Model` + `host_bridge.documentView()` | Indices and counts from the Model; the borrowed projection text from the bridge | Manuscript bytes inside the Model | the e2e journals; `verify:native-theme-pixels` |
+| **W4 · view read** — Zig reads the `Model` + `host_bridge.documentView()` | Indices and counts from the Model; the borrowed projection text from the bridge | Manuscript bytes inside the Model | the eight e2e journals, one per destination; `verify:native-theme-pixels` |
 | **W5 · project channel** — `project_request.zig` → `host/project.rs` → `Application::project` | One `ProjectInput` JSON in; one bounded `ProjectOutput` JSON out (overflow degraded by rule, not by cutting) | A second way to reach a use case; filesystem paths composed in the core; a reply field name the surface reads and no Rust type emits | `verify:wire-shapes`, both directions |
 | **W6 · document channel** — `host/document.rs` → `DocumentSurface` | `open` / `apply` / `project` against a session id; the projection lent back | A second document state machine | `verify:editor-kernel` |
 | **W7 · store access** — use cases → `ProjectStore` & friends | Rust calls, typed errors | SQL outside the store crate | `verify:write-path` |
@@ -478,7 +479,7 @@ it. A ◐ in the function matrix points here.
 | **M1–M5** | **Landed in v0.3.0.** KARA's event stream (produced where the facts happen, veil renderer), typography crossing into the projection (settings sliders included), material-draft resolution (`CommitMaterialDraft`, promote to chapter), the cross-document block jump (open-then-jump sequenced), anchored ranges in the projection (dots and the bento paint them) | — | — |
 | **M6** | **The un-landed screens: PDF reading, diagrams.** The facts exist (`block_shape::Table` knows a table's shape; `ingest/pdf` extracts text), the screens do not. The table stays editor-aligned text by decision — the binding constraint outlives the old implementation, see *Why a table is aligned text*; PDF and diagrams move to the next version | the domain facts and the constraint essays | One screen each for PDF and diagrams, on the native surface, bound by the recorded constraints |
 | **M7** | **Icons have no consumer.** `icons.rs` normalises and content-addresses an author's image; nothing above the store reads it (the Universal Button is not on the native surface) | `icons.rs`, `tests/icons.rs` | The surface that offers and shows the icon |
-| **M8** | **Replay cannot verify the manuscript node.** The e2e journals replay with `--no-verify` because the projection lives in `host_bridge`'s module buffer, not in the core Model — the replayer feeds host answers to the core and the view has no path to the text | the journals, the a11y comparison (the only differing node is the manuscript textbox) | Moving the projection into the Model (~11.5 KiB per frame through core — measure before signing) and re-enabling `--verify` |
+| **M8** | **Replay cannot verify a frame that holds the manuscript.** Five of the eight journals replay with `--no-verify` because the projection lives in `host_bridge`'s module buffer, not in the core Model — the replayer feeds host answers to the core and the view has no path to the text. The boundary is measured, not assumed: the three journals that never open a document (`files`, `connections`, `settings`) verify all 17 of their fingerprint checkpoints, and every journal that opens one diverges from the frame after the document row click | the eight journals and the tier table that carries the reason (`scripts/native-journals.ts`), the a11y comparison (the only differing node is the manuscript textbox) | Moving the projection into the Model (~11.5 KiB per frame through core — measure before signing), then flipping `tier` in that one table |
 | **M9** | **Landed in v0.3.0.** The producer runner exists and is production-wired: `runner.rs` pumps on the `ReadHost` poll — it launches each authorized Run it can serve through `HarnessAdapter::dispatch`, observes the stream on one thread per Run, lands the reply as `result.md` by atomic rename, and validates it through the same `collect_attempt` as the manual path. The two consumers it blocked landed with it: verifier comments (`AgentComment` now lands on the annotation surface at collect; an unknown target anchors on the first block, nothing is dropped) and the orphan-downstream cleanup (a `Follows`/`Verifies` Run whose upstream failed or was cancelled without an artifact is recorded `Failed` with the reason, transitively). The manual L0 round trip is unchanged: an unconnected agent stays `Authorized` for the author's `LaunchRun` | — | — |
 
 | **M12** | **Landed.** The rail's four colours have a consumer: `rail.zig` paints the ground and its rule as one full-height band and stamps `rail-ink` through the rail's text leaves, while `manuscriptTokens` hands the row register `rail-ink` / `rail-faint`. The measurement that made the ink half non-optional is worth keeping: on four of the seven themes `tokens.colors.text_muted` reads at \|Lc\| 8–20 against that theme's own `rail`, so a disabled row on a rail ground was invisible until the row ladder learned to read `ControlVisualTokens.disabled_foreground` — see the increment table | — | — |
@@ -750,6 +751,31 @@ function was caught only by clippy while the gate was fully green.
 A gate here is expected to be **injection-verified**: break the thing it guards,
 watch it go red, restore, watch it go green. A gate that has never been seen to
 fail is a gate that has proven nothing — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+### Eight journals, one per destination
+
+A session journal is a recorded run of the product: every event, every host
+answer, and a fingerprint of the accessibility tree per published frame. There
+is one per destination — manuscript, files, review, dispatch, mailbox,
+connections, history, settings — and `scripts/native-journals.ts` is their only
+authority: the steps, the destination index, and whether the journal can verify
+its fingerprints. The table is a `Record<JournalName, JournalPlan>`, so a
+destination with no journal is a type error rather than a lane that quietly
+covers seven.
+
+The two halves run in different worlds, and the difference is the point.
+**Recording** (`bun run e2e:record`) drives a real window on the release
+platform: it clicks what an author clicks, and it waits for the screen to say
+something rather than sleeping a fixed interval, so a step that finds no button
+fails where the button is missing. **Replay** (`bun run e2e:journals`, the CI
+step) runs headless on the null platform — the journal is the world — which is
+why eight destinations replay in under two seconds and need no display. The
+report lands in `target/e2e-evidence/journals.json`.
+
+This lane is what a surface migration is judged against: the same events fed to
+a rewritten core must consume the same host answers in the same order, and — for
+the journals that can verify — draw a tree with the same fingerprint. Three do
+verify today; the other five name M8 as what blocks them.
 
 ### A gate that cannot run proves nothing either
 

@@ -52,9 +52,8 @@
     "verify:release-version": "bun scripts/verify-release-version.ts",
     "verify:release-workflow": "bun scripts/verify-release-workflow.ts",
     "verify:gates-run": "bun scripts/verify-gates-run.ts",
-    "e2e:app": "cd apps/native && bun x native automate replay ../../e2e/native/writing-slice.journal --no-verify -- zig-out/bin/refrain",
-    "e2e:review": "cd apps/native && bun x native automate replay ../../e2e/native/review-loop.journal --no-verify -- zig-out/bin/refrain",
-    "e2e:dispatch": "cd apps/native && bun x native automate replay ../../e2e/native/dispatch-loop.journal --no-verify -- zig-out/bin/refrain",
+    "e2e:journals": "bun scripts/replay-native-journals.ts",
+    "e2e:record": "bun scripts/record-native-journals.ts",
     "e2e:ime": "bun e2e/ime/run-native.ts -Shell native -Binary apps/native/zig-out/bin/refrain.exe",
     "check:ts": "tsc --noEmit"
   },

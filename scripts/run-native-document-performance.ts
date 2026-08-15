@@ -133,7 +133,7 @@ const runtime = Bun.spawn([executable], {
   env: {
     ...windowEnvironment(process.env, { display, runtimeDir }),
     // 自动化项目通道：只有「选哪个路径」这一步替作者回答，其余每一步
-    // 都是真实点击（`NativeProjectPlatform`，与 e2e/native/full-flow.sh 同源）。
+    // 都是真实点击（`NativeProjectPlatform`，与 `record-native-journals.ts` 同源）。
     REFRAIN_AUTOMATION_ROOT: fixtureRoot,
     REFRAIN_DATA_DIR: dataDir,
   },
