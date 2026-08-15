@@ -13,16 +13,15 @@
 //!    越界即回落是 `?Destination`；`pendingJumpBlock: -1 表示没有` 是 `?u64`；
 //!    `rosterCursor: -1` 是 `?u32`。四条要记住的约定变成四个编译器替你记的类型。
 //!
-//! **答复字节住在哪。** 七个 `*Reply` 槽持的是**借来的**切片，指向桥的模块级存储
-//! ——与 `host_bridge.documentView()` 借正稿投影是同一条约定，也与 `core.ts` 的
-//! 语义相同（它持的是帧竞技场里的切片）。Model 因此可以整体拷贝而不搬字节。
-//! 单元 11 用 typed rows 取代这七个槽之后，本段连同 `snapshot.zig` 一起消失，
-//! 届时顶层字段还会再少七个。
+//! **答复字节不在这里。** 它们住在 `core/replies.zig` 的模块级存储里，与
+//! `host_bridge.zig` 把正稿投影搬进 `projection_text` 是同一条纪律。Model 曾经持过
+//! 七个借来的切片（`Replies`），那是两份「最近一条答复是什么」：两份只在同一次
+//! `update` 里同步，一次漏改就是画面停在上一条答复上。取消那一组之后顶层
+//! 字段是 29 个，且只剩一份权威。
 //!
-//! **实测 30 个顶层字段。** 我先前判断预算要等单元 11 才能达标（Memo D31），这个
-//! 判断错了：归组已经把七个答复槽吸成一个 `replies`，十四个正稿量吸成
-//! `document` 与 `viewport` 两个。预算不但达标，还给 12e 的臂留了十格余量。
-//! 单元 11 仍然会拿掉 `replies`，那是为了删掉解析，不再是为了凑预算。
+//! **实测 29 个顶层字段。** 我先前判断预算要等单元 11 才能达标（Memo D31），这个
+//! 判断错了：归组把十四个正稿量吸成 `document` 与 `viewport` 两个，答复槽则整
+//! 组离开了 Model。预算不但达标，还给 12e 的臂留了十一格余量。
 //!
 //! 规格：`RefRain-work/main+SPEC.md`。
 
@@ -110,6 +109,10 @@ pub const Dispatch = struct {
     stash: Draft = .empty,
     /// 块清单的下一页游标；null = 没有下一页。
     blocks_next: ?u32 = null,
+    /// 随这次派发带上的材料路径，换行分隔。路径里不会有换行，所以分隔符
+    /// 不会与内容撞车——与攻进发送的段落用 NUL 是同一条理由的两个答案（正文
+    /// 含换行，不含 NUL）。
+    materials: Draft = .empty,
 };
 
 /// 正在编辑的一份草稿：改写、材料、agent argv 共用这一个形状。
@@ -170,33 +173,11 @@ pub const Search = struct {
     exact: bool = false,
 };
 
-/// 借来的答复字节，按屏分槽。
-///
-/// **借来的**：切片指向桥的模块级存储，有效期到该槽收到下一条答复为止——与
-/// `host_bridge.documentView()` 借正稿投影同一条约定。分七个槽而不是一个，是因为
-/// 台上的 Run 名录答复不该把块清单冲掉。
-///
-/// 单元 11 用 typed rows 取代整个结构；那时 `snapshot.zig` 与
-/// `project_view.zig` 的解析半壁一起消失。
-pub const Replies = struct {
-    /// 最近一条项目答复（多数屏共用这一个）。
-    project: []const u8 = &.{},
-    /// 设置答复。排版三值与面板材质只在它里面出现。
-    config: []const u8 = &.{},
-    host: []const u8 = &.{},
-    /// 派发预览。送出成功后清槽——这次预览已被消费，再送必须重新预览。
-    preview: []const u8 = &.{},
-    blocks: []const u8 = &.{},
-    materials: []const u8 = &.{},
-    material_drafts: []const u8 = &.{},
-};
-
-/// 界面此刻的全部状态。顶层 40 个字段。
+/// 界面此刻的全部状态。顶层 29 个字段。
 pub const Model = struct {
-    // ---- 与 Rust 的握手 ----------------------------------------------- 3
+    // ---- 与 Rust 的握手 ----------------------------------------------- 2
     host_ready: bool = false,
     status: Line = .empty,
-    replies: Replies = .{},
 
     // ---- 正稿 ---------------------------------------------------------- 2
     document: Document = .{},
@@ -272,7 +253,7 @@ const testing = std.testing;
 
 test "顶层字段守住 40 的预算" {
     // PLAN §3 P4 的预算。这条测试是那句话的执行形式——加第 41 个字段要么先删一个，
-    // 要么先改纲领。单元 11 之后 `replies` 消失，预算还会松出一格。
+    // 要么先改纲领。
     const fields = @typeInfo(Model).@"struct".fields.len;
     try testing.expect(fields <= 40);
 }
