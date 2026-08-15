@@ -187,7 +187,7 @@ a link is missing; see *Open items*. **○** not on the native surface.
 
 | Function | L0 domain `refrain-core` | L1 persistence `refrain-store` | L2 orchestration `refrain-host` | L3 use cases `refrain-app` | L4 bridge `native/host` | L5 surface `native/src` | |
 |---|---|---|---|---|---|---|---|
-| **F1 · Edit the manuscript** | `manuscript/`, `source_layout`, `document_format` | `atomic`, `project`, `history` | — | `native_document`, `document` | `document.rs` | document Msgs in `core.ts`, `host_bridge`, `app_main` | ● |
+| **F1 · Edit the manuscript** | `manuscript/`, `source_layout`, `document_format` | `atomic`, `project`, `history` | — | `native_document`, `document` | `document.rs` | document Msgs in `core.zig`, `host_bridge`, `app_main` | ● |
 | **F2 · Break lines, measure text** | `typeset`, `block_shape`, `text_width`, `inline_span` | — | — | projection in `native_document` | protocol layout | `host_bridge`, `app_main` | ● |
 | **F3 · Plain-text formats** | `document_format`, `source_layout`, `typeset` code path | round-trip in `project` | — | `native_document` | `document.rs` | `document_language` | ● |
 | **F4 · Roots and the catalogue** | `role` | `root`, `project`, `schema`, `files/index` | — | `application` | `project.rs` | `project_request`, `project_view`, `snapshot` | ● |
@@ -204,7 +204,7 @@ a link is missing; see *Open items*. **○** not on the native surface.
 | **F15 · Width conversion** | `text_width` | `history` | — | `ConvertWidth`, `scope` | `project.rs` | context menu | ● |
 | **F16 · Themes and corners** | — | `config` | — | `application::apply_config` | `project.rs` | `generated/themes.zig`, `corners.zig`, `material.zig`, `material_paint.zig`, `rail.zig`, `workbench_view` | ● |
 | **F17 · Icons** | — | `icons` | — | — | — | — | ○ no consumer above the store |
-| **F18 · Health and the handshake** | `health` | — | — | `native` | `contract.rs`, `document.rs` | handshake in `core.ts` | ● |
+| **F18 · Health and the handshake** | `health` | — | — | `native` | `contract.rs`, `document.rs` | handshake in `core.zig` | ● |
 
 A ◐ row or a ○ row shows the work for the next version. The modules in the row
 have tests at their own layer. The link is missing. *Open items* gives the link.
@@ -233,19 +233,21 @@ L5 has three strata. `native check --strict` and rule NS9001 enforce them.
 
 - **Declarations** — `app.zon` for shortcuts and menus, `app.native` for
   structure and event bindings. No logic.
-- **Interface state** — `core.ts` and its two helpers. The compiler accepts a
-  restricted subset: numbers, strings, `asciiBytes` and `utf8Bytes` literals,
-  array tables, and interface-annotated records. This stratum holds the `Model`,
+- **Interface state** — `core.zig` and `core/`. This stratum holds the `Model`,
   the `Msg`, and `update`. It must not hold manuscript bytes or a document state
-  machine.
+  machine. It was TypeScript through v0.3.1, compiled through a restricted
+  subset; the scars that subset left (a packed panel stack, `-1` sentinels,
+  pre-encoded request bytes ferried through `Msg`) are named where they were
+  removed, because a reader who meets the Zig code alone cannot tell which
+  shapes were deliberate and which were a compiler's price.
 - **Platform and drawing** — the Zig files. They hold events, borrowed
   projections, non-ASCII labels, and geometry. They must not hold a second copy
   of the text, the selection, the composition, or the undo stack.
 
 Three rules apply to L5:
 
-- **The manuscript stays in Rust.** Zig draws a borrowed projection. The
-  TypeScript core keeps a revision number. Neither holds the bytes.
+- **The manuscript stays in Rust.** Zig draws a borrowed projection. The core
+  keeps a revision number. Neither holds the bytes.
 - **Use the correct byte spelling.** `asciiBytes` is for command names, keys,
   paths, and protocol values. `utf8Bytes` is for text that a person reads. A
   JavaScript string is UTF-16 and the boundary is UTF-8. The wrong spelling
@@ -358,25 +360,20 @@ module with no test file has test blocks in the module.
 | Module | Owns | Proven by |
 |---|---|---|
 | `app.zon` | The shortcut and menu declaration. One command-id space for both | `verify:command-space` |
-| `app.native` | The markup: the notice bar and its event bindings | compiled against the model contract |
-| `core.ts` | `Model`, `Msg`, `update`, `commandMsg`, `viewUnbound`. Interface state only | `core.test.ts` on the Null platform |
-| `workbench.ts` | The eight destinations and the navigation rules: indices, the needs-a-document mask, the layout fractions | `workbench.test.ts` |
-| `roster.ts` | The roster cursor invariant: the cursor points at a row that exists, or at −1 | `roster.test.ts` |
-| `wire_json.ts` | The JSON byte mechanics for the core | `wire_json.test.ts`; `verify:wire-shapes` |
 | `app_main.zig` | The shell: screens, fonts, menus, the context menu, KARA, and the theme wiring. `railTreeRow` makes a rail row: no corner, a semantic level, one indent step for each level | in-file tests; the e2e journals |
-| `host_bridge.zig` | The ABI client. It adopts the borrowed projection into module-lifetime storage | e2e; `verify:native-theme-pixels` |
-| `replay_seam.zig` | The one exit a Zig core uses to ask Rust: the two channel keys, the host-record encoding, and the result routing. It has no production reader today. The lane switch in P5 makes `update_fx` its reader | in-file tests, with one round trip against `host_bridge`'s decoder |
-| `core/workbench.zig` | The destinations, the navigation result, the panel stack, and the split fraction. The stack is a bounded array, not a packed integer: the packing was a restriction of the TypeScript subset, and it made "the stack holds the manuscript" and "the stack is empty" the same number | in-file tests, with the vectors of `workbench.test.ts` |
+| `host_bridge.zig` | The ABI client. `adoptWire` takes the projection into module-lifetime storage, and the core's `host_result` arm is what calls it — replay never calls the host, so anything adopted in the request callback is invisible to replay (this is what M8 was) | e2e; `verify:native-theme-pixels` |
+| `replay_seam.zig` | The one exit the core uses to ask Rust: the two channel keys, the host-record encoding, and the result routing | in-file tests, with one round trip against `host_bridge`'s decoder |
+| `core/workbench.zig` | The destinations, the navigation result, the panel stack, and the split fraction. The stack is a bounded array, not a packed integer: the packing was a restriction of the TypeScript subset, and it made "the stack holds the manuscript" and "the stack is empty" the same number | in-file tests, carrying the vectors the deleted `workbench.test.ts` held |
 | `core.zig` | The Zig core: `initFx` and `update`. All 74 arms have a named landing; `pending_arms` is empty and a test holds it there, so a new arm without a landing fails the exhaustiveness check rather than falling into an `else` | in-file tests, and a `TestHarness` that reads the parked request's action code and text |
 | `core/replies.zig` | Where a project reply lands so it outlives the call that delivered it — seven slots, chosen by the reply's own `kind`, so reading the settings does not wipe the block listing. Same discipline as `host_bridge.zig`'s projection buffer, and the same reason | in-file tests |
 | `core/text.zig` | A bounded piece of text for the Model: fixed capacity, no allocation, and no silent truncation. `setTruncated` is the one that truncates, and it says so and cuts on a codepoint boundary | in-file tests |
 | `core/msg.zig` | Everything that can happen. Four TypeScript reply arms are one `host_result` here, because the channel rides in the result key; the pre-encoded verdict requests are gone, because a Zig core can call the request encoders | in-file tests |
 | `core/model.zig` | The whole interface state: 29 top-level fields against the budget of 40, with a test that fails if a field is added past it. The reply bytes are not among them — they live in `core/replies.zig`, because two copies of "the latest reply" only agree until one update forgets to write both | in-file tests |
-| `core/roster.zig` | The roster cursor invariant: the cursor points at a row that exists, or it is `null`. `null` replaces the `-1` convention that each reader had to remember | in-file tests, with the vectors of `roster.test.ts` |
+| `core/roster.zig` | The roster cursor invariant: the cursor points at a row that exists, or it is `null`. `null` replaces the `-1` convention that each reader had to remember | in-file tests, carrying the vectors the deleted `roster.test.ts` held |
 | `project_request.zig` | The write side: one function for each `ProjectInput` entry | in-file tests; `verify:wire-shapes` |
 | `project_view.zig` | The read side: reply bytes to rows, and the Chinese labels | in-file tests |
 | `snapshot.zig` | The cursor over opaque JSON, with arrays | in-file tests |
-| `workbench_view.zig` | The destination names and hints, in the order of `workbench.ts` | index agreement by review |
+| `workbench_view.zig` | The destination names and hints, in the order of `core/workbench.zig`'s `Destination` | index agreement by review |
 | `document_language.zig` | Wire code to SDK syntax grammar. An unknown code falls back to plain | in-file tests |
 | `corners.zig` | The corner geometry: five scales and `squared` for the absence of a corner | `verify:corner-authority` |
 | `veil.zig` | The KARA veil: the gradient geometry, the chrome suffix commands, the interrupt labels | in-file tests |
@@ -398,11 +395,11 @@ what crosses each link and what must not cross it.
 ```
   declarations              interface state                 platform + drawing
   ┌────────────┐   W1      ┌──────────────────┐            ┌───────────────────────┐
-  │ app.zon    │──────────▶│ core.ts          │  model     │ app_main.zig          │
-  │ app.native │  Msg      │ workbench.ts     │───────────▶│ project_view.zig      │
-  └────────────┘           │ roster.ts        │  indices   │ corners.zig …         │
+  │ app.zon    │──────────▶│ core.zig         │  model     │ app_main.zig          │
+  │            │  Msg      │ core/workbench   │───────────▶│ project_view.zig      │
+  └────────────┘           │ core/roster …    │  enums     │ corners.zig …         │
                            └──────┬───────────┘            └─────────▲─────────────┘
-                                   │ Cmd.request                     │ W4: reads Model +
+                                   │ replay_seam.request             │ W4: reads Model +
                                    ▼                                 │ borrowed projection
                            ┌─────────────────────────────────────────┴─────────────┐
                            │ project_request.zig · host_bridge.zig                 │
@@ -716,47 +713,49 @@ Each item gives the decision, the alternative that was refused, and the
 observation that reverses the decision. No code has moved. Judge the work
 against these statements.
 
-### The interface state leaves TypeScript
+### The interface state left TypeScript — done in v0.3.2's development
 
-**The decision.** `Model`, `Msg`, and `update` move from `core.ts` to the Zig
-shell that draws the pixels.
+**The decision.** `Model`, `Msg`, and `update` moved from `core.ts` to the Zig
+shell that draws the pixels. `app.zon` now names `src/core.zig`; `core.ts`,
+`core.test.ts`, `workbench.ts`, `roster.ts`, `wire_json.ts` and their tests are
+deleted, 7,149 lines in all.
 
-**The reason.** This TypeScript compiles through a restricted subset. The subset
-has no JSON parser, no `TextEncoder`, no `Number()`, and fixed-length strings.
-Thus the surface reads each fact from a reply with a scan for a quoted byte
+**The reason.** That TypeScript compiled through a restricted subset. The subset
+had no JSON parser, no `TextEncoder`, no `Number()`, and fixed-length strings.
+Thus the surface read each fact from a reply with a scan for a quoted byte
 pattern. A pattern that no Rust type emits gives zero, and each test stays
-green. Zig reads the same replies through `snapshot.zig`, where a field that
-does not exist is a compile error.
+green. Zig reads the same replies through `snapshot.zig`, by path — which is how
+`verify:wire-shapes` found four reply layers (`appearance`, `typography`,
+`effects`, `returnPoint`) that the needle scan had skipped without noticing.
 
 **The refused alternative.** Keep the TypeScript lane and correct it in place.
-This is the cheaper move, and it is the fallback if the spike fails. It is not
-the destination, because the two lanes have different semantics: `Array.isArray`
-answers false for a tuple in the compiled core. A lane with unit tests on a
-different engine than the product is not a tested lane.
+That was the cheaper move and the stated fallback. It was refused because the
+two lanes had different semantics: `Array.isArray` answers false for a tuple in
+the compiled core. A lane whose unit tests run on a different engine than the
+product is not a tested lane.
 
-**What reverses the decision.** The Zig shell shows a defect of the same class —
-a defect that passes each test and fails only in a real window. The spike must
-end with a recorded journal that replays `--verify` green through a real window.
+**What would have reversed the decision.** A defect of the same class in the Zig
+shell — one that passes every test and fails only in a real window. The measure
+set in advance was a recorded journal replaying `--verify` green through a real
+window. Eight of eight do, with 81 fingerprint checkpoints; before the switch,
+five of the eight could not verify at all.
 
-**The largest unknown is answered, and now it runs.** The plan put one question
-before the work: does a Zig core have the seam that a journal records and
-replays for a host answer? It does, and it is the seam that RefRain already
-uses. `replay_seam.zig` is that seam, and four tests drive it through a real
-`UiApp(Model, Msg)`: a request parks with the module's channel key and the
-generated service name, one fed answer delivers exactly one Msg, the two
-channels stay in flight together, and the error route delivers one Msg and
-then refuses a second. A fifth test encodes a record here and decodes it with
-the bridge's own decoder, so both ends prove they read one generated offset
-table. The SDK records
-each effect result in the journal by kind, and `.host` is one of those kinds
-(`runtime/session_replay.zig`: a `.host` record feeds on replay unless its exit
-reason is `rejected`, which is the deterministic admission refusal that the
-replayed channel regenerates). `Effects.hostRequest` is the same keyed named
-host call that a transpiled core's `request` wire record rides today, and it is
-available to any core that takes the effects channel, thus a Zig `update` sends
-it and receives one `EffectHostResult` Msg. `host_bridge.zig` answers it with
-`feedHostResult` in both lanes. No second implementation and no double seam is
-needed for the replay feed.
+**The largest unknown was answered first.** The plan put one question before the
+work: does a Zig core have the seam that a journal records and replays for a
+host answer? It does, and it is the seam RefRain already used. `replay_seam.zig`
+is that seam. The SDK records each effect result in the journal by kind, and
+`.host` is one of those kinds (`runtime/session_replay.zig`: a `.host` record
+feeds on replay unless its exit reason is `rejected`, the deterministic
+admission refusal the replayed channel regenerates). `Effects.hostRequest` is
+the same keyed named host call a transpiled core's `request` wire record rides,
+so a Zig `update` sends it and receives one `EffectHostResult` Msg.
+
+**The lesson the switch taught, which the plan did not contain.** Bytes must be
+adopted where replay feeds them. `host_bridge` adopted the projection inside its
+request callback; replay never calls the host, so five journals recorded with
+text on screen replayed blank. That was M8, and it read as a limitation of
+journals rather than as a misplaced line. The same reasoning gives
+`core/replies.zig` its shape.
 
 **What must not follow.** The domain does not move. `refrain-core`,
 `refrain-store`, `refrain-host`, and `refrain-app` stay in Rust. "Zig core"
@@ -768,10 +767,12 @@ means the `Model`, `Msg`, and `update` of the shell only.
 `protocol/host.json`: `repr(C)` structs in Rust and matching declarations in
 Zig. Neither side parses.
 
-**What this removes.** Today one reply shape has three readers: serde in Rust,
-the byte patterns in `core.ts`, and the cursor in `snapshot.zig`. Nothing
-reports a difference between them. `verify:wire-shapes` exists because there are
-three readers. With one reader the gate is not necessary.
+**What this removes.** One reply shape has two readers: serde in Rust and the
+cursor in `snapshot.zig`. It had three until the lane switch deleted the byte
+patterns in `core.ts` — and that deletion is what made the third reader's blind
+spots visible, since `verify:wire-shapes` immediately named four layers the
+needle scan had never looked at. `verify:wire-shapes` exists because there is
+more than one reader; with one reader the gate is not necessary.
 
 **The refused alternative.** A JSON parser in the surface. This makes the
 reading correct, but it keeps three authorities. The difference between the
@@ -853,7 +854,7 @@ Use these words. SPEC §2 requires one word for each concept.
 | A line breaks at the wrong position | `refrain-core/src/typeset.rs` |
 | A block boundary is wrong | `refrain-core/src/source_layout.rs` |
 | The estimated height of a block is wrong | `refrain-core/src/block_shape.rs` |
-| A shortcut does nothing | `apps/native/app.zon` declares it. `core.ts::commandMsg` maps it |
+| A shortcut does nothing | `apps/native/app.zon` declares it, `core.zig::commandMsg` maps it, and `Adapter.Options.on_command` must be wired — the wiring is the half no unit test sees |
 | A menu item and its shortcut do not agree | Read `verify:command-space`. Both use W1 |
 | Search returns nothing, or the wrong order | `refrain-store/src/project/search.rs`, `refrain-core/src/search_rank.rs`, `chinese_index.rs` |
 | A Chinese word of two characters finds nothing | `refrain-core/src/chinese_index.rs` |
@@ -862,7 +863,7 @@ Use these words. SPEC §2 requires one word for each concept.
 | An agent reply was rejected | `refrain-core/src/agent_protocol.rs` |
 | A request carried the wrong context | `refrain-core/src/context_compiler.rs` |
 | A Run started too early, or did not start | `refrain-host/src/host.rs` |
-| A dispatched Run does not advance | `refrain-app/src/runner.rs`. Check the `IN_FLIGHT_*` counts in `core.ts` |
+| A dispatched Run does not advance | `refrain-app/src/runner.rs`. Check `inFlightRuns` in `core.zig` |
 | A downstream Run did not get the upstream work | `refrain-app/src/upstream.rs`, `refrain-core/src/upstream_work.rs` |
 | A proposal could not be applied | `refrain-app/src/decide.rs`, `refrain-core/src/manuscript/review.rs` |
 | A countermand reverted the wrong text | `refrain-app/src/decide.rs` |
@@ -876,7 +877,7 @@ Use these words. SPEC §2 requires one word for each concept.
 | The rail loses its colour, or a material stops the drawing | `apps/native/src/rail.zig` and `material.zig`. The rail ground takes no material |
 | An input reaches the screen late | `verify:native-document-performance`. Compare the p95 with the present interval in the same report, not with 16.67 ms |
 | A wheel does not move the window, or the scrollbar disagrees with the text | `projection_response` chooses the anchor from the action; `documentLayout` in `apps/native/src/app_main.zig` places the spacers on the same scale |
-| A roster cursor points at a row that is gone | `apps/native/src/roster.ts` |
+| A roster cursor points at a row that is gone | `apps/native/src/core/roster.zig` |
 | A character draws as a block | `verify:font-coverage`, then `manuscript_font` in `apps/native/build.zig` |
 | A panel covers the manuscript, or the stage is too small | `apps/native/src/panel_stack.zig`, `layeredBody` in `app_main.zig` |
 | A screen shows old facts after an action | The reply of the action is the new view. A second read means that the first reply was wrong |
@@ -891,15 +892,15 @@ projects and the reason for each one.
 
 | | |
 |---|---|
-| **Languages** | [Rust](https://rust-lang.org) for the domain. [Zig](https://ziglang.org) for the platform and the drawing. A restricted [TypeScript](https://www.typescriptlang.org) subset for the interface state |
+| **Languages** | [Rust](https://rust-lang.org) for the domain. [Zig](https://ziglang.org) for the interface state, the platform and the drawing. [TypeScript](https://www.typescriptlang.org) runs the gates and the release scripts; none of it ships |
 | **Application shell** | [Native SDK](https://native-sdk.dev) `@native-sdk/cli` 0.9.0, with an increment in `patches/`. Native rendering. No WebView and no JavaScript runtime in the binary |
-| **Surface** | `.native` markup compiled against the model contract. [Biome](https://biomejs.dev) formats the TypeScript |
+| **Surface** | Zig views built against `UiApp(Model, Msg)`. [Biome](https://biomejs.dev) formats the TypeScript tooling |
 | **Build tooling** | [ScriptC](https://github.com/vercel-labs/scriptc) compiles the tier A gates and the release scripts to binaries. [Bun](https://bun.sh) runs the other scripts. Neither ships |
 | **Storage** | [SQLite](https://sqlite.org) through [rusqlite](https://github.com/rusqlite/rusqlite), FTS5 `unicode61`, and a bigram tokeniser in the application |
 | **Config format** | [TOML](https://toml.io). A real format needs a real parser |
 | **Hashing** | [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) |
 | **Ids** | [UUID](https://github.com/uuid-rs/uuid), version 7 |
-| **Serialisation** | [Serde](https://serde.rs) and [specta](https://github.com/specta-rs/specta). One schema (`apps/native/protocol/host.json`) generates Rust, TypeScript, Zig, and a C header |
+| **Serialisation** | [Serde](https://serde.rs) and [specta](https://github.com/specta-rs/specta). One schema (`apps/native/protocol/host.json`) generates Rust, Zig, a C header, and the TypeScript the gates read |
 | **Scanning** | [memchr](https://github.com/BurntSushi/memchr) |
 | **Errors** | [thiserror](https://github.com/dtolnay/thiserror) |
 | **Filesystem walk** | [ignore](https://github.com/BurntSushi/ripgrep), the traversal of ripgrep, and [rayon](https://github.com/rayon-rs/rayon) |
@@ -950,9 +951,7 @@ three at the next upgrade.
 | **The typeset breaks** — `hard_breaks` on the text layout | `refrain_core::typeset` is the line-breaking authority. The SDK breaks at space and tab only, and a Chinese paragraph has neither | Offer upstream as a layout input |
 | **Per-widget text size and line height** | The measure of the manuscript comes from the typography settings of the author. The token ladder cannot state this for each widget | The same pull request as the breaks |
 | **The caret rectangle** — `text_caret_bounds` and `TextInputGeometrySnapshot` | An IME candidate window must sit at the caret. Without this the platform host estimates the position, and shaped CJK text moves the caret in the frame | Offer upstream. The runtime already has this geometry |
-| **Change-aware dispatch** — `update_fx_changed`, `dispatchChanged`, `view_state_revision` | The projection is in the buffer of the bridge, not in the Model. A host callback can change what a view reads without a change to the model root | This is the ground of M8. It becomes smaller when the projection moves into the Model |
-| **A TypeScript core under a hand-written entry** — `appTsCoreStage` | `addAppArtifacts` stages a TS core only when it also owns `src/main.zig`. RefRain draws its own shell in `app_main.zig` | Offer upstream as an `AppOptions` field. It dies with the TypeScript lane |
-| **Declaration-only type staging** — `compiler_typecheck.mjs` | The `events.d.ts` edge resolves to the `.ts` implementation, thus the analyzer typechecks SDK sources under the stricter settings of RefRain | An upstream defect. The export map of the `.d.ts` is one half of the correction |
+| **Change-aware dispatch** — `update_fx_changed`, `dispatchChanged`, `view_state_revision` | The projection is in the buffer of the bridge, not in the Model. A host callback can change what a view reads without a change to the model root | M8 stood on this and is now closed from the app side: the core adopts the projection in its `host_result` arm, which replay walks. The increment becomes unnecessary when the projection moves into the Model |
 | **The disabled ink of the row register** — `rowForegroundColor` | The rail is a second surface register beside the paper. `ControlVisualTokens.disabled_foreground` documents this ink, and the button ladder uses it, but the row ladder used the global `text_muted`. On four of seven themes that ink reads at \|Lc\| 8 to 20 against the rail | Offer upstream as a defect correction. Delete it on the day it lands |
 | **Windows semantic-analysis object** — `build/app.zig` | The Zig COFF backend cannot merge several archives into one object, and this application links a Rust staticlib. Cost: on Windows, `zig build test` does not force semantic analysis of the app module | A Zig backend limit. Test again at each Zig release |
 
