@@ -135,7 +135,16 @@ jobs:
           if [ -n "$reasons" ]; then
             echo "::error title=gate failure lines::$(escape "$reasons")"
           fi
-          echo "::error title=gate output, last 200 lines::$(escape "$(tail -200 "$log")")"
+          # An annotation message is capped near 4 KiB, so a long tail arrives
+          # as the summary with the reason cut off. Send the window around the
+          # FIRST error instead: that is where the compiler or the runner
+          # prints why, and the summary is already in the stage-name annotation.
+          first=$(grep -nE '^error:|^error\[|panicked|error: process exited' "$log" | head -1 | cut -d: -f1)
+          if [ -n "$first" ]; then
+            start=$((first > 90 ? first - 90 : 1))
+            echo "::error title=gate first failure context::$(escape "$(sed -n "${start},$((first + 10))p" "$log" | tail -c 3600)")"
+          fi
+          echo "::error title=gate output, last lines::$(escape "$(tail -c 3600 "$log")")"
           exit 1
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
