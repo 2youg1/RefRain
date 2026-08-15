@@ -3389,7 +3389,14 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     // 正文上的东西。裁决是 stage 例外：独占整屏（旧版 takesWholeStage）。
     // 多层面板栈（2.9）：侧层 + 当前层并排，正文轨按 v0.2.4 的公式右滑。
     // 面板打开时是功能区的模式替换，不进栈；独占去处当前时没有侧层。
-    const depth = panel_stack.visibleDepth(model.panelStack, model.destinationIndex);
+    // 层深先问语义（栈里有几层），再问几何（这扇窗画得下几层）。三个
+    // 消费点（这里、`railEdgeX`、`layeredBody`）拿同一个数，地、分栏线与
+    // 版式因此不可能对不齐。
+    const depth = panel_stack.fittingDepth(
+        @floatCast(@max(model.windowWidth, 0)),
+        @floatCast(model.layoutFraction),
+        panel_stack.visibleDepth(model.panelStack, model.destinationIndex),
+    );
     const layered = depth >= 2 and !model.paletteOpen;
     // 左 pane 的内容：命令面板住在功能区（打开时整个换成它——模式替换，
     // 舞台规则不许浮层，关掉回原来的去处），否则是当前去处。
@@ -3694,15 +3701,22 @@ fn destinationView(
     };
 }
 
-/// 多层并排的版式：侧层在左、当前层最右，正文轨按 v0.2.4 的公式右滑。
+/// 多层并排的版式：侧层在左、当前层最右、正文轨在它们右边。
 ///
 /// **接上哪个功能**：`panelStack` 的可见层（`panel_stack.zig` 投影层深与
 /// 几何）。每层内容是各去处的既有视图（`destinationView`），复用不重写。
 ///
-/// **交互设计**：版心列宽不变（=不断行）——层宽与单层时 split 第一 pane
-/// 同一个像素，多出的层宽换成轨的右滑（`trackShift`）。每层包 `.panel`：
-/// 圆角/材质/分隔全走 token 与 corners，零新几何。当前层带
-/// `global_key = "panel-current"`，panel-in 动画按它寻址。
+/// **交互设计**：一行里排完，与单层时的 split 同形——层各占一层宽，
+/// 舊台拿剩下的全部。每层包 `.panel`：圆角/材质/分隔全走 token 与
+/// corners，零新几何。当前层带 `global_key = "panel-current"`，panel-in
+/// 动画按它寻址（变换不入流，邻居不跟着动）。
+///
+/// **为什么不再是 z 叠 + 右滑**：上一版把轨铺满整个 body、再按
+/// v0.2.4 的 CSS 公式平移「多出的层宽的一半」，而面板盖在它上面。
+/// 那个公式来自一个轨居中于整窗的版式；在这里它意味着二层起
+/// 正文就落在面板上——实测：打开派发后「# 第一章」与面板的「段落 0
+/// 块」炖在同一行。排成一行之后，正文永远在自己的 pane 里，与单层
+/// 时同一条不变式。
 fn layeredBody(
     ui: *Adapter.Ui,
     model: *const Model,
@@ -3713,7 +3727,7 @@ fn layeredBody(
         @floatCast(@max(model.windowWidth, 0)),
         @floatCast(model.layoutFraction),
     );
-    var layers: [panel_stack.MAX_VISIBLE_LAYERS]Adapter.Ui.Node = undefined;
+    var layers: [panel_stack.MAX_VISIBLE_LAYERS + 1]Adapter.Ui.Node = undefined;
     var at: usize = 0;
     while (at < depth) : (at += 1) {
         const current = at == depth - 1;
@@ -3721,7 +3735,6 @@ fn layeredBody(
             .key = .{ .index = at },
             .global_key = if (current) .{ .str = "panel-current" } else null,
             .width = width,
-            .grow = 1,
         }, .{
             destinationView(ui, model, track, panel_stack.visibleLayerAt(
                 model.panelStack,
@@ -3734,23 +3747,10 @@ fn layeredBody(
         // 也同质——三处消费点共用这一行。
         layers[at] = rail.dress(ui, &themes.themes[currentThemeIndex(model)], panel);
     }
-    return ui.el(.stack, .{ .grow = 1 }, .{
-        // 正文轨在底层，右滑多出的层宽的一半（v0.2.4 的 translateX 公式）。
-        ui.el(.stack, .{
-            .grow = 1,
-            .transform = native_sdk.canvas.Affine.translate(
-                panel_stack.trackShift(
-                    @floatCast(@max(model.windowWidth, 0)),
-                    @floatCast(model.layoutFraction),
-                    depth,
-                ),
-                0,
-            ),
-        }, .{
-            track,
-        }),
-        ui.row(.{}, @as([]const Adapter.Ui.Node, layers[0..depth])),
-    });
+    // 层在前、舊台在后，一行排完：舊台 `grow` 拿剩下的全部，所以“正文落
+    // 在面板上”在几何上不可能，而不是靠一个平移量刚好错开。
+    layers[depth] = ui.el(.stack, .{ .grow = 1 }, .{track});
+    return ui.row(.{ .grow = 1 }, @as([]const Adapter.Ui.Node, layers[0 .. depth + 1]));
 }
 
 /// 命令面板：住在功能区（rail）里，不是浮层。

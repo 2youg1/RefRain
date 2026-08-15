@@ -109,15 +109,24 @@ pub fn layerWidth(window_width: f32, fraction: f32) f32 {
     return @max(0, window_width - 32) * fraction;
 }
 
-/// 正文轨的右滑量（px）。v0.2.4 的公式（surfaces.css L3334，出处）：
-/// `translateX(calc(var(--panel-reserve, 0px) / 2))`——reserve 是各层
-/// --panel-width 之和（panel-spine.ts 的 panelReserve）。我们的单层基准
-/// 已经经 split 让出一层宽，所以 reserve 在这里是「多出的层宽」：
-/// (depth − 1) × 层宽，滑它的一半。多层时版心列宽不变——不断行。
-pub fn trackShift(window_width: f32, fraction: f32, depth: usize) f32 {
-    if (depth <= 1) return 0;
-    const extra = layerWidth(window_width, fraction) * @as(f32, @floatFromInt(depth - 1));
-    return extra / 2;
+/// 这扇窗真能并排几层：舊台至少留住一层宽。
+///
+/// **为什么在这里**：哪一层是哪个去处是语义，归 `workbench.ts`；
+/// 能不能画得下是像素，归这里——两边各管各的，不复制对方的规则。
+///
+/// **为什么需要它**：`MAX_VISIBLE_LAYERS = 3` 是一个常数，而层宽是窗宽的
+/// 一个分数。默认 0.32 下三层吃掉 96%：实测 1250px 窗上走一轮
+/// 文件→设置→信箱，舊台只剩 60px。「正文永远不被挤变形」这条
+/// v0.2.4 的承诺因此是窗宽的函数，不是一个常数。作者把分隔条拖窄
+/// （fraction 变小）就能换回第三层——选权在作者手里，不在常数里。
+pub fn fittingDepth(window_width: f32, fraction: f32, depth: usize) usize {
+    if (depth <= 1) return depth;
+    const width = layerWidth(window_width, fraction);
+    if (width <= 0) return depth;
+    const room = @max(0, window_width - 32) - width;
+    if (room <= 0) return 1;
+    const fits: usize = @intFromFloat(@floor(room / width));
+    return @max(1, @min(depth, fits));
 }
 
 /// 当前层（最右）那根面板的稳定 id：进场动画按它寻址。global_key 的
@@ -189,11 +198,18 @@ test "visible layers skip whole-stage entries and cap at three, current last" {
     try std.testing.expectEqual(@as(i64, 3), visibleLayerAt(mixed, 3, 1));
 }
 
-test "the track shifts by half the extra layer width (v0.2.4 formula)" {
-    // 1280 窗、0.32：层宽 = 1248 × 0.32 = 399.36。单层不滑；两层滑
-    // extra/2 = 199.68；三层（多两层）滑 399.36。
-    try std.testing.expectApproxEqAbs(@as(f32, 0), trackShift(1280, 0.32, 1), 0.001);
-    try std.testing.expectApproxEqAbs(@as(f32, 199.68), trackShift(1280, 0.32, 2), 0.01);
-    try std.testing.expectApproxEqAbs(@as(f32, 399.36), trackShift(1280, 0.32, 3), 0.01);
+test "the stage keeps at least one layer's width, so three layers need a narrower rail" {
+    // 1280 窗、0.32：层宽 = 1248 × 0.32 = 399.36。两层占 798.72，舊台剩
+    // 449.28 ≥ 一层；三层占 1198，舊台只剩 49.9 ——不准。
     try std.testing.expectApproxEqAbs(@as(f32, 399.36), layerWidth(1280, 0.32), 0.01);
+    try std.testing.expectEqual(@as(usize, 2), fittingDepth(1280, 0.32, 3));
+    try std.testing.expectEqual(@as(usize, 2), fittingDepth(1280, 0.32, 2));
+    // 拖窄到 0.24：三层占 898.6，舊台剩 349.4 ≥ 299.5，三层画得下。
+    try std.testing.expectEqual(@as(usize, 3), fittingDepth(1280, 0.24, 3));
+    // 单层与无层原样交回；窗尺寸未到时不猜（层宽 0）。
+    try std.testing.expectEqual(@as(usize, 1), fittingDepth(1280, 0.32, 1));
+    try std.testing.expectEqual(@as(usize, 0), fittingDepth(1280, 0.32, 0));
+    try std.testing.expectEqual(@as(usize, 3), fittingDepth(0, 0.32, 3));
+    // 分数大到一层就吃掉大半屏：只剩得下一层。
+    try std.testing.expectEqual(@as(usize, 1), fittingDepth(1280, 0.6, 3));
 }

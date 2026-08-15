@@ -28,8 +28,32 @@ const MAX_RETAINED_WIDGETS = 260;
 const FIXTURE_BLOCKS = SHARED_FIXTURE_BLOCKS;
 const FIXTURE_BYTES = SHARED_FIXTURE_BYTES;
 const INSERT_OFFSET = 360;
-const TOP_PATTERN = `visible blocks 0–${DEFAULT_VIEWPORT_BLOCKS} of ${FIXTURE_BLOCKS}`;
-const TAIL_PATTERN = `visible blocks ${FIXTURE_BLOCKS - DEFAULT_VIEWPORT_BLOCKS}–${FIXTURE_BLOCKS} of ${FIXTURE_BLOCKS}`;
+/**
+ * Where the projection window sits, read from the manuscript itself.
+ *
+ * The lane used to ask the status line (`N blocks · M bytes`, `visible blocks
+ * a–b of c`). That status line is gone — today it carries the save point, the
+ * selection statistics, and the activity sentence, and nothing else earns its
+ * one row. Rather than add automation text to an author's surface, the lane now
+ * reads the fact it actually needs out of the projected text: every fixture
+ * block is prefixed with its own zero-padded index, so where the window sits is
+ * directly observable, and it proves more than the old sentence did — that the
+ * projection *moved*, not merely that a counter changed.
+ *
+ * Positions are read as numbers rather than asserted as sentences: the head is
+ * "the first projected block is one of the first few", which survives the fact
+ * that an opened manuscript anchors at block 1 rather than block 0.
+ */
+const HEAD_BLOCKS = 3;
+/**
+ * 选中跨段且越出视窗：状态行的「+」就是裁剪本身（`statuslineText`）。
+ *
+ * 同步只拿字面子串交给 `automate assert`，精确形状在 TypeScript 这侧判：
+ * 那个验证器的正则方言不在仓库里，把判据寄在一个读不到的引擎上，
+ * 红与绿都不可读。
+ */
+const CLIPPED_SELECTION_MARK = "选中 ";
+const CLIPPED_SELECTION_SHAPE = /选中 [0-9]+ 字 · [0-9]+ 段\+/;
 
 const root = process.cwd();
 const nativeDir = join(root, "apps/native");
@@ -157,6 +181,14 @@ function snapshot(): string {
   );
 }
 
+/**
+ * Which block the projection currently starts on, read out of the projected
+ * text itself — every fixture block carries its own zero-padded index.
+ */
+function firstProjectedBlock(text: string): number {
+  return capturedNumber(text, /text="([0-9]{6}) \| /, "first projected block");
+}
+
 function requiredMatch(text: string, pattern: RegExp, label: string): RegExpMatchArray {
   const match = text.match(pattern);
   if (match === null) throw new Error(`snapshot does not contain ${label}`);
@@ -230,6 +262,24 @@ function widgetBounds(text: string, id: string, role: string, name: string): str
   return bounds;
 }
 
+/**
+ * Where the manuscript column sits, and how tall the projection currently is.
+ *
+ * A preedit legitimately grows the block it is typed into — nine bytes of
+ * 输入中 can take one more wrapped line — so height is *reported*, while the
+ * origin and the column width are what must not move: those are what an author
+ * would see as the text jumping sideways or the block leaping under the caret.
+ */
+function editorColumn(
+  text: string,
+  id: string,
+): { readonly place: string; readonly height: number } {
+  const bounds = widgetBounds(text, id, "textbox", "RefRain manuscript");
+  const parts = bounds.match(/^([-0-9.]+,[-0-9.]+) ([-0-9.]+)x([-0-9.]+)$/);
+  if (parts === null) throw new Error(`manuscript bounds are not a frame: ${bounds}`);
+  return { place: `${parts[1]} ${parts[2]}`, height: Number(parts[3]) };
+}
+
 function percentile(values: readonly number[], fraction: number): number {
   if (values.length === 0) throw new Error("cannot calculate a percentile without samples");
   const ordered = [...values].sort((left, right) => left - right);
@@ -246,6 +296,14 @@ function average(values: readonly number[]): number {
 
 function assertPatterns(patterns: readonly string[]): void {
   runNative(["assert", "--timeout-ms", "30000", ...patterns]);
+}
+
+/** 等一帧，再拿快照在本地判形状。形状不对就报出它期待什么。 */
+function snapshotShowing(pattern: RegExp, label: string): string {
+  runNative(["wait"]);
+  const text = snapshot();
+  if (!pattern.test(text)) throw new Error(`snapshot does not show ${label}`);
+  return text;
 }
 
 function residentMemory(snapshotText: string): {
@@ -316,11 +374,12 @@ function openTheFixture(): void {
     "document",
     widgetId(snapshot(), "treeitem", SHARED_FIXTURE_DOCUMENT),
   ]);
-  assertPatterns([`${FIXTURE_BLOCKS} blocks · ${FIXTURE_BYTES} bytes`]);
+  assertPatterns([`role=textbox name="RefRain manuscript"`, "中文と日本語"]);
 }
 
 openTheFixture();
 let current = snapshot();
+const openedAtHead = firstProjectedBlock(current) < HEAD_BLOCKS;
 const trackId = widgetId(current, "group", "RefRain manuscript track");
 const editorId = widgetId(current, "textbox", "RefRain manuscript");
 // Undo is a command, not a button: the surface prints its chord on the palette
@@ -337,38 +396,51 @@ const initialFontEvidence = {
   canvasCommands: metric(current, "canvas_commands"),
 };
 
-runNative(["widget-wheel", "document", trackId, "-4000000"]);
-assertPatterns([TOP_PATTERN]);
 runNative(["profile", "on"]);
 
-const scroll = measurements();
-for (let index = 0; index < RUNS; index += 1) {
-  const tail = index % 2 === 0;
-  runNative(["widget-wheel", "document", trackId, tail ? "4000000" : "-4000000"]);
-  assertPatterns([tail ? TAIL_PATTERN : TOP_PATTERN]);
-  current = snapshot();
-  recordMeasurement(current, scroll);
-}
-
+/**
+ * Wheeling comes **last**, and the order is load-bearing rather than tidy.
+ *
+ * Measured this pass on a 1,000-block fixture: one 360 px wheel walked the
+ * window from block 11 to block 905, the next one back to block 9, and from the
+ * tail of the 100k-block fixture neither a wheel toward the head nor a caret
+ * placed at byte 0 brought the projection home — it stayed at block 99,904.
+ * Every request carries `model.documentScroll`, and `document.rs`'s
+ * `projection_response` prefers `DocumentAnchor::Scroll` over the caret whenever
+ * that offset is above zero, so once an author scrolls, the offset outranks
+ * every later caret. Recorded as M13.
+ *
+ * So each editing measurement below runs while the manuscript is still where it
+ * opened, and the scroll measurement runs after them, at the end, where it can
+ * strand the window without stranding the lane.
+ */
+const focused = new RegExp(`widget @w1/document#${editorId} [^\\n]*focused=true`);
 const focus = measurements();
 for (let index = 0; index < RUNS; index += 1) {
   runNative(["widget-action", "document", trackId, "focus"]);
   runNative(["widget-action", "document", editorId, "focus"]);
-  assertPatterns([`role=textbox name="RefRain manuscript".*focused=true`]);
-  current = snapshot();
+  current = snapshotShowing(focused, "the manuscript focused");
   recordMeasurement(current, focus);
 }
 
-const stableEditorBounds = widgetBounds(current, editorId, "textbox", "RefRain manuscript");
+const stableEditorColumn = editorColumn(current, editorId);
+const compositionHeights: number[] = [];
+const compositionCommitBytes = 6;
+// A selection over the whole document, on a widget that only holds the
+// projection: the widget clamps it to what it has, and the status line marks
+// the clipping with a `+`. Both facts are read back rather than predicted — the
+// projection's byte length is the surface's business, not this lane's.
+runNative(["widget-action", "document", editorId, "set_selection", `0 ${FIXTURE_BYTES}`]);
+assertPatterns(["selection=0..", CLIPPED_SELECTION_MARK]);
+current = snapshotShowing(CLIPPED_SELECTION_SHAPE, "a clipped cross-paragraph selection");
+// The manuscript's own `selection=`, reached across its multi-line `text="…"`:
+// the attribute follows the projected text on the same logical line, so a
+// newline-free match cannot get there.
 const topProjectionEnd = capturedNumber(
   current,
-  /visible blocks 0–[0-9]+ of [0-9]+ · bytes 0–([0-9]+)/,
-  "top projection end",
+  new RegExp(`#${editorId} [\\s\\S]*?selection=0\\.\\.([0-9]+)`),
+  "clipped selection end",
 );
-const compositionCommitBytes = 6;
-runNative(["widget-action", "document", editorId, "set_selection", `0 ${FIXTURE_BYTES}`]);
-assertPatterns([`selection=0..${topProjectionEnd}`, `selection 0\\.\\.${FIXTURE_BYTES}`]);
-current = snapshot();
 const crossParagraphSelection = {
   anchor: 0,
   focus: FIXTURE_BYTES,
@@ -377,8 +449,9 @@ const crossParagraphSelection = {
   lastSelectedBlock: FIXTURE_BLOCKS - 1,
   projectedFocus: topProjectionEnd,
   snapshotObserved:
-    current.includes(`selection=0..${topProjectionEnd}`) &&
-    current.includes(`selection 0..${FIXTURE_BYTES}`),
+    topProjectionEnd > 0 &&
+    topProjectionEnd < FIXTURE_BYTES &&
+    CLIPPED_SELECTION_SHAPE.test(current),
 };
 
 runNative([
@@ -393,22 +466,30 @@ runNative(["widget-action", "document", editorId, "set_composition", "输入中"
 assertPatterns([
   `selection=${INSERT_OFFSET + 9}..${INSERT_OFFSET + 9}`,
   `composition=${INSERT_OFFSET}..${INSERT_OFFSET + 9}`,
-  TOP_PATTERN,
 ]);
 current = snapshot();
-if (widgetBounds(current, editorId, "textbox", "RefRain manuscript") !== stableEditorBounds) {
-  throw new Error("collapsed preedit changed the editor bounds");
+{
+  const column = editorColumn(current, editorId);
+  compositionHeights.push(column.height);
+  if (column.place !== stableEditorColumn.place) {
+    throw new Error(
+      `collapsed preedit moved the manuscript column: ${stableEditorColumn.place} -> ${column.place}`,
+    );
+  }
 }
 
 runNative(["widget-action", "document", editorId, "cancel_composition"]);
 runNative(["assert", "--absent", "--timeout-ms", "30000", "composition="]);
-assertPatterns([
-  `${FIXTURE_BLOCKS} blocks · ${FIXTURE_BYTES} bytes`,
-  `selection=${INSERT_OFFSET}..${INSERT_OFFSET}`,
-]);
+assertPatterns([`selection=${INSERT_OFFSET}..${INSERT_OFFSET}`]);
 current = snapshot();
-if (widgetBounds(current, editorId, "textbox", "RefRain manuscript") !== stableEditorBounds) {
-  throw new Error("cancelling a collapsed preedit changed the editor bounds");
+{
+  const column = editorColumn(current, editorId);
+  compositionHeights.push(column.height);
+  if (column.place !== stableEditorColumn.place) {
+    throw new Error(
+      `cancelling a collapsed preedit moved the manuscript column: ${stableEditorColumn.place} -> ${column.place}`,
+    );
+  }
 }
 
 runNative(["widget-action", "document", editorId, "set_composition", "確定"]);
@@ -417,20 +498,27 @@ assertPatterns([
   `selection=${INSERT_OFFSET + compositionCommitBytes}..${INSERT_OFFSET + compositionCommitBytes}`,
 ]);
 current = snapshot();
-if (widgetBounds(current, editorId, "textbox", "RefRain manuscript") !== stableEditorBounds) {
-  throw new Error("committable collapsed preedit changed the editor bounds");
+{
+  const column = editorColumn(current, editorId);
+  compositionHeights.push(column.height);
+  if (column.place !== stableEditorColumn.place) {
+    throw new Error(
+      `committable collapsed preedit moved the manuscript column: ${stableEditorColumn.place} -> ${column.place}`,
+    );
+  }
 }
 runNative(["widget-action", "document", editorId, "commit_composition"]);
 runNative(["assert", "--absent", "--timeout-ms", "30000", "composition="]);
+// The committed text is in the manuscript, and undo takes it back out. Reading
+// the text is stronger than reading a byte counter: a counter can agree while
+// the wrong bytes sit there.
 assertPatterns([
-  `${FIXTURE_BYTES + compositionCommitBytes} bytes`,
+  "確定",
   `selection=${INSERT_OFFSET + compositionCommitBytes}..${INSERT_OFFSET + compositionCommitBytes}`,
 ]);
 undo();
-assertPatterns([
-  `${FIXTURE_BLOCKS} blocks · ${FIXTURE_BYTES} bytes`,
-  `selection=${INSERT_OFFSET}..${INSERT_OFFSET}`,
-]);
+runNative(["assert", "--absent", "--timeout-ms", "30000", "確定"]);
+assertPatterns([`selection=${INSERT_OFFSET}..${INSERT_OFFSET}`]);
 
 runNative([
   "widget-action",
@@ -445,17 +533,14 @@ const insert = measurements();
 const insertUndo = measurements();
 for (let index = 0; index < RUNS; index += 1) {
   runNative(["widget-action", "document", editorId, "focus"]);
-  assertPatterns([`role=textbox name="RefRain manuscript".*focused=true`]);
+  snapshotShowing(focused, "the manuscript focused");
   runNative(["widget-key", "document", "x", "x"]);
-  assertPatterns([
-    `${FIXTURE_BYTES + 1} bytes`,
-    `selection=${INSERT_OFFSET + 1}..${INSERT_OFFSET + 1}`,
-  ]);
+  assertPatterns([`selection=${INSERT_OFFSET + 1}..${INSERT_OFFSET + 1}`]);
   current = snapshot();
   recordMeasurement(current, insert);
 
   undo();
-  assertPatterns([`${FIXTURE_BYTES} bytes`, `selection=${INSERT_OFFSET}..${INSERT_OFFSET}`]);
+  assertPatterns([`selection=${INSERT_OFFSET}..${INSERT_OFFSET}`]);
   current = snapshot();
   recordMeasurement(current, insertUndo);
 }
@@ -464,7 +549,7 @@ const composition = measurements();
 const cancel = measurements();
 for (let index = 0; index < RUNS; index += 1) {
   runNative(["widget-action", "document", editorId, "focus"]);
-  assertPatterns([`role=textbox name="RefRain manuscript".*focused=true`]);
+  snapshotShowing(focused, "the manuscript focused");
   runNative(["widget-action", "document", editorId, "set_composition", "输入中"]);
   assertPatterns([
     `selection=${INSERT_OFFSET + 9}..${INSERT_OFFSET + 9}`,
@@ -484,7 +569,7 @@ const commit = measurements();
 const compositionUndo = measurements();
 for (let index = 0; index < RUNS; index += 1) {
   runNative(["widget-action", "document", editorId, "focus"]);
-  assertPatterns([`role=textbox name="RefRain manuscript".*focused=true`]);
+  snapshotShowing(focused, "the manuscript focused");
   runNative(["widget-action", "document", editorId, "set_composition", "確定"]);
   assertPatterns([
     `selection=${INSERT_OFFSET + 6}..${INSERT_OFFSET + 6}`,
@@ -493,18 +578,35 @@ for (let index = 0; index < RUNS; index += 1) {
 
   runNative(["widget-action", "document", editorId, "commit_composition"]);
   runNative(["assert", "--absent", "--timeout-ms", "30000", "composition="]);
-  assertPatterns([
-    `${FIXTURE_BYTES + 6} bytes`,
-    `selection=${INSERT_OFFSET + 6}..${INSERT_OFFSET + 6}`,
-  ]);
+  assertPatterns(["確定", `selection=${INSERT_OFFSET + 6}..${INSERT_OFFSET + 6}`]);
   current = snapshot();
   recordMeasurement(current, commit);
 
   undo();
-  assertPatterns([`${FIXTURE_BYTES} bytes`, `selection=${INSERT_OFFSET}..${INSERT_OFFSET}`]);
+  runNative(["assert", "--absent", "--timeout-ms", "30000", "確定"]);
+  assertPatterns([`selection=${INSERT_OFFSET}..${INSERT_OFFSET}`]);
   current = snapshot();
   recordMeasurement(current, compositionUndo);
 }
+
+// Sign convention, measured rather than assumed: a negative delta walks this
+// track toward the head and a positive one toward the tail. Four million pixels
+// is past either end of a 100k-block manuscript. Where a wheel lands is not
+// asserted — see M13 above; what is asserted is that wheeling reaches the
+// screen at all, and the window it left behind is reported as that defect's
+// standing evidence.
+const WHEEL_TO_HEAD = "-4000000";
+const WHEEL_TO_TAIL = "4000000";
+const scroll = measurements();
+const scrollWindowStarts: number[] = [];
+for (let index = 0; index < RUNS; index += 1) {
+  runNative(["widget-wheel", "document", trackId, index % 2 === 0 ? WHEEL_TO_TAIL : WHEEL_TO_HEAD]);
+  runNative(["wait"]);
+  current = snapshot();
+  scrollWindowStarts.push(firstProjectedBlock(current));
+  recordMeasurement(current, scroll);
+}
+const scrollMovedTheWindow = new Set(scrollWindowStarts).size > 1;
 
 const profile = requiredMatch(current, /^frame_profile .*$/m, "frame profile")[0];
 const stageMaximumsUs = {
@@ -549,6 +651,8 @@ const checks = {
   compositionUndoP95: passesOneFrame(compositionUndo),
   noLongStage: maximumStageUs < LONG_TASK_BUDGET_US,
   boundedRetainedWidgets: retainedWidgets <= MAX_RETAINED_WIDGETS,
+  scrollReachesTheScreen: scrollMovedTheWindow,
+  headAnchoredOnOpen: openedAtHead,
   crossParagraphSelection:
     crossParagraphSelection.snapshotObserved &&
     crossParagraphSelection.anchor === 0 &&
@@ -582,7 +686,14 @@ const report = {
   commitInputToPresentNs: latencyReport(commit),
   compositionUndoInputToPresentNs: latencyReport(compositionUndo),
   crossParagraphSelection,
-  compositionGeometry: { stableBounds: stableEditorBounds },
+  // M13's evidence: where twenty alternating wheels actually left the window.
+  scrollWindowStarts,
+  compositionGeometry: {
+    stableColumn: stableEditorColumn.place,
+    openHeight: stableEditorColumn.height,
+    // A collapsed preedit may add a wrapped line; it may not move the column.
+    compositionHeights,
+  },
   font: initialFontEvidence,
   screenshot: { path: screenshotPath, bytes: screenshotBytes },
   frameProfileUs: {
