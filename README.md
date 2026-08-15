@@ -111,21 +111,28 @@ sent back, sentence by sentence.
 
 ### Scale
 
-Measured, not estimated — and each row says which platform measured it, because
-the two disagree where the filesystem does the work:
+Measured, not estimated. **Every row is measured on Windows, the platform this
+project releases from**, because a number measured where nothing ships is a
+number about somebody else's machine. Where Linux disagrees, its reading is
+given beside — the two part company wherever the filesystem does the work.
 
-| | | |
+Windows readings: 2026-08-16, `x86_64-pc-windows-msvc`, release profile, on the
+development machine. Linux readings: the same tests as CI runs them.
+
+| | Windows — the release platform | Linux |
 |---|---|---|
-| 1GB Markdown | opens — 7.2 million blocks | Linux |
-| 11.4MB manuscript, 100k blocks | open to JSON, p95 68ms | Linux |
-| 100MB PDF import | parses in 195ms | Linux |
-| 100k-file project directory | warm refresh, p95 404ms | Linux |
-| 100k-file project directory | warm refresh, p95 **1032ms**; open one page, p95 810ms | **Windows — the release platform** |
+| 1GB Markdown | opens — 7,206,321 blocks: read 1.0s, split 1.9s, manuscript 0.5s | opens — 7.2 million blocks |
+| 11.4MB manuscript, 100k blocks | open to the bridge, p95 **83.9ms** | p95 68ms |
+| 100MB PDF import | parses in **315ms** | 195ms |
+| 100k-file project directory | warm refresh p95 **1074.6ms**; the path an author waits on (reconcile + one page) p95 **843.7ms** | warm refresh p95 404ms |
+| 100k-row document | search p95 **23.2ms**; one page p95 **14.1ms** | p95 under 10ms |
 
-The last row is the one to read before judging the others: a warm refresh is a
-metadata walk of every file, and NTFS charges several times what ext4 charges
-for it. `crates/refrain-store/tests/project_performance.rs` therefore holds a
-budget per platform, each carrying the reading that set it.
+The project-directory row is the one to read before judging the others: a warm
+refresh is a metadata walk of every file, and NTFS charges several times what
+ext4 charges for it. `crates/refrain-store/tests/project_performance.rs`
+therefore holds a budget per platform, each carrying the reading that set it.
+The 1GB row comes from `huge_input_probe.rs`, which is `#[ignore]`d because it
+writes a multi-gigabyte corpus; run it with `--ignored` to reproduce.
 
 ## How the code is organised
 
@@ -196,11 +203,15 @@ the on-disk formats are unchanged, so this build is a drop-in replacement for
 v0.2.5. It exists to be used and reported against. The version position is the
 author's call pending that round of use.
 
-Most measurements in this repository come from Linux, and nothing is claimed
-for a platform until it has been measured there. The exception is the Windows
-build itself: it compiles and passes the full test suite on real Windows
-hardware. The Windows and macOS input-method paths are written but not yet
-signed off.
+Nothing is claimed for a platform until it has been measured there. Since
+v0.3.3 the scale table above is measured on Windows first, because that is what
+this project releases; Linux readings stay beside them as the CI reference.
+
+The Windows input-method path is exercised end to end — a real window, the real
+system IME, Chinese committed into a manuscript and saved — but it is not yet
+signed off: four of the fifteen criteria ask the platform layer for candidate
+window evidence it does not currently emit, and two more still ask for a
+diagnostic line the surface stopped drawing. macOS is not built.
 
 ### Building from source
 

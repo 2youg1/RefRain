@@ -30,13 +30,16 @@ const WARM_RUNS: usize = 20;
 /// nothing had regressed. A budget that is permanently red on the release
 /// platform stops being read, which is worse than no budget at all.
 ///
-/// **Where the Windows numbers come from.** Measured here, twice, on the
-/// development machine (2026-08-15, `x86_64-pc-windows-msvc`, release):
-/// warm p95 1032.2 / 1028.4 ms, product p95 809.9 / 794.5 ms, search p95
-/// 21.7 / 21.8 ms, page p95 13.7 / 13.5 ms, all refreshes 20.66 / 20.92 s.
-/// Run-to-run spread is under 0.5%, so the budgets below are those readings
-/// with roughly 50% headroom — enough that machine noise never reds the gate,
-/// tight enough that doubling the per-document work still does.
+/// **Where the Windows numbers come from.** Measured here on the development
+/// machine (`x86_64-pc-windows-msvc`, release). Twice on 2026-08-15: warm p95
+/// 1032.2 / 1028.4 ms, product p95 809.9 / 794.5 ms, search p95 21.7 / 21.8 ms,
+/// page p95 13.7 / 13.5 ms, all refreshes 20.66 / 20.92 s. A third time on
+/// 2026-08-16, the reading the README now carries: warm p95 1074.6 ms, product
+/// p95 843.7 ms, search p95 23.2 ms, page p95 14.1 ms, first refresh 2.02 s,
+/// all refreshes 22.11 s. Run-to-run spread stays near 4%, so the budgets below
+/// are those readings with roughly 50% headroom — enough that machine noise
+/// never reds the gate, tight enough that doubling the per-document work still
+/// does.
 ///
 /// The Linux numbers are unchanged; they are what CI measures and what the
 /// pre-fix N+1 baseline (54.161335 s for the first refresh) was judged against.
