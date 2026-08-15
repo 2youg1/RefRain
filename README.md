@@ -182,8 +182,11 @@ one beside it.
 
 Releases are published on
 [GitHub](https://github.com/kaile9/RefRain/releases). The current release is
-v0.3.1 — the native surface with a Windows client, and a manuscript window
-that a wheel can bring home from either end.
+v0.3.2 — the native surface with a Windows client, a manuscript window that a
+wheel can bring home from either end, and the first release whose gate ran
+green on the commit it was cut from. v0.3.0 and v0.3.1 were tagged and never
+published, because the release workflow requires that green run and the gate
+had never had one.
 
 Most measurements in this repository come from Linux, and nothing is claimed
 for a platform until it has been measured there. The exception is the Windows
