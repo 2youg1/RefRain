@@ -123,6 +123,28 @@ font-checks a markup `label=` attribute as if it were rendered text and refuses
 CJK there. It is the last English string on the surface, and it dies with
 `app.native` when the TypeScript lane goes.
 
+**There is no top bar, and the window's own chrome stays the platform's.** The
+question was asked directly — a bar that used to collapse by itself and no longer
+does — and the honest answer has two halves. The bar being remembered belonged to
+the deleted Tauri shell; the behaviour it had, opening on approach and getting
+out of the way, is what the rail's hover-peek does today (2.13), and the facts it
+carried are carried by the window title, the menu bar (`app.zon` states why a
+desktop application needs one: it is the complete list of what the application
+can do), the status line, and the tray item. Adding a bar back would be the third
+interaction zone the stage rule forbids.
+
+The other half is that the complaint names something real: the top of the window
+used to be a dead margin between the platform's caption and the body. The rail's
+ground now reaches `y = 0`, so that edge belongs to the page.
+
+Going further — `titlebar = "hidden_inset"`, which the SDK supports on all three
+platforms and which reclaims the caption band for the app while keeping the
+system frame and the DWM caption buttons — was tried and reverted deliberately.
+It moves the window's drag behaviour into the app (`setWindowDragRegions` must
+declare a caption region and exclude the button cluster), and a mistake there
+leaves the only shipping platform with a window nobody can move. That is a change
+to make with a hand on the window, not a side effect of a pass.
+
 No new UI floats above the manuscript layer. There are two exemptions and
 there will never be a third: the agent-state recovery card (KARA's "you
 stopped here"), and the settings surface when the author asks for it
@@ -824,6 +846,70 @@ latency against whichever clock domain was nearer, because the platform hosts
 disagreed. 0.9.0 stamps the monotonic clock at the responding present's return
 and states that domain is now universal, so the workaround went with the defect
 it worked around.
+
+### Why the surface's interface state is leaving TypeScript
+
+The decision, its rejected alternative, and the observation that would reverse
+it. Nothing below has moved yet; this section exists so the move is judged
+against a written claim rather than against whatever the code ends up doing.
+
+**The decision.** `Model` / `Msg` / `update` leave `core.ts` for the Zig shell
+that already draws every pixel beside them. The reason is not that TypeScript is
+the wrong language; it is that this TypeScript is compiled through a restricted
+subset with no JSON parser, no `TextEncoder`, no `Number()`, and fixed-length
+strings — so every fact the surface reads out of a reply is read by scanning for
+a quoted byte pattern. The catalogue defect above is what that costs: a needle
+spelled `"documentCount"`, a Rust type that never emitted it, and a file tree
+that drew nothing while every test stayed green. Zig reads the same replies
+through `snapshot.zig` today and would read typed rows tomorrow (below); the
+subset's byte needles have no equivalent on that side, because a field that does
+not exist is a compile error rather than a zero.
+
+**The rejected alternative** is to keep the TypeScript lane and fix it in place —
+the cheaper move, and the one to fall back to if the spike below fails. It is
+rejected as the *destination* because the two lanes have provably different
+semantics: `Array.isArray` answers false for a tuple in the compiled core, which
+is why every effect-carrying `update` arm once committed the tuple itself as the
+model and the first real window segfaulted while the Null platform and the node
+lane stayed green. A lane whose unit tests run on a different engine than the
+product cannot be trusted to have been tested.
+
+**What would reverse it.** If the Zig shell reproduces a defect of the same class
+— something that passes every test and fails only in a real window — then the
+lane was never the cause and the attribution is wrong. The spike is therefore
+required to end with a recorded journal replaying `--verify` green through a real
+window, not with a compiling skeleton.
+
+**What must not follow from it.** The domain does not move. `refrain-core`,
+`refrain-store`, `refrain-host` and `refrain-app` stay Rust; "Zig core" names the
+shell's Model/Msg/update and nothing else. A domain judgement that appears in
+Zig during the migration is a defect to push back down, not progress.
+
+### Why the bridge is leaving opaque JSON for typed rows
+
+**The decision.** The reply channel stops carrying JSON the surface parses and
+starts carrying rows generated from `protocol/host.json` — `repr(C)` structs in
+Rust, the matching declarations in Zig, zero parsing on either side.
+
+**What it deletes.** Today one reply shape has three readers who each know it
+independently: serde on the Rust side, the byte needles in `core.ts`, and the
+hand-written cursor in `snapshot.zig`. Nothing reports when they drift; the gate
+that now covers the reply direction (`verify:wire-shapes`) is a check *because*
+there are three readers, and it becomes unnecessary when there is one. The
+domain judgements the surface currently makes by guessing at bytes — whether a
+Run is in flight, whether a proposal's scope still matches, which recovery step a
+stale proposal is on — belong to L2/L3 and cross as computed enum fields.
+
+**The rejected alternative** is a real JSON parser in the surface. It is rejected
+because it would make the surface's reading correct without making it *single*:
+the three authorities would remain, and the drift they permit is the defect
+class, not the parsing.
+
+**What would reverse it.** If the row structs turn `host.json` into a second
+place where product vocabulary is defined — if a screen's wording or paging rule
+starts living in the schema — then the shape has migrated the problem rather
+than removed it. Rows carry only what is drawn; paging and truncation stay with
+`truncate_output`.
 
 ### Why RefRain breaks its own lines
 

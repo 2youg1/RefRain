@@ -9,8 +9,11 @@ dist/
 # Rust and native generated output.
 target/
 apps/native/.native/
-apps/native/.zig-cache/
 apps/native/zig-out/
+# The Zig cache, wherever it lands. `native automate` writes one beside the
+# working directory it is invoked from, so pinning the app's path alone let a
+# root-level cache — automation snapshots and a screenshot — reach the index.
+.zig-cache/
 
 # TypeScript incremental build state.
 *.tsbuildinfo

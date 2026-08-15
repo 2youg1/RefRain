@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$Root = "",
   # `native` is the only shell the product has. It is named explicitly so the
   # CI step says which surface it drove: an embedded-browser shell existed here
@@ -21,6 +21,7 @@ $RuntimeOut = Join-Path $ResultRoot "runtime.stdout.log"
 $IdentityPath = Join-Path $ResultRoot "identity.json"
 $ManifestPath = Join-Path $ResultRoot "run.json"
 $DocumentPath = Join-Path $FixtureRoot "document.md"
+$AutomationDir = Join-Path $NativeDir ".zig-cache/native-sdk-automation"
 
 Remove-Item $ResultRoot -Recurse -Force -ErrorAction SilentlyContinue
 New-Item $FixtureRoot -ItemType Directory -Force | Out-Null
@@ -122,7 +123,17 @@ function Native-Snapshot([int]$PublisherPid, [string]$Name, [string]$Required = 
   do {
     $errorPath = Join-Path $ResultRoot "automation.stderr.tmp"
     $attempt = Invoke-NativeAutomation @("snapshot") $errorPath
-    $snapshot = ($attempt.Lines -join "`n")
+    # Read the delivered file as UTF-8 rather than the command's stdout: Windows
+    # PowerShell decodes a child process's output with the console codepage, and
+    # every accessible name on this surface is Chinese — a pattern naming one
+    # could never match a mojibake'd line, and the whole lane would look like a
+    # timeout instead of an encoding.
+    $deliveredPath = Join-Path $AutomationDir "snapshot.txt"
+    $snapshot = if (Test-Path $deliveredPath) {
+      [IO.File]::ReadAllText($deliveredPath, [Text.UTF8Encoding]::new($false))
+    } else {
+      ($attempt.Lines -join "`n")
+    }
     $allowedDelivery = "delivered snapshot -> "
     if ($attempt.ExitCode -eq 0 -and ($attempt.Stderr.Length -eq 0 -or $attempt.Stderr.StartsWith($allowedDelivery)) -and
         $snapshot -match "ready=true" -and $snapshot -match "publisher_pid=$PublisherPid(?:\s|$)" -and
@@ -133,7 +144,28 @@ function Native-Snapshot([int]$PublisherPid, [string]$Name, [string]$Required = 
     }
     Start-Sleep -Milliseconds 100
   } while ((Get-Date) -lt $deadline)
-  throw "Native snapshot $Name did not prove the required runtime state"
+  # Keep what was actually seen. A bare "did not prove" says only that thirty
+  # seconds passed, which is the least useful sentence a failing lane can print.
+  [IO.File]::WriteAllText((Join-Path $ResultRoot "$Name.unmatched.txt"), "$snapshot`n", [Text.UTF8Encoding]::new($false))
+  throw "Native snapshot $Name did not prove the required runtime state (wanted /$Required/, saw $RelativeResultRoot/$Name.unmatched.txt)"
+}
+
+<#
+  Click the one widget a pattern names, once the snapshot proves it is there.
+
+  The lane needs two clicks before it can type anything — adopt the folder, open
+  the document — and both must wait for their row rather than sleep and hope.
+#>
+function Native-Click-Named([int]$PublisherPid, [string]$Name, [string]$Pattern) {
+  $snapshot = Native-Snapshot $PublisherPid $Name $Pattern
+  $found = [regex]::Match($snapshot, "widget @w1/document#([0-9]+) $Pattern")
+  if (-not $found.Success) { throw "Native snapshot $Name has no widget matching $Pattern" }
+  $errorPath = Join-Path $ResultRoot "$Name.automation.stderr.txt"
+  $attempt = Invoke-NativeAutomation @("widget-click", "document", $found.Groups[1].Value) $errorPath
+  if ($attempt.ExitCode -ne 0 -or
+      ($attempt.Stderr.Length -gt 0 -and -not $attempt.Stderr.StartsWith("delivered widget-click -> "))) {
+    throw "Native click $Name failed"
+  }
 }
 
 function Start-Composition([int]$PublisherPid, [string]$Name, [string]$Letters) {
@@ -168,12 +200,20 @@ try {
   & bun e2e/ime/capture-native-identity.ts --root $Root --executable $Executable --output $IdentityPath
   if ($LASTEXITCODE -ne 0) { throw "identity capture failed" }
 
+  # The two names this used to set (REFRAIN_NATIVE_ROOT / _DOCUMENT) have had no
+  # reader since v0.2.5, so the app came up with nothing open and the first
+  # snapshot waited thirty seconds for a manuscript textbox that could not
+  # exist. The document is opened the way an author opens one: the automation
+  # channel answers "which folder", every other step is a real click.
   $env:NATIVE_SDK_IME_EVIDENCE = "1"
-  $env:REFRAIN_NATIVE_ROOT = $FixtureRoot
-  $env:REFRAIN_NATIVE_DOCUMENT = "document.md"
-  $env:REFRAIN_NATIVE_APP_DB = (Join-Path $FixtureRoot "app.db")
+  $env:REFRAIN_AUTOMATION_ROOT = $FixtureRoot
+  $env:REFRAIN_DATA_DIR = (Join-Path $ResultRoot "appdata")
   $process = Start-Process $Executable -PassThru -RedirectStandardError $RuntimeLog -RedirectStandardOutput $RuntimeOut
 
+  # First-launch destination is already Files, so no chord is sent: pressing the
+  # Files chord while on Files closes the destination (workbench.ts::navigate).
+  Native-Click-Named $process.Id "adopt" 'role=button name="打开一个项目文件夹"'
+  Native-Click-Named $process.Id "open-document" 'role=treeitem name="document\.md"'
   $initial = Native-Snapshot $process.Id "initial" "role=textbox name=`"RefRain manuscript`""
   $window = [IntPtr]::Zero
   $deadline = (Get-Date).AddSeconds(20)
@@ -219,13 +259,16 @@ try {
   }
   $punctuation = Native-Snapshot $process.Id "punctuation" "role=textbox.*focused=true"
 
-  $save = [regex]::Match($punctuation, 'widget @w1/document#([0-9]+) role=button name="Save"')
-  if (-not $save.Success) { throw "Native snapshot has no Save button" }
-  $saveAttempt = Invoke-NativeAutomation @("widget-click", "document", $save.Groups[1].Value) (Join-Path $ResultRoot "save.automation.stderr.txt")
+  # Save is a command, not a button: the surface prints its chord on the menu
+  # and the palette row, and `document.save` is the same W1 path both take. The
+  # `name="Save"` button this looked for has not existed since the native
+  # surface landed.
+  $saveAttempt = Invoke-NativeAutomation @("shortcut", "document.save") (Join-Path $ResultRoot "save.automation.stderr.txt")
   if ($saveAttempt.ExitCode -ne 0 -or
-      ($saveAttempt.Stderr.Length -gt 0 -and -not $saveAttempt.Stderr.StartsWith("delivered widget-click -> "))) {
+      ($saveAttempt.Stderr.Length -gt 0 -and -not $saveAttempt.Stderr.StartsWith("delivered shortcut -> "))) {
     throw "Native Save action failed"
   }
+  $punctuation | Out-Null
   Start-Sleep -Milliseconds 500
 
   $preeditHash = (Get-FileHash (Join-Path $ResultRoot "preedit.png") -Algorithm SHA256).Hash.ToLowerInvariant()
