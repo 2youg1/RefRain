@@ -366,6 +366,8 @@ module with no test file has test blocks in the module.
 | `app_main.zig` | The shell: screens, fonts, menus, the context menu, KARA, and the theme wiring. `railTreeRow` makes a rail row: no corner, a semantic level, one indent step for each level | in-file tests; the e2e journals |
 | `host_bridge.zig` | The ABI client. It adopts the borrowed projection into module-lifetime storage | e2e; `verify:native-theme-pixels` |
 | `replay_seam.zig` | The one exit a Zig core uses to ask Rust: the two channel keys, the host-record encoding, and the result routing. It has no production reader today. The lane switch in P5 makes `update_fx` its reader | in-file tests, with one round trip against `host_bridge`'s decoder |
+| `core/workbench.zig` | The destinations, the navigation result, the panel stack, and the split fraction. The stack is a bounded array, not a packed integer: the packing was a restriction of the TypeScript subset, and it made "the stack holds the manuscript" and "the stack is empty" the same number | in-file tests, with the vectors of `workbench.test.ts` |
+| `core/roster.zig` | The roster cursor invariant: the cursor points at a row that exists, or it is `null`. `null` replaces the `-1` convention that each reader had to remember | in-file tests, with the vectors of `roster.test.ts` |
 | `project_request.zig` | The write side: one function for each `ProjectInput` entry | in-file tests; `verify:wire-shapes` |
 | `project_view.zig` | The read side: reply bytes to rows, and the Chinese labels | in-file tests |
 | `snapshot.zig` | The cursor over opaque JSON, with arrays | in-file tests |

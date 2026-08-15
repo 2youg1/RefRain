@@ -24,6 +24,10 @@ const document_language = @import("document_language.zig");
 // P2 的回放缝：Zig 核心问 Rust 的出口。今天只有它自己的测试是读者——
 // 车道切换在 P5，届时 update_fx 成为第二个读者、TS 车道成为零个。
 const replay_seam = @import("replay_seam.zig");
+// 单元 12 的规则层：去处/导航/面板栈与名录游标。今天同样只有测试是读者——
+// 生产读者是尚未写出的 Zig `update`，车道切换在单元 13。
+const core_workbench = @import("core/workbench.zig");
+const core_roster = @import("core/roster.zig");
 
 pub const panic = std.debug.FullPanic(native_sdk.debug.capturePanic);
 pub const Model = core.Model;
@@ -58,6 +62,8 @@ test {
     std.testing.refAllDecls(project_view);
     std.testing.refAllDecls(document_language);
     std.testing.refAllDecls(replay_seam);
+    std.testing.refAllDecls(core_workbench);
+    std.testing.refAllDecls(core_roster);
 }
 
 test "compiled lane: bare-sugar-free update snapshots after tuple and bare arms alike" {
