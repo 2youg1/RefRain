@@ -51,19 +51,24 @@ const INJECTIONS: readonly Injection[] = [
     replacement: 'if (!writer.key("runId")',
     expect: "runId",
   },
+  // These two used to bite `apps/native/src/roster.ts`. The lane switch deleted
+  // it, and every hand-written TypeScript under `apps/native/src/` with it — the
+  // only files left there are generated, and both gates exempt the generated
+  // bridge on purpose. So the bite creates the file it needs instead of editing
+  // one: what is being proved is that the gate still names a network call and a
+  // hand-written bridge call **anywhere in that tree**, which is exactly the
+  // shape a new file would have.
   {
     gate: "verify:no-network",
-    file: "apps/native/src/roster.ts",
-    anchor: "export const NO_ROW = -1;",
-    replacement: 'await fetch("https://example.com/telemetry");\nexport const NO_ROW = -1;',
-    expect: "roster.ts",
+    file: "apps/native/src/injected_network_probe.ts",
+    content: 'await fetch("https://example.com/telemetry");\n',
+    expect: "injected_network_probe.ts",
   },
   {
     gate: "verify:bridge",
-    file: "apps/native/src/roster.ts",
-    anchor: "export const NO_ROW = -1;",
-    replacement: 'const raw = invoke("health", {});\nexport const NO_ROW = -1;',
-    expect: "roster.ts",
+    file: "apps/native/src/injected_bridge_probe.ts",
+    content: 'const raw = invoke("health", {});\n',
+    expect: "injected_bridge_probe.ts",
   },
   {
     gate: "verify:core-purity",
