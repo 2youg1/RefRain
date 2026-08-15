@@ -28,6 +28,9 @@ const replay_seam = @import("replay_seam.zig");
 // 生产读者是尚未写出的 Zig `update`，车道切换在单元 13。
 const core_workbench = @import("core/workbench.zig");
 const core_roster = @import("core/roster.zig");
+const core_text = @import("core/text.zig");
+const core_msg = @import("core/msg.zig");
+const core_model = @import("core/model.zig");
 
 pub const panic = std.debug.FullPanic(native_sdk.debug.capturePanic);
 pub const Model = core.Model;
@@ -64,6 +67,9 @@ test {
     std.testing.refAllDecls(replay_seam);
     std.testing.refAllDecls(core_workbench);
     std.testing.refAllDecls(core_roster);
+    std.testing.refAllDecls(core_text);
+    std.testing.refAllDecls(core_msg);
+    std.testing.refAllDecls(core_model);
 }
 
 test "compiled lane: bare-sugar-free update snapshots after tuple and bare arms alike" {
