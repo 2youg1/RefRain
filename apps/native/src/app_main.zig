@@ -797,27 +797,40 @@ fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             .{ .gap = rail_row_gap_px, .semantics = .{ .role = .tree, .label = "项目里的文档" } },
             @as([]const Adapter.Ui.Node, rows[0..window]),
         ),
-        ui.row(.{ .gap = 8 }, .{
-            ui.button(.{
-                .disabled = model.documentCursor.len == 0,
-                .on_press = documentPageMsg(model),
-                .semantics = .{ .label = "读下一页文档名录" },
-            }, "再读一页"),
-            ui.button(.{
-                // 新建用搜索框里的字当标题：作者刚打完一个找不到的名字，
-                // 下一步多半就是建它。空框时按钮灰着，不发一条会被拒绝的请求。
-                .disabled = model.searchQuery.len == 0,
-                .on_press = createDocumentMsg(model),
-                .semantics = .{ .label = "用搜索框里的名字新建一篇正文" },
-            }, "新建正文"),
-            ui.button(.{
-                .on_press = importMsg(model, true),
-                .semantics = .{ .label = "把一份文本导入为正文" },
-            }, "导入正文"),
-            ui.button(.{
-                .on_press = importMsg(model, false),
-                .semantics = .{ .label = "把一份来源导入为资料" },
-            }, "导入资料"),
+        // 四个动作两行两列，不是一行四个：栏是这一屏最窄的一层（文件去处
+        // 的 layoutFraction 最小），一行四个在默认窗宽下把后两个挤出右缘——
+        // 实测 1250px 窗上「导入正文」被切、「导入资料」整个看不见。SDK 的
+        // 行不做流式换行（`ui.zig`：rows never flow-wrap their children），
+        // 所以换行是版式的事，写成两行。
+        ui.column(.{ .gap = 8 }, .{
+            ui.row(.{ .gap = 8 }, .{
+                ui.button(.{
+                    .grow = 1,
+                    .disabled = model.documentCursor.len == 0,
+                    .on_press = documentPageMsg(model),
+                    .semantics = .{ .label = "读下一页文档名录" },
+                }, "再读一页"),
+                ui.button(.{
+                    // 新建用搜索框里的字当标题：作者刚打完一个找不到的名字，
+                    // 下一步多半就是建它。空框时按钮灰着，不发一条会被拒绝的请求。
+                    .grow = 1,
+                    .disabled = model.searchQuery.len == 0,
+                    .on_press = createDocumentMsg(model),
+                    .semantics = .{ .label = "用搜索框里的名字新建一篇正文" },
+                }, "新建正文"),
+            }),
+            ui.row(.{ .gap = 8 }, .{
+                ui.button(.{
+                    .grow = 1,
+                    .on_press = importMsg(model, true),
+                    .semantics = .{ .label = "把一份文本导入为正文" },
+                }, "导入正文"),
+                ui.button(.{
+                    .grow = 1,
+                    .on_press = importMsg(model, false),
+                    .semantics = .{ .label = "把一份来源导入为资料" },
+                }, "导入资料"),
+            }),
         }),
     });
 }
