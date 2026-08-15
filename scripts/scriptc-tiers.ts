@@ -41,6 +41,7 @@ export const TIER_A: Readonly<Record<string, string>> = {
   "verify:native-document-performance": "scripts/verify-native-document-performance.ts",
   "verify:native-ime": "scripts/verify-native-ime.ts",
   "verify:no-html-sink": "scripts/verify-no-html-sink.ts",
+  "verify:release-target": "scripts/verify-release-target.ts",
   "verify:release-version": "scripts/verify-release-version.ts",
   "verify:roundtrip": "scripts/verify-roundtrip.ts",
   "verify:skill-doc-current": "scripts/verify-skill-doc-current.ts",

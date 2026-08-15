@@ -188,20 +188,34 @@ one beside it.
 ## Install
 
 Releases are published on
-[GitHub](https://github.com/kaile9/RefRain/releases). The current release is
-v0.3.3. v0.3.0 and v0.3.1 were tagged and never published: the release workflow
-requires a successful gate run on the tagged commit, and the gate had never
-once been green on a runner. It is green now, on Linux and Windows, so v0.3.3
-is the first tag since v0.2.5 that means what it claims.
+[GitHub](https://github.com/kaile9/RefRain/releases). **The current release is
+v0.3.4. Do not use the v0.3.3 artifact** — it does not start on Intel.
 
-v0.3.3 stays on the patch position on purpose. The change behind it is large —
-the state machine is Zig and the 7,149 lines of TypeScript that used to hold it
-are gone; the reply channel carries typed rows generated from one schema instead
-of opaque JSON, so neither side parses. But nothing an installed copy exchanges
-with anything else moved: the host protocol is internal to the one binary, and
-the on-disk formats are unchanged, so this build is a drop-in replacement for
-v0.2.5. It exists to be used and reported against. The version position is the
-author's call pending that round of use.
+v0.3.0 and v0.3.1 were tagged and never published: the release workflow requires
+a successful gate run on the tagged commit, and the gate had never once been
+green on a runner. It is green now, on Linux and Windows, so v0.3.3 was the
+first tag since v0.2.5 whose gate meant what it claimed — and its artifact still
+crashed on launch with `0xC000001D`, an illegal instruction.
+
+The cause was in the build, not the program. The Native SDK's `build.zig` calls
+`b.standardTargetOptions(.{})`, which without an explicit `-Dtarget` resolves to
+the **build machine's own CPU features**. The Windows runner that built v0.3.3
+was AMD, so LLVM emitted `INSERTQ` — an SSE4a instruction Intel does not
+implement — and the binary died on the first Intel machine that ran it. Every
+gate stayed green throughout, because a machine can always execute what it just
+compiled for itself; nothing but running the CI artifact on different silicon
+could have shown it. v0.3.4 names the floor instead of inheriting it
+(`x86_64_v2`: SSE4.2 and POPCNT, every x86-64 part since 2009), and
+`verify:release-target` fails the gate if any CI build stops naming it.
+
+The v0.3.x line stays on the patch position on purpose. The change behind it is
+large — the state machine is Zig and the 7,149 lines of TypeScript that used to
+hold it are gone; the reply channel carries typed rows generated from one schema
+instead of opaque JSON, so neither side parses. But nothing an installed copy
+exchanges with anything else moved: the host protocol is internal to the one
+binary, and the on-disk formats are unchanged, so this build is a drop-in
+replacement for v0.2.5. It exists to be used and reported against. The version
+position is the author's call pending that round of use.
 
 Nothing is claimed for a platform until it has been measured there. Since
 v0.3.3 the scale table above is measured on Windows first, because that is what

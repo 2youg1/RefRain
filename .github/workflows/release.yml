@@ -150,9 +150,16 @@ jobs:
             throw "Tag $env:GITHUB_REF_NAME does not match v$version"
           }
 
+      # `-Dtarget` and `-Dcpu` are the whole reason v0.3.4 exists. Without them
+      # the SDK's `b.standardTargetOptions(.{})` resolves to the build machine's
+      # native CPU, so the published artifact carries whatever the runner's
+      # silicon supports. v0.3.3 was built on an AMD runner, picked up `INSERTQ`
+      # (SSE4a, which Intel does not implement), and died on launch with
+      # 0xC000001D on the author's Intel laptop. x86_64_v2 is the declared floor:
+      # SSE4.2 and POPCNT, which is every x86-64 part since 2009.
       - name: Build the Native Windows binary
         working-directory: apps/native
-        run: bun x native build . --yes -Dplatform=windows -Doptimize=ReleaseFast
+        run: bun x native build . --yes -Dplatform=windows -Doptimize=ReleaseFast -Dtarget=x86_64-windows-gnu -Dcpu=x86_64_v2
 
       # `native package` produces the application directory. It does not produce
       # the public asset: ScriptC owns the archive so the bytes are ours and

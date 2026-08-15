@@ -102,7 +102,7 @@ jobs:
       # nothing about what the author types.
       - name: Build the shipping Native executable with automation evidence
         working-directory: apps/native
-        run: bun x native build . --yes -Dplatform=windows -Dautomation=true -Doptimize=ReleaseFast
+        run: bun x native build . --yes -Dplatform=windows -Dautomation=true -Doptimize=ReleaseFast -Dtarget=x86_64-windows-gnu -Dcpu=x86_64_v2
 
       - name: Drive the Native GPU document surface with Microsoft Pinyin
         shell: pwsh
