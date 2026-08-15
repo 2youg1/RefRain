@@ -34,24 +34,20 @@ pub const Effects = App.Effects;
 /// 它们今天在 `update` 里明确地什么都不做，而不是落进一个 `else` 分支——`else` 会
 /// 让「忘了迁」与「有意不动」看起来一样。这张表让剩余工作可数。
 pub const pending_arms = [_][]const u8{
-    // 12e：要读答复才能决定的臂。
-    "host_result",        "document_input",         "document_scroll",
-    "document_save",      "document_undo",          "document_jump",
-    "document_revert",    "document_open",          "document_open_jump",
-    "project_request",    "search_fire",            "verdict_begin",
-    "verdict_accept",     "verdict_reject",         "verdict_revise",
-    "verdict_settle",     "desk_verdict",           "review_advance",
-    "revision_begin",     "material_draft_begin",   "agent_edit_begin",
-    "dispatch_agents",    "dispatch_orchestration", "dispatch_block_toggle",
+    "document_input", "document_scroll", "document_jump",
+    "document_revert", "document_open", "document_open_jump",
+    "project_request", "search_fire", "verdict_begin",
+    "verdict_accept", "verdict_reject", "verdict_revise",
+    "verdict_settle", "desk_verdict", "review_advance",
+    "revision_begin", "material_draft_begin", "agent_edit_begin",
+    "dispatch_agents", "dispatch_orchestration", "dispatch_block_toggle",
     "dispatch_blocks_all", "dispatch_blocks_clear", "dispatch_carry",
-    "dispatch_agent",     "dispatch_material_toggle", "dispatch_stash",
-    "dispatch_stash_drop", "dispatch_stash_clear",  "runs_tick",
-    "stale_dismiss",      "mailbox_tab",
-    // 12f：KARA 的计时与开关（机器在 Rust，这里只接计时）。
-    "kara_toggle",        "app_focus",              "kara_gone_away",
-    "kara_entered",       "kara_leave_finished",    "kara_card_done",
-    "kara_interrupt_done", "app_quit",              "frame",
-    "theme_select",       "material_select",
+    "dispatch_agent", "dispatch_material_toggle", "dispatch_stash",
+    "dispatch_stash_drop", "dispatch_stash_clear", "runs_tick",
+    "stale_dismiss", "mailbox_tab", "kara_toggle",
+    "app_focus", "kara_gone_away", "kara_entered",
+    "kara_leave_finished", "kara_card_done", "kara_interrupt_done",
+    "app_quit",
 };
 
 /// 启动：向 Rust 握一次手。
@@ -71,7 +67,6 @@ pub fn initFx(model: *Model, fx: *Effects) void {
 /// `[Model, Cmd]` 元组（编译产物对混形糖的窄化会断裂，v0.3.0 真窗首派崩溃的根因），
 /// 那条纪律随车道一起消失。
 pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
-    _ = fx;
     // 探头态的解除在分派之前：任何交互都算「作者用过这栏」——栏留下，解除的只是
     // 自动收回的资格。机器自己的动静（计时、答复、帧）不解除。
     if (model.rail_peek and !keepsPeek(msg)) model.rail_peek = false;
@@ -117,8 +112,48 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         .notice_dismiss => model.notice = null,
         .noop => {},
 
+        // ---------------------------------------------------------- Rust 的答复
+        .host_result => |result| applyHostResult(model, result, fx),
+
+        // ---------------------------------------------------------- 正稿的两个命令
+        .document_save => {
+            if (!model.hasDocument() or model.document.save_pending) return;
+            var buffer: [replay_seam.max_record_bytes]u8 = undefined;
+            const record = replay_seam.encode(&buffer, .{
+                .action = .apply_input,
+                .input = @intFromEnum(protocol.Input.save),
+                .session = model.document.session,
+                .revision = model.document.revision,
+            }) catch return;
+            // 保存走自己的通道：与打字共键时，在飞的保存会被下一次输入顶掉，
+            // 「已保存」就成了没有证据的说法。
+            replay_seam.request(fx, .save, record, Effects.hostMsg(.host_result));
+            model.document.save_pending = true;
+        },
+        .document_undo => {
+            if (!model.hasDocument()) return;
+            var buffer: [replay_seam.max_record_bytes]u8 = undefined;
+            const record = replay_seam.encode(&buffer, .{
+                .action = .apply_input,
+                .input = @intFromEnum(protocol.Input.undo),
+                .session = model.document.session,
+                .revision = model.document.revision,
+            }) catch return;
+            replay_seam.request(fx, .dispatch, record, Effects.hostMsg(.host_result));
+        },
+
         // ---------------------------------------------------------- 外观
         .theme_next => model.theme_index = nextTheme(model.theme_index),
+        .theme_select => |index| model.theme_index = clampTheme(index),
+        // 0 实心 / 1 亚克力 / 2 液态玻璃；越界回落实心。
+        .material_select => |index| model.panel_material = if (index <= 2) index else 0,
+
+        // ---------------------------------------------------------- 帧
+        .frame => |size| {
+            model.window = size;
+            // 行长与视口高随真实窗宽重算；换算本身归排版，不在这里猫一份。
+            model.viewport.height_px = viewportHeightPx(size.height);
+        },
 
         // ---------------------------------------------------------- 名录
         .roster_step => |delta| {
@@ -221,10 +256,103 @@ fn relayout(model: *Model) void {
 
 /// 换下一套主题，到末尾回到第一套。
 fn nextTheme(current: u8) u8 {
-    const themes = @import("generated/themes.zig");
-    const count: u8 = @intCast(themes.themes.len);
+    const count = themeCount();
     if (count == 0) return 0;
     return (current + 1) % count;
+}
+
+fn clampTheme(index: u8) u8 {
+    const count = themeCount();
+    if (count == 0) return 0;
+    return if (index < count) index else 0;
+}
+
+fn themeCount() u8 {
+    const themes = @import("generated/themes.zig");
+    return @intCast(themes.themes.len);
+}
+
+/// 正文视口的像素高：窗高减去列上下内边距、行距与状态行。
+///
+/// 这个余量是同一处布局常量在两端的影子（绘制侧 `documentView` 的 column
+/// padding），不是一条规则——改了那边就改这里。
+const manuscript_chrome_height_px: f32 = 78;
+
+fn viewportHeightPx(window_height: f32) u32 {
+    if (window_height <= manuscript_chrome_height_px) return 0;
+    return @intFromFloat(window_height - manuscript_chrome_height_px);
+}
+
+/// Rust 答复了。
+///
+/// **一个臂接两个通道四种情形**：通道由 key 认，成败由 `ok` 说。TS 车道四个臂
+/// 共享一个函数体的写法（子集不允许运行期形状测试，NS1041）在这里不再必要。
+fn applyHostResult(model: *Model, result: native_sdk.EffectHostResult, fx: *Effects) void {
+    const channel = replay_seam.Channel.fromKey(result.key) orelse return;
+    // 这次在飞结束了，无论成败——卡住「正在保存…」是谎话。
+    if (channel == .save) model.document.save_pending = false;
+
+    if (!result.ok) {
+        setStatus(model, "Rust 没有应答。");
+        return;
+    }
+    const response = protocol.decodeDispatchResponse(result.bytes) orelse {
+        model.host_ready = false;
+        setStatus(model, "本地内核返回了不合约的答复。");
+        return;
+    };
+    if (response.status != 0) {
+        setStatus(model, "本地内核拒绝了这次请求。");
+        return;
+    }
+
+    const action = std.enums.fromInt(protocol.Action, response.action) orelse return;
+    switch (action) {
+        .health => {
+            if (response.api_version != protocol.api_version or
+                response.capabilities & protocol.capability_mask != protocol.capability_mask)
+            {
+                model.host_ready = false;
+                setStatus(model, "本地内核的能力与表面不匹配。");
+                return;
+            }
+            model.host_ready = true;
+            setStatus(model, "Rust 已就绪。");
+            // 握手只发生一次，顺带把读设置发出去：排版三值与主题随它的答复落地，
+            // 设置页与正文首帧不必等作者先按一次「读取设置」。
+            var buffer: [replay_seam.max_record_bytes]u8 = undefined;
+            const record = replay_seam.encode(&buffer, .{
+                .action = .project,
+                .text = "{\"kind\":\"readConfig\"}",
+            }) catch return;
+            replay_seam.request(fx, .dispatch, record, Effects.hostMsg(.host_result));
+        },
+        // 项目答复的内容要等单元 11 的 typed rows。为它先造一套模块级存储，造的是
+        // 一个为了被删而存在的东西——所以这里只收握手与会话事实。
+        .project => model.host_ready = true,
+        .open_manuscript, .apply_input, .obtain_projection, .scroll_projection => {
+            landDocument(model, response, channel);
+        },
+    }
+}
+
+/// 一条投影答复里的会话事实。
+///
+/// 正稿的字节不过界（W3）：这里只收数字，文字由桥借给绘制侧。
+fn landDocument(model: *Model, response: protocol.RefrainNativeResponse, channel: replay_seam.Channel) void {
+    model.host_ready = true;
+    model.document.session = response.session;
+    model.document.revision = response.revision;
+    model.document.bytes = response.total_bytes;
+    model.document.blocks = response.total_blocks;
+    model.viewport.first_block = response.first_block;
+    model.viewport.window_start = response.window_start;
+    // 保存的正面证据：只有保存通道上的答复才能盖这一章。
+    if (channel == .save) model.document.saved_revision = response.revision;
+}
+
+fn setStatus(model: *Model, line: []const u8) void {
+    _ = model.status.setTruncated(line);
 }
 
 // ------------------------------------------------------------------ 测试
@@ -246,9 +374,9 @@ test "还没迁的臂表里每个名字都是真的 Msg 臂" {
     }
     // 已迁 = 总数 − 待迁。数字写进断言，掉了会红。
     try testing.expectEqual(@as(usize, 74), arms.len);
-    try testing.expectEqual(@as(usize, 46), pending_arms.len);
+    try testing.expectEqual(@as(usize, 40), pending_arms.len);
     // 已迁 28 臂。这个数字每迁一批就长一次,它是单元 12 的进度条。
-    try testing.expectEqual(@as(usize, 28), arms.len - pending_arms.len);
+    try testing.expectEqual(@as(usize, 34), arms.len - pending_arms.len);
 }
 
 test "导航：够得着就走，够不着就说为什么" {
@@ -360,6 +488,105 @@ test "理由框：空串也是一条记下的理由，取消不动已记下的" 
     update(&model, .review_reason_cancel, &fx);
     try testing.expectEqualStrings("太长", model.review.reason.slice());
     try testing.expect(!model.review.reason_open);
+}
+
+/// 造一条合约的答复字节。测试专用——真实的字节由 Rust 发。
+fn testResponse(action: protocol.Action, edit: anytype) [protocol.response_bytes]u8 {
+    var response = protocol.emptyResponse(@intFromEnum(action));
+    response.protocol_version = protocol.protocol_version;
+    response.api_version = protocol.api_version;
+    response.capabilities = protocol.capability_mask;
+    inline for (@typeInfo(@TypeOf(edit)).@"struct".fields) |f| {
+        @field(response, f.name) = @field(edit, f.name);
+    }
+    return protocol.encodeDispatchResponse(response);
+}
+
+test "握手合约不对就不就绪，而不是装作就绪" {
+    var model: Model = .{};
+    var fx: Effects = undefined;
+    // 能力位对不上：具名拒绝，不标就绪。
+    const mismatched = testResponse(.health, .{ .capabilities = @as(u32, 0) });
+    update(&model, .{ .host_result = .{
+        .key = replay_seam.Channel.dispatch.key(),
+        .ok = true,
+        .bytes = &mismatched,
+    } }, &fx);
+    try testing.expect(!model.host_ready);
+
+    // 坏字节：同样不就绪，而不是把垃圾当会话事实落地。
+    update(&model, .{ .host_result = .{
+        .key = replay_seam.Channel.dispatch.key(),
+        .ok = true,
+        .bytes = "not a response",
+    } }, &fx);
+    try testing.expect(!model.host_ready);
+    try testing.expect(!model.status.isEmpty());
+}
+
+test "保存的证据只从保存通道上来" {
+    var model: Model = .{ .document = .{ .session = 7, .revision = 4 } };
+    var fx: Effects = undefined;
+
+    // 投影通道上的答复推进了修订号，但不能算作「已保存」。
+    const typed = testResponse(.apply_input, .{
+        .session = @as(u64, 7),
+        .revision = @as(u64, 5),
+    });
+    update(&model, .{ .host_result = .{
+        .key = replay_seam.Channel.dispatch.key(),
+        .ok = true,
+        .bytes = &typed,
+    } }, &fx);
+    try testing.expectEqual(@as(u64, 5), model.document.revision);
+    try testing.expect(model.isDirty());
+
+    // 保存通道上的同形答复才盖章。
+    const saved = testResponse(.apply_input, .{
+        .session = @as(u64, 7),
+        .revision = @as(u64, 5),
+    });
+    update(&model, .{ .host_result = .{
+        .key = replay_seam.Channel.save.key(),
+        .ok = true,
+        .bytes = &saved,
+    } }, &fx);
+    try testing.expect(!model.isDirty());
+    try testing.expect(!model.document.save_pending);
+}
+
+test "保存失败也结束在飞，不卡在「正在保存…」" {
+    var model: Model = .{ .document = .{ .session = 1, .save_pending = true } };
+    var fx: Effects = undefined;
+    update(&model, .{ .host_result = .{
+        .key = replay_seam.Channel.save.key(),
+        .ok = false,
+        .bytes = "rejected",
+    } }, &fx);
+    try testing.expect(!model.document.save_pending);
+    // 失败不盖章：「已保存」必须有正面证据。
+    try testing.expectEqual(@as(u64, 0), model.document.saved_revision);
+}
+
+test "没有稿子就不发保存，也不立在飞旗" {
+    var model: Model = .{};
+    var fx: Effects = undefined;
+    update(&model, .document_save, &fx);
+    try testing.expect(!model.document.save_pending);
+}
+
+test "主题循环与越界都落在色表内" {
+    var model: Model = .{};
+    var fx: Effects = undefined;
+    const count = themeCount();
+    try testing.expect(count > 0);
+    var index: u8 = 0;
+    while (index < count) : (index += 1) update(&model, .theme_next, &fx);
+    try testing.expectEqual(@as(u8, 0), model.theme_index); // 转了一圈回到第一套
+    update(&model, .{ .theme_select = 200 }, &fx);
+    try testing.expectEqual(@as(u8, 0), model.theme_index);
+    update(&model, .{ .material_select = 9 }, &fx);
+    try testing.expectEqual(@as(u8, 0), model.panel_material);
 }
 
 test "命令面板每次打开都是新的一次" {
