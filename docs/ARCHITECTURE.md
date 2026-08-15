@@ -187,12 +187,12 @@ a link is missing; see *Open items*. **○** not on the native surface.
 
 | Function | L0 domain `refrain-core` | L1 persistence `refrain-store` | L2 orchestration `refrain-host` | L3 use cases `refrain-app` | L4 bridge `native/host` | L5 surface `native/src` | |
 |---|---|---|---|---|---|---|---|
-| **F1 · Edit the manuscript** | `manuscript/`, `source_layout`, `document_format` | `atomic`, `project`, `history` | — | `native_document`, `document` | `document.rs` | document Msgs in `core.zig`, `host_bridge`, `app_main` | ● |
-| **F2 · Break lines, measure text** | `typeset`, `block_shape`, `text_width`, `inline_span` | — | — | projection in `native_document` | protocol layout | `host_bridge`, `app_main` | ● |
+| **F1 · Edit the manuscript** | `manuscript/`, `source_layout`, `document_format` | `atomic`, `project`, `history` | — | `native_document`, `document` | `document.rs` | document Msgs in `core.zig`, `host_bridge`, `view/document.zig` | ● |
+| **F2 · Break lines, measure text** | `typeset`, `block_shape`, `text_width`, `inline_span` | — | — | projection in `native_document` | protocol layout | `host_bridge`, `view/document.zig` | ● |
 | **F3 · Plain-text formats** | `document_format`, `source_layout`, `typeset` code path | round-trip in `project` | — | `native_document` | `document.rs` | `document_language` | ● |
 | **F4 · Roots and the catalogue** | `role` | `root`, `project`, `schema`, `files/index` | — | `application` | `project.rs` | `project_request`, `project_view`, `snapshot` | ● |
-| **F5 · Search and jump** | `chinese_index`, `searchable_block`, `search_rank`, `inline_span` | `project/search`, `project/catalog` | — | `application` | `project.rs` | search box in `app_main`, `document_jump` | ● |
-| **F6 · Settings** | — | `config` | — | `application::apply_config` | `project.rs` | settings screen in `app_main` | ● |
+| **F5 · Search and jump** | `chinese_index`, `searchable_block`, `search_rank`, `inline_span` | `project/search`, `project/catalog` | — | `application` | `project.rs` | `view/search.zig`, `document_jump` | ● |
+| **F6 · Settings** | — | `config` | — | `application::apply_config` | `project.rs` | `view/settings.zig` | ● |
 | **F7 · Harnesses and connections** | — | `config` | `adapters`, `Tier` | `harness` | `project.rs` | connections screen | ● |
 | **F8 · Dispatch and edges** | `context_compiler`, `material_listing`, `upstream_work`, `persona` | `materials`, `orchestration` | `host`, `run_edge`, `staging`, `process`, `adapters` | `dispatch`, `scope`, `upstream`, `cancel`, `runner` | `project.rs` | dispatch screen, `LaunchRun` | ● |
 | **F9 · Collect, review, decide** | `agent_protocol`, `manuscript/review`, `manuscript/decision` | `ledger`, `history` | Run records in `host` | `collect`, `decide`, `review`, `journal` | `project.rs` | review screen | ● |
@@ -223,11 +223,12 @@ other types. A gate makes the refusal.
 | **L2 `refrain-host`** — orchestration | Task, Run, and Authorization state, staging, workspaces, process launch, harness adapters | The database. It writes through the `HostJournal` trait. Domain rules | INV-12 by review, and the journal seam | 6 / 4,751 |
 | **L3 `refrain-app`** — use cases | The flows that need more than one layer below, the one `Application`, and `DocumentSurface` | FFI, raw pointers, platform APIs | `#![forbid(unsafe_code)]` | 17 / 8,493 |
 | **L4 `apps/native/host`** — the bridge | The C ABI: one entry, the generated layout, the session table, bounded replies, the handshake | Product semantics. Those are Rust enums below | `verify:bridge`, the protocol generator `--check` | 6 / 1,660 |
-| **L5 `apps/native/src`** — the surface | Markup and declarations, interface state, platform events, drawing | Manuscript bytes, product rules | `native check . --strict`; the layer table is in [AGENTS.md](AGENTS.md) | 21 hand-written / 14,372 and tests |
+| **L5 `apps/native/src`** — the surface | Markup and declarations, interface state, platform events, drawing | Manuscript bytes, product rules | `native check . --strict`; the layer table is in [AGENTS.md](AGENTS.md) | 33 hand-written / 13,826 |
 
 The line counts include each hand-written source file below `src/`. They do not
-include the generated files (873 lines) and the four L5 test files (1,992
-lines).
+include the generated files (1,131 lines). L5 has no separate test files: every
+test block sits in the module it proves, and `app_main.zig`'s `refAllDecls`
+block is what reaches them.
 
 L5 has three strata. `native check --strict` and rule NS9001 enforce them.
 
@@ -242,7 +243,13 @@ L5 has three strata. `native check --strict` and rule NS9001 enforce them.
   shapes were deliberate and which were a compiler's price.
 - **Platform and drawing** — the Zig files. They hold events, borrowed
   projections, non-ASCII labels, and geometry. They must not hold a second copy
-  of the text, the selection, the composition, or the undo stack.
+  of the text, the selection, the composition, or the undo stack. One
+  destination is one file below `view/`, and `app_main.zig` is the router that
+  wires them: the shell, the frame, and the one `switch` that says which
+  destination a layer draws. A destination that needs another destination's
+  piece imports it by name — there is no edge back into the router, because
+  importing the root by path is how a mutable module-level buffer quietly
+  becomes two.
 
 Three rules apply to L5:
 
@@ -252,12 +259,13 @@ Three rules apply to L5:
   paths, and protocol values. `utf8Bytes` is for text that a person reads. A
   JavaScript string is UTF-16 and the boundary is UTF-8. The wrong spelling
   changes a non-ASCII code unit into different bytes. Rule NS1064 finds this.
-- **`update` always returns `[Model, Cmd<Msg>]`.** The SDK also accepts a bare
-  model, but the compiled core tests the union with `Array.isArray`, and that
-  test answers false for a tuple on the ScriptC lane. Write `[model, Cmd.none]`
-  for "no effect". Never write a bare `return model`. The gate is the test
-  "compiled lane: bare-sugar-free update snapshots after tuple and bare arms
-  alike" in `app_main.zig`.
+- **~~`update` always returns `[Model, Cmd<Msg>]`.~~** Closed by unit 13. The
+  rule and its test existed because the translated core tested the union with
+  `Array.isArray`, which answers false for a tuple on the ScriptC lane. The Zig
+  `update_fx` mutates `*Model` in place and has no tuple to return, so the
+  defect's shape is no longer expressible. The line stays struck through rather
+  than deleted because the v0.3.0 first-dispatch crash is easier to understand
+  with the rule that used to prevent it in view.
 
 ---
 
@@ -360,7 +368,18 @@ module with no test file has test blocks in the module.
 | Module | Owns | Proven by |
 |---|---|---|
 | `app.zon` | The shortcut and menu declaration. One command-id space for both | `verify:command-space` |
-| `app_main.zig` | The shell: screens, fonts, menus, the context menu, KARA, and the theme wiring. `railTreeRow` makes a rail row: no corner, a semantic level, one indent step for each level | in-file tests; the e2e journals |
+| `app_main.zig` | The router: `main`, the fonts, the menus, `documentView` (the whole shell frame), `destinationView`, `layeredBody`, the palette, and the rail geometry. It was 4,038 lines through v0.3.2 and is 817 now; the destinations moved out under `view/` | in-file tests; the e2e journals |
+| `view/shell.zig` | The vocabulary more than one destination draws with: `railTreeRow` (no corner, a semantic level, one indent step for each level), the row budgets, the current theme index and material kind, `paletteGoSection` | reached through `app_main.zig`; the e2e journals |
+| `view/document.zig` | The manuscript track: the column and viewport metrics, `documentLayout` (the inverse of Rust's scroll anchor), the anchor dots, the verdict bento, the status line, and the manuscript context menu | in-file test on the scroll anchor; the `manuscript` journal |
+| `view/files.zig` | The file tree, the row menu, and the open/delete/disclose/import Msgs. It owns the 64-slot reference pool a tree row lends to `document_open` | the `files` journal |
+| `view/search.zig` | The query box, the hit rows, and the excerpt around a hit | the `files` journal |
+| `view/review.zig` | The verdict bench: proposal rows, the A/B faces, the reason, the annotations, and the stale-proposal panel | the `review` journal |
+| `view/desk.zig` | The dispatch desk: the block list, the materials, the preview, the Run roster, and the material drafts | the `dispatch` journal |
+| `view/mailbox.zig` | The three boxes, the ordering, and countermand | the `mailbox` journal |
+| `view/history.zig` | The change list and `RevertTo` | the `history` journal |
+| `view/connections.zig` | The orchestration catalogue and skill installation | the `connections` journal |
+| `view/settings.zig` | Themes, materials, the three typography sliders, fonts, Agents, and the connection config | the `settings` journal |
+| `view/kara.zig` | KARA's return card, interrupt line, and departure summary | the `manuscript` journal |
 | `host_bridge.zig` | The ABI client. `adoptWire` takes the projection into module-lifetime storage, and the core's `host_result` arm is what calls it — replay never calls the host, so anything adopted in the request callback is invisible to replay (this is what M8 was) | e2e; `verify:native-theme-pixels` |
 | `replay_seam.zig` | The one exit the core uses to ask Rust: the two channel keys, the host-record encoding, and the result routing | in-file tests, with one round trip against `host_bridge`'s decoder |
 | `core/workbench.zig` | The destinations, the navigation result, the panel stack, and the split fraction. The stack is a bounded array, not a packed integer: the packing was a restriction of the TypeScript subset, and it made "the stack holds the manuscript" and "the stack is empty" the same number | in-file tests, carrying the vectors the deleted `workbench.test.ts` held |
@@ -478,7 +497,7 @@ Each fact below has one authority. A second copy is a defect.
 | Corner geometry | `apps/native/src/corners.zig` | A radius number in another file. A bare `0` |
 | Protocol layout | `apps/native/protocol/host.json` | An offset edited by hand in a generated file |
 | The anchor of a projection | `projection_response` in `apps/native/host/src/document.rs` | An anchor chosen from a value instead of from the action. Each request carries the last scroll offset of the surface, thus an offset alone would have priority over each later caret and the caret could not bring the window back, and a zero offset could not be told from "I sent no offset". `applyInput` anchors on the caret; `scrollProjection` anchors on the offset at any value, zero included; every other view action keeps the block it was given. A range selection keeps the window, because the author selected text and did not ask to go somewhere |
-| The scale of the virtual scroll track | `virtualBlockHeight` and `defaultViewportBlocks` in `apps/native/protocol/host.json` | A second mapping between a pixel offset and a block. Rust reads `floor(offset / virtualBlockHeight)` and stops at the last window (`total − defaultViewportBlocks`); `documentLayout` in `app_main.zig` inverts the same two constants for the leading spacer. A spacer that is placed by a proportion of the projected height is a second mapping, and only the drawing side knows that height |
+| The scale of the virtual scroll track | `virtualBlockHeight` and `defaultViewportBlocks` in `apps/native/protocol/host.json` | A second mapping between a pixel offset and a block. Rust reads `floor(offset / virtualBlockHeight)` and stops at the last window (`total − defaultViewportBlocks`); `documentLayout` in `view/document.zig` inverts the same two constants for the leading spacer. A spacer that is placed by a proportion of the projected height is a second mapping, and only the drawing side knows that height |
 | The interface font | `manuscript_font` in `apps/native/build.zig` | A second face for interface text. The SDK selects a face for each run, not for each codepoint, thus an uncovered character shows a block. `verify:font-coverage` compares the label tables against the cmap of this face |
 
 Two more rules:
@@ -898,7 +917,7 @@ Use these words. SPEC §2 requires one word for each concept.
 | A corner has the wrong shape | `apps/native/src/corners.zig` |
 | The rail loses its colour, or a material stops the drawing | `apps/native/src/rail.zig` and `material.zig`. The rail ground takes no material |
 | An input reaches the screen late | `verify:native-document-performance`. Compare the p95 with the present interval in the same report, not with 16.67 ms |
-| A wheel does not move the window, or the scrollbar disagrees with the text | `projection_response` chooses the anchor from the action; `documentLayout` in `apps/native/src/app_main.zig` places the spacers on the same scale |
+| A wheel does not move the window, or the scrollbar disagrees with the text | `projection_response` chooses the anchor from the action; `documentLayout` in `apps/native/src/view/document.zig` places the spacers on the same scale |
 | A roster cursor points at a row that is gone | `apps/native/src/core/roster.zig` |
 | A character draws as a block | `verify:font-coverage`, then `manuscript_font` in `apps/native/build.zig` |
 | A panel covers the manuscript, or the stage is too small | `apps/native/src/panel_stack.zig`, `layeredBody` in `app_main.zig` |
