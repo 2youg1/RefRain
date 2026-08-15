@@ -221,6 +221,19 @@ function packageFixture(item: Fixture) {
   });
 }
 
+/**
+ * 会外派进程的那几条测试的停顿预算。
+ *
+ * **它不是一条性能断言。** 这几条要起一个刚编出来的 ScriptC 可执行文件，再起
+ * 两次 Python：本机 298ms，而共享 runner 上实测 9,458ms —— Windows Defender
+ * 对第一次执行的新二进制做扫描，加上冷启动的 Python，轻易越过 bun 的 5 秒缺省。
+ * 于是一条正确的测试因为跑它的机器忙而报红（v0.3.4 的 CI 撞过一次）。
+ *
+ * 预算给到 60 秒是因为这里唯一要挡的是「真的挂住了」；快慢归 `verify:open-latency`
+ * 与 `verify:project-performance` 那两条真的在测时间的门禁管。
+ */
+const spawn_budget_ms = 60_000;
+
 describe("ScriptC release archive", () => {
   test("compiled program rejects a missing command without aborting", () => {
     const result = spawnSync(binary, [], { cwd: repository, encoding: "utf8" });
@@ -229,65 +242,69 @@ describe("ScriptC release archive", () => {
     expect(result.stderr).toContain("usage: release-assets package");
   });
 
-  test("compiled program packages a Native directory as a self-verifying portable ZIP", () => {
-    const item = fixture();
-    const result = packageFixture(item);
-    expect(result.status).toBe(0);
+  test(
+    "compiled program packages a Native directory as a self-verifying portable ZIP",
+    () => {
+      const item = fixture();
+      const result = packageFixture(item);
+      expect(result.status).toBe(0);
 
-    const archive = join(item.output, "refrain-windows-x64.zip");
-    expect(readdirSync(item.output)).toEqual(["refrain-windows-x64.zip"]);
-    expect(existsSync(archive)).toBe(true);
-    const archiveBytes = readFileSync(archive);
-    expect(result.stdout).toContain(`sha256=${sha256(archiveBytes)}`);
+      const archive = join(item.output, "refrain-windows-x64.zip");
+      expect(readdirSync(item.output)).toEqual(["refrain-windows-x64.zip"]);
+      expect(existsSync(archive)).toBe(true);
+      const archiveBytes = readFileSync(archive);
+      expect(result.stdout).toContain(`sha256=${sha256(archiveBytes)}`);
 
-    const python = process.platform === "win32" ? "python" : "python3";
-    const tested = spawnSync(python, ["-m", "zipfile", "-t", archive], { encoding: "utf8" });
-    expect(tested.status).toBe(0);
+      const python = process.platform === "win32" ? "python" : "python3";
+      const tested = spawnSync(python, ["-m", "zipfile", "-t", archive], { encoding: "utf8" });
+      expect(tested.status).toBe(0);
 
-    const extracted = join(item.root, "extracted");
-    const extraction = spawnSync(python, ["-m", "zipfile", "-e", archive, extracted], {
-      encoding: "utf8",
-    });
-    expect(extraction.status).toBe(0);
-    expect(readFileSync(join(extracted, "RefRain", "bin", "refrain.exe"))).toEqual(
-      readFileSync(join(item.app, "bin", "refrain.exe")),
-    );
+      const extracted = join(item.root, "extracted");
+      const extraction = spawnSync(python, ["-m", "zipfile", "-e", archive, extracted], {
+        encoding: "utf8",
+      });
+      expect(extraction.status).toBe(0);
+      expect(readFileSync(join(extracted, "RefRain", "bin", "refrain.exe"))).toEqual(
+        readFileSync(join(item.app, "bin", "refrain.exe")),
+      );
 
-    const manifest: unknown = JSON.parse(
-      readFileSync(join(extracted, "release-manifest.json"), "utf8"),
-    );
-    expect(manifest).toMatchObject({
-      schemaVersion: 1,
-      product: "RefRain",
-      version: "0.2.5",
-      platform: "windows-x64",
-      asset: "refrain-windows-x64.zip",
-      root: "RefRain",
-      sbom: "refrain-windows-x64.cdx.json",
-      hashes: "SHA256SUMS",
-    });
+      const manifest: unknown = JSON.parse(
+        readFileSync(join(extracted, "release-manifest.json"), "utf8"),
+      );
+      expect(manifest).toMatchObject({
+        schemaVersion: 1,
+        product: "RefRain",
+        version: "0.2.5",
+        platform: "windows-x64",
+        asset: "refrain-windows-x64.zip",
+        root: "RefRain",
+        sbom: "refrain-windows-x64.cdx.json",
+        hashes: "SHA256SUMS",
+      });
 
-    const sbom: unknown = JSON.parse(
-      readFileSync(join(extracted, "refrain-windows-x64.cdx.json"), "utf8"),
-    );
-    expect(sbom).toMatchObject({
-      bomFormat: "CycloneDX",
-      specVersion: "1.6",
-      version: 1,
-      metadata: { component: { type: "application", name: "RefRain", version: "0.2.5" } },
-    });
+      const sbom: unknown = JSON.parse(
+        readFileSync(join(extracted, "refrain-windows-x64.cdx.json"), "utf8"),
+      );
+      expect(sbom).toMatchObject({
+        bomFormat: "CycloneDX",
+        specVersion: "1.6",
+        version: 1,
+        metadata: { component: { type: "application", name: "RefRain", version: "0.2.5" } },
+      });
 
-    const hashes = readFileSync(join(extracted, "SHA256SUMS"), "utf8")
-      .trim()
-      .split("\n")
-      .map((line) => line.split("  "));
-    for (const [expected, path] of hashes) {
-      if (expected === undefined || path === undefined) {
-        throw new Error("SHA256SUMS contains an incomplete row");
+      const hashes = readFileSync(join(extracted, "SHA256SUMS"), "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => line.split("  "));
+      for (const [expected, path] of hashes) {
+        if (expected === undefined || path === undefined) {
+          throw new Error("SHA256SUMS contains an incomplete row");
+        }
+        expect(sha256(readFileSync(join(extracted, path)))).toBe(expected);
       }
-      expect(sha256(readFileSync(join(extracted, path)))).toBe(expected);
-    }
-  });
+    },
+    spawn_budget_ms,
+  );
 
   // 夹具要创建符号链接：Windows 上这需要开发者模式或管理员权限，否则
   // symlinkSync 直接 EPERM——红的是夹具而不是产品。Linux CI 照跑这道断言。
@@ -349,35 +366,39 @@ describe("ScriptC release archive", () => {
     expect(result.stderr).toContain("permissions");
   });
 
-  test("repackages byte-identical Native directories as byte-identical archives", () => {
-    const first = fixture();
-    const second = fixture();
-    expect(packageFixture(first).status).toBe(0);
-    expect(packageFixture(second).status).toBe(0);
-    const firstArchive = join(first.output, "refrain-windows-x64.zip");
-    const secondArchive = join(second.output, "refrain-windows-x64.zip");
-    expect(readFileSync(firstArchive)).toEqual(readFileSync(secondArchive));
+  test(
+    "repackages byte-identical Native directories as byte-identical archives",
+    () => {
+      const first = fixture();
+      const second = fixture();
+      expect(packageFixture(first).status).toBe(0);
+      expect(packageFixture(second).status).toBe(0);
+      const firstArchive = join(first.output, "refrain-windows-x64.zip");
+      const secondArchive = join(second.output, "refrain-windows-x64.zip");
+      expect(readFileSync(firstArchive)).toEqual(readFileSync(secondArchive));
 
-    const python = process.platform === "win32" ? "python" : "python3";
-    const probe = spawnSync(
-      python,
-      [
-        "-c",
-        "import json,sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); print(json.dumps([{'name':i.filename,'time':i.date_time,'mode':i.external_attr>>16,'method':i.compress_type} for i in z.infolist()]))",
-        firstArchive,
-      ],
-      { encoding: "utf8" },
-    );
-    expect(probe.status).toBe(0);
-    const metadata: unknown = JSON.parse(probe.stdout);
-    expect(isZipMetadata(metadata)).toBe(true);
-    if (!isZipMetadata(metadata)) throw new Error("Python ZIP metadata has an unexpected shape");
-    for (const item of metadata) {
-      expect(item.method).toBe(0);
-      expect(item.time).toEqual([1980, 1, 1, 0, 0, 0]);
-      expect(item.mode).toBe(item.name.toLowerCase().endsWith(".exe") ? 0o100755 : 0o100644);
-    }
-  });
+      const python = process.platform === "win32" ? "python" : "python3";
+      const probe = spawnSync(
+        python,
+        [
+          "-c",
+          "import json,sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); print(json.dumps([{'name':i.filename,'time':i.date_time,'mode':i.external_attr>>16,'method':i.compress_type} for i in z.infolist()]))",
+          firstArchive,
+        ],
+        { encoding: "utf8" },
+      );
+      expect(probe.status).toBe(0);
+      const metadata: unknown = JSON.parse(probe.stdout);
+      expect(isZipMetadata(metadata)).toBe(true);
+      if (!isZipMetadata(metadata)) throw new Error("Python ZIP metadata has an unexpected shape");
+      for (const item of metadata) {
+        expect(item.method).toBe(0);
+        expect(item.time).toEqual([1980, 1, 1, 0, 0, 0]);
+        expect(item.mode).toBe(item.name.toLowerCase().endsWith(".exe") ? 0o100755 : 0o100644);
+      }
+    },
+    spawn_budget_ms,
+  );
 
   test("rejects a Native application directory with a missing required asset", () => {
     const item = fixture();
