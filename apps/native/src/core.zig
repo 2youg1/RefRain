@@ -36,18 +36,12 @@ pub const Effects = App.Effects;
 pub const pending_arms = [_][]const u8{
     "document_input", "document_scroll", "document_jump",
     "document_revert", "document_open", "document_open_jump",
-    "project_request", "search_fire", "verdict_begin",
-    "verdict_accept", "verdict_reject", "verdict_revise",
-    "verdict_settle", "desk_verdict", "review_advance",
-    "revision_begin", "material_draft_begin", "agent_edit_begin",
-    "dispatch_agents", "dispatch_orchestration", "dispatch_block_toggle",
-    "dispatch_blocks_all", "dispatch_blocks_clear", "dispatch_carry",
-    "dispatch_agent", "dispatch_material_toggle", "dispatch_stash",
-    "dispatch_stash_drop", "dispatch_stash_clear", "runs_tick",
-    "stale_dismiss", "mailbox_tab", "kara_toggle",
-    "app_focus", "kara_gone_away", "kara_entered",
-    "kara_leave_finished", "kara_card_done", "kara_interrupt_done",
-    "app_quit",
+    "project_request", "search_fire", "verdict_accept",
+    "verdict_reject", "verdict_settle", "desk_verdict",
+    "review_advance", "dispatch_material_toggle", "dispatch_stash_drop",
+    "runs_tick", "kara_toggle", "app_focus",
+    "kara_gone_away", "kara_entered", "kara_leave_finished",
+    "kara_card_done", "kara_interrupt_done",
 };
 
 /// 启动：向 Rust 握一次手。
@@ -195,6 +189,63 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         },
         .review_peer => model.review.peer = !model.review.peer,
         .verdict_close => model.review.proposal.clear(),
+        .stale_dismiss => {
+            model.review.stale_frozen.clear();
+            model.review.stale_recovery.clear();
+        },
+
+        // ---------------------------------------------------------- 开盒与起笔
+        // 三条同形：id 与起笔都由绘制侧从名录里读出来交过来——核心不自己查那份答复。
+        .revision_begin => |seeded| setEditing(&model.revising, seeded),
+        .material_draft_begin => |seeded| setEditing(&model.material_draft, seeded),
+        // argv 的起笔是空：快照是借用模式，拼不出现有 argv 的文本。
+        .agent_edit_begin => |id| {
+            model.editing_agent = .{};
+            model.editing_agent.id.set(id) catch return;
+        },
+        .verdict_begin => |seeded| {
+            model.review.proposal.set(seeded.id) catch return;
+            // 起笔先装进改写缓冲，但不开改写框（id 空 = 没在改写）。
+            // Alt+E 才把它打开，那时字已经在里面了。
+            _ = model.revising.body.setTruncated(seeded.seed);
+        },
+        .verdict_revise => {
+            if (model.review.proposal.isEmpty()) return;
+            model.revising.id = model.review.proposal;
+        },
+
+        // ---------------------------------------------------------- 派发台的界面半边
+        .dispatch_agents => |delta| model.dispatch.agents = clampAgents(model.dispatch.agents, delta),
+        .dispatch_orchestration => model.dispatch.orchestration = (model.dispatch.orchestration + 1) % 3,
+        .dispatch_carry => |index| model.dispatch.carry = if (index <= 2) index else 0,
+        .dispatch_agent => |id| model.dispatch.agent.set(id) catch model.dispatch.agent.clear(),
+        .dispatch_block_toggle => |ordinal| {
+            if (ordinal >= model.dispatch.checked.capacity()) return;
+            model.dispatch.checked.toggle(ordinal);
+        },
+        .dispatch_blocks_all => {
+            // 整章：铺到稿子的块总数为止，不铺满位图。
+            const total: usize = @intCast(@min(model.document.blocks, model.dispatch.checked.capacity()));
+            model.dispatch.checked = @TypeOf(model.dispatch.checked).initEmpty();
+            var ordinal: usize = 0;
+            while (ordinal < total) : (ordinal += 1) model.dispatch.checked.set(ordinal);
+        },
+        .dispatch_blocks_clear => model.dispatch.checked = @TypeOf(model.dispatch.checked).initEmpty(),
+        .dispatch_stash => |text| {
+            // 攒进发送：只记录，不打断写作。段与段以换行分隔。
+            if (text.len == 0) return;
+            if (!model.dispatch.stash.isEmpty()) model.dispatch.stash.append("\n") catch return;
+            model.dispatch.stash.append(text) catch return;
+        },
+        .dispatch_stash_clear => model.dispatch.stash.clear(),
+
+        // ---------------------------------------------------------- 信箱
+        .mailbox_tab => model.mailbox_discarded = !model.mailbox_discarded,
+
+        // ---------------------------------------------------------- 退出
+        // 录制会话唯一的干净出口：被信号杀掉的进程留不下结束标记，
+        // 回放会判 `JournalTruncated`。
+        .app_quit => fx.quitApp(),
 
         // ---------------------------------------------------------- 还没迁的臂
         // 明确地什么都不做。见 `pending_arms`：迁一个就从那张表里删一个。
@@ -355,6 +406,25 @@ fn setStatus(model: *Model, line: []const u8) void {
     _ = model.status.setTruncated(line);
 }
 
+/// 开一份草稿：id 与起笔一起落地。装不下的 id 宁可不开——开一个认不出自己该交
+/// 回哪里的编辑框，比不开更坏。
+fn setEditing(slot: *model_mod.Editing, seeded: msg_mod.Seeded) void {
+    slot.* = .{};
+    slot.id.set(seeded.id) catch {
+        slot.* = .{};
+        return;
+    };
+    _ = slot.body.setTruncated(seeded.seed);
+}
+
+/// 改派几个 agent。下限 1（并列的 Run 至少有一个），上限 8。
+fn clampAgents(current: u32, delta: i32) u32 {
+    const moved = @as(i64, current) + delta;
+    if (moved <= 1) return 1;
+    if (moved >= 8) return 8;
+    return @intCast(moved);
+}
+
 // ------------------------------------------------------------------ 测试
 
 const testing = std.testing;
@@ -374,9 +444,9 @@ test "还没迁的臂表里每个名字都是真的 Msg 臂" {
     }
     // 已迁 = 总数 − 待迁。数字写进断言，掉了会红。
     try testing.expectEqual(@as(usize, 74), arms.len);
-    try testing.expectEqual(@as(usize, 40), pending_arms.len);
+    try testing.expectEqual(@as(usize, 23), pending_arms.len);
     // 已迁 28 臂。这个数字每迁一批就长一次,它是单元 12 的进度条。
-    try testing.expectEqual(@as(usize, 34), arms.len - pending_arms.len);
+    try testing.expectEqual(@as(usize, 51), arms.len - pending_arms.len);
 }
 
 test "导航：够得着就走，够不着就说为什么" {
@@ -587,6 +657,46 @@ test "主题循环与越界都落在色表内" {
     try testing.expectEqual(@as(u8, 0), model.theme_index);
     update(&model, .{ .material_select = 9 }, &fx);
     try testing.expectEqual(@as(u8, 0), model.panel_material);
+}
+
+test "开盒装好起笔但不开改写框，Alt+E 才开" {
+    var model: Model = .{};
+    var fx: Effects = undefined;
+    update(&model, .{ .verdict_begin = .{ .id = "p-7", .seed = "改后的话" } }, &fx);
+    try testing.expectEqualStrings("p-7", model.review.proposal.slice());
+    // 字已经在里面，但框还没开。
+    try testing.expectEqualStrings("改后的话", model.revising.body.slice());
+    try testing.expect(!model.revising.isOpen());
+    update(&model, .verdict_revise, &fx);
+    try testing.expect(model.revising.isOpen());
+    // 关盒只关盒。
+    update(&model, .verdict_close, &fx);
+    try testing.expect(model.review.proposal.isEmpty());
+}
+
+test "派发台：改派人数有下限，整章只铺到稿子的块数" {
+    var model: Model = .{ .document = .{ .session = 1, .blocks = 3 } };
+    var fx: Effects = undefined;
+    // 并列的 Run 至少有一个：减到 0 是一次不会发生的派发。
+    update(&model, .{ .dispatch_agents = -5 }, &fx);
+    try testing.expectEqual(@as(u32, 1), model.dispatch.agents);
+    update(&model, .{ .dispatch_agents = 99 }, &fx);
+    try testing.expectEqual(@as(u32, 8), model.dispatch.agents);
+
+    update(&model, .dispatch_blocks_all, &fx);
+    try testing.expectEqual(@as(usize, 3), model.dispatch.checked.count());
+    update(&model, .{ .dispatch_block_toggle = 1 }, &fx);
+    try testing.expectEqual(@as(usize, 2), model.dispatch.checked.count());
+    update(&model, .dispatch_blocks_clear, &fx);
+    try testing.expectEqual(@as(usize, 0), model.dispatch.checked.count());
+
+    // 攒的段落以换行分隔，空段不攒。
+    update(&model, .{ .dispatch_stash = "第一段" }, &fx);
+    update(&model, .{ .dispatch_stash = "" }, &fx);
+    update(&model, .{ .dispatch_stash = "第二段" }, &fx);
+    try testing.expectEqualStrings("第一段\n第二段", model.dispatch.stash.slice());
+    update(&model, .dispatch_stash_clear, &fx);
+    try testing.expect(model.dispatch.stash.isEmpty());
 }
 
 test "命令面板每次打开都是新的一次" {
