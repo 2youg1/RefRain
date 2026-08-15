@@ -310,7 +310,11 @@ pub fn main(init: std.process.Init) !void {
         .fonts = &.{
             .{
                 .id = manuscript_font_id,
-                .name = "NotoSansSC-Variable.ttf",
+                // 名字必须与 `build.zig` 真正嵌进来的那份字节一致：这里曾写
+                // 「Variable」而嵌的是 8,127 码位的子集，于是「界面字体已经
+                // 内嵌」读起来像「什么字都画得出」——濤（默认主题自己的名字）、
+                // 侘与减号 U+2212 都不在子集里，画成豆腐块（M14）。
+                .name = "NotoSansSC-Subset.ttf",
                 .ttf = manuscript_font_bytes,
             },
             .{
