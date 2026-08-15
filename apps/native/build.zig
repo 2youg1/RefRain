@@ -125,7 +125,16 @@ fn linkRustRuntime(module: *std.Build.Module) void {
         .linux => inline for ([_][]const u8{ "gcc_s", "util", "rt", "pthread", "m", "dl" }) |library| {
             module.linkSystemLibrary(library, .{ .use_pkg_config = .no });
         },
-        .macos => inline for ([_][]const u8{ "System", "resolv", "m" }) |library| {
+        // `libSystem` is the umbrella dylib that carries libc, libm and the
+        // resolver on macOS, so it is the whole list. The entry that used to
+        // name `resolv` beside it was written by analogy with the Linux line
+        // rather than measured: Rust reports no `resolv` for the Apple
+        // targets, and Zig refused it under the Xcode SDK sysroot with
+        // "unable to find dynamic system library 'resolv' ... searched paths:
+        // none" before a single object was emitted. It failed on every macOS
+        // gate run and on no other platform, and nobody saw it, because the
+        // author's machine is Windows and the runner could not report why.
+        .macos => inline for ([_][]const u8{ "System", "m" }) |library| {
             module.linkSystemLibrary(library, .{ .use_pkg_config = .no });
         },
         .windows => inline for ([_][]const u8{
