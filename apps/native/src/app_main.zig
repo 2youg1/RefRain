@@ -5,7 +5,10 @@ const native_sdk = @import("native_sdk");
 const manifest = @import("app_manifest_zon");
 const protocol = @import("generated/protocol.zig");
 const themes = @import("generated/themes.zig");
-pub const core = @import("refrain_core");
+/// 状态机。单元 13 之前这里写的是 `@import("refrain_core")`（转译过的 `core.ts`）；
+/// 现在它直指 Zig 核心，那个名字落到唯一的权威上。
+pub const core = @import("core.zig");
+const replies = @import("core/replies.zig");
 const host_bridge = @import("host_bridge.zig");
 const corners = @import("corners.zig");
 const veil = @import("veil.zig");
@@ -24,20 +27,21 @@ const document_language = @import("document_language.zig");
 // P2 的回放缝：Zig 核心问 Rust 的出口。今天只有它自己的测试是读者——
 // 车道切换在 P5，届时 update_fx 成为第二个读者、TS 车道成为零个。
 const replay_seam = @import("replay_seam.zig");
-// 单元 12 的规则层：去处/导航/面板栈与名录游标。今天同样只有测试是读者——
-// 生产读者是尚未写出的 Zig `update`，车道切换在单元 13。
+// 单元 12 的规则层：去处/导航/面板栈与名录游标。
 const core_workbench = @import("core/workbench.zig");
 const core_roster = @import("core/roster.zig");
 const core_text = @import("core/text.zig");
 const core_msg = @import("core/msg.zig");
 const core_model = @import("core/model.zig");
-const core_zig = @import("core.zig");
 
 pub const panic = std.debug.FullPanic(native_sdk.debug.capturePanic);
 pub const Model = core.Model;
 pub const Msg = core.Msg;
 
-const Adapter = native_sdk.TsUiApp(core);
+/// `UiApp(Model, Msg)` 而不再是 `TsUiApp(core)`：后者多出来的那一层（模型镜像、
+/// 字节桥、按导出名 comptime 探测入口）只为转译核心而存在。代价是四个入口必须
+/// 在下面显式接线——漏一行，那条通道静默，而它自己的单元测试仍然全绿。
+const Adapter = core.App;
 const manuscript_font_id = native_sdk.canvas.min_registered_font_id;
 const manuscript_font_bytes = @embedFile("manuscript_font");
 // 三槽（SPEC 9.8）的另外两张：Latin 用 Antic Didone，日文用 Zen Kaku
@@ -50,8 +54,6 @@ const japanese_font_bytes = @embedFile("japanese_font");
 const shell_scene = native_sdk.app_manifest.shellConfigFrom(manifest);
 const canvas_label = native_sdk.app_manifest.firstGpuSurfaceLabel(shell_scene);
 const app_permissions = manifestStringList(manifest, "permissions");
-pub const app_markup = @embedFile("app.native");
-const CompiledView = native_sdk.canvas.CompiledMarkupView(Model, Msg, app_markup);
 
 test {
     std.testing.refAllDecls(host_bridge);
@@ -71,29 +73,14 @@ test {
     std.testing.refAllDecls(core_text);
     std.testing.refAllDecls(core_msg);
     std.testing.refAllDecls(core_model);
-    std.testing.refAllDecls(core_zig);
+    std.testing.refAllDecls(core);
+    std.testing.refAllDecls(replies);
 }
 
-test "compiled lane: bare-sugar-free update snapshots after tuple and bare arms alike" {
-    // 编译车道（ScriptC）没有混形糖：facade 对 `Model | [Model, Cmd]` 的窄化
-    // 在编译产物里断裂，凡带 Cmd 的臂都会把元组本身提交成模型，下一次
-    // model_snapshot 保留到 0x0/0x1（v0.3.0 真窗首派崩溃，windowed-only）。
-    // 纪律因此是：core.ts 的 update 恒返 [Model, Cmd<Msg>]，裸 Model 一律
-    // 配 Cmd.none。这个测试守住它——boot 后各派一类臂，快照都必须干净。
-    const initial = core.initialModel();
-    try std.testing.expect(initial.model.status.len > 0);
-    // 带 Cmd 的臂（改动模型 + 请求）：旧罪的第一现场。
-    const r1 = core.update(initial.model, .theme_next);
-    try std.testing.expect(r1.model.status.len > 0);
-    // 带 Cmd 但不改模型的臂（app_focus 回焦的 cancel）。
-    const r2 = core.update(r1.model, .{ .app_focus = true });
-    try std.testing.expect(r2.model.status.len > 0);
-    // 空臂与退层：跨臂连续派发的快照链。
-    const r3 = core.update(r2.model, .noop);
-    try std.testing.expect(r3.model.status.len > 0);
-    const r4 = core.update(r3.model, .panel_back);
-    try std.testing.expect(r4.model.status.len > 0);
-}
+// 删除：「编译车道没有混形糖」那条测试随车道一起死。它守的是一条只对转译核心
+// 成立的纪律（`update` 恒返 `[Model, Cmd]`，因为 facade 对混形的窄化在编译产物里
+// 断裂，v0.3.0 真窗首派崩溃的根因）。Zig 的 `update_fx` 就地改 `*Model`，没有元组
+// 可返，也就没有那条纪律可违——缺陷的形状本身不再可表示。
 
 test "generated C ABI layouts match the Rust repr C contract" {
     // The request borrows its text through a pointer instead of inlining a
@@ -211,7 +198,7 @@ test "the document track inverts the projection's scroll anchor" {
 /// 把 Model 选中的那套 RefRain 主题交给 SDK。
 ///
 /// **接上哪个功能**：七套主题的原生渲染。SDK 的 `manifestThemePack()` 只有一套
-/// 中性灰；这里改为按 `model.themeIndex` 从生成色表取色。
+/// 中性灰；这里改为按 `model.theme_index` 从生成色表取色。
 ///
 /// **在全局逻辑中负责什么**：只做「下标 → 色值」这一次查表。Model 不持有颜色，
 /// 色表不认识 Model，两边都不知道对方的内部结构。
@@ -276,7 +263,7 @@ fn statusItem(model: *const Model, scratch: *Adapter.App.StatusItemScratch) Adap
     const title = std.fmt.bufPrint(
         &scratch.title_buffer,
         "RefRain · {d} 字节",
-        .{model.documentBytes},
+        .{model.document.bytes},
     ) catch "RefRain";
     scratch.items[0] = .{ .id = 1, .label = "保存", .command = "document.save" };
     scratch.items[1] = .{ .id = 2, .label = "撤销", .command = "document.undo" };
@@ -284,19 +271,6 @@ fn statusItem(model: *const Model, scratch: *Adapter.App.StatusItemScratch) Adap
     scratch.items[3] = .{ .id = 4, .label = "去裁决", .command = "go.3" };
     scratch.items[4] = .{ .id = 5, .label = "去信箱", .command = "go.5" };
     return .{ .title = title, .items = scratch.items[0..5] };
-}
-
-/// 焦点通道：SDK 的生命周期事件翻译成 core 的 `app_focus`。
-///
-/// **必须由接线显式设置**（与 `on_command` 同一条纪律）：`TsUiApp` 只自动接
-/// `frameMsg`／`keyMsg` 那几个通道。activate/deactivate 是 KARA 失焦计时
-/// （8s 判离开）的事实来源；start/frame/stop 不译——core 只认焦点两面。
-fn lifecycleMsg(event: native_sdk.LifecycleEvent) ?Msg {
-    return switch (event) {
-        .activate => .{ .app_focus = true },
-        .deactivate => .{ .app_focus = false },
-        else => null,
-    };
 }
 
 /// chrome 动画的唯一登记口：veil（KARA 的纱）、panel-in（换层进场）与
@@ -339,23 +313,26 @@ pub fn main(init: std.process.Init) !void {
     // UI 树每帧重建的临时结构会把已触碰的页越堆越多——实测空首屏私有
     // 工作集因此多占 ~20MB。smp_allocator 按 slab 字节粒度分配、块内复用，
     // 页池按需触碰（Zig 0.16 的 GPA 后继）。
-    const app_state = try Adapter.create(std.heap.smp_allocator, .{}, .{
+    const app_state = try Adapter.create(std.heap.smp_allocator, .{
         .name = manifest.name,
         .scene = shell_scene,
         .canvas_label = canvas_label,
         .view = documentView,
         .tokens_fn = manuscriptTokens,
         .status_item_fn = statusItem,
-        // 快捷键、系统菜单与菜单栏常驻项都经这一条进 core。
-        //
-        // **必须由接线显式设置**：`TsUiApp` 只自动接 `frameMsg`／`keyMsg` 那几个
-        // 通道（它们按导出名 comptime 探测），`on_command` 不在其中。少了这一行，
-        // `app.zon` 声明的 14 个快捷键与整张菜单栏全部静默——按下去毫无反应，
-        // 而 `commandMsg` 的单元测试仍然全绿，因为它们测的是翻译，不是接线。
-        // 真窗口探针正是这样抓到它的：widget 点击有反应，command 通道没有。
+        // 状态机本体与开场的一次握手。
+        .update_fx = core.update,
+        .init_fx = core.initFx,
+        // 四个入口都在这里显式接线。转译核心那条车道按导出名 comptime 探测
+        // `frameMsg`／`keyMsg`，Zig 核心没有那层探测：**漏一行，那条通道就静默**，
+        // 而它自己的单元测试仍然全绿——因为那些测试测的是翻译，不是接线。
+        // 真窗口探针曾经就是这样抓到 `on_command` 漏接的：widget 点击有反应，
+        // command 通道没有。`core.zig` 里有一条测试问另一半（每个 id 有没有落点），
+        // 接没接上只有真窗口能答。
         .on_command = core.commandMsg,
-        // 焦点通道同一条纪律：显式接线，KARA 的失焦计时靠它。
-        .on_lifecycle = lifecycleMsg,
+        .on_lifecycle = core.lifecycleMsg,
+        .on_frame = core.frameMsg,
+        .on_key = core.keyMsg,
         // KARA 的纱：chrome 画在部件树之后、不进命中树（veil.zig 拥有它的
         // 几何与材质）；suffix 恒为 1 条命令。
         .chrome = .{
@@ -387,10 +364,6 @@ pub fn main(init: std.process.Init) !void {
                 .ttf = japanese_font_bytes,
             },
         },
-        .markup = if (builtin.mode == .Debug)
-            .{ .source = app_markup, .watch_path = "src/app.native", .io = init.io }
-        else
-            null,
     });
     defer app_state.destroy();
 
@@ -424,8 +397,8 @@ const DocumentLayout = struct {
 /// 排版三值经 core 从设置答复落地进 Model；缺省与 Rust
 /// `TypographyConfig::default`（config.rs）同源（17px / 190%）。
 fn documentLineHeightPx(model: *const Model) f32 {
-    const size: f32 = @floatCast(model.typographyTextSize);
-    const percent: f32 = @floatFromInt(model.typographyLineHeightPercent);
+    const size: f32 = @floatCast(model.typography.text_size);
+    const percent: f32 = @floatFromInt(model.typography.line_height_percent);
     if (size <= 0 or percent <= 0) return 0;
     return size * percent / 100;
 }
@@ -433,7 +406,7 @@ fn documentLineHeightPx(model: *const Model) f32 {
 /// 视口高（px）：帧到了用 core 按真实窗高换算的值（`viewportHeightPx`），
 /// 没到用帧前缺省。滚动布局每帧都要一个值，不等第一帧。
 fn documentViewportHeightPx(model: *const Model) f32 {
-    if (model.documentViewportHeight > 0) return @floatFromInt(model.documentViewportHeight);
+    if (model.viewport.height_px > 0) return @floatFromInt(model.viewport.height_px);
     return pre_frame_viewport_height;
 }
 
@@ -441,8 +414,8 @@ fn documentViewportHeightPx(model: *const Model) f32 {
 /// 视口实测取小）× 字号——字身宽即字号（CJK 全角 advance 恒为 1em）。
 /// 0 表示帧还没到，编辑区自动宽。
 fn documentColumnWidthPx(model: *const Model) f32 {
-    if (model.documentColumnsEm <= 0 or model.typographyTextSize <= 0) return 0;
-    return @floatCast(model.documentColumnsEm * model.typographyTextSize);
+    if (model.viewport.columns_em <= 0 or model.typography.text_size <= 0) return 0;
+    return @floatCast(model.viewport.columns_em * model.typography.text_size);
 }
 
 /// 滚动轨道的几何：投影窗口的真实内容高、窗口前后的空白。行高与视口高
@@ -483,13 +456,13 @@ fn documentLayout(document: host_bridge.DocumentView, total_blocks: u64, viewpor
 /// Run 允许什么动作归 `project_view.runActions`——这里一条规则也不复制。
 /// 空信箱说话而不是留白：什么都不画会被读成界面坏了。
 fn mailboxView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    if (model.rootId.len == 0) {
+    if (model.root_id.slice().len == 0) {
         return ui.column(.{ .gap = 8, .padding = 12 }, .{
             ui.text(.{}, "送出去的那些"),
             ui.text(.{}, "先打开一个项目"),
         });
     }
-    const reply = snapshot.value(model.projectResult);
+    const reply = snapshot.value(replies.borrow(.project));
     var children: [2 * mailbox_rows + 2]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     // 页签决定读哪份投影；未读数只在默认列表有意义，回收站里数它
@@ -685,17 +658,17 @@ fn runCard(
 
 /// 读信箱。没有 Root 就没有信箱——按钮因此返回 null。
 fn readMailboxMsg(model: *const Model) ?Msg {
-    if (model.rootId.len == 0) return null;
+    if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
-    const request = project_request.readMailbox(&writer, model.rootId, model.mailboxDiscarded) orelse return null;
+    const request = project_request.readMailbox(&writer, model.root_id.slice(), model.mailboxDiscarded) orelse return null;
     return .{ .project_request = request.bytes };
 }
 
 /// 取回一弃置的单。页签上下文就是它的出处——行本身不带弃置标记。
 fn mailboxRestoreMsg(model: *const Model, entry: project_view.MailboxEntry) ?Msg {
-    if (model.rootId.len == 0) return null;
+    if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
-    const request = project_request.mailboxRestore(&writer, model.rootId, entry.id) orelse return null;
+    const request = project_request.mailboxRestore(&writer, model.root_id.slice(), entry.id) orelse return null;
     return .{ .project_request = request.bytes };
 }
 
@@ -706,29 +679,29 @@ fn mailboxSwapMsg(
     entry: project_view.MailboxEntry,
     neighbor: project_view.MailboxEntry,
 ) ?Msg {
-    if (model.rootId.len == 0) return null;
+    if (model.root_id.slice().len == 0) return null;
     _ = entry.rank orelse return null;
     _ = neighbor.rank orelse return null;
     var writer = project_request.Writer{};
-    const request = project_request.mailboxSwap(&writer, model.rootId, entry.id, neighbor.id) orelse return null;
+    const request = project_request.mailboxSwap(&writer, model.root_id.slice(), entry.id, neighbor.id) orelse return null;
     return .{ .project_request = request.bytes };
 }
 
 /// 读编排名录：Run 那一半的数据从这条来。
 fn readHostMsg(model: *const Model) ?Msg {
-    if (model.rootId.len == 0) return null;
+    if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
-    const request = project_request.readHost(&writer, model.rootId) orelse return null;
+    const request = project_request.readHost(&writer, model.root_id.slice()) orelse return null;
     return .{ .project_request = request.bytes };
 }
 
 /// 置顶或取消置顶一单。格名取自行本身——它是安排表点名的依据，不是显示文本。
 fn mailboxPinMsg(model: *const Model, entry: project_view.MailboxEntry) ?Msg {
-    if (model.rootId.len == 0) return null;
+    if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.mailboxPin(
         &writer,
-        model.rootId,
+        model.root_id.slice(),
         entry.id,
         entry.box_name,
         !entry.pinned,
@@ -738,11 +711,11 @@ fn mailboxPinMsg(model: *const Model, entry: project_view.MailboxEntry) ?Msg {
 
 /// 弃置一单：软删除，它从默认列表消失，提案行与账本原封不动（INV-4）。
 fn mailboxDiscardMsg(model: *const Model, entry: project_view.MailboxEntry) ?Msg {
-    if (model.rootId.len == 0) return null;
+    if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.mailboxDiscard(
         &writer,
-        model.rootId,
+        model.root_id.slice(),
         entry.id,
         entry.box_name,
     ) orelse return null;
@@ -752,11 +725,11 @@ fn mailboxDiscardMsg(model: *const Model, entry: project_view.MailboxEntry) ?Msg
 /// 冲销一单已裁决的提案。`document` 是 Root 相对路径——`Countermand` 按
 /// 文档取回稿子，跨界的是路径而不是绝对地址。
 fn countermandMsg(model: *const Model, entry: project_view.MailboxEntry) ?Msg {
-    if (model.rootId.len == 0) return null;
+    if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.countermand(
         &writer,
-        model.rootId,
+        model.root_id.slice(),
         entry.document,
         entry.id,
     ) orelse return null;
@@ -780,11 +753,11 @@ fn runCommandMsg(
     model: *const Model,
     run_id: []const u8,
 ) ?Msg {
-    if (model.rootId.len == 0) return null;
+    if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.hostRunCommand(
         &writer,
-        model.rootId,
+        model.root_id.slice(),
         command,
         run_id,
         // 宿主自己没有钟：时刻随命令过河，它的事实才可重放。
@@ -803,7 +776,7 @@ fn runCommandMsg(
 /// `project_view.documentRow`，请求的写法归 `project_request`，路径解析在
 /// Rust 里——跨界的是 Root id 加相对路径，界面无法指定任意文件。
 fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    if (model.rootId.len == 0) {
+    if (model.root_id.slice().len == 0) {
         // 还没有项目：这一屏是作者第一次打开软件看到的东西，所以它必须
         // 自己给出入口，而不是显示一句「没有项目」。
         return ui.column(.{ .gap = 12, .padding = 16 }, .{
@@ -825,7 +798,7 @@ fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             }),
         });
     }
-    const opened = snapshot.value(model.projectResult);
+    const opened = snapshot.value(replies.borrow(.project));
     const documents = snapshot.array(opened, "documents");
     // 行数当场数——答复里那个数组就是权威。Model 里曾经另存一个
     // `documentCount`，它去找一个 Rust 从未发过的字段名，恒为 0，于是
@@ -858,7 +831,7 @@ fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         ui.row(.{ .gap = 8, .cross = .center }, .{
             ui.text(.{ .grow = 1 }, "文档"),
             // 画出来的与一共有多少分开说：作者据此知道还有没读到的。
-            ui.text(.{}, ui.fmt("{d} / {d}", .{ window, model.documentTotal })),
+            ui.text(.{}, ui.fmt("{d} / {d}", .{ window, model.document.total })),
         }),
         // 搜索与文件树在同一屏：作者找一份稿子时不必先想「该去哪个去处」。
         searchView(ui, model),
@@ -875,7 +848,7 @@ fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             ui.row(.{ .gap = 8 }, .{
                 ui.button(.{
                     .grow = 1,
-                    .disabled = model.documentCursor.len == 0,
+                    .disabled = model.document.cursor.slice().len == 0,
                     .on_press = documentPageMsg(model),
                     .semantics = .{ .label = "读下一页文档名录" },
                 }, "再读一页"),
@@ -883,7 +856,7 @@ fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
                     // 新建用搜索框里的字当标题：作者刚打完一个找不到的名字，
                     // 下一步多半就是建它。空框时按钮灰着，不发一条会被拒绝的请求。
                     .grow = 1,
-                    .disabled = model.searchQuery.len == 0,
+                    .disabled = model.search.query.slice().len == 0,
                     .on_press = createDocumentMsg(model),
                     .semantics = .{ .label = "用搜索框里的名字新建一篇正文" },
                 }, "新建正文"),
@@ -907,12 +880,12 @@ fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
 /// 新建一份正文。标题取搜索框里的字——作者刚打完一个找不到的名字，
 /// 下一步多半就是建它，所以两处共用一个输入框而不是再开一个。
 fn createDocumentMsg(model: *const Model) ?Msg {
-    if (model.rootId.len == 0 or model.searchQuery.len == 0) return null;
+    if (model.root_id.slice().len == 0 or model.search.query.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.createDocument(
         &writer,
-        model.rootId,
-        model.searchQuery,
+        model.root_id.slice(),
+        model.search.query.slice(),
         "chapter",
     ) orelse return null;
     return .{ .project_request = request.bytes };
@@ -946,11 +919,11 @@ fn documentRowMenu(
 
 /// 改一份材料对 Agent 的披露权限。
 fn disclosureMsg(model: *const Model, path: []const u8, disclosure: []const u8) ?Msg {
-    if (model.rootId.len == 0 or path.len == 0) return null;
+    if (model.root_id.slice().len == 0 or path.len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.setDisclosure(
         &writer,
-        model.rootId,
+        model.root_id.slice(),
         path,
         disclosure,
     ) orelse return null;
@@ -959,11 +932,11 @@ fn disclosureMsg(model: *const Model, path: []const u8, disclosure: []const u8) 
 
 /// 删除一份文档。进系统回收站，不是抹掉——语义归 Rust。
 fn deleteDocumentMsg(model: *const Model, path: []const u8) ?Msg {
-    if (model.rootId.len == 0 or path.len == 0) return null;
+    if (model.root_id.slice().len == 0 or path.len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.deleteDocument(
         &writer,
-        model.rootId,
+        model.root_id.slice(),
         path,
     ) orelse return null;
     return .{ .project_request = request.bytes };
@@ -990,29 +963,29 @@ var document_reference_slot: usize = 0;
 fn openDocumentMsg(model: *const Model, path: []const u8) ?Msg {
     document_reference_slot = (document_reference_slot + 1) % DOCUMENT_REFERENCE_SLOTS;
     const buffer: []u8 = document_reference_pool[document_reference_slot][0..];
-    const reference = project_view.documentReference(buffer, model.rootId, path) orelse return null;
+    const reference = project_view.documentReference(buffer, model.root_id.slice(), path) orelse return null;
     return .{ .document_open = reference };
 }
 
 /// 文件树的下一页。游标由 Rust 给，界面原样送回。
 fn documentPageMsg(model: *const Model) ?Msg {
-    if (model.rootId.len == 0) return null;
+    if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.documentPage(
         &writer,
-        model.rootId,
-        model.documentCursor,
+        model.root_id.slice(),
+        model.document.cursor.slice(),
     ) orelse return null;
     return .{ .project_request = request.bytes };
 }
 
 /// 导入正文或资料。文件由 Rust 的选择器给出，来源永不写回。
 fn importMsg(model: *const Model, comptime manuscript: bool) ?Msg {
-    if (model.rootId.len == 0) return null;
+    if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.chooseAndImport(
         &writer,
-        model.rootId,
+        model.root_id.slice(),
         manuscript,
     ) orelse return null;
     return .{ .project_request = request.bytes };
@@ -1030,7 +1003,7 @@ fn settingsView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     // 公共槽，一次搜索就把它换成搜索结果——设置页随作者上一把操作漂移，
     // 「还没读到」其实是读错了槽。configReply 只收 config 答复（core 按
     // kind 落槽），换主题、改排版、切身份的答复都会刷新它。
-    const config = snapshot.value(model.configReply);
+    const config = snapshot.value(replies.borrow(.config));
     const appearance = snapshot.field(config, "appearance");
     const theme = if (appearance) |shown|
         snapshot.stringField(shown, "theme") orelse ""
@@ -1113,8 +1086,8 @@ fn themeButtons(ui: *Adapter.Ui, model: *const Model) [themes.themes.len]Adapter
 /// Model 的主题下标钳进色表范围（越界回落默认——与 core `theme_select`
 /// 臂的越界处理同一句话，界面与内核不各判一次）。
 fn currentThemeIndex(model: *const Model) usize {
-    return if (model.themeIndex >= 0 and model.themeIndex < themes.themes.len)
-        @intCast(model.themeIndex)
+    return if (model.theme_index >= 0 and model.theme_index < themes.themes.len)
+        @intCast(model.theme_index)
     else
         themes.default_index;
 }
@@ -1123,7 +1096,7 @@ fn currentThemeIndex(model: *const Model) usize {
 /// `material_select` 臂、material.zig 的 `kindFromKebab` 同一句（实心什么
 /// 都不依赖，永远画得出来）。
 fn panelMaterialKind(model: *const Model) material_recipe.Kind {
-    return switch (model.panelMaterial) {
+    return switch (model.panel_material) {
         1 => .acrylic,
         2 => .liquid,
         else => .solid,
@@ -1140,7 +1113,7 @@ fn materialButton(
 ) Adapter.Ui.Node {
     return ui.button(.{
         .on_press = .{ .material_select = index },
-        .selected = model.panelMaterial == index,
+        .selected = model.panel_material == index,
         .semantics = .{ .label = "把面板换成" ++ label },
     }, label);
 }
@@ -1156,8 +1129,8 @@ fn agentsSection(ui: *Adapter.Ui, model: *const Model, config: snapshot.Value) A
     var count: usize = 0;
     while (count < rows.len) : (count += 1) {
         const agent = project_view.agentAt(agents, count) orelse break;
-        const editing = model.editingAgent.len > 0 and
-            std.mem.eql(u8, model.editingAgent, agent.id);
+        const editing = model.editing_agent.id.slice().len > 0 and
+            std.mem.eql(u8, model.editing_agent.id.slice(), agent.id);
         rows[count] = ui.el(.card, .{ .key = .{ .index = count }, .padding = 8 }, .{
             ui.column(.{ .gap = 4 }, .{
                 ui.row(.{ .gap = 8, .cross = .center }, .{
@@ -1279,7 +1252,7 @@ fn agentArgvEditor(ui: *Adapter.Ui, model: *const Model, agent: project_view.Age
     const Input = @FieldType(Msg, "agent_argv_typed");
     return ui.column(.{ .gap = 4 }, .{
         ui.textField(.{
-            .text = model.agentArgvDraft,
+            .text = model.editing_agent.body.slice(),
             .placeholder = "--model max --temperature 0.2",
             .on_input = Adapter.Ui.translatedInputMsg(.agent_argv_typed, Input),
             .semantics = .{ .label = "这个 Agent 的专属参数" },
@@ -1303,7 +1276,7 @@ fn upsertAgentMsg(model: *const Model, agent: project_view.Agent) ?Msg {
         agent.connection_id,
         agentPersonaMode(agent),
         agent.persona_body,
-        model.agentArgvDraft,
+        model.editing_agent.body.slice(),
     ) orelse return null;
     return .{ .project_request = request.bytes };
 }
@@ -1359,11 +1332,11 @@ fn typographyRow(
     // 数值跟着标签走：作者拖动时看到的是「字号 17.5 px」在动，不是一根
     // 没有刻度的轨——滑杆没有刻度是 SDK 部件的形状，数值由我们补上。
     const value_text = if (comptime std.mem.eql(u8, field, "textSize"))
-        ui.fmt("{d:.1} px", .{model.typographyTextSize})
+        ui.fmt("{d:.1} px", .{model.typography.text_size})
     else if (comptime std.mem.eql(u8, field, "lineHeight"))
-        ui.fmt("{d}%", .{model.typographyLineHeightPercent})
+        ui.fmt("{d}%", .{model.typography.line_height_percent})
     else
-        ui.fmt("{d:.1} em", .{model.typographyMeasureEm});
+        ui.fmt("{d:.1} em", .{model.typography.measure_em});
     return ui.row(.{ .gap = 8, .cross = .center }, .{
         ui.text(.{}, ui.fmt("{s} {s}", .{ label, value_text })),
         ui.button(.{
@@ -1388,12 +1361,12 @@ fn typographyRow(
 /// 词汇表以 Rust 为准，这里多一个词就是第二份权威。
 fn currentTypographyUnits(model: *const Model, comptime field: []const u8) i32 {
     if (comptime std.mem.eql(u8, field, "textSize")) {
-        return @intFromFloat(model.typographyTextSize * 10);
+        return @intFromFloat(model.typography.text_size * 10);
     }
     if (comptime std.mem.eql(u8, field, "lineHeight")) {
-        return @intCast(model.typographyLineHeightPercent);
+        return @intCast(model.typography.line_height_percent);
     }
-    return @intFromFloat(model.typographyMeasureEm * 10);
+    return @intFromFloat(model.typography.measure_em * 10);
 }
 
 /// 排版滑杆的消息闭包：一个字段一个实例，实例里装着上一次落定的值。
@@ -1467,12 +1440,12 @@ fn readConfigMsg() ?Msg {
 /// 键图原生行为。
 fn searchView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     const Input = @FieldType(Msg, "search_typed");
-    const results = snapshot.value(model.projectResult);
-    const kind = snapshot.kind(model.projectResult);
+    const results = snapshot.value(replies.borrow(.project));
+    const kind = snapshot.kind(replies.borrow(.project));
     const is_blocks = std.mem.eql(u8, kind, "blocks");
     const rows = snapshot.array(results, if (is_blocks) "blocks" else "documents");
     // 空查询不画旧结果：按 searchQuery 判空，不按答复判空。
-    const searching = model.searchQuery.len > 0;
+    const searching = model.search.query.slice().len > 0;
     const count = if (searching) @min(rows.count(), max_visible_rows) else 0;
     var nodes: [max_visible_rows]Adapter.Ui.Node = undefined;
     var index: usize = 0;
@@ -1489,7 +1462,7 @@ fn searchView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             const excerpt_buf = ui.arena.alloc(u8, 4 * 60 + 12) catch break :blk path;
             break :blk ui.fmt("{s} · {s}", .{
                 path,
-                project_view.excerptAround(excerpt_buf, text, model.searchQuery, 60),
+                project_view.excerptAround(excerpt_buf, text, model.search.query.slice(), 60),
             });
         } else snapshot.stringField(row, "path") orelse "这一行读不出来";
         const jump = searchHitMsg(model, row, is_blocks);
@@ -1506,7 +1479,7 @@ fn searchView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         ui.row(.{ .gap = 8, .cross = .center }, .{
             ui.textField(.{
                 .grow = 1,
-                .text = model.searchQuery,
+                .text = model.search.query.slice(),
                 .placeholder = "搜索文档或正文",
                 .on_input = Adapter.Ui.translatedInputMsg(.search_typed, Input),
                 .semantics = .{ .label = "搜索词" },
@@ -1538,12 +1511,12 @@ fn searchView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
 /// 一次搜索。空查询不发请求——空词在 Rust 那边是一次有名拒绝，
 /// 而作者读成的是「搜索坏了」。
 fn searchMsg(model: *const Model, comptime blocks: bool) ?Msg {
-    if (model.rootId.len == 0 or model.searchQuery.len == 0) return null;
+    if (model.root_id.slice().len == 0 or model.search.query.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = if (blocks)
-        project_request.blockSearch(&writer, model.rootId, model.searchQuery, model.searchExact)
+        project_request.blockSearch(&writer, model.root_id.slice(), model.search.query.slice(), model.searchExact)
     else
-        project_request.documentSearch(&writer, model.rootId, model.searchQuery, model.searchExact);
+        project_request.documentSearch(&writer, model.root_id.slice(), model.search.query.slice(), model.searchExact);
     return .{ .project_request = (request orelse return null).bytes };
 }
 
@@ -1556,16 +1529,16 @@ fn searchHitMsg(model: *const Model, row: snapshot.Value, blocks: bool) ?Msg {
     const path = snapshot.stringField(row, "path") orelse "";
     if (blocks and path.len > 0) {
         const ordinal = snapshot.unsignedField(row, "ordinal") orelse return null;
-        if (model.documentSession != 0 and std.mem.eql(u8, path, model.documentPath)) {
+        if (model.document.session != 0 and std.mem.eql(u8, path, model.document.path.slice())) {
             return .{ .document_jump = @intCast(ordinal) };
         }
         // 跨文档命中：开文档与跳块是两次请求——挂起的块序号随引用一起送，
         // 打开答复落地后 core 补发跳块（v0.2.4 的 selectDocument→revealBlock
         // 串联缝）。引用与文件树行同一个轮换池、同一条借用纪律。
-        if (model.rootId.len == 0) return null;
+        if (model.root_id.slice().len == 0) return null;
         document_reference_slot = (document_reference_slot + 1) % DOCUMENT_REFERENCE_SLOTS;
         const buffer: []u8 = document_reference_pool[document_reference_slot][0..];
-        const reference = project_view.documentReference(buffer, model.rootId, path) orelse return null;
+        const reference = project_view.documentReference(buffer, model.root_id.slice(), path) orelse return null;
         return .{ .document_open_jump = .{
             .reference = reference,
             .block = @intCast(ordinal),
@@ -1637,13 +1610,13 @@ fn manuscriptMenu(model: *const Model) []const Adapter.Ui.ContextMenuItem {
 /// 只做高亮不做评论：评论要作者写一段字，而右键菜单按下即执行。
 /// 评论走批注面板（尚未接）。
 fn annotateMsg(model: *const Model, selected: []const u8) ?Msg {
-    if (model.rootId.len == 0 or model.documentPath.len == 0) return null;
+    if (model.root_id.slice().len == 0 or model.document.path.slice().len == 0) return null;
     if (selected.len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.annotate(
         &writer,
-        model.rootId,
-        model.documentPath,
+        model.root_id.slice(),
+        model.document.path.slice(),
         selected,
         // 空 body 即高亮。
         "",
@@ -1693,13 +1666,13 @@ fn annotateMsg(model: *const Model, selected: []const u8) ?Msg {
 /// +入批，没有单独的入批态）；进度显示 `{staged}/{total} 已判` 同理，
 /// native 里「已判」与「待合并」恒等，不硬凑两个数。
 fn reviewView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    if (model.rootId.len == 0 or model.documentPath.len == 0) {
+    if (model.root_id.slice().len == 0 or model.document.path.slice().len == 0) {
         return ui.column(.{ .gap = 8, .padding = 12 }, .{
             ui.text(.{}, "待裁决的提案"),
             ui.text(.{}, "先打开一份稿子"),
         });
     }
-    const listing = snapshot.value(model.projectResult);
+    const listing = snapshot.value(replies.borrow(.project));
     const total = project_view.proposalCount(listing);
     const window = @min(total, max_visible_rows);
     var rows: [max_visible_rows]Adapter.Ui.Node = undefined;
@@ -1712,7 +1685,7 @@ fn reviewView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             ui.text(.{ .grow = 1 }, "待裁决的提案"),
             // 批次进度跟着台账走（stagedCount 由 core 从答复提取），
             // 界面不自己数「我判了几条」——那会与账本漂开。
-            ui.text(.{}, ui.fmt("{d}/{d} 已判", .{ model.stagedCount, total })),
+            ui.text(.{}, ui.fmt("{d}/{d} 已判", .{ model.review.staged_count, total })),
             ui.button(.{
                 .on_press = readProposalsMsg(model),
                 .semantics = .{ .label = "重新读取待裁决的提案" },
@@ -1721,12 +1694,12 @@ fn reviewView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
                 .variant = .primary,
                 // 空批次不发提交：按钮先灰掉，作者按下去之前就知道，
                 // 而不是收到一次拒绝。
-                .disabled = model.stagedCount == 0,
+                .disabled = model.review.staged_count == 0,
                 .on_press = commitVerdictsMsg(model),
                 .semantics = .{ .label = "把判过的这些落盘" },
             }, ui.fmt("{s} {d} 条 ({s})", .{
                 commands.labelOf("verdict.settle"),
-                model.stagedCount,
+                model.review.staged_count,
                 commands.hintOf("verdict.settle"),
             })),
         }),
@@ -1742,7 +1715,7 @@ fn reviewView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             commands.hintOf("verdict.settle"),
         })),
         // 过期面板压在名录之上：它是上一次派发失败的说辞，先交代清楚再判。
-        if (model.staleRecovery.len > 0)
+        if (model.review.stale_recovery.slice().len > 0)
             stalePanel(ui, model)
         else
             ui.el(.stack, .{ .height = 0 }, .{}),
@@ -1754,7 +1727,7 @@ fn reviewView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
                 @as([]const Adapter.Ui.Node, rows[0..window]),
             ),
         // 落盘的结局要说出来：三态各说各的，`decisionMessage` 判。
-        ui.text(.{}, project_view.decisionMessage(model.projectResult)),
+        ui.text(.{}, project_view.decisionMessage(replies.borrow(.project))),
         annotationsSection(ui, model),
     });
 }
@@ -1783,13 +1756,13 @@ fn stalePanel(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     var count: usize = 0;
     children[count] = ui.text(.{}, "这一段在派发之后被改过了，提案没有套用。");
     count += 1;
-    if (model.staleFrozen.len > 0) {
+    if (model.review.stale_frozen.slice().len > 0) {
         children[count] = ui.text(.{}, "Agent 当时读到的是：");
         count += 1;
-        children[count] = ui.text(.{}, model.staleFrozen);
+        children[count] = ui.text(.{}, model.review.stale_frozen.slice());
         count += 1;
     }
-    var rest = model.staleRecovery;
+    var rest = model.review.stale_recovery.slice();
     while (rest.len > 0 and count + 1 < children.len) {
         const at = std.mem.indexOfScalar(u8, rest, '\n') orelse rest.len;
         // 空段（连着的 \n 或收尾的 \n）不画——一行空步骤会被读成界面坏了。
@@ -1819,7 +1792,7 @@ fn stalePanel(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
 /// （`annotationDraft`），与派发框同一条路径；「这段字够不够清楚」不是
 /// 这一屏能判的，范围对不上块由 Rust 在入口具名拒绝。
 fn annotationsSection(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    const listing = snapshot.value(model.projectResult);
+    const listing = snapshot.value(replies.borrow(.project));
     const Input = @FieldType(Msg, "annotation_draft_typed");
     var rows: [mailbox_rows]Adapter.Ui.Node = undefined;
     var count: usize = 0;
@@ -1854,7 +1827,7 @@ fn annotationsSection(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         ui.row(.{ .gap = 8, .cross = .center }, .{
             ui.textField(.{
                 .grow = 1,
-                .text = model.annotationDraft,
+                .text = model.annotation_draft.slice(),
                 .placeholder = "写评论（留空就是高亮）",
                 .on_input = Adapter.Ui.translatedInputMsg(.annotation_draft_typed, Input),
                 .semantics = .{ .label = "评论草稿" },
@@ -1891,13 +1864,13 @@ fn convertWidthMsg(
     whole_document: bool,
     direction: []const u8,
 ) ?Msg {
-    if (model.rootId.len == 0 or model.documentPath.len == 0) return null;
+    if (model.root_id.slice().len == 0 or model.document.path.slice().len == 0) return null;
     if (!whole_document and selected.len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.convertWidth(
         &writer,
-        model.rootId,
-        model.documentPath,
+        model.root_id.slice(),
+        model.document.path.slice(),
         selected,
         whole_document,
         direction,
@@ -1908,28 +1881,28 @@ fn convertWidthMsg(
 /// 在选中的一段正文上发一条评论：正文是选区原文，评论是草稿字节。
 /// 草稿为空就是高亮——与正文右键菜单同一族，只是这里能写字。
 fn commentMsg(model: *const Model) ?Msg {
-    if (model.rootId.len == 0 or model.documentPath.len == 0) return null;
+    if (model.root_id.slice().len == 0 or model.document.path.slice().len == 0) return null;
     const selected = selectedText(host_bridge.documentView());
     if (selected.len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.annotate(
         &writer,
-        model.rootId,
-        model.documentPath,
+        model.root_id.slice(),
+        model.document.path.slice(),
         selected,
-        model.annotationDraft,
+        model.annotation_draft.slice(),
     ) orelse return null;
     return .{ .project_request = request.bytes };
 }
 
 /// 读这份文档的批注。没打开稿子就没有可读的——按钮因此返回 null。
 fn readAnnotationsMsg(model: *const Model) ?Msg {
-    if (model.rootId.len == 0 or model.documentPath.len == 0) return null;
+    if (model.root_id.slice().len == 0 or model.document.path.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.readAnnotations(
         &writer,
-        model.rootId,
-        model.documentPath,
+        model.root_id.slice(),
+        model.document.path.slice(),
     ) orelse return null;
     return .{ .project_request = request.bytes };
 }
@@ -1958,8 +1931,8 @@ fn proposalRow(
         return ui.text(.{}, "这一条读不出来");
     // 正在改写的是不是这一条。只有这一条展开编辑区——同时展开多条会让
     // 作者以为可以一次改好几处，而每次提交只带一条的最终正文。
-    const revising = model.revisingProposal.len > 0 and
-        std.mem.eql(u8, model.revisingProposal, proposal.id);
+    const revising = model.revising.id.slice().len > 0 and
+        std.mem.eql(u8, model.revising.id.slice(), proposal.id);
     // 游标是 i64：-1 表示没有行。先判非负再转 usize（整数槽纪律）。
     const on_cursor = model.rosterCursor >= 0 and
         index == @as(usize, @intCast(model.rosterCursor));
@@ -2038,7 +2011,7 @@ fn proposalRow(
                 ui.row(.{ .gap = 8, .cross = .center }, .{
                     ui.textField(.{
                         .grow = 1,
-                        .text = model.reasonDraft,
+                        .text = model.review.reason_draft.slice(),
                         .placeholder = "理由（可留空）",
                         .on_input = Adapter.Ui.translatedInputMsg(.review_reason_typed, ReasonInput),
                         .on_submit = @as(?Msg, .review_reason_commit),
@@ -2064,7 +2037,7 @@ fn proposalRow(
             // 已记下的理由亮出来：它随下一次裁决发出，作者要知道它还在。
             if (on_cursor and model.reasonRecorded)
                 ui.text(.{}, ui.fmt("理由：{s} · 随下一次裁决发出", .{
-                    if (model.reviewReason.len > 0) model.reviewReason else "（空）",
+                    if (model.review.reason.slice().len > 0) model.review.reason.slice() else "（空）",
                 }))
             else
                 ui.el(.stack, .{ .height = 0 }, .{}),
@@ -2096,11 +2069,11 @@ fn revisionEditor(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             .wrap = true,
             .on_input = Adapter.Ui.translatedInputMsg(.revision_typed, Input),
             .semantics = .{ .label = "改写后的正文" },
-        }, model.revisionText),
+        }, model.revising.body.slice()),
         ui.row(.{ .gap = 8 }, .{
             ui.button(.{
                 .variant = .primary,
-                .disabled = model.revisionText.len == 0,
+                .disabled = model.revising.body.slice().len == 0,
                 .on_press = commitRevisionMsg(model),
                 .semantics = .{ .label = "按我改的这版接受" },
             }, "按我改的接受"),
@@ -2122,16 +2095,16 @@ fn revisionEditor(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
 /// core 键盘路径逐字节同形）。返回 `desk_verdict` 而不是通用
 /// `project_request`：core 发它时连带清掉理由、挂起判后前进的旗。
 fn verdictMsg(model: *const Model, proposal_id: []const u8, kind: []const u8) ?Msg {
-    if (model.rootId.len == 0 or model.documentPath.len == 0) return null;
+    if (model.root_id.slice().len == 0 or model.document.path.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.stageVerdict(
         &writer,
-        model.rootId,
-        model.documentPath,
+        model.root_id.slice(),
+        model.document.path.slice(),
         proposal_id,
         kind,
         "",
-        if (model.reasonRecorded) model.reviewReason else "",
+        if (model.reasonRecorded) model.review.reason.slice() else "",
     ) orelse return null;
     return .{ .desk_verdict = request.bytes };
 }
@@ -2160,53 +2133,53 @@ fn beginRevisionMsg(listing: snapshot.Value, index: usize) ?Msg {
 /// 理由与返回通道同 `verdictMsg`：记下的理由随这次裁决发出，桌面裁决走
 /// `desk_verdict`（core 连带清理由、挂判后前进）。
 fn commitRevisionMsg(model: *const Model) ?Msg {
-    if (model.rootId.len == 0 or model.documentPath.len == 0) return null;
-    if (model.revisingProposal.len == 0 or model.revisionText.len == 0) return null;
+    if (model.root_id.slice().len == 0 or model.document.path.slice().len == 0) return null;
+    if (model.revising.id.slice().len == 0 or model.revising.body.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.stageVerdict(
         &writer,
-        model.rootId,
-        model.documentPath,
-        model.revisingProposal,
+        model.root_id.slice(),
+        model.document.path.slice(),
+        model.revising.id.slice(),
         "accept-modified",
-        model.revisionText,
-        if (model.reasonRecorded) model.reviewReason else "",
+        model.revising.body.slice(),
+        if (model.reasonRecorded) model.review.reason.slice() else "",
     ) orelse return null;
     return .{ .desk_verdict = request.bytes };
 }
 
 /// 提交暂存的裁决批次。裁决即落盘（D1／F-01）。
 fn commitVerdictsMsg(model: *const Model) ?Msg {
-    if (model.rootId.len == 0 or model.documentPath.len == 0) return null;
+    if (model.root_id.slice().len == 0 or model.document.path.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.commitVerdicts(
         &writer,
-        model.rootId,
-        model.documentPath,
+        model.root_id.slice(),
+        model.document.path.slice(),
     ) orelse return null;
     return .{ .project_request = request.bytes };
 }
 
 /// 读这份文档上待裁决的提案。
 fn readProposalsMsg(model: *const Model) ?Msg {
-    if (model.rootId.len == 0 or model.documentPath.len == 0) return null;
+    if (model.root_id.slice().len == 0 or model.document.path.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.readProposals(
         &writer,
-        model.rootId,
-        model.documentPath,
+        model.root_id.slice(),
+        model.document.path.slice(),
     ) orelse return null;
     return .{ .project_request = request.bytes };
 }
 
 /// 读这份稿子的块清单（派发台的行）。`after` 是翻页游标：null 读第一页。
 fn readBlocksMsg(model: *const Model, after: ?u64) ?Msg {
-    if (model.rootId.len == 0 or model.documentPath.len == 0) return null;
+    if (model.root_id.slice().len == 0 or model.document.path.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.readBlocks(
         &writer,
-        model.rootId,
-        model.documentPath,
+        model.root_id.slice(),
+        model.document.path.slice(),
         after,
         100,
     ) orelse return null;
@@ -2215,17 +2188,17 @@ fn readBlocksMsg(model: *const Model, after: ?u64) ?Msg {
 
 /// 读这个项目的资料名录（派发台的资料分区）。
 fn readMaterialsMsg(model: *const Model) ?Msg {
-    if (model.rootId.len == 0) return null;
+    if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
-    const request = project_request.readMaterials(&writer, model.rootId) orelse return null;
+    const request = project_request.readMaterials(&writer, model.root_id.slice()) orelse return null;
     return .{ .project_request = request.bytes };
 }
 
 /// 收取选中那一条 Run 的结果。
 fn collectRunMsg(model: *const Model, run_id: []const u8) ?Msg {
-    if (model.rootId.len == 0) return null;
+    if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
-    const request = project_request.collectRun(&writer, model.rootId, run_id) orelse return null;
+    const request = project_request.collectRun(&writer, model.root_id.slice(), run_id) orelse return null;
     return .{ .project_request = request.bytes };
 }
 
@@ -2233,9 +2206,9 @@ fn collectRunMsg(model: *const Model, run_id: []const u8) ?Msg {
 /// 手动往返的作者在按下它之后拿到一份可以亲手送给 Agent 的请求
 /// （工作区里的 request），发令枪与下游自动发射同一条命令。
 fn launchRunMsg(model: *const Model, run_id: []const u8) ?Msg {
-    if (model.rootId.len == 0) return null;
+    if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
-    const request = project_request.launchRun(&writer, model.rootId, run_id) orelse return null;
+    const request = project_request.launchRun(&writer, model.root_id.slice(), run_id) orelse return null;
     return .{ .project_request = request.bytes };
 }
 
@@ -2247,7 +2220,7 @@ fn launchRunMsg(model: *const Model, run_id: []const u8) ?Msg {
 /// **在全局逻辑中负责什么**：只画与只派 Msg。已撤销的行仍然显示（灰着），
 /// 因为它们是作者做过的事；从列表里消失会让他以为自己记错了。
 fn historyView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    const listing = snapshot.value(model.projectResult);
+    const listing = snapshot.value(replies.borrow(.project));
     var rows: [24]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     while (count < rows.len) : (count += 1) {
@@ -2293,12 +2266,12 @@ fn revertToMsg(change: project_view.Change) ?Msg {
 
 /// 读这份文档的改动记录。没打开稿子就没有可读的——按钮因此返回 null。
 fn readHistoryMsg(model: *const Model) ?Msg {
-    if (model.rootId.len == 0 or model.documentPath.len == 0) return null;
+    if (model.root_id.slice().len == 0 or model.document.path.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.readHistory(
         &writer,
-        model.rootId,
-        model.documentPath,
+        model.root_id.slice(),
+        model.document.path.slice(),
     ) orelse return null;
     return .{ .project_request = request.bytes };
 }
@@ -2312,8 +2285,8 @@ fn readHistoryMsg(model: *const Model) ?Msg {
 ///
 /// **在全局逻辑中负责什么**：只画与只派 Msg。「装了没有」「能做到哪一层」
 /// 都由 Rust 探测，这里一条也不猜。中文标签住在 `project_view` 的翻译里。
-fn connectionsView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    const listing = snapshot.value(model.projectResult);
+fn connectionsView(ui: *Adapter.Ui) Adapter.Ui.Node {
+    const listing = snapshot.value(replies.borrow(.project));
     var rows: [8]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     while (count < rows.len) : (count += 1) {
@@ -2429,8 +2402,8 @@ fn dispatchView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     const span = coverageSpan(model);
     // 就绪 = 有范围 ∧ 要求非空 ∧ 委托可送。委托恒可送（没有具名伙伴时
     // 「手动往返」兜底行总在），所以它不进这个式子。
-    const ready = (span != null or model.dispatchStash.len > 0 or selected.len > 0) and
-        model.dispatchPrompt.len > 0;
+    const ready = (span != null or model.dispatch.stash.slice().len > 0 or selected.len > 0) and
+        model.dispatch.prompt.slice().len > 0;
     // 请求先编一次：攒段/选区太长装不下 12KB 槽时编不出——按钮灰掉并
     // 说原因。不灰不按、按了没反应，都是谎话（审计 #13）。
     const preview_msg = previewDispatchMsg(model, selected);
@@ -2452,7 +2425,7 @@ fn dispatchView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         // on_submit（SDK 的 isSubmitKeyboard：Enter 留给换行），绑到送出。
         ui.el(.textarea, .{
             .wrap = true,
-            .text = model.dispatchPrompt,
+            .text = model.dispatch.prompt.slice(),
             .on_input = Adapter.Ui.translatedInputMsg(.dispatch_typed, Input),
             .on_submit = dispatchMsg(model, selected),
             .semantics = .{ .label = "写给 agent 的要求" },
@@ -2465,7 +2438,7 @@ fn dispatchView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
                 .on_press = .{ .dispatch_agents = -1 },
                 .semantics = .{ .label = "少派一个" },
             }, "−"),
-            ui.text(.{}, ui.fmt("{d}", .{model.dispatchAgents})),
+            ui.text(.{}, ui.fmt("{d}", .{model.dispatch.agents})),
             ui.button(.{
                 .on_press = .{ .dispatch_agents = 1 },
                 .semantics = .{ .label = "多派一个" },
@@ -2474,12 +2447,12 @@ fn dispatchView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         // 排法只在多于一个 agent 时有意义。一个 agent 时仍然画出来但灰掉，
         // 而不是整行消失——一行凭空出现的控件会让作者以为界面刚才坏了。
         ui.row(.{ .gap = 8, .cross = .center }, .{
-            ui.text(.{ .grow = 1 }, orchestrationAt(model.dispatchOrchestration).hint),
+            ui.text(.{ .grow = 1 }, orchestrationAt(model.dispatch.orchestration).hint),
             ui.button(.{
-                .disabled = model.dispatchAgents < 2,
+                .disabled = model.dispatch.agents < 2,
                 .on_press = @as(?Msg, .dispatch_orchestration),
                 .semantics = .{ .label = "换一种排法" },
-            }, orchestrationAt(model.dispatchOrchestration).label),
+            }, orchestrationAt(model.dispatch.orchestration).label),
         }),
         ui.row(.{ .gap = 8 }, .{
             ui.button(.{
@@ -2500,7 +2473,7 @@ fn dispatchView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             ui.spacer(0),
         // 只印接好线的键位：Space 勾选与台内移动 2.8 才接。
         ui.text(.{}, "Ctrl+Enter 送出（在要求框里）"),
-        dispatchPreviewSection(ui, model),
+        dispatchPreviewSection(ui),
         deskRunRoster(ui, model),
         materialDraftsSection(ui, model),
     });
@@ -2541,9 +2514,9 @@ fn coverageSpan(model: *const Model) ?DeskSpan {
 
 /// 攒了几段：NUL 数 + 1。空串是零段。
 fn stashCount(model: *const Model) usize {
-    if (model.dispatchStash.len == 0) return 0;
+    if (model.dispatch.stash.slice().len == 0) return 0;
     var count: usize = 1;
-    for (model.dispatchStash) |ch| {
+    for (model.dispatch.stash.slice()) |ch| {
         if (ch == 0) count += 1;
     }
     return count;
@@ -2572,8 +2545,8 @@ fn firstChars(text: []const u8, n: usize) []const u8 {
 }
 
 /// config 答复里的 agents 数组原文。没有答复时是空数组。
-fn configAgents(model: *const Model) snapshot.Value {
-    return snapshot.field(snapshot.value(model.configReply), "agents") orelse "[]";
+fn configAgents() snapshot.Value {
+    return snapshot.field(snapshot.value(replies.borrow(.config)), "agents") orelse "[]";
 }
 
 /// 手动往返的哨兵词（agent id 是 uuid，这个词不会撞）：空 dispatchAgent
@@ -2584,9 +2557,9 @@ const manual_agent_sentinel = "manual";
 /// 当前生效的委托对象：哨兵是手动往返（空 id）；`dispatchAgent` 非空是它；
 /// 空时视同第一个具名伙伴（显示上亮第一个）；一个伙伴也没有时是手动往返。
 fn effectiveDispatchAgent(model: *const Model) []const u8 {
-    if (std.mem.eql(u8, model.dispatchAgent, manual_agent_sentinel)) return "";
-    if (model.dispatchAgent.len > 0) return model.dispatchAgent;
-    const first = project_view.agentAt(configAgents(model), 0) orelse return "";
+    if (std.mem.eql(u8, model.dispatch.agent.slice(), manual_agent_sentinel)) return "";
+    if (model.dispatch.agent.slice().len > 0) return model.dispatch.agent.slice();
+    const first = project_view.agentAt(configAgents(), 0) orelse return "";
     return first.id;
 }
 
@@ -2595,7 +2568,7 @@ fn deskAgentLabel(model: *const Model) []const u8 {
     const effective = effectiveDispatchAgent(model);
     if (effective.len == 0) return "手动往返";
     var index: usize = 0;
-    while (project_view.agentAt(configAgents(model), index)) |agent| : (index += 1) {
+    while (project_view.agentAt(configAgents(), index)) |agent| : (index += 1) {
         if (std.mem.eql(u8, agent.id, effective)) return agent.name;
     }
     return "—";
@@ -2609,8 +2582,8 @@ fn deskTicket(ui: *Adapter.Ui, model: *const Model, selected: []const u8, span: 
     const segments = deskCheckedCount(model) + stashCount(model) + @as(usize, @intFromBool(selected.len > 0));
     return ui.row(.{ .gap = 12 }, .{
         ui.text(.{}, ui.fmt("段落 {d} 块", .{segments})),
-        ui.text(.{}, if (model.dispatchPrompt.len > 0)
-            ui.fmt("要求 {d} 字", .{charCount(model.dispatchPrompt)})
+        ui.text(.{}, if (model.dispatch.prompt.slice().len > 0)
+            ui.fmt("要求 {d} 字", .{charCount(model.dispatch.prompt.slice())})
         else
             "要求 —"),
         ui.text(.{}, ui.fmt("委托 {s}", .{deskAgentLabel(model)})),
@@ -2627,7 +2600,7 @@ fn deskTicket(ui: *Adapter.Ui, model: *const Model, selected: []const u8, span: 
 /// core 的 `deskBlocks` 槽是替换语义（每页答复换掉整槽），位图跨页
 /// 存活——翻页不丢勾选，显示的是当前这页。
 fn deskBlockList(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    const listing = snapshot.value(model.deskBlocks);
+    const listing = snapshot.value(replies.borrow(.blocks));
     var rows: [desk_block_rows]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     while (count < rows.len) : (count += 1) {
@@ -2652,7 +2625,7 @@ fn deskBlockList(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         ui.row(.{ .gap = 8, .cross = .center }, .{
             ui.text(.{ .grow = 1 }, "段落"),
             // 已装 / 总数：槽里这页的行数 对 这份稿子的总块数。
-            ui.text(.{}, ui.fmt("{d}/{d}", .{ count, model.documentBlocks })),
+            ui.text(.{}, ui.fmt("{d}/{d}", .{ count, model.document.blocks })),
             ui.button(.{
                 .on_press = @as(?Msg, .dispatch_blocks_all),
                 .semantics = .{ .label = "勾上整章" },
@@ -2698,7 +2671,7 @@ fn deskBlockList(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
 /// 回去。勾选态住在 Model（`dispatchMaterials`，\n 分隔），这一节一条
 /// 规则也不复制。
 fn deskMaterials(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    if (model.deskMaterials.len == 0) {
+    if (replies.borrow(.materials).len == 0) {
         return ui.row(.{ .gap = 8, .cross = .center }, .{
             ui.text(.{ .grow = 1 }, "资料"),
             ui.button(.{
@@ -2707,7 +2680,7 @@ fn deskMaterials(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             }, "读取资料"),
         });
     }
-    const listing = snapshot.value(model.deskMaterials);
+    const listing = snapshot.value(replies.borrow(.materials));
     var rows: [mailbox_rows]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     while (count < rows.len) : (count += 1) {
@@ -2742,7 +2715,7 @@ fn deskMaterials(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
 
 /// 这份资料勾了吗：`dispatchMaterials` 是 \n 分隔的路径表，逐段比对。
 fn materialChecked(model: *const Model, path: []const u8) bool {
-    var rest = model.dispatchMaterials;
+    var rest = model.dispatch.materials.slice();
     while (rest.len > 0) {
         const at = std.mem.indexOfScalar(u8, rest, '\n') orelse rest.len;
         if (std.mem.eql(u8, rest[0..at], path)) return true;
@@ -2754,7 +2727,7 @@ fn materialChecked(model: *const Model, path: []const u8) bool {
 /// 勾选的资料路径切进 `out`，返回条数。空段（连着的 \n）跳过。
 fn checkedMaterials(model: *const Model, out: [][]const u8) usize {
     var count: usize = 0;
-    var rest = model.dispatchMaterials;
+    var rest = model.dispatch.materials.slice();
     while (rest.len > 0 and count < out.len) {
         const at = std.mem.indexOfScalar(u8, rest, '\n') orelse rest.len;
         const segment = rest[0..at];
@@ -2769,11 +2742,11 @@ fn checkedMaterials(model: *const Model, out: [][]const u8) usize {
 /// 攒段区：正文右键「攒进发送」存下的段。每段在送出时成为一个文本
 /// scope（顺在块段后面）。空时不画这一节。
 fn deskStash(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    if (model.dispatchStash.len == 0) return ui.el(.stack, .{ .height = 0 }, .{});
+    if (model.dispatch.stash.slice().len == 0) return ui.el(.stack, .{ .height = 0 }, .{});
     // 与信箱同一条窗口纪律：画前 mailbox_rows 段，更多的照送但不全画。
     var rows: [mailbox_rows]Adapter.Ui.Node = undefined;
     var count: usize = 0;
-    var rest = model.dispatchStash;
+    var rest = model.dispatch.stash.slice();
     while (rest.len > 0 and count < rows.len) {
         const at = std.mem.indexOfScalar(u8, rest, 0) orelse rest.len;
         const segment = rest[0..at];
@@ -2803,7 +2776,7 @@ fn deskStash(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
 /// 委托行：config 名录里的具名伙伴各一个按钮（选中态高亮），末尾
 /// 「手动往返」。一个伙伴也没有时只剩手动往返那行。
 fn deskAgentRow(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    const agents = configAgents(model);
+    const agents = configAgents();
     const effective = effectiveDispatchAgent(model);
     var rows: [mailbox_rows]Adapter.Ui.Node = undefined;
     var count: usize = 0;
@@ -2838,7 +2811,7 @@ fn deskCarryRow(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     var buttons: [3]Adapter.Ui.Node = undefined;
     for (modes, 0..) |label, index| {
         buttons[index] = ui.button(.{
-            .selected = model.dispatchCarry == @as(i64, @intCast(index)),
+            .selected = model.dispatch.carry == @as(i64, @intCast(index)),
             .on_press = .{ .dispatch_carry = @intCast(index) },
             .semantics = .{ .label = label },
         }, label);
@@ -2862,7 +2835,7 @@ fn deskCarryRow(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
 /// 轮询链与下游自动发射都不在这里——core 与领域层各管各的，这一节只读
 /// 快照。
 fn deskRunRoster(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    if (model.deskHost.len == 0) {
+    if (replies.borrow(.host).len == 0) {
         return ui.row(.{ .gap = 8, .cross = .center }, .{
             ui.text(.{ .grow = 1 }, "Run 名录"),
             ui.button(.{
@@ -2871,11 +2844,11 @@ fn deskRunRoster(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             }, "读取 Run 名录"),
         });
     }
-    const host = snapshot.value(model.deskHost);
+    const host = snapshot.value(replies.borrow(.host));
     var rows: [mailbox_rows]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     while (count < rows.len) : (count += 1) {
-        const row = project_view.runsForDocument(host, model.documentPath, count) orelse break;
+        const row = project_view.runsForDocument(host, model.document.path.slice(), count) orelse break;
         rows[count] = deskRunRow(ui, model, host, row, count);
     }
     return ui.column(.{ .gap = 4 }, .{
@@ -2951,11 +2924,11 @@ fn deskRunRow(
 /// 稳定前缀字节——「送前核对」的读法（SPEC 8.2 的授权落点）。预览住专槽
 /// `deskPreview`（审计 #8）：刷新名录/读取资料不再把它冲掉，清单活到被
 /// 消费（送出成功清槽）或被下一次预览替换。
-fn dispatchPreviewSection(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    if (!std.mem.eql(u8, snapshot.kind(model.deskPreview), "dispatchPreview")) {
+fn dispatchPreviewSection(ui: *Adapter.Ui) Adapter.Ui.Node {
+    if (!std.mem.eql(u8, snapshot.kind(replies.borrow(.preview)), "dispatchPreview")) {
         return ui.el(.stack, .{ .height = 0 }, .{});
     }
-    const package = snapshot.value(model.deskPreview);
+    const package = snapshot.value(replies.borrow(.preview));
     const digest = snapshot.stringField(package, "digest") orelse "";
     const prefix_bytes = snapshot.unsignedField(package, "prefixBytes") orelse 0;
     var rows: [mailbox_rows]Adapter.Ui.Node = undefined;
@@ -2993,8 +2966,8 @@ fn dispatchPreviewSection(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node 
 /// 编辑后正文的版本（`edited_body` 通道，M3 备好的那条）。
 fn materialDraftsSection(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     const DraftInput = @FieldType(Msg, "material_draft_typed");
-    const is_drafts = std.mem.eql(u8, snapshot.kind(model.projectResult), "materialDrafts");
-    const listing = snapshot.value(model.projectResult);
+    const is_drafts = std.mem.eql(u8, snapshot.kind(replies.borrow(.project)), "materialDrafts");
+    const listing = snapshot.value(replies.borrow(.project));
     var rows: [mailbox_rows]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     if (is_drafts) {
@@ -3002,8 +2975,8 @@ fn materialDraftsSection(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             const draft = project_view.materialDraftAt(listing, count) orelse break;
             // 正在改的是不是这一条：同时只编辑一条（与裁决台的改写区同
             // 一条纪律——一次提交只带一条的正文）。
-            const editing = model.materialDraftId.len > 0 and
-                std.mem.eql(u8, model.materialDraftId, draft.id);
+            const editing = model.material_draft.id.slice().len > 0 and
+                std.mem.eql(u8, model.material_draft.id.slice(), draft.id);
             rows[count] = ui.el(.card, .{ .key = .{ .index = count }, .padding = 8 }, .{
                 ui.column(.{ .gap = 4 }, .{
                     ui.text(.{}, ui.fmt("{s} · {s}", .{ draft.title, draft.kind })),
@@ -3018,14 +2991,14 @@ fn materialDraftsSection(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
                                 .wrap = true,
                                 .on_input = Adapter.Ui.translatedInputMsg(.material_draft_typed, DraftInput),
                                 .semantics = .{ .label = "改这条草稿的正文" },
-                            }, model.materialDraftText),
+                            }, model.material_draft.body.slice()),
                             ui.row(.{ .gap = 8 }, .{
                                 ui.button(.{
-                                    .on_press = commitMaterialDraftMsg(model, draft.id, model.materialDraftText, false, false),
+                                    .on_press = commitMaterialDraftMsg(model, draft.id, model.material_draft.body.slice(), false, false),
                                     .semantics = .{ .label = "按改后的正文收进资料区" },
                                 }, "收进资料区"),
                                 ui.button(.{
-                                    .on_press = commitMaterialDraftMsg(model, draft.id, model.materialDraftText, false, true),
+                                    .on_press = commitMaterialDraftMsg(model, draft.id, model.material_draft.body.slice(), false, true),
                                     .semantics = .{ .label = "按改后的正文提拔成正文" },
                                 }, "收成正文"),
                                 ui.button(.{
@@ -3080,9 +3053,9 @@ fn materialDraftsSection(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
 
 /// 读材料草稿名录。没有项目时不发——Rust 会具名拒绝，而按钮根本不该送到。
 fn readMaterialDraftsMsg(model: *const Model) ?Msg {
-    if (model.rootId.len == 0) return null;
+    if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
-    const request = project_request.readMaterialDrafts(&writer, model.rootId) orelse return null;
+    const request = project_request.readMaterialDrafts(&writer, model.root_id.slice()) orelse return null;
     return .{ .project_request = request.bytes };
 }
 
@@ -3095,11 +3068,11 @@ fn commitMaterialDraftMsg(
     dismiss: bool,
     as_chapter: bool,
 ) ?Msg {
-    if (model.rootId.len == 0) return null;
+    if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.commitMaterialDraft(
         &writer,
-        model.rootId,
+        model.root_id.slice(),
         draft_id,
         edited_body,
         dismiss,
@@ -3123,9 +3096,9 @@ fn selectedText(document: host_bridge.DocumentView) []const u8 {
 /// 最新预览答复里的 digest。预览住专槽 `deskPreview`（审计 #8）：无关答复
 /// 不再把它冲掉；槽空（没预览过、或上次送出已消费）时交出空切片——
 /// 「送出去」因此带不上核对，Rust 按无核对处理。
-fn previewedDigest(model: *const Model) []const u8 {
-    if (!std.mem.eql(u8, snapshot.kind(model.deskPreview), "dispatchPreview")) return "";
-    return snapshot.stringField(snapshot.value(model.deskPreview), "digest") orelse "";
+fn previewedDigest() []const u8 {
+    if (!std.mem.eql(u8, snapshot.kind(replies.borrow(.preview)), "dispatchPreview")) return "";
+    return snapshot.stringField(snapshot.value(replies.borrow(.preview)), "digest") orelse "";
 }
 
 /// 送出去。
@@ -3144,32 +3117,32 @@ fn previewDispatchMsg(model: *const Model, selected: []const u8) ?Msg {
 }
 
 fn dispatchDeskMsg(model: *const Model, selected: []const u8, comptime kind: []const u8) ?Msg {
-    if (model.rootId.len == 0 or model.documentPath.len == 0) return null;
-    if (model.dispatchPrompt.len == 0) return null;
-    const agents: u64 = @intCast(@max(1, model.dispatchAgents));
+    if (model.root_id.slice().len == 0 or model.document.path.slice().len == 0) return null;
+    if (model.dispatch.prompt.slice().len == 0) return null;
+    const agents: u64 = @intCast(@max(1, model.dispatch.agents));
     // 一个 agent 时排法无意义，送并列：让 Rust 那边少一个「作者选了
     // 接力却只派了一个」的边角情况。
-    const orchestration = if (model.dispatchAgents < 2) "alternates" else orchestrationAt(model.dispatchOrchestration).wire;
+    const orchestration = if (model.dispatch.agents < 2) "alternates" else orchestrationAt(model.dispatch.orchestration).wire;
     const span = coverageSpan(model);
     // 选区路径并入 desk 写器（审计 #7）：位图与攒段都空时，选区当成一段
     // 文本 scope 走 stash 槽位送出——委托/带稿/资料三个闸从此在选区派发
     // 也生效（旧路径把它们写死丢了：persona 恒 null、channel 恒 harness、
     // carry/materials/agent 全不送）。2.2 的纪律不变：选区只在位图与攒段
     // 都空时才作为 scope。
-    const has_blocks = span != null or model.dispatchStash.len > 0;
+    const has_blocks = span != null or model.dispatch.stash.slice().len > 0;
     if (!has_blocks and selected.len == 0) return null;
     const agent = effectiveDispatchAgent(model);
     // 手动往返（空 id）走 L0：channel 是 manual，agent 字段不写。
     const channel: []const u8 = if (agent.len > 0) "harness" else "manual";
     // 带稿档位：0 增量 / 1 全文 / 2 不带。「不带」不写这个词——与 serde
     // 的 skip 同形，旧载荷旧行为。
-    const carry: []const u8 = switch (model.dispatchCarry) {
+    const carry: []const u8 = switch (model.dispatch.carry) {
         1 => "full",
         2 => "",
         else => "diff",
     };
     // 送前核对只在送出时带；预览不带（与旧的一对同一条分工）。
-    const digest = previewedDigest(model);
+    const digest = previewedDigest();
     const expected: ?[]const u8 = if (comptime std.mem.eql(u8, kind, "dispatch"))
         (if (digest.len > 0) digest else null)
     else
@@ -3181,11 +3154,11 @@ fn dispatchDeskMsg(model: *const Model, selected: []const u8, comptime kind: []c
     var writer = project_request.Writer{};
     const request = project_request.dispatchDesk(
         &writer,
-        model.rootId,
-        model.documentPath,
-        model.dispatchPrompt,
+        model.root_id.slice(),
+        model.document.path.slice(),
+        model.dispatch.prompt.slice(),
         if (span) |s| .{ .from = s.from, .count = s.count } else null,
-        if (has_blocks) model.dispatchStash else selected,
+        if (has_blocks) model.dispatch.stash.slice() else selected,
         agents,
         orchestration,
         carry,
@@ -3259,13 +3232,13 @@ fn verdictBento(
     line_height: f32,
 ) ?Adapter.Ui.Node {
     const ReviseInput = @FieldType(Msg, "revision_typed");
-    if (model.verdictProposal.len == 0) return null;
+    if (model.review.proposal.slice().len == 0) return null;
     for (document.ranges) |range| {
         if (range.kind != 3) continue;
-        if (!std.mem.eql(u8, &range.id, model.verdictProposal)) continue;
+        if (!std.mem.eql(u8, &range.id, model.review.proposal.slice())) continue;
         const line = lineIndexOf(document.line_starts, range.start);
         const width = @min(@as(f32, 340), @max(@as(f32, 240), column_width));
-        const revising = std.mem.eql(u8, model.revisingProposal, model.verdictProposal);
+        const revising = std.mem.eql(u8, model.revising.id.slice(), model.review.proposal.slice());
         var bento = ui.el(.panel, .{
             .frame = native_sdk.geometry.RectF.init(
                 @max(0, column_width - width),
@@ -3302,10 +3275,10 @@ fn verdictBento(
                             .wrap = true,
                             .on_input = Adapter.Ui.translatedInputMsg(.revision_typed, ReviseInput),
                             .semantics = .{ .label = "改写后的正文" },
-                        }, model.revisionText),
+                        }, model.revising.body.slice()),
                         ui.button(.{
                             .variant = .primary,
-                            .disabled = model.revisionText.len == 0,
+                            .disabled = model.revising.body.slice().len == 0,
                             .on_press = judgeRevisionMsg(model),
                             .semantics = .{ .label = "按我改的这版接受并落盘" },
                         }, "落定 (Alt+Enter)"),
@@ -3329,13 +3302,13 @@ fn verdictBento(
 /// 点开印点：预编接受/退回两条请求（judgeVerdict），起笔从裁决名录读
 /// （名录没在读就空起笔）。
 fn verdictBeginMsg(model: *const Model, range: protocol.AnchorRangeWire) ?Msg {
-    if (model.rootId.len == 0 or model.documentPath.len == 0) return null;
+    if (model.root_id.slice().len == 0 or model.document.path.slice().len == 0) return null;
     const id: []const u8 = &range.id;
     var accept_writer = project_request.Writer{};
     const accept = project_request.judgeVerdict(
         &accept_writer,
-        model.rootId,
-        model.documentPath,
+        model.root_id.slice(),
+        model.document.path.slice(),
         id,
         "accept",
         "",
@@ -3344,8 +3317,8 @@ fn verdictBeginMsg(model: *const Model, range: protocol.AnchorRangeWire) ?Msg {
     var reject_writer = project_request.Writer{};
     const reject = project_request.judgeVerdict(
         &reject_writer,
-        model.rootId,
-        model.documentPath,
+        model.root_id.slice(),
+        model.document.path.slice(),
         id,
         "reject",
         "",
@@ -3355,14 +3328,14 @@ fn verdictBeginMsg(model: *const Model, range: protocol.AnchorRangeWire) ?Msg {
         .proposalId = id,
         .accept = accept.bytes,
         .reject = reject.bytes,
-        .seed = proposalSeedById(model, id),
+        .seed = proposalSeedById(id),
     } };
 }
 
 /// 从裁决名录里按 id 读起笔（agent 的建议）。名录没在读就空起笔。
-fn proposalSeedById(model: *const Model, id: []const u8) []const u8 {
-    if (!std.mem.eql(u8, snapshot.kind(model.projectResult), "proposals")) return "";
-    const listing = snapshot.value(model.projectResult);
+fn proposalSeedById(id: []const u8) []const u8 {
+    if (!std.mem.eql(u8, snapshot.kind(replies.borrow(.project)), "proposals")) return "";
+    const listing = snapshot.value(replies.borrow(.project));
     var index: usize = 0;
     while (index < mailbox_rows) : (index += 1) {
         const proposal = project_view.proposalAt(listing, index) orelse break;
@@ -3374,16 +3347,16 @@ fn proposalSeedById(model: *const Model, id: []const u8) []const u8 {
 /// 改后接受并落盘：作者写的那段成为最终正文，一次完成（judgeVerdict
 /// 把记账与提交合成一步——饭盒不停留，作者回到写作）。
 fn judgeRevisionMsg(model: *const Model) ?Msg {
-    if (model.rootId.len == 0 or model.documentPath.len == 0) return null;
-    if (model.revisingProposal.len == 0 or model.revisionText.len == 0) return null;
+    if (model.root_id.slice().len == 0 or model.document.path.slice().len == 0) return null;
+    if (model.revising.id.slice().len == 0 or model.revising.body.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.judgeVerdict(
         &writer,
-        model.rootId,
-        model.documentPath,
-        model.revisingProposal,
+        model.root_id.slice(),
+        model.document.path.slice(),
+        model.revising.id.slice(),
         "accept-modified",
-        model.revisionText,
+        model.revising.body.slice(),
         "",
     ) orelse return null;
     return .{ .project_request = request.bytes };
@@ -3393,7 +3366,7 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     const Input = @FieldType(Msg, "document_input");
     const Scroll = @FieldType(Msg, "document_scroll");
     const document = host_bridge.documentView();
-    const total_blocks: u64 = @intCast(@max(model.documentBlocks, 0));
+    const total_blocks: u64 = @intCast(@max(model.document.blocks, 0));
     // 行高/视口高/列宽都从 Model 换算（同一式各只有一处），滚动布局与
     // 部件绘制因此必然一致——旧的 650/18 硬编码的错误正是两处各写一份。
     const line_height = documentLineHeightPx(model);
@@ -3403,7 +3376,7 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         // 那张表做翻译）。SDK 自带 17 门语法的高亮器，所以这一行接上之后
         // 代码文件就有色，零自研着色代码。散文走 markdown 语法。
         .language = document_language.syntaxOf(document.format),
-        .editable = model.documentSession != 0,
+        .editable = model.document.session != 0,
         .on_input = Adapter.Ui.translatedInputMsg(.document_input, Input),
         .wrap = true,
         // 列宽 = 生效行长 × 字号：作者调的「行长」在这里真正生效；0（帧前）
@@ -3417,7 +3390,7 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     // 字号与行高进部件（SDK 侧的 RefRain 补丁：0 回落 token 阶梯）。
     // 滚动布局的行高与这里是同一个 line_height——光标、选区、滚动位置
     // 因此都落在真实行界上。
-    editor.widget.text_size = @floatCast(model.typographyTextSize);
+    editor.widget.text_size = @floatCast(model.typography.text_size);
     editor.widget.text_line_height = line_height;
     // 禁则断行进绘制：Rust 按 CLREQ 断好的行首交给部件照断——SDK 自己的
     // 换行搜索只认 space/tab，断不了中文（散文一个字也不会有断点）。
@@ -3447,7 +3420,7 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         ui.spacer(1),
     });
     const track = ui.scroll(.{
-        .value = @floatCast(model.documentScroll),
+        .value = @floatCast(model.viewport.scroll),
         .on_scroll = Adapter.Ui.translatedScrollMsg(.document_scroll, Scroll),
         .grow = 1,
         // 右键菜单挂在正文的滚动区上：作者在正文里任意一处都够得到它，
@@ -3477,8 +3450,8 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     // 消费点（这里、`railEdgeX`、`layeredBody`）拿同一个数，地、分栏线与
     // 版式因此不可能对不齐。
     const depth = panel_stack.fittingDepth(
-        @floatCast(@max(model.windowWidth, 0)),
-        @floatCast(model.layoutFraction),
+        @floatCast(@max(model.window.width, 0)),
+        @floatCast(model.layout_fraction),
         panel_stack.visibleDepth(model.panelStack, model.destinationIndex),
     );
     const layered = depth >= 2 and !model.paletteOpen;
@@ -3519,7 +3492,7 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         layeredBody(ui, model, track_with_card, depth)
     else
         ui.split(.{
-            .value = @floatCast(model.layoutFraction),
+            .value = @floatCast(model.layout_fraction),
             .resize_duration = motion.split_settle_ms,
             .resize_easing = motion.enter_easing,
             .on_resize = Adapter.Ui.translatedValueMsg(.split_resize, f64),
@@ -3542,7 +3515,7 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         // 先打开一份稿子」），而拒绝往往正发生在栏占满窗宽的时候——让位会
         // 把它振成一个读不出的碎片（真窗探针拍到过：三层时只剩一个
         // 「Dism」）。它自带地（`.alert` 的 chrome），所以跨在栏上也读得出。
-        CompiledView.build(ui, model),
+        noticeBar(ui, model),
         body,
         karaInterruptLine(ui, model),
         karaSummaryStrip(ui, model),
@@ -3574,7 +3547,7 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         ui,
         &themes.themes[currentThemeIndex(model)],
         edge,
-        @floatFromInt(@max(model.windowHeight, 0)),
+        @floatFromInt(@max(model.window.height, 0)),
     ) else null;
     // 地在最底层（栏内各层透它），线在最上层（它是分界，不能被任何
     // 一层盖住）。
@@ -3595,7 +3568,7 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     // 关要移出整个栏宽（约 248px，感应面见 split 左 pane 的 railPeek 分支）。
     // 高度取实窗高；窗尺寸未到时帧事件会立刻补上，不做无边界的猜测高度。
     if (!railOpen(model)) {
-        const window_height: f32 = @floatFromInt(@max(model.windowHeight, 0));
+        const window_height: f32 = @floatFromInt(@max(model.window.height, 0));
         shell_layers[shell_count] = ui.el(.stack, .{
             .frame = native_sdk.geometry.RectF.init(0, 0, 4, window_height),
             .on_hover_enter = .{ .rail_peek_open = {} },
@@ -3620,7 +3593,7 @@ fn railOpen(model: *const Model) bool {
 /// `layoutFraction ≥ 0.999` 时不铺地——于是整屏裁决台是纸底上的栏墨，实测
 /// 下几乎读不出字。两件事同一个判据之后，那一帧回到纸的 register。
 fn railHasGround(model: *const Model) bool {
-    return railOpen(model) and model.layoutFraction < 0.999;
+    return railOpen(model) and model.layout_fraction < 0.999;
 }
 
 /// 功能栏的右缘在哪里（窗口坐标 px）。地、分栏线与页脚的让位共用这一个
@@ -3634,10 +3607,10 @@ fn railHasGround(model: *const Model) bool {
 /// 与裁决）——没有第二栏就没有分界，也无从让位；窗尺寸未到时（不猜）。
 fn railEdgeX(model: *const Model, depth: usize, layered: bool) ?f32 {
     if (!railOpen(model)) return null;
-    const fraction: f32 = @floatCast(model.layoutFraction);
+    const fraction: f32 = @floatCast(model.layout_fraction);
     if (fraction >= 0.999) return null;
-    const window_width: f32 = @floatCast(@max(model.windowWidth, 0));
-    if (window_width <= 0 or model.windowHeight <= 0) return null;
+    const window_width: f32 = @floatCast(@max(model.window.width, 0));
+    if (window_width <= 0 or model.window.height <= 0) return null;
     const columns: f32 = if (layered) @floatFromInt(depth) else 1;
     return shell_padding_px + panel_stack.layerWidth(window_width, fraction) * columns;
 }
@@ -3654,7 +3627,7 @@ fn railEdgeX(model: *const Model, depth: usize, layered: bool) ?f32 {
 /// 进度，所以等待只说「正在保存…」，不画假装进度的百分比。没有稿子
 /// 时说「还没有打开稿子」，不画一串零。
 fn statuslineText(ui: *Adapter.Ui, model: *const Model, document: host_bridge.DocumentView) []const u8 {
-    if (model.documentSession == 0) return "还没有打开稿子";
+    if (model.document.session == 0) return "还没有打开稿子";
     const save_seg = saveSegment(ui, model);
     const stats = project_view.selectionStats(
         document.text,
@@ -3679,9 +3652,9 @@ var statusline_save_ms: i64 = 0;
 
 fn saveSegment(ui: *Adapter.Ui, model: *const Model) []const u8 {
     if (model.savePending) return "正在保存…";
-    if (model.documentRevision != model.savedRevision) return "有未保存改动";
-    if (model.savedRevision != statusline_stamped_revision) {
-        statusline_stamped_revision = model.savedRevision;
+    if (model.document.revision != model.document.saved_revision) return "有未保存改动";
+    if (model.document.saved_revision != statusline_stamped_revision) {
+        statusline_stamped_revision = model.document.saved_revision;
         // 墙钟走 SDK 的 runtime.nowMs（三平台一致，Windows 用 NT 精确系统
         // 时间）：Zig 0.16 的 std.time 已不再暴露墙钟。
         statusline_save_ms = native_sdk.runtime.nowMs();
@@ -3707,7 +3680,7 @@ fn karaReturnCard(ui: *Adapter.Ui, model: *const Model, column_width: f32, line_
         .frame = native_sdk.geometry.RectF.init(16, 12, width, line_height + 16),
         .padding = 8,
     }, .{
-        ui.text(.{}, ui.fmt("你停在这里：{s}", .{model.karaReturnTail})),
+        ui.text(.{}, ui.fmt("你停在这里：{s}", .{model.kara.return_tail.slice()})),
     });
     // 回来卡同吃材质（2.10）：它是豁免浮层，但观感上与面板同一份配方。
     material_paint.apply(
@@ -3722,20 +3695,47 @@ fn karaReturnCard(ui: *Adapter.Ui, model: *const Model, column_width: f32, line_
 /// `.alert` 部件画它——语义即「需要作者看一眼」。打断码的翻译表归
 /// veil.zig（中文字面量纪律），不认识的码原样显示。
 fn karaInterruptLine(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    if (model.karaInterrupt.len == 0 or model.karaState == 0) {
+    if (model.kara.interrupt.slice().len == 0 or model.kara.state == 0) {
         return ui.el(.stack, .{ .height = 0 }, .{});
     }
     return ui.el(.alert, .{
         .semantics = .{ .label = "打断" },
     }, .{
-        ui.text(.{}, veil.interruptLabel(model.karaInterrupt)),
+        ui.text(.{}, veil.interruptLabel(model.kara.interrupt.slice())),
+    });
+}
+
+/// 一条具名的拒绝。null = 无事，画一个零高的占位。
+///
+/// 单元 13 之前这一条住在 `app.native`（声明式标记）里，绑的是 `{noticeShown}` 与
+/// `{notice}` 两个字段。Zig 核心的 `notice` 是 `?Line`——「没有话说」就是 null，
+/// 那个伴生的布尔不再存在（`core/model.zig` 记的那条裁定）。标记的绑定器从
+/// 可选的结构里取不出字串（`valueOf` 对 `.optional` 只能交出内层的值，而内层
+/// 是一个结构），所以两者只能留一个：要么把伴生布尔请回来养标记，要么把这
+/// 十行标记搬成 Zig。我选后者：一个为了渲染器而存在的状态字段会与真正的状态
+/// 漂开，而这个界面剩下的 4,000 行本来就是 Zig 画的——十行标记不值一个第二权威。
+fn noticeBar(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
+    const notice = model.notice orelse return ui.el(.stack, .{ .height = 0 }, .{});
+    return ui.el(.alert, .{
+        .variant = .secondary,
+        .semantics = .{ .label = "提示" },
+    }, .{
+        ui.row(.{ .gap = 8, .cross = .center }, .{
+            ui.text(.{ .grow = 1 }, notice.slice()),
+            ui.el(.button, .{
+                .variant = .secondary,
+                .icon = "x",
+                .semantics = .{ .label = "知道了" },
+                .on_press = .notice_dismiss,
+            }, .{}),
+        }),
     });
 }
 
 /// 小结带：离场时把这一段发生的事讲一遍（`.status_bar` 部件——栏脚语义）。
 /// queued 掩码逐位出文案，位序即显示序；什么都没有就说「这一段很安静。」。
 fn karaSummaryStrip(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    if (model.karaState != 5) return ui.el(.stack, .{ .height = 0 }, .{});
+    if (model.kara.state != 5) return ui.el(.stack, .{ .height = 0 }, .{});
     return ui.el(.status_bar, .{
         .semantics = .{ .label = "离场小结" },
     }, .{
@@ -3745,7 +3745,7 @@ fn karaSummaryStrip(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
 
 /// 小结文案：已保存 / Agent 完成了 / 提案到了 / 索引刷新了，按位序连接。
 fn karaSummaryText(ui: *Adapter.Ui, model: *const Model) []const u8 {
-    const queued = model.karaQueued;
+    const queued = model.kara.queued;
     if (queued <= 0) return "这一段很安静。";
     var parts: [4][]const u8 = undefined;
     var count: usize = 0;
@@ -3786,7 +3786,7 @@ fn destinationView(
         3 => dispatchView(ui, model),
         4 => mailboxView(ui, model),
         // 连接问的是这台机器有什么，不是这个项目有什么。
-        5 => connectionsView(ui, model),
+        5 => connectionsView(ui),
         // 历史读的是落盘的记录，不是内存里那条撤销链。
         6 => historyView(ui, model),
         7 => settingsView(ui, model),
@@ -3817,8 +3817,8 @@ fn layeredBody(
     depth: usize,
 ) Adapter.Ui.Node {
     const width = panel_stack.layerWidth(
-        @floatCast(@max(model.windowWidth, 0)),
-        @floatCast(model.layoutFraction),
+        @floatCast(@max(model.window.width, 0)),
+        @floatCast(model.layout_fraction),
     );
     var layers: [panel_stack.MAX_VISIBLE_LAYERS + 1]Adapter.Ui.Node = undefined;
     var at: usize = 0;
@@ -3862,7 +3862,7 @@ fn layeredBody(
 /// availability 提示）——作者是慢鼠标画像，每个键位都印在行上让人学会。
 fn palettePanel(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     const QueryInput = @FieldType(Msg, "palette_query");
-    const query = model.paletteQuery;
+    const query = model.palette.query.slice();
     // 命令面板住功能区成树（舞台规则），所以它与功能栏同形：包一层 .panel
     // 交给 `rail.dress`（调用处在 `documentView`）——地、墨、去盒三件事不
     // 在这里再写一遍，否则它会在已经去了盒的栏里再套一只盒。
@@ -4023,7 +4023,7 @@ fn paletteMsg(id: []const u8) ?Msg {
 /// 而不是让作者按一次被具名拒绝。
 fn paletteAvailable(model: *const Model, id: []const u8) bool {
     if (std.mem.eql(u8, id, "document.save") or std.mem.eql(u8, id, "document.undo")) {
-        return model.documentPath.len > 0;
+        return model.document.path.slice().len > 0;
     }
     return true;
 }

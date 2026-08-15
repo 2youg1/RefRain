@@ -17,13 +17,13 @@
 
 const std = @import("std");
 const native_sdk = @import("native_sdk");
-const core = @import("refrain_core");
+const core = @import("core.zig");
 const motion = @import("motion.zig");
 
 const canvas = native_sdk.canvas;
 
 const Model = core.Model;
-const TsUiApp = native_sdk.TsUiApp(core);
+const TsUiApp = core.App;
 
 /// 可见层数上限（workbench.ts 的 MAX_VISIBLE_LAYERS）：超出藏最旧。
 pub const MAX_VISIBLE_LAYERS = 3;
@@ -136,20 +136,21 @@ pub fn currentLayerId() u64 {
 }
 
 /// 上一帧的当前层：进场检测只认「换层」这条边。
-var last_current: i64 = -1;
+/// `null` = 还没画过一帧（旧形用 −1 占这个位，而 −1 不是一个去处）。
+var last_current: ?core.Destination = null;
 
 /// `Options.animations` 的一段：换到面板层时给它一条 panel-in（左滑
 /// 100% 层宽 + 淡入，300ms emphasized）。独占层不做（它不是侧来的面板）。
 /// 重建重挂的窗口纪律与 veil 同一条（状态窗口内重建会重播一次）。
 pub fn enterAnimation(model: *const Model, start_ns: u64, out: []canvas.CanvasRenderAnimation) usize {
-    const current = model.destinationIndex;
-    const changed = current != last_current;
+    const current = model.destination;
+    const changed = last_current == null or last_current.? != current;
     last_current = current;
     if (out.len == 0 or !changed) return 0;
-    if (isWholeStage(current)) return 0;
+    if (current.isWholeStage()) return 0;
     const width = layerWidth(
-        @floatCast(@max(model.windowWidth, 0)),
-        @floatCast(model.layoutFraction),
+        @floatCast(@max(model.window.width, 0)),
+        @floatCast(model.layout_fraction),
     );
     out[0] = .{
         .id = currentLayerId(),

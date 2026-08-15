@@ -27,32 +27,10 @@ pub fn build(b: *std.Build) void {
     artifacts.tests.root_module.addAnonymousImport("latin_font", .{ .root_source_file = latin_font });
     artifacts.tests.root_module.addAnonymousImport("japanese_font", .{ .root_source_file = japanese_font });
 
-    // TS 核心的编译归 SDK 的 tsCoreStage（0.8 起唯一通道：前端检查、
-    // corewire 镜像、外部编译器归档）。RefRain 的入口是手写 Zig 壳
-    // （app_main.zig 的自绘视图），addAppArtifacts 因此把这棵树按 Zig
-    // 核心处理、不登台——这里显式登台，把镜像模块与编译归档接进 exe 与
-    // tests。对 app_main 而言 core 的拼写不变：
-    // `pub const core = @import("refrain_core")`——换的是编译通道，不是
-    // core 的表面。
-    //
-    // 0.9.0 起登台要目标三元组：ScriptC 的编译支持按 host×target 判定，
-    // 不支持的组合在配置期就要教着失败，而不是拖到链接。目标取 exe 模块
-    // 已解析的那一个，两条链接线因此必然同源。
-    const core_stage = native_sdk.appTsCoreStage(b, dep, artifacts.exe.root_module.resolved_target.?, ".", "refrain");
-    const mirror_root = core_stage.main_root.dirname().path(b, "core.zig");
-    const exe_core = b.createModule(.{
-        .root_source_file = mirror_root,
-        .target = artifacts.exe.root_module.resolved_target.?,
-        .optimize = artifacts.exe.root_module.optimize.?,
-    });
-    artifacts.exe.root_module.addImport("refrain_core", exe_core);
-    artifacts.exe.root_module.addObjectFile(core_stage.archive);
-    const test_core = b.createModule(.{
-        .root_source_file = mirror_root,
-        .target = artifacts.tests.root_module.resolved_target.?,
-        .optimize = artifacts.tests.root_module.optimize.?,
-    });
-    artifacts.tests.root_module.addImport("refrain_core", test_core);
+    // 单元 13 之前这里登台一个 TS 核心（`appTsCoreStage`：前端检查、corewire 镜像、
+    // ScriptC 归档），把转译后的 `core.ts` 以 `refrain_core` 接进 exe 与 tests。
+    // 状态机现在是 `src/core.zig`，没有第二个核心可登，那一整块连同它拉进来的
+    // ScriptC 工具链一起消失。`addAppArtifacts` 本来就把这棵树按 Zig 核心处理。
     const exe_runner = artifacts.exe.root_module.import_table.get("runner").?;
     artifacts.exe.root_module.addImport("app_manifest_zon", exe_runner.import_table.get("app_manifest_zon").?);
     const test_runner = artifacts.tests.root_module.import_table.get("runner").?;
@@ -95,7 +73,6 @@ pub fn build(b: *std.Build) void {
     // distinct (Debug `native test` is the common case).
     if (artifacts.tests.root_module != artifacts.exe.root_module) {
         artifacts.tests.root_module.addObjectFile(archive);
-        artifacts.tests.root_module.addObjectFile(core_stage.archive);
         linkRustRuntime(artifacts.tests.root_module);
     }
 

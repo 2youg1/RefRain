@@ -71,7 +71,7 @@ if (found.length > 0) {
  * 「Rust 真的发这个名字吗」被问出口的时刻。
  */
 const REPLY_FIELD_SOURCES: Readonly<Record<string, string>> = {
-  kind: "ProjectOutput 的 serde tag",
+  kind: "serde 的内部标签（ProjectOutput／KaraState／RunProgress 共用这一个字）",
   code: "RefrainError 的 ErrorCode",
   detail: "RefrainError 的 detail",
   id: "ProposalView / DocumentBlockRow 的 id",
@@ -88,17 +88,33 @@ const REPLY_FIELD_SOURCES: Readonly<Record<string, string>> = {
   text_size_tenths_px: "Config 的排版三值（同上）",
   line_height_percent: "Config 的排版三值（同上）",
   measure_tenths_em: "Config 的排版三值（同上）",
+  // 以下四条是单元 13 后才看得见的层次：`core.ts` 在字节里找针，根本不经过
+  // 父字段；Zig 核心按路径取值，于是每一层都要说出它是谁发的。
+  appearance: "Config.appearance（AppearanceConfig）",
+  typography: "AppearanceConfig.typography（TypographyConfig）",
+  state: "KaraMachine.state",
+  effects: "KaraStep 答复的 effects 列",
+  returnPoint: "KaraEffect::ShowReturnCard.return_point",
+  runs: "HostSnapshot.runs",
+  progress: "RunRow.progress（RunProgress 的 serde 标签）",
+  proposals: "ProjectProposals.proposals",
 };
 
-const core = readFileSync("apps/native/src/core.ts", "utf8");
-// 字段针恒带内层引号（`asciiBytes('"name"')`）；值的比对不带，所以这一条
-// 正则把两者分得开。
-const needles = [...core.matchAll(/asciiBytes\('"([A-Za-z_][A-Za-z0-9_]*)"/gu)].map((m) => m[1]);
+// 单元 13 之前这里读的是 `core.ts` 的字节针（`asciiBytes('"name"')`）。Zig 核心按
+// 路径取值（`snapshot.stringField(value, "rootId")`），所以这一条改成数取值的字段名。
+// 问题不变：界面读的每一个答复字段，都要说得出是哪个 Rust 类型发的它。
+const core = readFileSync("apps/native/src/core.zig", "utf8");
+const needles = [
+  ...core.matchAll(
+    /snapshot\.(?:string|unsigned|bool)?[Ff]ield\([^,]+, "([A-Za-z_][A-Za-z0-9_]*)"\)/gu,
+  ),
+  ...core.matchAll(/snapshot\.array\([^,]+, "([A-Za-z_][A-Za-z0-9_]*)"\)/gu),
+].map((m) => m[1]);
 const unaccounted = [...new Set(needles)].filter(
   (name) => name !== undefined && !(name in REPLY_FIELD_SOURCES),
 );
 if (unaccounted.length > 0) {
-  console.error("FAIL  verify:wire-shapes: core.ts reads reply fields with no stated source");
+  console.error("FAIL  verify:wire-shapes: core.zig reads reply fields with no stated source");
   for (const name of unaccounted) {
     console.error(
       `      "${name}"  add it to REPLY_FIELD_SOURCES with the Rust type that emits it`,

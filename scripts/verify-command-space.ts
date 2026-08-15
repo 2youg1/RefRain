@@ -26,7 +26,7 @@
 import { readFileSync } from "node:fs";
 
 const MANIFEST = "apps/native/app.zon";
-const CORE = "apps/native/src/core.ts";
+const CORE = "apps/native/src/core.zig";
 const VIEW = "apps/native/src/app_main.zig";
 const TABLE = "apps/native/src/commands.zig";
 
@@ -35,14 +35,36 @@ const core = readFileSync(CORE, "utf8");
 const view = readFileSync(VIEW, "utf8");
 const table = readFileSync(TABLE, "utf8");
 
-/** `commandMsg` 认识的 id：那个 switch 的每一个 case。 */
+/**
+ * `commandMsg` 认识的 id。
+ *
+ * 单元 13 之前这里数的是 `core.ts` 那个 switch 的 case；Zig 核心用
+ * `std.mem.eql` 逐条比，八个去处则收成一条前缀规则（`go.` 加一位 1..8）。
+ * 两条都要读：只数字面量会把八个去处当成没有落点，只读前缀则看不见其余十一条。
+ */
 function knownCommands(source: string): Set<string> {
-  const body = source.match(/export function commandMsg\([\s\S]*?\n\}/u)?.[0];
+  const body = source.match(/pub fn commandMsg\([\s\S]*?\n\}/u)?.[0];
   if (body === undefined) {
     console.error(`FAIL  verify:command-space: ${CORE} has no commandMsg to read`);
     process.exit(1);
   }
-  return new Set(Array.from(body.matchAll(/case "([^"]+)":/gu), (match) => match[1] as string));
+  const known = new Set(
+    Array.from(
+      body.matchAll(/std\.mem\.eql\(u8, name, "([^"]+)"\)/gu),
+      (match) => match[1] as string,
+    ),
+  );
+  // 八个去处的前缀规则：范围从源码里读，不写死 1..8——写死的范围在新增一个
+  // 去处时不会红，而那正是这道门禁要抳的一刻。
+  const prefix = body.match(
+    /startsWith\(u8, name, "go\."\)[\s\S]*?digit >= '(\d)' and digit <= '(\d)'/u,
+  );
+  if (prefix) {
+    const first = Number(prefix[1]);
+    const last = Number(prefix[2]);
+    for (let ordinal = first; ordinal <= last; ordinal += 1) known.add(`go.${ordinal}`);
+  }
+  return known;
 }
 
 /**

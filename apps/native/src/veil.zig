@@ -15,7 +15,7 @@
 
 const std = @import("std");
 const native_sdk = @import("native_sdk");
-const core = @import("refrain_core");
+const core = @import("core.zig");
 const motion = @import("motion.zig");
 
 const canvas = native_sdk.canvas;
@@ -85,8 +85,8 @@ fn gradientStops(paper: canvas.Color) []canvas.GradientStop {
 /// 栏脚行高：与 `documentLineHeightPx`（app_main）同式——栏脚只有一行
 /// 文字，行高即它的高。
 fn footerHeight(model: *const Model) f32 {
-    const size: f32 = @floatCast(model.typographyTextSize);
-    const percent: f32 = @floatFromInt(model.typographyLineHeightPercent);
+    const size: f32 = @floatCast(model.typography.text_size);
+    const percent: f32 = @floatFromInt(model.typography.line_height_percent);
     if (size <= 0 or percent <= 0) return 0;
     return size * percent / 100;
 }
@@ -94,10 +94,11 @@ fn footerHeight(model: *const Model) f32 {
 /// 正文轨占版心列的几分之几：稿子与裁决（stage 例外）独占，其余去处
 /// 正文在 split 的右 pane。
 fn trackShare(model: *const Model) f32 {
-    return switch (model.destinationIndex) {
-        0, 2 => 1.0,
-        else => 1.0 - @as(f32, @floatCast(model.layoutFraction)),
-    };
+    // 旧形写的是 `switch (destinationIndex) { 0, 2 => ... }`——两个魔数字，而「哪些去处
+    // 独占舞台」这条规则已经在 `core/workbench.zig` 里有一份权威。新增一个独占去处时，
+    // 改那一份就够，不必记得回头改这个数字。
+    if (model.destination.isWholeStage()) return 1.0;
+    return 1.0 - @as(f32, @floatCast(model.layout_fraction));
 }
 
 /// `ChromeOptions.build`：画出或藏起这条纱。
@@ -112,7 +113,7 @@ pub fn build(
     tokens: canvas.DesignTokens,
 ) anyerror!void {
     _ = size;
-    if (model.karaState < 1 or model.karaState > 5) {
+    if (model.kara.state < 1 or model.kara.state > 5) {
         try builder.fillRect(.{
             .id = command_id,
             .rect = geometry.RectF.zero(),
@@ -121,10 +122,10 @@ pub fn build(
         return;
     }
     const frame = rect(
-        // windowWidth 是 f64（契约混合类型），其余两个是 i64。
-        @floatCast(@max(model.windowWidth, 0)),
-        @floatFromInt(@max(model.windowHeight, 0)),
-        @floatFromInt(@max(model.documentViewportHeight, 0)),
+        // 窗口尺寸是 f32（`geometry.SizeF`）；视口高是 u32 的像素数。
+        @floatCast(@max(model.window.width, 0)),
+        @floatCast(@max(model.window.height, 0)),
+        @floatFromInt(@max(model.viewport.height_px, 0)),
         footerHeight(model),
         trackShare(model),
     );
@@ -152,7 +153,7 @@ pub fn animations(
 ) usize {
     _ = tree;
     if (out.len == 0) return 0;
-    switch (model.karaState) {
+    switch (model.kara.state) {
         // Entering：opacity 0→1。
         1 => {
             out[0] = .{
@@ -168,7 +169,7 @@ pub fn animations(
         // Leaving：上抬 8% 同时 opacity 1→0。
         5 => {
             const lift = exit_lift_ratio * height_ratio *
-                @as(f32, @floatFromInt(@max(model.windowHeight, 0)));
+                @as(f32, @floatCast(@max(model.window.height, 0)));
             out[0] = .{
                 .id = command_id,
                 .start_ns = start_ns,
@@ -187,7 +188,7 @@ pub fn animations(
 
 // `Options.animations` 的 tree 形参类型：经 TsUiApp 实例化一次，与
 // app_main 的 Adapter 是同一个类型。
-const TsUiApp = native_sdk.TsUiApp(core);
+const TsUiApp = core.App;
 const TsUiTree = TsUiApp.Ui.Tree;
 
 /// 打断码的中文读法（KARA 小结/打断的文案表）。不认识的码原样显示——

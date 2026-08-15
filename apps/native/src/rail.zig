@@ -31,7 +31,7 @@
 
 const std = @import("std");
 const native_sdk = @import("native_sdk");
-const core = @import("refrain_core");
+const core = @import("core.zig");
 const corners = @import("corners.zig");
 const themes = @import("generated/themes.zig");
 const material = @import("material.zig");
@@ -40,7 +40,7 @@ const material_paint = @import("material_paint.zig");
 const canvas = native_sdk.canvas;
 const Color = canvas.Color;
 const Theme = themes.Theme;
-const Ui = native_sdk.TsUiApp(core).Ui;
+const Ui = core.App.Ui;
 
 /// 选中一行时印色覆在栏上的浓度。
 ///
