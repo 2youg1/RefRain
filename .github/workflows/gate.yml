@@ -117,7 +117,20 @@ jobs:
       # so `tee` cannot turn a red gate green.
       - name: Run the gate
         shell: bash
-        run: bun run gate 2>&1 | tee "gate-${{ matrix.platform }}.log"
+        run: |
+          log="gate-${{ matrix.platform }}.log"
+          if bun run gate 2>&1 | tee "$log"; then exit 0; fi
+          # An artifact needs a token to download and a job log needs admin
+          # rights, so neither can be read by the person holding the red.
+          # A check annotation is the one channel that is public on a public
+          # repository, so the reason rides out on it.
+          escape() { printf '%s' "$1" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' | awk 'BEGIN{ORS="%0A"}{print}'; }
+          fails=$(grep -E '^FAIL' "$log" | head -20)
+          if [ -n "$fails" ]; then
+            echo "::error title=gate stages that failed::$(escape "$fails")"
+          fi
+          echo "::error title=gate output, last 80 lines::$(escape "$(tail -80 "$log")")"
+          exit 1
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
