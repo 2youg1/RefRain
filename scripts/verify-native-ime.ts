@@ -28,19 +28,29 @@ const contracts: readonly Contract[] = [
     path: ".github/workflows/ime-gate.yml",
     required: [
       "windows-native-ime:",
-      "macos-native-ime:",
-      "runs-on: [self-hosted, macOS, refrain-ime]",
       "-Dautomation=true -Doptimize=ReleaseFast",
       "drive-native-windows.ps1",
       "assert-native.ts",
       "native-ime-windows",
-      "native-ime-macos",
     ],
-    forbidden: ["tauri build", "-Shell wv2", "apps/desktop"],
+    // The macOS job is not required here. It was a job pinned to
+    // `[self-hosted, macOS, refrain-ime]`, and no such runner is registered, so
+    // it never ran and never could — a gate that cannot run proves nothing. The
+    // macOS driver keeps its own contract below, and `e2e:ime:macos` keeps it
+    // reachable from a machine that has the input source.
+    forbidden: [
+      "tauri build",
+      "-Shell wv2",
+      "apps/desktop",
+      "runs-on: [self-hosted, macOS, refrain-ime]",
+    ],
   },
   {
     path: "package.json",
-    required: ['"e2e:ime": "bun e2e/ime/run-native.ts'],
+    required: [
+      '"e2e:ime": "bun e2e/ime/run-native.ts',
+      '"e2e:ime:macos": "bun e2e/ime/driver/drive-native-macos.ts"',
+    ],
   },
   {
     path: "e2e/ime/run-native.ts",

@@ -19,7 +19,40 @@ env:
   ZIG_VERSION: "0.16.0"
 
 jobs:
+  # A tag is a claim about a commit, not a licence to build one. This job
+  # refuses to start the release unless the gate workflow already finished
+  # green on exactly this commit. Before it, a tag on a red commit produced a
+  # published asset: the release workflow checks the version surfaces and the
+  # archive, and nothing else asked whether the code passes.
+  #
+  # Re-running the gate here instead would double the release time and still
+  # answer a different question — "does it pass now", not "did this commit
+  # pass".
+  gate-is-green:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Require a successful gate run on the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(git rev-parse HEAD^{commit})
+          runs=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/gate.yml/runs?head_sha=$sha&status=completed" \
+            --jq '[.workflow_runs[] | select(.conclusion == "success")] | length')
+          echo "gate runs that succeeded on $sha: $runs"
+          if [ "$runs" -lt 1 ]; then
+            echo "No successful gate run for $sha. Push the commit, let the gate finish, then tag."
+            exit 1
+          fi
+
   windows:
+    needs: gate-is-green
     runs-on: windows-latest
     timeout-minutes: 60
     # Compile through `zig cc`, not the runner's LLVM clang.

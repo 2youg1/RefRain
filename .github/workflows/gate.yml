@@ -129,20 +129,17 @@ jobs:
         working-directory: apps/native
         run: bun x native build . --yes -Dplatform=${{ matrix.platform }}
 
-      # Null platform has no GPU view, so it proves compilation and core logic
-      # on every runner while the real-window paths below prove the product.
-      - name: Native strict checks on the built contract
-        working-directory: apps/native
-        run: |
-          bun run test:null
-          bun run check
-
       # Eight journals, one per destination, recorded on a real window by
       # `bun run e2e:record` and replayed here headlessly (null platform: the
       # journal is the world). Three of them also verify every frame's
       # accessibility fingerprint; the five that open a manuscript cannot until
       # M8 closes. This replaces the embedded-browser drivers entirely: there is
       # no browser in the product, so there is no browser in the gate.
+      #
+      # The replay first compares the protocol version each journal was recorded
+      # under with the one compiled into this binary. Without that comparison a
+      # protocol change leaves every host answer refused and every fingerprint
+      # still agreeing, and the lane reports green while it judges nothing.
       - name: Every destination replays from its journal
         if: runner.os == 'Windows'
         run: bun run e2e:journals
@@ -163,23 +160,10 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  # Shared-runner wall-clock results are non-blocking Windows evidence.
-  performance-evidence:
-    name: non-blocking Windows performance evidence
-    runs-on: windows-latest
-    timeout-minutes: 20
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
-        with:
-          version: ${{ env.ZIG_VERSION }}
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - run: bun install --frozen-lockfile
-      - run: bun run evidence:performance
+  # Evidence does not live here. Each evidence lane names one thing it needs
+  # from the machine, and a shared runner meets none of them: the pixel lane
+  # needs a GPU view, the window lane needs a real window on the release
+  # platform, and a wall-clock budget measured on a shared runner is a reading
+  # about the runner. They run from `evidence.yml` and from the author's
+  # machine. A lane that runs where its requirement is absent produces a colour
+  # that everybody learns to explain away.

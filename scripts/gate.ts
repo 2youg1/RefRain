@@ -73,27 +73,53 @@ const stages: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["verify:gates-run", ["bun", "scripts/verify-gates-run.ts"]],
 ];
 
-// Real-window pixel evidence: the claim is about what reaches the screen, so a
-// data-layer assertion cannot make it. These stages need a GPU view and a
-// display, so they run as a separate non-blocking job rather than in the
-// blocking gate. The DOM-era members of this set went out with the surface
-// they measured; theme pixels is the one that survived the rewrite.
-const pixelEvidence = new Set(["verify:native-theme-pixels"]);
-const performanceEvidence = new Set([
-  "verify:project-performance",
-  "verify:large-input-performance",
-  "verify:native-document-performance",
-]);
-const pixelOnly = process.argv.includes("--pixel-evidence-only");
-const performanceOnly = process.argv.includes("--performance-evidence-only");
-if (pixelOnly && performanceOnly) {
-  throw new Error("select one evidence mode");
+/**
+ * The stages a data-layer assertion cannot make, grouped by what each one needs
+ * from the machine that runs it.
+ *
+ * The grouping is the point: each lane names one requirement, so a runner that
+ * cannot meet it does not run the lane and does not report a colour about it.
+ * A lane that runs where its requirement is absent measures the runner, not the
+ * product — and a red that everybody explains away is worse than no lane.
+ *
+ * - `pixels` needs a GPU view: the claim is about what reaches the screen.
+ * - `data-performance` needs only a release build and a disk, thus any runner
+ *   can produce it. The budgets are per platform, because NTFS and ext4 do not
+ *   read metadata at the same speed.
+ * - `window-performance` needs a real window on the release platform, and it
+ *   drives it through the automation server. A shared runner has no such
+ *   window.
+ */
+const EVIDENCE_LANES = {
+  pixels: ["verify:native-theme-pixels"],
+  "data-performance": ["verify:project-performance", "verify:large-input-performance"],
+  "window-performance": ["verify:native-document-performance"],
+} as const;
+
+type EvidenceLane = keyof typeof EVIDENCE_LANES;
+
+const laneNames = Object.keys(EVIDENCE_LANES) as readonly EvidenceLane[];
+const evidenceStages = new Set<string>(laneNames.flatMap((lane) => [...EVIDENCE_LANES[lane]]));
+
+/** `--evidence <lane>[,<lane>…]`; without it the blocking gate runs. */
+function requestedLanes(argv: readonly string[]): readonly EvidenceLane[] {
+  const at = argv.indexOf("--evidence");
+  if (at < 0) return [];
+  const value = argv[at + 1];
+  if (value === undefined) throw new Error(`--evidence needs a lane: ${laneNames.join(", ")}`);
+  return value.split(",").map((name) => {
+    if (!laneNames.includes(name as EvidenceLane)) {
+      throw new Error(`unknown evidence lane ${name}; known: ${laneNames.join(", ")}`);
+    }
+    return name as EvidenceLane;
+  });
 }
-const selected = stages.filter(([name]) => {
-  if (pixelOnly) return pixelEvidence.has(name);
-  if (performanceOnly) return performanceEvidence.has(name);
-  return !pixelEvidence.has(name) && !performanceEvidence.has(name);
-});
+
+const lanes = requestedLanes(process.argv);
+const wanted = new Set<string>(lanes.flatMap((lane) => [...EVIDENCE_LANES[lane]]));
+const selected = stages.filter(([name]) =>
+  lanes.length === 0 ? !evidenceStages.has(name) : wanted.has(name),
+);
 const failures: string[] = [];
 
 /**
@@ -130,7 +156,7 @@ for (const [name, argv] of selected) {
   }
 }
 
-const kind = pixelOnly ? "pixel evidence" : performanceOnly ? "performance evidence" : "blocking";
+const kind = lanes.length === 0 ? "blocking" : `${lanes.join(" + ")} evidence`;
 console.log(`\nran ${selected.length} ${kind} stages, ${failures.length} failed`);
 if (failures.length > 0) {
   console.log(`failed: ${failures.join(", ")}`);

@@ -20,8 +20,10 @@
     "corpora": "bun scripts/freeze-corpora.ts",
     "pretest": "bun scripts/freeze-corpora.ts",
     "gate": "bun scripts/gate.ts",
-    "evidence:pixels": "bun scripts/gate.ts --pixel-evidence-only",
-    "evidence:performance": "bun scripts/gate.ts --performance-evidence-only",
+    "evidence:pixels": "bun scripts/gate.ts --evidence pixels",
+    "evidence:performance": "bun scripts/gate.ts --evidence data-performance,window-performance",
+    "evidence:data-performance": "bun scripts/gate.ts --evidence data-performance",
+    "evidence:window-performance": "bun scripts/gate.ts --evidence window-performance",
     "verify:no-spec-upload": "bun scripts/verify-no-spec-upload.ts",
     "verify:no-network": "bun scripts/verify-no-network.ts",
     "verify:bridge": "bun scripts/verify-bridge.ts",
@@ -56,6 +58,7 @@
     "e2e:journals": "bun scripts/replay-native-journals.ts",
     "e2e:record": "bun scripts/record-native-journals.ts",
     "e2e:ime": "bun e2e/ime/run-native.ts -Shell native -Binary apps/native/zig-out/bin/refrain.exe",
+    "e2e:ime:macos": "bun e2e/ime/driver/drive-native-macos.ts",
     "check:ts": "tsc --noEmit"
   },
   "devDependencies": {

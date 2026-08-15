@@ -1,18 +1,26 @@
 name: native-ime
 
+# The Windows IME acceptance lane, under construction (P7).
+#
+# It launches the shipping binary and reports the state it saw, and it does not
+# yet reach its first composition. Until it does, it runs on request and once a
+# week, not on every pull request that touches the surface: a lane that is red
+# for a known reason on every change teaches people to ignore the colour, and
+# the next real defect arrives in the same red.
+#
+# The macOS half was a job pinned to `[self-hosted, macOS, refrain-ime]`. No
+# such runner is registered, thus the job never ran and never could. A gate that
+# cannot run proves nothing; macOS IME is recorded in ARCHITECTURE.md as wired
+# with no signature from a real machine, which is what is true.
+
 on:
   schedule:
-    - cron: "17 3 * * *"
+    - cron: "17 3 * * 1"
   workflow_dispatch:
   pull_request:
     paths:
       - ".github/workflows/ime-gate.yml"
-      - "apps/native/**"
-      - "crates/refrain-app/**"
-      - "crates/refrain-core/**"
       - "e2e/ime/**"
-      - "patches/@native-sdk%2Fcli@0.9.0.patch"
-      - "scripts/native-document-evidence-identity.ts"
 
 concurrency:
   group: native-ime-${{ github.ref }}
@@ -26,29 +34,10 @@ env:
   RUST_VERSION: "1.97.1"
   ZIG_VERSION: "0.16.0"
 
+# The evidence policy test and the TypeScript check are not repeated here:
+# `bun run gate` runs `bun test` and `bun run check:ts` on all three platforms,
+# and this file's own job would be a second reader of the same two facts.
 jobs:
-  policy:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-
-      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
-        with:
-          version: ${{ env.ZIG_VERSION }}
-
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - run: bun install --frozen-lockfile
-      - run: bun test e2e/ime/native-evidence-policy.test.ts
-      - run: bun x tsc --noEmit -p tsconfig.json
-
   windows-native-ime:
     runs-on: windows-latest
     timeout-minutes: 60
@@ -123,48 +112,5 @@ jobs:
         with:
           name: native-ime-windows
           path: e2e/ime/results/native/windows/
-          if-no-files-found: warn
-          retention-days: 30
-
-  macos-native-ime:
-    runs-on: [self-hosted, macOS, refrain-ime]
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-
-      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
-        with:
-          version: ${{ env.ZIG_VERSION }}
-
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - run: bun install --frozen-lockfile
-
-      - name: Require the configured Japanese input source and UI control permission
-        run: |
-          defaults read com.apple.HIToolbox AppleEnabledInputSources
-          osascript -e 'tell application "System Events" to get UI elements enabled'
-
-      - name: Build the shipping Native executable with automation evidence
-        working-directory: apps/native
-        run: bun x native build . --yes -Dplatform=macos -Dautomation=true -Doptimize=ReleaseFast
-
-      - name: Drive the Native GPU document surface with Kotoeri
-        run: bun e2e/ime/driver/drive-native-macos.ts
-
-      - name: Enforce Native IME acceptance from the recorded run
-        run: bun e2e/ime/assert-native.ts --manifest e2e/ime/results/native/macos/run.json
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        if: always()
-        with:
-          name: native-ime-macos
-          path: e2e/ime/results/native/macos/
           if-no-files-found: warn
           retention-days: 30

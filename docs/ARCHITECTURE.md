@@ -549,11 +549,23 @@ that the journal writes.
 scripts on the disk with the scripts that something invokes. It fails if a
 script exists that nothing invokes.
 
-Two evidence sets are outside the blocking gate, because a data-layer assertion
-cannot make their claims:
+Three evidence lanes are outside the blocking gate, because a data-layer
+assertion cannot make their claims. Each lane names the one thing that it needs
+from the machine that runs it, and `scripts/gate.ts` holds the three lanes in
+one table:
 
-- `bun run evidence:pixels` — real-window pixel checks. It needs a GPU view.
-- `bun run evidence:performance` — the measured performance gates.
+| Lane | Needs | Command | Where it runs |
+|---|---|---|---|
+| `pixels` | a GPU view | `bun run evidence:pixels` | the author's machine |
+| `data-performance` | a release build and a disk | `bun run evidence:data-performance` | `evidence.yml`, on all three platforms, weekly and on request |
+| `window-performance` | a real window on the release platform | `bun run evidence:window-performance` | the author's machine |
+
+`bun run evidence:performance` runs the two performance lanes together.
+
+A lane that runs where its requirement is absent measures the runner and not the
+product. A shared runner has no GPU view and no real window, thus `gate.yml`
+runs no evidence lane. A red that each reader explains away is worse than a lane
+that states where it can run.
 
 State a performance budget for each platform, and give the reading that set it.
 A warm catalogue refresh reads the metadata of each file. NTFS is several times
@@ -598,6 +610,28 @@ nothing. See [CONTRIBUTING.md](CONTRIBUTING.md).
 be dead: it can read a path that only one platform has, it can set an
 environment variable that no code reads, or it can click a control that the
 surface removed. Run each evidence lane on the release platform.
+
+### The four workflows
+
+Each workflow answers one question. A workflow that answers no question, or that
+asks a machine for something the machine does not have, comes out.
+
+| Workflow | The question | When |
+|---|---|---|
+| `gate.yml` | Does this commit pass every blocking gate on Linux, Windows and macOS? | each push and each pull request |
+| `evidence.yml` | Does the data layer stay inside the budget that each platform states? | weekly, on request, and when a budget file changes |
+| `ime-gate.yml` | Does a real Windows input method reach the manuscript? | weekly and on request, while the lane is under construction (P7) |
+| `release.yml` | Does this tag point at a green commit, and does the archive read back? | a tag that starts with `v` |
+
+Two rules hold this shape:
+
+- **A release starts from a green commit.** `release.yml` asks the Actions API
+  for a `gate.yml` run that succeeded on the tagged commit and refuses to build
+  without one. Before this, a tag on a red commit produced a published asset:
+  the release workflow checked the version surfaces and the archive, and nothing
+  asked whether the code passes.
+- **One reader for each fact.** `gate.yml` runs `bun test` and `bun run check:ts`
+  on three platforms, thus no other workflow repeats them.
 
 **A red gate can be the environment.** Before you call a red result a defect,
 run the same gate on the base commit with no local changes. The same failure
