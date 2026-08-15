@@ -134,8 +134,20 @@ fn linkRustRuntime(module: *std.Build.Module) void {
         // none" before a single object was emitted. It failed on every macOS
         // gate run and on no other platform, and nobody saw it, because the
         // author's machine is Windows and the runner could not report why.
-        .macos => inline for ([_][]const u8{ "System", "m" }) |library| {
-            module.linkSystemLibrary(library, .{ .use_pkg_config = .no });
+        .macos => {
+            inline for ([_][]const u8{ "System", "m", "objc" }) |library| {
+                module.linkSystemLibrary(library, .{ .use_pkg_config = .no });
+            }
+            // The Rust archive reaches Apple's frameworks through its file
+            // dialog and platform-directory crates, so the link needs each
+            // framework that the archive's undefined symbols name:
+            // CoreFoundation for `CFRelease` and the `CFString`/`CFTimeZone`
+            // families, AppKit for `NSApplicationMain`, CoreGraphics for
+            // `CGShieldingWindowLevel`, and `libobjc` above for `objc_msgSend`
+            // and the class/method/ivar reflection calls.
+            inline for ([_][]const u8{ "CoreFoundation", "Foundation", "AppKit", "CoreGraphics" }) |framework| {
+                module.linkFramework(framework, .{});
+            }
         },
         .windows => inline for ([_][]const u8{
             "advapi32",
