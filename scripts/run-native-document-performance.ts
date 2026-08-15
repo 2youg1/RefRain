@@ -39,12 +39,24 @@ import {
   windowEnvironment,
   windowPlatformLabel,
 } from "./native-runtime-process.ts";
+import { executableFor, TIER_A } from "./scriptc-tiers.ts";
 
 const root = join(import.meta.dir, "..");
 const nativeDir = join(root, "apps/native");
 const nativeCli = join(nativeDir, "node_modules/.bin/native");
 const executable = nativeExecutablePath(nativeDir);
-const verifier = join(root, "scripts/verify-native-document-performance.ts");
+/**
+ * The verifier runs as its ScriptC executable, never as its source through Bun.
+ *
+ * It is a tier A gate: the compiled artefact is the authority, and a lane that
+ * measured through the interpreter would leave the compiled program untested
+ * (D15). This launcher owns the window; the verifier owns the judgement.
+ */
+const verifierSource = TIER_A["verify:native-document-performance"];
+if (verifierSource === undefined) {
+  throw new Error("verify:native-document-performance left the tier A table");
+}
+const verifier = join(root, executableFor(verifierSource));
 const automationDir = join(nativeDir, ".zig-cache/native-sdk-automation");
 const runtimeDir = join(tmpdir(), `refrain-native-evidence-${process.pid}`);
 const fixtureRoot = join(tmpdir(), `refrain-native-fixture-${process.pid}`);
@@ -151,7 +163,7 @@ let verificationExit = 1;
 let verificationStdout = "";
 let verificationStderr = "";
 try {
-  const verification = Bun.spawn([process.execPath, verifier], {
+  const verification = Bun.spawn([verifier], {
     cwd: root,
     env: {
       ...process.env,

@@ -129,18 +129,28 @@ const failures: string[] = [];
  * fallback the compiled artefact was never the authority, and a ScriptC
  * regression would turn no gate red (roadmap D15). Run `bun run scriptc:build`
  * first — CI does.
+ *
+ * The substitution applies to the stage that runs the script itself. One stage
+ * does not: `verify:native-document-performance` runs a launcher that opens a
+ * real window and spawns the compiled verifier against it. Substituting the
+ * verifier for the launcher ran the verifier with no window at all — it read
+ * the snapshot the previous run left on the disk, asked the operating system
+ * about a process that had exited, and reported a failure about a window that
+ * nobody opened. The launcher spawns the same compiled program, thus D15 holds
+ * where it means something.
  */
-function commandFor(name: string, argv: readonly string[]): readonly string[] {
+function compiledCommandFor(name: string, argv: readonly string[]): readonly string[] | null {
   const script = TIER_A[name];
-  if (script === undefined) return argv;
-  return [executableFor(script)];
+  if (script === undefined) return null;
+  return argv.includes(script) ? [executableFor(script)] : null;
 }
 
 for (const [name, argv] of selected) {
   const started = Date.now();
-  const [command, ...args] = commandFor(name, argv);
+  const compiled = compiledCommandFor(name, argv);
+  const [command, ...args] = compiled ?? argv;
   if (command === undefined) throw new Error(`stage ${name} has no command`);
-  if (TIER_A[name] !== undefined && !existsSync(command)) {
+  if (compiled !== null && !existsSync(command)) {
     console.log(`FAIL  ${name}  (tier A executable missing: ${command} — run scriptc:build)`);
     failures.push(name);
     continue;
