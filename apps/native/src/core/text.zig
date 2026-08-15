@@ -17,6 +17,7 @@
 //! 规格：`RefRain-work/main+SPEC.md` §8。
 
 const std = @import("std");
+const native_sdk = @import("native_sdk");
 
 pub const Error = error{TooLong};
 
@@ -93,6 +94,39 @@ pub fn Bounded(comptime capacity: usize) type {
         ///
         /// 按码位而不是按字节：一个汉字三字节，按字节退会留下半个字，而那半个字
         /// 在下一次绘制时是一个替换符——作者按一次退格看见一个方块。
+        /// 把一次文本编辑落到这段草稿上。
+        ///
+        /// **为什么草稿要自己算**：平台的文本通道送的是编辑事件（插入、退格、
+        /// 清空），不是整串——「这次编辑之后框里是什么」必须有人算。正稿那一条路
+        /// 由 Rust 算（`DocumentSurface` 是唯一的文本状态机）；界面的单行草稿进不了
+        /// 那个机器，所以算在这里。
+        ///
+        /// **只认三种事件**：插入、退格、清空。移动光标、选区与组字属于正稿的
+        /// 词汇，一段草稿没有光标模型可言——默默处理它们会造出一个只有一半行为
+        /// 的编辑器。没认的事件原样不动。
+        ///
+        /// 返回是否真的改变了内容。装不下时不报错也不截：草稿到顶就不再长，
+        /// 已经写下的一字不失——这是作者看得见的拒绝，不是静默的。
+        pub fn applyEdit(self: *Self, event: native_sdk.canvas.TextInputEvent) bool {
+            switch (event) {
+                .insert_text => |chunk| {
+                    self.append(chunk) catch return false;
+                    return chunk.len > 0;
+                },
+                .delete_backward => {
+                    if (self.len == 0) return false;
+                    self.popCodepoint();
+                    return true;
+                },
+                .clear => {
+                    if (self.len == 0) return false;
+                    self.clear();
+                    return true;
+                },
+                else => return false,
+            }
+        }
+
         pub fn popCodepoint(self: *Self) void {
             if (self.len == 0) return;
             var end = self.len - 1;
@@ -151,6 +185,31 @@ test "退格退掉一整个码位，不留半个字" {
     // 空了再退不动，也不越界。
     line.popCodepoint();
     try testing.expect(line.isEmpty());
+}
+
+test "编辑事件只认插入、退格与清空" {
+    var draft: Bounded(32) = .empty;
+    try testing.expect(draft.applyEdit(.{ .insert_text = "写" }));
+    try testing.expect(draft.applyEdit(.{ .insert_text = "中文" }));
+    try testing.expectEqualStrings("写中文", draft.slice());
+    // 退格退一个码位，不是一个字节。
+    try testing.expect(draft.applyEdit(.delete_backward));
+    try testing.expectEqualStrings("写中", draft.slice());
+    try testing.expect(draft.applyEdit(.clear));
+    try testing.expect(draft.isEmpty());
+    // 空了再退、再清都不算改变。
+    try testing.expect(!draft.applyEdit(.delete_backward));
+    try testing.expect(!draft.applyEdit(.clear));
+    // 正稿的词汇原样不动：一段草稿没有光标模型可言。
+    try testing.expect(!draft.applyEdit(.commit_composition));
+    try testing.expect(!draft.applyEdit(.{ .move_caret = .{ .direction = .next } }));
+    try testing.expect(draft.isEmpty());
+}
+
+test "草稿到顶就不再长，已写下的一字不失" {
+    var draft = try Bounded(4).from("abcd");
+    try testing.expect(!draft.applyEdit(.{ .insert_text = "e" }));
+    try testing.expectEqualStrings("abcd", draft.slice());
 }
 
 test "边界：容量恰好、空输入" {

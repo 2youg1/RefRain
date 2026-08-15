@@ -31,6 +31,7 @@ const core_roster = @import("core/roster.zig");
 const core_text = @import("core/text.zig");
 const core_msg = @import("core/msg.zig");
 const core_model = @import("core/model.zig");
+const core_zig = @import("core.zig");
 
 pub const panic = std.debug.FullPanic(native_sdk.debug.capturePanic);
 pub const Model = core.Model;
@@ -70,6 +71,7 @@ test {
     std.testing.refAllDecls(core_text);
     std.testing.refAllDecls(core_msg);
     std.testing.refAllDecls(core_model);
+    std.testing.refAllDecls(core_zig);
 }
 
 test "compiled lane: bare-sugar-free update snapshots after tuple and bare arms alike" {
