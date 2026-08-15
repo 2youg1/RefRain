@@ -292,18 +292,27 @@ fn projection_response(
     request: &RefrainNativeRequest,
     status: u32,
 ) -> RefrainNativeResponse {
-    // A scroll offset resolves against the manuscript's block count, so the
-    // platform sends pixels and Rust decides which block starts the window.
-    let anchor = if request.scroll_offset_y > 0.0 {
+    // The action selects the anchor. Each request carries the last scroll
+    // offset of the surface, thus an offset alone cannot decide: after one
+    // scroll, that offset would have priority over each later caret, and the
+    // caret could not bring the window back. An action that moves the caret
+    // anchors on the caret. A view request anchors on the offset, or on the
+    // block when there is no offset.
+    let first_block = match to_usize(request.viewport_first_block) {
+        Ok(value) => value,
+        Err(_) => return RefrainNativeResponse::empty(ERROR_INVALID_REQUEST, action),
+    };
+    let anchor = if action == ACTION_APPLY_INPUT {
+        DocumentAnchor::Caret {
+            window_first_block: first_block,
+        }
+    } else if request.scroll_offset_y > 0.0 {
         DocumentAnchor::Scroll {
             offset: request.scroll_offset_y,
             block_height: VIRTUAL_BLOCK_HEIGHT,
         }
     } else {
-        match to_usize(request.viewport_first_block) {
-            Ok(value) => DocumentAnchor::Block(value),
-            Err(_) => return RefrainNativeResponse::empty(ERROR_INVALID_REQUEST, action),
-        }
+        DocumentAnchor::Block(first_block)
     };
     let viewport = DocumentViewport {
         anchor,

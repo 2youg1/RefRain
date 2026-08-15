@@ -1,11 +1,10 @@
-import type { SourceExecutableIdentity } from "./native-document-evidence-identity.ts";
+import { DEFAULT_VIEWPORT_BLOCKS } from "../apps/native/src/generated/protocol.ts";
 
 export interface NativeInteractionReport extends Readonly<Record<string, unknown>> {
   readonly schemaVersion: 2;
   readonly runsPerOperation: 20;
   readonly fixture: Readonly<Record<string, unknown>>;
   readonly checks: Readonly<Record<string, boolean>>;
-  readonly identity: SourceExecutableIdentity & Readonly<Record<string, unknown>>;
   readonly passed: true;
 }
 
@@ -29,21 +28,14 @@ export function parseNativeInteractionReport(stdout: string): NativeInteractionR
     !isRecord(fixture) ||
     fixture.blocks !== 100_000 ||
     fixture.bytes !== 11_953_766 ||
-    fixture.viewportBlocks !== 24
+    fixture.viewportBlocks !== DEFAULT_VIEWPORT_BLOCKS
   ) {
     throw new Error("Native interaction report does not prove the shared 100,000-block fixture");
   }
-  const identity = value.identity;
-  if (
-    !isRecord(identity) ||
-    typeof identity.sourceRevision !== "string" ||
-    !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(identity.sourceRevision) ||
-    typeof identity.sourceDirty !== "boolean" ||
-    !isSha256(identity.dirtyManifestSha256) ||
-    !isSha256(identity.executableSha256)
-  ) {
-    throw new Error("Native interaction report has no complete source and executable identity");
-  }
+  // The identity of the source and of the binary belongs to the parent lane.
+  // This verifier is a tier A program and compiles fully static: it cannot hash
+  // a file. The parent collects the identity before the run and again after it,
+  // and refuses a report whose binary changed under it.
   const checks = value.checks;
   if (!isRecord(checks) || Object.keys(checks).length === 0) {
     throw new Error("Native interaction report has no named checks");
@@ -55,10 +47,6 @@ export function parseNativeInteractionReport(stdout: string): NativeInteractionR
     throw new Error("Native interaction report is not passing");
   }
   return value as NativeInteractionReport;
-}
-
-function isSha256(value: unknown): boolean {
-  return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -3507,7 +3507,6 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     var shell_count: usize = 0;
     const railband = if (railEdgeX(model, depth, layered)) |edge| rail.band(
         ui,
-        panelMaterialKind(model),
         &themes.themes[currentThemeIndex(model)],
         edge,
         @floatFromInt(@max(model.windowHeight, 0)),

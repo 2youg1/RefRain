@@ -140,6 +140,17 @@ each field.
 The ink and the ground must come from the same test. `railHasGround` is that
 test. If the two tests are different, a screen shows rail ink on paper ground.
 
+**The ground of the rail is always solid.** The panel material applies to a
+surface that floats above the manuscript: a panel, a bento, the return card, a
+menu, the palette. Such a surface mixes toward the paper below it, and that is
+correct compositing. The rail does not float above the paper. It is a second
+ground beside the paper. A recipe that mixes the paper into the rail makes the
+desk the colour of the page: acrylic moved the `tou` ground from `#223b60` to
+`#5c6c83` and made the disabled row register illegible. Liquid glass added a
+second cost, because the recipe put the largest blur radius on a band the height
+of the window: the reference renderer could not capture a frame. Both materials
+are correct now. A pixel probe reads the same `#223b60` for each of the three.
+
 The status line belongs to the manuscript column. It starts at the right edge of
 the rail. The notice bar is different: it announces a refusal, it uses the full
 width of the window, and it has its own `.alert` ground.
@@ -364,9 +375,9 @@ module with no test file has test blocks in the module.
 | `panel_stack.zig` | The visible panel stack: the position of each layer, and `fittingDepth` for the number of layers that the window holds | in-file tests; vectors shared with `workbench.test.ts` |
 | `commands.zig` | The command table: id, Chinese label, key hint | `verify:command-space` |
 | `motion.zig` | The motion tokens: the durations, the easing pair, the breath loop | in-file tests |
-| `material.zig` | The panel-material recipe table: surface blend, blur radius, sheen stops. The manuscript track does not use it | in-file tests |
+| `material.zig` | The panel-material recipe table: surface blend, blur radius, sheen stops. The manuscript track and the rail ground do not use it | in-file tests |
 | `material_paint.zig` | Recipes to pixels: plane blending, border blending, the widget apply, the sheen plan | in-file tests |
-| `rail.zig` | The rail register: `band`, `dress`, and `controlTokens`. It holds no colour. Each value comes from the theme table | in-file tests; `verify:native-theme-pixels` |
+| `rail.zig` | The rail register: `band`, `dress`, and `controlTokens`. The ground is always solid. It holds no colour: each value comes from the theme table | in-file tests; `verify:native-theme-pixels` |
 | `generated/` | `protocol.ts`, `protocol.zig`, `themes.zig`. Regenerate them. Do not edit them | `verify:themes-current`; protocol `--check` |
 
 ---
@@ -461,6 +472,7 @@ Each fact below has one authority. A second copy is a defect.
 | Theme colours | The `THEMES` table in `scripts/generate-themes.ts` | A copy kept by hand. Four anchors for each theme |
 | Corner geometry | `apps/native/src/corners.zig` | A radius number in another file. A bare `0` |
 | Protocol layout | `apps/native/protocol/host.json` | An offset edited by hand in a generated file |
+| The anchor of a projection | `projection_response` in `apps/native/host/src/document.rs` | An anchor chosen from a value instead of from the action. Each request carries the last scroll offset of the surface, thus an offset alone would have priority over each later caret and the caret could not bring the window back. An action that moves the caret anchors on the caret. A range selection keeps the window, because the author selected text and did not ask to go somewhere |
 | The interface font | `manuscript_font` in `apps/native/build.zig` | A second face for interface text. The SDK selects a face for each run, not for each codepoint, thus an uncovered character shows a block. `verify:font-coverage` compares the label tables against the cmap of this face |
 
 Two more rules:
@@ -547,6 +559,15 @@ A warm catalogue refresh reads the metadata of each file. NTFS is several times
 slower than ext4 for this work. One number for all platforms cannot be correct
 on both.
 
+State an interaction budget against the window that produced the reading. The
+claim is "an input is on the screen by the second presented frame", thus the
+budget is two present intervals of that window. Two numbers make this budget. A
+fixed 16.67 ms reads a 45 Hz present path as a latency defect. One interval is
+not possible for input that arrives at a random phase: the input waits for the
+rest of the current frame, and then it needs the next present. Measured on this
+machine: the interval p50 is 24.12 ms, and each p95 is between 1.17 and 1.75
+intervals.
+
 Run these commands in this order. Run all of them for each change.
 
 ```sh
@@ -614,8 +635,7 @@ closes it. A ◐ or ○ in the function matrix points here.
 | **M6** | **The PDF screen and the diagram screen do not exist.** The facts exist: `block_shape::Table` knows the shape of a table, and `ingest/pdf` extracts the text | the domain facts | One screen for PDF and one for diagrams. A table stays aligned text: a caret offset is a byte offset, and a table adds a second coordinate system. An imported PDF is read-only, because `.refrain-source/` is never written |
 | **M7** | **Icons have no consumer.** `icons.rs` normalises and content-addresses an image. No module above the store reads it | `icons.rs`, `tests/icons.rs` | The surface that offers and shows the icon |
 | **M8** | **Replay cannot verify a frame that holds the manuscript.** The projection is in the module buffer of `host_bridge`, not in the Model. The replayer feeds the host answers to the core, and the view has no path to the text. Measured: the three journals that open no document verify all 17 fingerprint checkpoints. Each journal that opens a document differs from the frame after the click on the document row | the eight journals and the tier table in `scripts/native-journals.ts` | Move the projection into the Model. Measure the cost first: approximately 11.5 KiB for each frame through the core. Then change `tier` in the one table |
-| **M13** | **The projection anchors on an old scroll offset.** Each projection request carries `model.documentScroll`. `projection_response` in `apps/native/host/src/document.rs` selects `DocumentAnchor::Scroll` when that offset is more than zero. Thus the offset has priority over each later caret. Measured on a 1,000-block fixture: one 360 px wheel moved the window from block 11 to block 905, and the next wheel moved it to block 9. On the 100k-block fixture, from the tail, neither a wheel nor a caret at byte 0 moved the window from block 99,904 | `DocumentAnchor` already has `Scroll` and `Block`. `verify:native-document-performance` reports the window after each of twenty wheels | One rule in `document.rs` for the anchor of each action: a scroll anchors on the offset, and each other action anchors on the caret. Also keep `documentScroll` and the offset of the scroll container in agreement |
-| **M15** | **Acrylic mixes the paper colour into the ground of the rail.** The recipe folds `(1 − surface_mix)` of the paper colour into the surface. This is correct for a panel above the manuscript and incorrect for the rail. The ink of the rail is set against the `rail` colour of the theme. Measured on the `tou` theme: the ground goes from `#223b60` to `#5c6c83`, and the disabled row register becomes illegible. Liquid glass is worse: after the change the application answers snapshots, but `automate screenshot` times out, thus the reference renderer cannot capture the frame | `material.zig` owns the recipe table. `rail.zig` owns the rail register | A recipe that mixes toward the surface below. A real-window pixel check for each material. Today `evidence:pixels` sees only `solid` |
+| **M13** | **A large wheel saturates the projection window, and the window does not come back.** `scrollOffsetY: 0` means "anchor by block" on the wire, thus a scroll to the very top cannot be told from "keep the block that you have". Measured: twenty wheels of 4,000,000 px in alternate directions leave the window on block 99,904 each time, and `verify:native-document-performance` reports that sequence. The caret half of this defect is closed: an action that moves the caret anchors on the caret (`DocumentAnchor::Caret`), thus a caret at byte 0 brings the window home from the tail | `DocumentAnchor` has `Scroll`, `Block`, and `Caret`. The report field `scrollWindowStarts` shows the window after each wheel | A discriminator for a scroll that does not use a magic value: an action code or a request flag. Also make the virtual track scale agree with the projected height, because the leading spacer and the anchor use two different mappings today |
 
 Wired, but with no signature from a real machine: IME composition on Windows and
 macOS. `SetComposition`, `CommitComposition`, and `CancelComposition` exist, and
@@ -623,8 +643,9 @@ macOS. `SetComposition`, `CommitComposition`, and `CancelComposition` exist, and
 
 Closed in this version: KARA events and the veil, typography in the projection,
 material drafts, the cross-document jump, anchored ranges (M1 to M5); the
-producer runner (M9); the rail colour register (M12); the interface font
-coverage (M14).
+producer runner (M9); the rail colour register (M12); the caret half of the
+projection anchor (M13); the interface font coverage (M14); the panel material
+against the rail register (M15).
 
 ---
 
@@ -771,6 +792,8 @@ Use these words. SPEC §2 requires one word for each concept.
 | An annotation lost its anchor | `refrain-store/src/annotations.rs` |
 | A colour is wrong, or a theme looks flat | `apps/native/src/generated/themes.zig` |
 | A corner has the wrong shape | `apps/native/src/corners.zig` |
+| The rail loses its colour, or a material stops the drawing | `apps/native/src/rail.zig` and `material.zig`. The rail ground takes no material |
+| An input reaches the screen late | `verify:native-document-performance`. Compare the p95 with the present interval in the same report, not with 16.67 ms |
 | A roster cursor points at a row that is gone | `apps/native/src/roster.ts` |
 | A character draws as a block | `verify:font-coverage`, then `manuscript_font` in `apps/native/build.zig` |
 | A panel covers the manuscript, or the stage is too small | `apps/native/src/panel_stack.zig`, `layeredBody` in `app_main.zig` |

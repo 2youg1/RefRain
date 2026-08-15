@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { DEFAULT_VIEWPORT_BLOCKS } from "../apps/native/src/generated/protocol.ts";
 import {
   assertNativeAutomationStderr,
   assertNativeRuntimeStderr,
@@ -89,14 +90,8 @@ describe("Native interaction report policy", () => {
   const report = {
     schemaVersion: 2,
     runsPerOperation: 20,
-    fixture: { blocks: 100_000, bytes: 11_953_766, viewportBlocks: 24 },
+    fixture: { blocks: 100_000, bytes: 11_953_766, viewportBlocks: DEFAULT_VIEWPORT_BLOCKS },
     checks: { mountP95: true, noDispatchErrors: true },
-    identity: {
-      sourceRevision: "d17bf91dddb3e5033768279f84c6ee66e19c2632",
-      sourceDirty: true,
-      dirtyManifestSha256: "a".repeat(64),
-      executableSha256: "b".repeat(64),
-    },
     passed: true,
   } as const;
 
@@ -109,17 +104,6 @@ describe("Native interaction report policy", () => {
 
     expect(() => parseNativeInteractionReport(JSON.stringify(falseReport))).toThrow(
       "checks are not all true",
-    );
-  });
-
-  test("rejects a report without a complete source and executable identity", () => {
-    const wrongIdentity = {
-      ...report,
-      identity: { ...report.identity, executableSha256: "missing" },
-    };
-
-    expect(() => parseNativeInteractionReport(JSON.stringify(wrongIdentity))).toThrow(
-      "source and executable identity",
     );
   });
 

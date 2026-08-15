@@ -53,10 +53,20 @@ const selected_wash_alpha: f32 = 0.34;
 /// 按下那一瞬的浓度：比选中再实一档，手指抬起就回。
 const pressed_wash_alpha: f32 = 0.46;
 
-/// 功能栏的地。材质配方与面板同一份（`material.zig` 的表），折的是主题
-/// 自己的 `rail` 那一面而不是 `surface`。
-pub fn ground(kind: material.Kind, theme: *const Theme) Color {
-    return material_paint.railPaint(kind, theme);
+/// 功能栏的地。**永远实心**，与作者选的面板材质无关。
+///
+/// 材质表的前提写在 `material.zig` 的模块头里：`surface_mix < 1` 的配方
+/// 「只给停在正文旁边的表面」——面板、饭盒、回来卡、菜单、命令面板。那些
+/// 表面浮在纸上，所以向纸色折进 (1−mix) 份是它们真实的合成。栏不浮在纸上，
+/// 栏是与纸并列的另一面地；向纸折它等于把桌子刷成纸色。实测（tou）：
+/// 亚克力把栏地从 #223b60 冲到 #5c6c83，而栏的墨是 M12 按 `rail` 调的，
+/// 于是禁用行整类掉到读不出。
+///
+/// 液态玻璃还多一条：整条带铺满窗高，配方最大的那档背景模糊挂在它上面，
+/// 参考渲染器（`automate screenshot`）因此抓不到帧。地实心之后这条带不再
+/// 带模糊，材质仍在它被设计的地方生效。
+pub fn ground(theme: *const Theme) Color {
+    return material_paint.railPaint(.solid, theme);
 }
 
 /// 分栏线。它属于栏与正文的分界，不属于任何一层，所以层叠得再深也只有
@@ -125,7 +135,6 @@ pub const Band = struct {
 /// 层叠得再深也只有一层地、一条线。
 pub fn band(
     ui: *Ui,
-    kind: material.Kind,
     theme: *const Theme,
     edge_x: f32,
     window_height: f32,
@@ -133,8 +142,7 @@ pub fn band(
     var ground_node = ui.el(.stack, .{
         .frame = native_sdk.geometry.RectF.init(0, 0, edge_x, window_height),
     }, .{});
-    ground_node.widget.backdrop_blur = material.recipe(kind).blur_radius;
-    ground_node.widget.style.background = ground(kind, theme);
+    ground_node.widget.style.background = ground(theme);
     // 栏不取弧边、不取外框：分栏只由右缘那一条发丝说。
     ground_node.widget.style.radius = corners.squared;
     ground_node.widget.style.border = transparent();
@@ -213,22 +221,22 @@ fn ownsItsGround(kind: canvas.WidgetKind) bool {
     };
 }
 
-test "地走的是材质配方，折的是 rail 那一面" {
+test "栏地永远实心，且不等于面板的表面色" {
     const day = &themes.themes[0]; // 濤（昼）
-    // 实心：mix = 1，折完仍是 rail 本身。
-    const solid = ground(.solid, day);
-    try std.testing.expectApproxEqAbs(day.rail.r, solid.r, 0.001);
-    try std.testing.expectApproxEqAbs(day.rail.g, solid.g, 0.001);
-    try std.testing.expectApproxEqAbs(@as(f32, 1), solid.a, 0.001);
-    // 亚克力：rgb = 纸×0.15 + rail×0.85，alpha 取混合比——与面板同一条式子，
-    // 只换了折哪一面。
-    const acrylic = ground(.acrylic, day);
-    const paper = day.colors.background.?;
-    try std.testing.expectApproxEqAbs(paper.r * 0.15 + day.rail.r * 0.85, acrylic.r, 0.001);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.85), acrylic.a, 0.001);
-    // 地不等于面板的表面色——这正是 M12 的缺口：改之前两者是同一个值。
+    // 实心：mix = 1，折完仍是 rail 本身，alpha 不透。
+    const paint = ground(day);
+    try std.testing.expectApproxEqAbs(day.rail.r, paint.r, 0.001);
+    try std.testing.expectApproxEqAbs(day.rail.g, paint.g, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1), paint.a, 0.001);
+    // 地不等于面板的表面色——这是 M12 的缺口：改之前两者是同一个值。
     const surface = material_paint.surfacePaint(.solid, day);
-    try std.testing.expect(@abs(solid.r - surface.r) + @abs(solid.b - surface.b) > 0.1);
+    try std.testing.expect(@abs(paint.r - surface.r) + @abs(paint.b - surface.b) > 0.1);
+    // 作者选哪档材质都不动栏地：七套主题各验一次。
+    for (themes.themes) |theme| {
+        const opaque_ground = ground(&theme);
+        try std.testing.expectApproxEqAbs(theme.rail.r, opaque_ground.r, 0.001);
+        try std.testing.expectApproxEqAbs(@as(f32, 1), opaque_ground.a, 0.001);
+    }
 }
 
 test "行的寄存器给栏，菜单的寄存器明写成纸——七套主题都不回落" {

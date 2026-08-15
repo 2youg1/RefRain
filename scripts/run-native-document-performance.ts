@@ -128,6 +128,11 @@ writeFileSync(
   buildSharedDocumentFixture(SHARED_FIXTURE_BLOCKS, SHARED_FIXTURE_BYTES),
 );
 
+// The binary that these readings belong to, hashed before the window opens and
+// again after it closes. The verifier cannot do this: it is a tier A program and
+// compiles fully static, thus it cannot hash a file.
+const preRunIdentity = await collectSourceExecutableIdentity(root, executable);
+
 const runtime = Bun.spawn([executable], {
   cwd: nativeDir,
   env: {
@@ -186,12 +191,13 @@ if (verificationExit !== 0) {
 }
 const interactionReport = parseNativeInteractionReport(verificationStdout);
 const postRunIdentity = await collectSourceExecutableIdentity(root, executable);
-assertSourceExecutableIdentityUnchanged(interactionReport.identity, postRunIdentity);
+assertSourceExecutableIdentityUnchanged(preRunIdentity, postRunIdentity);
 const report = {
   schemaVersion: 2,
   platform: windowPlatformLabel(display),
   legacy: legacyReport,
   interaction: interactionReport,
+  identity: preRunIdentity,
   postRunIdentity,
   passed: interactionReport.passed,
 };

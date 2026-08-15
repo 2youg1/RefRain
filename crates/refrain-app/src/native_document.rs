@@ -77,6 +77,13 @@ pub enum DocumentAnchor {
     Block(usize),
     /// Start at the block under this pixel offset in a uniform-height track.
     Scroll { offset: f64, block_height: f64 },
+    /// Keep the block that holds the caret in view.
+    ///
+    /// The window stays where it is while the caret is inside it. It moves the
+    /// minimum distance when the caret is outside it. An action that moves the
+    /// caret uses this anchor, because the author must see the character that
+    /// the action wrote.
+    Caret { window_first_block: usize },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -558,6 +565,33 @@ impl DocumentSurface {
     fn anchor_block(&self, anchor: DocumentAnchor, block_count: usize, total: usize) -> usize {
         match anchor {
             DocumentAnchor::Block(index) => index.min(total),
+            // Injection proof for this arm: return `window` unconditionally and
+            // `the_caret_anchor_brings_the_caret_into_the_window` fails on the
+            // first assertion.
+            DocumentAnchor::Caret { window_first_block } => {
+                let last_window = total.saturating_sub(block_count.min(total));
+                let window = window_first_block.min(last_window);
+                // A range selection keeps the window. The author selected text;
+                // the author did not ask to go somewhere. "Select all" would
+                // otherwise move the window to the end of the manuscript.
+                if self.selection.anchor != self.selection.focus {
+                    return window;
+                }
+                let caret = selection_range(self.selection).end;
+                let Some(block) = self.manuscript.block_at_offset(caret) else {
+                    return window;
+                };
+                if block < window {
+                    return block;
+                }
+                let window_end = window.saturating_add(block_count);
+                if block >= window_end {
+                    return block
+                        .saturating_sub(block_count.saturating_sub(1))
+                        .min(last_window);
+                }
+                window
+            }
             DocumentAnchor::Scroll {
                 offset,
                 block_height,
@@ -1165,6 +1199,80 @@ mod tests {
                 .first_block,
             last_window
         );
+    }
+
+    /// The caret anchor keeps the caret in view and moves the minimum distance.
+    ///
+    /// Without this rule an action that moves the caret re-projects at the last
+    /// scroll offset that the surface sent. The window then stays where the
+    /// author scrolled, and the character that the author just wrote is off the
+    /// screen. Measured before the rule: from block 99,904 a caret at byte 0
+    /// left the window at block 99,904.
+    #[test]
+    fn the_caret_anchor_brings_the_caret_into_the_window() {
+        let mut document = DocumentSurface::open(DocumentOpen::ScaleFixture).unwrap();
+        let caret = |window: usize| DocumentViewport {
+            anchor: DocumentAnchor::Caret {
+                window_first_block: window,
+            },
+            block_count: 32,
+            max_bytes: 40_960,
+            columns_em: 0.0,
+        };
+
+        // The caret is at byte 0, and the window is at the tail: the window
+        // comes back to the caret.
+        document
+            .apply(DocumentInput::SetSelection(ByteSelection {
+                anchor: 0,
+                focus: 0,
+            }))
+            .unwrap();
+        assert_eq!(document.project(caret(99_904)).unwrap().first_block, 0);
+
+        // The caret is inside the window: the window does not move.
+        let window = document.project(viewport(50_000, 32)).unwrap();
+        let inside = window.window_start;
+        document
+            .apply(DocumentInput::SetSelection(ByteSelection {
+                anchor: inside,
+                focus: inside,
+            }))
+            .unwrap();
+        assert_eq!(
+            document.project(caret(50_000)).unwrap().first_block,
+            50_000,
+            "a caret inside the window must not move it"
+        );
+
+        // The caret is below the window: the window moves the minimum distance,
+        // and the caret's block is the last block in it.
+        let below = document.project(viewport(50_100, 32)).unwrap();
+        let offset = below.window_start;
+        document
+            .apply(DocumentInput::SetSelection(ByteSelection {
+                anchor: offset,
+                focus: offset,
+            }))
+            .unwrap();
+        let moved = document.project(caret(50_000)).unwrap();
+        assert!(
+            moved.first_block > 50_000,
+            "a caret below the window must move it down, got {}",
+            moved.first_block
+        );
+        assert!(moved.first_block <= 50_100);
+
+        // A range selection keeps the window, even when its focus is at the end
+        // of the manuscript. Select-all must not move the author.
+        let total_bytes = document.project(viewport(0, 1)).unwrap().total_bytes;
+        document
+            .apply(DocumentInput::SetSelection(ByteSelection {
+                anchor: 0,
+                focus: total_bytes,
+            }))
+            .unwrap();
+        assert_eq!(document.project(caret(0)).unwrap().first_block, 0);
     }
 
     #[test]

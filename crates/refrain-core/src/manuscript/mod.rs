@@ -1079,6 +1079,17 @@ impl Manuscript {
     /// The end uses the next block's start, not the previous block's end, so
     /// separators remain attached to the projection and adjacent windows join
     /// back into the original source without inventing delimiter bytes.
+    /// Which block holds this document byte offset.
+    ///
+    /// The manuscript owns block lineage and source gaps, so it answers this
+    /// question once. A caller that walks the blocks itself makes a second
+    /// authority for the same fact. An offset past the end belongs to the last
+    /// block, and an empty manuscript has no block to name.
+    #[must_use]
+    pub fn block_at_offset(&self, offset: usize) -> Option<usize> {
+        self.offsets.block_at_or_before(offset)
+    }
+
     pub fn block_byte_range(
         &self,
         range: std::ops::Range<usize>,
