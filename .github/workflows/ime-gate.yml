@@ -72,6 +72,18 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      # The Native SDK CLI transpiles through its own TypeScript toolchain
+      # (`@typescript/old`), which bun installs under
+      # `node_modules/.bun/<name>@<version>/node_modules` where node does not
+      # look. Without this every `native` command fails with
+      # "@typescript/old does not resolve". Resolved from the installed link so
+      # no SDK version is written into the workflow.
+      - name: Point node at the Native SDK's own dependencies
+        shell: bash
+        run: |
+          sdk=$(node -e "console.log(require('fs').realpathSync('apps/native/node_modules/@native-sdk/cli'))")
+          echo "NODE_PATH=$(dirname "$(dirname "$sdk")")" >> "$GITHUB_ENV"
+
       - name: Install Chinese and Japanese input methods
         shell: pwsh
         run: |

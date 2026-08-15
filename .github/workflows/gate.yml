@@ -93,6 +93,25 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      # Every `native` command needs this, and its absence is why this gate had
+      # never been green on a runner. The Native SDK CLI transpiles the core
+      # through its own TypeScript toolchain (`@typescript/old`). Bun installs
+      # a package's own dependencies under
+      # `node_modules/.bun/<name>@<version>/node_modules`, which node does not
+      # search, so `native test` and `native build` both died with
+      # "@typescript/old does not resolve" while every source gate passed. The
+      # author's machine exports the same variable by hand, so the difference
+      # between the two never showed until the gate could say why it failed.
+      #
+      # Resolve it from the installed link instead of writing the version in:
+      # the realpath of the CLI is `<store>/node_modules/@native-sdk/cli`, so
+      # two levels up is the directory that holds its dependencies.
+      - name: Point node at the Native SDK's own dependencies
+        shell: bash
+        run: |
+          sdk=$(node -e "console.log(require('fs').realpathSync('apps/native/node_modules/@native-sdk/cli'))")
+          echo "NODE_PATH=$(dirname "$(dirname "$sdk")")" >> "$GITHUB_ENV"
+
       # Tier A gates run as compiled executables with no Bun fallback (D15),
       # so the gate cannot start until they exist.
       - name: Install ScriptC
