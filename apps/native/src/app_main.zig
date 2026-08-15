@@ -3420,7 +3420,7 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         leading_content;
     // 功能栏穿上自己的地与墨（M12）。稿子去处的左 pane 就是正文轨本身，
     // 不着栏色——那一帧根本没有栏。
-    const leading = if (railOpen(model))
+    const leading = if (railHasGround(model))
         rail.dress(ui, &themes.themes[currentThemeIndex(model)], leading_hosted)
     else
         leading_hosted;
@@ -3528,6 +3528,16 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
 /// 地、墨与分栏线三件事都读这一个判据。
 fn railOpen(model: *const Model) bool {
     return model.paletteOpen or model.destinationIndex != 0;
+}
+
+/// 栏这一帧有没有**自己的地**。墨跟着地走，否则就会出现「纸的地 + 栏的墨」
+/// 那一帧（`rail.zig` 的注释记着它第一次是怎么被真窗探针抓到的）。
+///
+/// 独占去处（裁决）就是这个口子：`railOpen` 对它为真，而 `railEdgeX` 在
+/// `layoutFraction ≥ 0.999` 时不铺地——于是整屏裁决台是纸底上的栏墨，实测
+/// 下几乎读不出字。两件事同一个判据之后，那一帧回到纸的 register。
+fn railHasGround(model: *const Model) bool {
+    return railOpen(model) and model.layoutFraction < 0.999;
 }
 
 /// 功能栏的右缘在哪里（窗口坐标 px）。地、分栏线与页脚的让位共用这一个
