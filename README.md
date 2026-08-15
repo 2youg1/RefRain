@@ -117,7 +117,17 @@ number about somebody else's machine. Where Linux disagrees, its reading is
 given beside — the two part company wherever the filesystem does the work.
 
 Windows readings: 2026-08-16, `x86_64-pc-windows-msvc`, release profile, on the
-development machine. Linux readings: the same tests as CI runs them.
+development machine — **Intel Core i5-1340P (4P+8E, 12C/16T, 1.9 GHz base),
+16 GB DDR5-5200, Samsung MZVL41T0HBLB NVMe, Windows 11 build 26220**. Linux
+readings: the same tests as CI runs them.
+
+A laptop is the point, not an apology. These are the numbers on a mid-range
+mobile part, so they are a floor: a desktop with more single-thread headroom and
+a faster NVMe will beat every row here, most visibly the project-directory row,
+which is a metadata walk of 100,000 files and is bound by single-thread CPU and
+storage latency rather than by cores. Nothing in this table touches the GPU — it
+is all store and core work. The GPU only shows up in the pixel and window
+evidence lanes, which are measured separately on an Intel Iris Xe.
 
 | | Windows — the release platform | Linux |
 |---|---|---|

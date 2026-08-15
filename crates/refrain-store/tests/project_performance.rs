@@ -31,7 +31,14 @@ const WARM_RUNS: usize = 20;
 /// platform stops being read, which is worse than no budget at all.
 ///
 /// **Where the Windows numbers come from.** Measured here on the development
-/// machine (`x86_64-pc-windows-msvc`, release). Twice on 2026-08-15: warm p95
+/// machine: Intel Core i5-1340P (4P+8E, 12C/16T, 1.9 GHz base), 16 GB DDR5-5200,
+/// Samsung MZVL41T0HBLB NVMe, Windows 11 build 26220, `x86_64-pc-windows-msvc`,
+/// release. **The machine belongs in the record because the budget is a claim
+/// about a machine.** A warm refresh is a metadata walk bound by single-thread
+/// CPU and storage latency, so a faster desktop reads well under these numbers
+/// and a slower laptop can legitimately exceed them without anything having
+/// regressed — which is exactly the argument a reader needs to make when this
+/// budget goes red on hardware nobody wrote down. Twice on 2026-08-15: warm p95
 /// 1032.2 / 1028.4 ms, product p95 809.9 / 794.5 ms, search p95 21.7 / 21.8 ms,
 /// page p95 13.7 / 13.5 ms, all refreshes 20.66 / 20.92 s. A third time on
 /// 2026-08-16, the reading the README now carries: warm p95 1074.6 ms, product
