@@ -457,20 +457,91 @@ pub fn statuslineText(ui: *Adapter.Ui, model: *const Model, document: host_bridg
 /// 保存段的墙钟打戳：渲染时观测 `savedRevision` 的变化沿，变化的那帧
 /// 打上本地毫秒戳。这是 UI 的观测不是协议——与真实落盘最多差一帧；
 /// core 子集没有墙钟，钟只能长在视图侧（注释即约定，读数别当协议用）。
-var statusline_stamped_revision: u64 = 0;
+///
+/// **两者都是可选的，而不是从 0 起算。** 旧式拿 `0` 当「还没打过戳」，于是一份
+/// 打开时就已落盘的稿子——`saved_revision` 与戳都是 0，永远碰不到变化沿——把
+/// `nowMs() - 0` 当成了间隔，状态行写着「已保存 · 496341 小时前」，那是 Unix
+/// 纪元。读错以外它还每过一小时变一次，于是每一条打开稿子的 journal 在录制后
+/// 一小时内就失效：上两轮会话都在本机看见 8/8，而 CI 稍后跑到同一步全红，
+/// 两次都被归因成了别的东西（M8 的余波、录制过期）。
+///
+/// `null` 说的是「本会话没观测到任何一次保存」，那时候视图手里没有钟读数可报，
+/// 就不报——而不是拿一个哨兵值假装成一次保存。
+var statusline_stamped_revision: ?u64 = null;
 
-var statusline_save_ms: i64 = 0;
+var statusline_save_ms: ?i64 = null;
+
+/// 保存段说的四件事之一。穷尽枚举而不是「可能为空的字串」：
+/// `saved_unobserved`（已落盘，但本会话没看见过那一次保存）是一个具名的答案，
+/// 不是一个缺省——正是把它当缺省，才让状态行报出了 Unix 纪元。
+pub const SaveState = union(enum) {
+    saving,
+    dirty,
+    saved_unobserved,
+    saved_since_ms: i64,
+};
+
+/// 保存段的判定。不认识 `Ui`，也不自己读钟——戳与当下都由调用方给，
+/// 所以这条规则可以在没有窗口的测试里被钉住。
+pub fn saveState(
+    save_pending: bool,
+    revision: u64,
+    saved_revision: u64,
+    observed_save_ms: ?i64,
+    now_ms: i64,
+) SaveState {
+    if (save_pending) return .saving;
+    if (revision != saved_revision) return .dirty;
+    const at = observed_save_ms orelse return .saved_unobserved;
+    return .{ .saved_since_ms = now_ms - at };
+}
+
+test "the save segment never reports a save this session did not observe" {
+    // 打开一份打开时就已落盘的稿子：没有观测到保存沿，就没有钟读数可报。
+    // 旧式在这里算 `now - 0`，状态行写出「已保存 · 496341 小时前」（Unix 纪元），
+    // 而且那个数每过一小时变一次——每一条打开稿子的 journal 因此在录制后一小时
+    // 内失效，本机 8/8 而 CI 全红。注入证明：把 `orelse` 换回一个 0 缺省，
+    // 这一条立刻读出一个纪元量级的间隔。
+    try std.testing.expectEqual(SaveState.saved_unobserved, saveState(false, 3, 3, null, 1_760_000_000_000));
+    try std.testing.expectEqual(SaveState.saving, saveState(true, 3, 3, null, 0));
+    try std.testing.expectEqual(SaveState.dirty, saveState(false, 4, 3, null, 0));
+    // 观测到保存之后才有间隔可报，而它是「当下减那一戳」，不是「当下减纪元」。
+    try std.testing.expectEqual(
+        SaveState{ .saved_since_ms = 3_000 },
+        saveState(false, 3, 3, 1_000, 4_000),
+    );
+}
 
 fn saveSegment(ui: *Adapter.Ui, model: *const Model) []const u8 {
-    if (model.document.save_pending) return "正在保存…";
-    if (model.document.revision != model.document.saved_revision) return "有未保存改动";
-    if (model.document.saved_revision != statusline_stamped_revision) {
-        statusline_stamped_revision = model.document.saved_revision;
-        // 墙钟走 SDK 的 runtime.nowMs（三平台一致，Windows 用 NT 精确系统
-        // 时间）：Zig 0.16 的 std.time 已不再暴露墙钟。
-        statusline_save_ms = native_sdk.runtime.nowMs();
+    // 只在「不在保存中且没有未落盘改动」的帧上观测沿，与旧式同序：
+    // 这两种状态下 `saved_revision` 还不是作者看见的那一份。
+    if (!model.document.save_pending and model.document.revision == model.document.saved_revision) {
+        if (statusline_stamped_revision) |stamped| {
+            if (stamped != model.document.saved_revision) {
+                statusline_stamped_revision = model.document.saved_revision;
+                // 墙钟走 SDK 的 runtime.nowMs（三平台一致，Windows 用 NT 精确系统
+                // 时间）：Zig 0.16 的 std.time 已不再暴露墙钟。
+                statusline_save_ms = native_sdk.runtime.nowMs();
+            }
+        } else {
+            // 第一次看见这份稿子已是落盘态：那是打开时就有的，不是本会话保存的。
+            // 记下版次好让下一次真的保存被认成变化沿，但不打钟戳。
+            statusline_stamped_revision = model.document.saved_revision;
+        }
     }
-    var buf: [32]u8 = undefined;
-    const rel = project_view.relativeSaveText(&buf, native_sdk.runtime.nowMs() - statusline_save_ms);
-    return ui.fmt("已保存 · {s}", .{rel});
+    return switch (saveState(
+        model.document.save_pending,
+        model.document.revision,
+        model.document.saved_revision,
+        statusline_save_ms,
+        native_sdk.runtime.nowMs(),
+    )) {
+        .saving => "正在保存…",
+        .dirty => "有未保存改动",
+        .saved_unobserved => "已保存",
+        .saved_since_ms => |elapsed| blk: {
+            var buf: [32]u8 = undefined;
+            break :blk ui.fmt("已保存 · {s}", .{project_view.relativeSaveText(&buf, elapsed)});
+        },
+    };
 }
