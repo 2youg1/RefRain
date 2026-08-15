@@ -424,6 +424,20 @@ pub fn setPanelMaterial(writer: *Writer, material: []const u8) ?Request {
     return writer.finish();
 }
 
+/// 换一套主题。slug 取自生成的色表，调用方不自己拼名字。
+///
+/// **口径**：`{"kind":"changeConfig","value":{"setTheme":"sumi"}}`——与
+/// `setPanelMaterial` 同形。TS 车道把七套主题写成一个七分支的 switch（受限子集
+/// 拼不出字符串），于是新增一套主题要同时改色表与那个 switch——两份权威。
+/// 这里只收一个 slug，它由调用方从色表里读出来。
+pub fn setTheme(writer: *Writer, slug: []const u8) ?Request {
+    writer.reset();
+    if (!writer.put("{\"kind\":\"changeConfig\",\"value\":{\"setTheme\":")) return null;
+    if (!writer.putString(slug)) return null;
+    if (!writer.put("}}")) return null;
+    return writer.finish();
+}
+
 /// 切换一个 Agent 的角色二态：干活 ↔ 扮演，身份原文带过去。
 ///
 /// **接上哪个功能**：设置面板 Agent 行上的切换按钮。没有身份的 Agent

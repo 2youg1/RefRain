@@ -9,9 +9,7 @@
     "test:null": "REFRAIN_NATIVE_SCALE_FIXTURE=1 native test . --yes -Dplatform=null",
     "core": "native dev . --core"
   },
-  "dependencies": {
-    "@native-sdk/core": "0.9.0"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@native-sdk/cli": "0.9.0"
   }

@@ -20,6 +20,7 @@ const roster = @import("core/roster.zig");
 const model_mod = @import("core/model.zig");
 const msg_mod = @import("core/msg.zig");
 const replies = @import("core/replies.zig");
+const host_bridge = @import("host_bridge.zig");
 const replay_seam = @import("replay_seam.zig");
 const project_request = @import("project_request.zig");
 const project_view = @import("project_view.zig");
@@ -99,6 +100,9 @@ pub const KaraState = enum(u8) {
 /// 随它回来——设置页与正文首帧因此不必等作者先按一次「读取设置」。
 pub fn initFx(model: *Model, fx: *Effects) void {
     model.* = .{};
+    // 分栏投影跟着首帧的去处算一次：缺省去处是文件，而它有侧栏。把答案写进
+    // `layout_fraction` 的缺省会造出第二份权威（改了去处表就要记得改那个数）。
+    relayout(model);
     var buffer: [replay_seam.max_record_bytes]u8 = undefined;
     const record = replay_seam.encode(&buffer, .{ .action = .health }) catch return;
     replay_seam.request(fx, .dispatch, record, Effects.hostMsg(.host_result));
@@ -230,10 +234,22 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         .document_open_jump => |opening| openManuscript(model, fx, opening.reference, opening.block),
 
         // ---------------------------------------------------------- 外观
-        .theme_next => model.theme_index = nextTheme(model.theme_index),
-        .theme_select => |index| model.theme_index = clampTheme(index),
-        // 0 实心 / 1 亚克力 / 2 液态玻璃；越界回落实心。
-        .material_select => |index| model.panel_material = if (index <= 2) index else 0,
+        // 界面立刻用新主题，落盘随后——一次写盘失败不该让主题弹回去，失败会经
+        // 答复变成一条可见状态。不落盘的话重开又回到濤，而作者会把那当成没保存成功。
+        .theme_next => selectTheme(model, fx, nextTheme(model.theme_index)),
+        .theme_select => |index| selectTheme(model, fx, clampTheme(index)),
+        // 0 实心 / 1 亚克力 / 2 液态玻璃；越界回落实心。与主题同一条纪律：先记下标，后落盘。
+        .material_select => |index| {
+            model.panel_material = if (index <= 2) index else 0;
+            const slug = switch (model.panel_material) {
+                1 => "acrylic",
+                2 => "liquid",
+                else => "solid",
+            };
+            var writer: project_request.Writer = .{};
+            const encoded = project_request.setPanelMaterial(&writer, slug) orelse return;
+            sendProject(fx, model, encoded.bytes);
+        },
 
         // ---------------------------------------------------------- 帧
         .frame => |size| {
@@ -872,6 +888,19 @@ fn relayout(model: *Model) void {
     model.layout_fraction = workbench.layoutFraction(model.destination, model.rail_fraction);
 }
 
+/// 选中一套主题：先记下标，再把它落盘。
+///
+/// slug 从生成的色表里读，不在这里拄一张下标→名字的表（TS 车道那个七分支的
+/// switch 是受限子集的产物，它让新增一套主题要改两处）。
+fn selectTheme(model: *Model, fx: *Effects, index: u8) void {
+    model.theme_index = index;
+    const themes = @import("generated/themes.zig");
+    if (index >= themes.themes.len) return;
+    var writer: project_request.Writer = .{};
+    const encoded = project_request.setTheme(&writer, themes.themes[index].slug) orelse return;
+    sendProject(fx, model, encoded.bytes);
+}
+
 /// 换下一套主题，到末尾回到第一套。
 fn nextTheme(current: u8) u8 {
     const count = themeCount();
@@ -947,6 +976,9 @@ fn applyHostResult(model: *Model, result: native_sdk.EffectHostResult, fx: *Effe
         },
         .project => landProject(model, response, fx),
         .open_manuscript, .apply_input, .obtain_projection, .scroll_projection => {
+            // 正文先落进桥的模块缓冲，再收会话事实。两件事都在这一条臂里，因为
+            // 它是回放会走的那条路（M8：见 `host_bridge.adoptWire`）。
+            host_bridge.adoptWire(result.bytes);
             landDocument(model, response, channel, fx);
         },
     }
@@ -1271,7 +1303,8 @@ test "74 条臂全部有落地，待迁表是空的" {
 }
 
 test "导航：够得着就走，够不着就说为什么" {
-    var model: Model = .{};
+    // 首帧在文件去处（`Model` 的缺省），先回稿子再试一次够不着的导航。
+    var model: Model = .{ .destination = .manuscript };
     var fx: Effects = undefined;
     // 裁决台要一份稿子；没有稿子时不动去处，留下一句话。
     update(&model, .{ .workbench_go = .review }, &fx);
@@ -1292,7 +1325,7 @@ test "导航：够得着就走，够不着就说为什么" {
 }
 
 test "同键再按回正文，退层回上一个去处" {
-    var model: Model = .{ .document = .{ .session = 1 } };
+    var model: Model = .{ .destination = .manuscript, .document = .{ .session = 1 } };
     var fx: Effects = undefined;
     update(&model, .{ .workbench_go = .files }, &fx);
     update(&model, .{ .workbench_go = .dispatch }, &fx);
@@ -1310,7 +1343,7 @@ test "同键再按回正文，退层回上一个去处" {
 }
 
 test "四区键位与分栏投影一起动" {
-    var model: Model = .{ .document = .{ .session = 1 } };
+    var model: Model = .{ .destination = .manuscript, .document = .{ .session = 1 } };
     var fx: Effects = undefined;
     // Cmd+2 去文件区：分栏比例跟着变成侧栏宽。
     update(&model, .{ .workbench_key = 2 }, &fx);
@@ -1326,7 +1359,7 @@ test "四区键位与分栏投影一起动" {
 }
 
 test "探头态：交互留下栏，机器的动静不解除" {
-    var model: Model = .{ .document = .{ .session = 1 } };
+    var model: Model = .{ .destination = .manuscript, .document = .{ .session = 1 } };
     var fx: Effects = undefined;
     update(&model, .rail_peek_open, &fx);
     try testing.expect(model.rail_peek);
@@ -1348,7 +1381,7 @@ test "探头态：交互留下栏，机器的动静不解除" {
 }
 
 test "名录键只在有名录的去处上动" {
-    var model: Model = .{ .document = .{ .session = 1 }, .roster_count = 3 };
+    var model: Model = .{ .destination = .manuscript, .document = .{ .session = 1 }, .roster_count = 3 };
     var fx: Effects = undefined;
     // 稿子上没有名录：游标不动，免得作者回到台上时位置已经漂了。
     update(&model, .{ .roster_step = 1 }, &fx);
@@ -1466,19 +1499,9 @@ test "没有稿子就不发保存，也不立在飞旗" {
     try testing.expect(!model.document.save_pending);
 }
 
-test "主题循环与越界都落在色表内" {
-    var model: Model = .{};
-    var fx: Effects = undefined;
-    const count = themeCount();
-    try testing.expect(count > 0);
-    var index: u8 = 0;
-    while (index < count) : (index += 1) update(&model, .theme_next, &fx);
-    try testing.expectEqual(@as(u8, 0), model.theme_index); // 转了一圈回到第一套
-    update(&model, .{ .theme_select = 200 }, &fx);
-    try testing.expectEqual(@as(u8, 0), model.theme_index);
-    update(&model, .{ .material_select = 9 }, &fx);
-    try testing.expectEqual(@as(u8, 0), model.panel_material);
-}
+// 主题与材质的落地在真 `Effects` 上判：它们现在会发一条落盘请求。
+// 见测试「换主题立刻换肤，同时把选择落盘」。
+
 
 test "开盒装好起笔但不开改写框，Alt+E 才开" {
     var model: Model = .{};
@@ -2222,4 +2245,44 @@ test "生命周期只译焦点两面" {
     try testing.expect(lifecycleMsg(.start) == null);
     try testing.expect(lifecycleMsg(.frame) == null);
     try testing.expect(lifecycleMsg(.stop) == null);
+}
+
+test "换主题立刻换肤，同时把选择落盘" {
+    var h = try CoreHarness.create();
+    defer h.destroy();
+    const themes = @import("generated/themes.zig");
+    try testing.expect(themes.themes.len > 1);
+
+    // 换一套：下标前进，并且发出一条 changeConfig。不落盘的话重开又回到濤，
+    // 而作者会把那当成主题没保存成功。
+    try h.dispatch(.theme_next);
+    try testing.expectEqual(@as(u8, 1), h.model().theme_index);
+    try testing.expectEqual(protocol.Action.project, h.parkedAction().?);
+    try testing.expectEqualStrings(
+        "{\"kind\":\"changeConfig\",\"value\":{\"setTheme\":\"" ++ themes.themes[1].slug ++ "\"}}",
+        h.parkedText(),
+    );
+
+    // 转一圈回到第一套。
+    var index: u8 = 1;
+    while (index < themes.themes.len) : (index += 1) try h.dispatch(.theme_next);
+    try testing.expectEqual(@as(u8, 0), h.model().theme_index);
+
+    // 越界的选择回落默认，而不是让色表越界。
+    try h.dispatch(.{ .theme_select = 200 });
+    try testing.expectEqual(@as(u8, 0), h.model().theme_index);
+
+    // 材质同一条纪律：先记下标，后落盘；越界回落实心。
+    try h.dispatch(.{ .material_select = 1 });
+    try testing.expectEqual(@as(u8, 1), h.model().panel_material);
+    try testing.expectEqualStrings(
+        "{\"kind\":\"changeConfig\",\"value\":{\"setPanelMaterial\":\"acrylic\"}}",
+        h.parkedText(),
+    );
+    try h.dispatch(.{ .material_select = 9 });
+    try testing.expectEqual(@as(u8, 0), h.model().panel_material);
+    try testing.expectEqualStrings(
+        "{\"kind\":\"changeConfig\",\"value\":{\"setPanelMaterial\":\"solid\"}}",
+        h.parkedText(),
+    );
 }

@@ -259,7 +259,7 @@ fn manuscriptTokens(model: *const Model) native_sdk.canvas.DesignTokens {
 /// 是因为它们正是作者在别的应用里工作时会想起来的两件事。
 ///
 /// 标题写进 SDK 给的暂存区，所以不必在 Model 里再存一份格式化后的字符串。
-fn statusItem(model: *const Model, scratch: *Adapter.App.StatusItemScratch) Adapter.App.StatusItemState {
+fn statusItem(model: *const Model, scratch: *Adapter.StatusItemScratch) Adapter.StatusItemState {
     const title = std.fmt.bufPrint(
         &scratch.title_buffer,
         "RefRain · {d} 字节",
@@ -292,7 +292,7 @@ fn chromeAnimations(
 /// 墨线是部件树里的元素（不是 suffix 定位）：栏脚高随 KARA 行变化，
 /// 部件树给的位置永远是对的。
 fn inkAnimation(model: *const Model, start_ns: u64, out: []native_sdk.canvas.CanvasRenderAnimation) usize {
-    if (out.len == 0 or !model.savePending) return 0;
+    if (out.len == 0 or !model.document.save_pending) return 0;
     out[0] = .{
         .id = native_sdk.canvas.globalWidgetId(.stack, .{ .str = "busy-ink" }),
         .start_ns = start_ns,
@@ -467,7 +467,7 @@ fn mailboxView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     var count: usize = 0;
     // 页签决定读哪份投影；未读数只在默认列表有意义，回收站里数它
     // 会数出「刚放弃的那批」——那不是未读。
-    const discarded = model.mailboxDiscarded;
+    const discarded = model.mailbox_discarded;
     const unread = if (discarded) 0 else blk: {
         var seen: usize = 0;
         var walk: usize = 0;
@@ -660,7 +660,7 @@ fn runCard(
 fn readMailboxMsg(model: *const Model) ?Msg {
     if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
-    const request = project_request.readMailbox(&writer, model.root_id.slice(), model.mailboxDiscarded) orelse return null;
+    const request = project_request.readMailbox(&writer, model.root_id.slice(), model.mailbox_discarded) orelse return null;
     return .{ .project_request = request.bytes };
 }
 
@@ -1249,12 +1249,11 @@ fn beginAgentEditMsg(agent_id: []const u8) Msg {
 /// upsert——名字与身份从 Rust 快照回填，只改参数。编辑态与草稿住在
 /// Model（`editingAgent`／`agentArgvDraft`），与改写区同一条纪律。
 fn agentArgvEditor(ui: *Adapter.Ui, model: *const Model, agent: project_view.Agent) Adapter.Ui.Node {
-    const Input = @FieldType(Msg, "agent_argv_typed");
     return ui.column(.{ .gap = 4 }, .{
         ui.textField(.{
             .text = model.editing_agent.body.slice(),
             .placeholder = "--model max --temperature 0.2",
-            .on_input = Adapter.Ui.translatedInputMsg(.agent_argv_typed, Input),
+            .on_input = Adapter.Ui.inputMsg(.agent_argv_typed),
             .semantics = .{ .label = "这个 Agent 的专属参数" },
         }),
         ui.button(.{
@@ -1439,7 +1438,6 @@ fn readConfigMsg() ?Msg {
 /// 走焦点、Enter 跳过去（on_submit）、Space 选择激活，都是 SDK 的 list
 /// 键图原生行为。
 fn searchView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    const Input = @FieldType(Msg, "search_typed");
     const results = snapshot.value(replies.borrow(.project));
     const kind = snapshot.kind(replies.borrow(.project));
     const is_blocks = std.mem.eql(u8, kind, "blocks");
@@ -1481,13 +1479,13 @@ fn searchView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
                 .grow = 1,
                 .text = model.search.query.slice(),
                 .placeholder = "搜索文档或正文",
-                .on_input = Adapter.Ui.translatedInputMsg(.search_typed, Input),
+                .on_input = Adapter.Ui.inputMsg(.search_typed),
                 .semantics = .{ .label = "搜索词" },
             }),
             ui.button(.{
                 .on_press = .{ .search_precision = {} },
                 .semantics = .{ .label = "切换精确与宽松" },
-            }, if (model.searchExact) "精确" else "宽松"),
+            }, if (model.search.exact) "精确" else "宽松"),
         }),
         ui.row(.{ .gap = 8 }, .{
             ui.button(.{
@@ -1514,9 +1512,9 @@ fn searchMsg(model: *const Model, comptime blocks: bool) ?Msg {
     if (model.root_id.slice().len == 0 or model.search.query.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = if (blocks)
-        project_request.blockSearch(&writer, model.root_id.slice(), model.search.query.slice(), model.searchExact)
+        project_request.blockSearch(&writer, model.root_id.slice(), model.search.query.slice(), model.search.exact)
     else
-        project_request.documentSearch(&writer, model.root_id.slice(), model.search.query.slice(), model.searchExact);
+        project_request.documentSearch(&writer, model.root_id.slice(), model.search.query.slice(), model.search.exact);
     return .{ .project_request = (request orelse return null).bytes };
 }
 
@@ -1597,8 +1595,8 @@ fn manuscriptMenu(model: *const Model) []const Adapter.Ui.ContextMenuItem {
         // workbench_key 的 ordinal  remap 后 3 是稿子、4 是动态的 Agent
         // 去处，印它们的键位会教作者一个按到别处的组合。
         .{ .label = commands.withHint(&State.label_pool[2], "go.2"), .msg = .{ .workbench_key = 2 } },
-        .{ .label = "裁决", .msg = .{ .workbench_go = 2 } },
-        .{ .label = "派发", .msg = .{ .workbench_go = 3 } },
+        .{ .label = "裁决", .msg = .{ .workbench_go = .review } },
+        .{ .label = "派发", .msg = .{ .workbench_go = .dispatch } },
         .{ .separator = true },
         .{ .label = commands.withHint(&State.label_pool[5], "palette"), .msg = .{ .palette_toggle = {} } },
     };
@@ -1793,7 +1791,6 @@ fn stalePanel(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
 /// 这一屏能判的，范围对不上块由 Rust 在入口具名拒绝。
 fn annotationsSection(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     const listing = snapshot.value(replies.borrow(.project));
-    const Input = @FieldType(Msg, "annotation_draft_typed");
     var rows: [mailbox_rows]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     while (count < rows.len) : (count += 1) {
@@ -1829,7 +1826,7 @@ fn annotationsSection(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
                 .grow = 1,
                 .text = model.annotation_draft.slice(),
                 .placeholder = "写评论（留空就是高亮）",
-                .on_input = Adapter.Ui.translatedInputMsg(.annotation_draft_typed, Input),
+                .on_input = Adapter.Ui.inputMsg(.annotation_draft_typed),
                 .semantics = .{ .label = "评论草稿" },
             }),
             ui.button(.{
@@ -1933,12 +1930,10 @@ fn proposalRow(
     // 作者以为可以一次改好几处，而每次提交只带一条的最终正文。
     const revising = model.revising.id.slice().len > 0 and
         std.mem.eql(u8, model.revising.id.slice(), proposal.id);
-    // 游标是 i64：-1 表示没有行。先判非负再转 usize（整数槽纪律）。
-    const on_cursor = model.rosterCursor >= 0 and
-        index == @as(usize, @intCast(model.rosterCursor));
+    // 游标是 `?u32`：null 就是没有行。旧形用 −1 占这个位，每个读取点都得记得。
+    const on_cursor = if (model.roster_cursor) |row| index == @as(usize, row) else false;
     // 竞争稿只在游标行找：翻 B 面跟着行走，不跟着台子走。
     const competitor = if (on_cursor) project_view.competitorOf(listing, index) else null;
-    const ReasonInput = @FieldType(Msg, "review_reason_typed");
     return ui.el(.card, .{
         .key = .{ .index = index },
         .padding = 8,
@@ -1951,7 +1946,7 @@ fn proposalRow(
                 ui.text(.{ .grow = 1 }, proposal.scope),
                 // 游标行有竞争者时，翻到哪面就亮哪面的徽标。
                 ui.text(.{}, if (competitor != null)
-                    (if (model.reviewPeer == 1) "竞争 B" else "竞争 A")
+                    (if (model.review.peer) "竞争 B" else "竞争 A")
                 else
                     ""),
                 // 判过的行标出来，作者据此知道自己判到第几条。
@@ -1966,7 +1961,7 @@ fn proposalRow(
                 ui.text(.{}, "（只留评论，不改正文）"),
             // B 面：竞争稿的正文画在原文与改后之下。找不到就说没有——
             // 画一段空气会被读成「竞争稿是空的」。
-            if (on_cursor and model.reviewPeer == 1)
+            if (on_cursor and model.review.peer)
                 (if (competitor) |peer|
                     (if (peer.after_text.len > 0)
                         ui.text(.{}, ui.fmt("竞争稿：{s}", .{peer.after_text}))
@@ -2007,13 +2002,13 @@ fn proposalRow(
             }),
             // 理由框只开在游标行：理由随下一次裁决发出，与行绑定才不会
             // 让作者以为它是整批的。
-            if (on_cursor and model.reasonOpen)
+            if (on_cursor and model.review.reason_open)
                 ui.row(.{ .gap = 8, .cross = .center }, .{
                     ui.textField(.{
                         .grow = 1,
                         .text = model.review.reason_draft.slice(),
                         .placeholder = "理由（可留空）",
-                        .on_input = Adapter.Ui.translatedInputMsg(.review_reason_typed, ReasonInput),
+                        .on_input = Adapter.Ui.inputMsg(.review_reason_typed),
                         .on_submit = @as(?Msg, .review_reason_commit),
                         // 边沿触发：开框那一帧 false→true 拉一次焦点，
                         // 之后保持 true 也不会再抢作者的焦点。
@@ -2035,7 +2030,7 @@ fn proposalRow(
             else
                 ui.el(.stack, .{ .height = 0 }, .{}),
             // 已记下的理由亮出来：它随下一次裁决发出，作者要知道它还在。
-            if (on_cursor and model.reasonRecorded)
+            if (on_cursor and model.review.reason_recorded)
                 ui.text(.{}, ui.fmt("理由：{s} · 随下一次裁决发出", .{
                     if (model.review.reason.slice().len > 0) model.review.reason.slice() else "（空）",
                 }))
@@ -2056,7 +2051,6 @@ fn proposalRow(
 /// 规则在 Rust 的入口（`stage_verdict`），这里不复制它；按钮在文字为空时
 /// 灰掉，是为了让作者在按下之前就知道，而不是收到一次拒绝。
 fn revisionEditor(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    const Input = @FieldType(Msg, "revision_typed");
     return ui.column(.{ .gap = 6, .padding = 6 }, .{
         ui.text(.{}, "改成："),
         // 用 `ui.code(editable)` 而不是 `textField`：一段改写文字可以有多行，
@@ -2067,7 +2061,7 @@ fn revisionEditor(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             .language = document_language.syntaxOf(host_bridge.documentView().format),
             .editable = true,
             .wrap = true,
-            .on_input = Adapter.Ui.translatedInputMsg(.revision_typed, Input),
+            .on_input = Adapter.Ui.inputMsg(.revision_typed),
             .semantics = .{ .label = "改写后的正文" },
         }, model.revising.body.slice()),
         ui.row(.{ .gap = 8 }, .{
@@ -2104,7 +2098,7 @@ fn verdictMsg(model: *const Model, proposal_id: []const u8, kind: []const u8) ?M
         proposal_id,
         kind,
         "",
-        if (model.reasonRecorded) model.review.reason.slice() else "",
+        if (model.review.reason_recorded) model.review.reason.slice() else "",
     ) orelse return null;
     return .{ .desk_verdict = request.bytes };
 }
@@ -2119,7 +2113,7 @@ fn verdictMsg(model: *const Model, proposal_id: []const u8, kind: []const u8) ?M
 fn beginRevisionMsg(listing: snapshot.Value, index: usize) ?Msg {
     const proposal = project_view.proposalAt(listing, index) orelse return null;
     return .{ .revision_begin = .{
-        .proposalId = proposal.id,
+        .id = proposal.id,
         .seed = proposal.after_text,
     } };
 }
@@ -2143,7 +2137,7 @@ fn commitRevisionMsg(model: *const Model) ?Msg {
         model.revising.id.slice(),
         "accept-modified",
         model.revising.body.slice(),
-        if (model.reasonRecorded) model.review.reason.slice() else "",
+        if (model.review.reason_recorded) model.review.reason.slice() else "",
     ) orelse return null;
     return .{ .desk_verdict = request.bytes };
 }
@@ -2396,7 +2390,6 @@ fn orchestrationAt(index: i64) @TypeOf(orchestrations[0]) {
 /// 下游在上游收取后自动发射（领域层管）——这一节只读快照，一条编排
 /// 规则也不复制。材料草稿的「改」在行内完成：作者不离台。
 fn dispatchView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    const Input = @FieldType(Msg, "dispatch_typed");
     const document = host_bridge.documentView();
     const selected = selectedText(document);
     const span = coverageSpan(model);
@@ -2426,7 +2419,7 @@ fn dispatchView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         ui.el(.textarea, .{
             .wrap = true,
             .text = model.dispatch.prompt.slice(),
-            .on_input = Adapter.Ui.translatedInputMsg(.dispatch_typed, Input),
+            .on_input = Adapter.Ui.inputMsg(.dispatch_typed),
             .on_submit = dispatchMsg(model, selected),
             .semantics = .{ .label = "写给 agent 的要求" },
         }, .{}),
@@ -2482,19 +2475,18 @@ fn dispatchView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
 /// 勾选覆盖的连续块段：from 是起始 ordinal，count 是块数。
 const DeskSpan = struct { from: u64, count: u64 };
 
-/// 勾选位图的第 i 位：置位 = ordinal i 被勾。越界当 0。
+/// 勾选位图的第 i 位。越界当 0。
+///
+/// 旧形是一个按需长长的字节数组，每个读取点自己做 `>>3` 与 `&7`；现在是
+/// `StaticBitSet(1024)`，那两次移位连同「越界当 0」的约定一起归它。
 fn deskBit(model: *const Model, ordinal: usize) bool {
-    const byte_index = ordinal >> 3;
-    if (byte_index >= model.dispatchChecked.len) return false;
-    const shift: u3 = @intCast(ordinal & 7);
-    return (model.dispatchChecked[byte_index] >> shift) & 1 == 1;
+    if (ordinal >= model.dispatch.checked.capacity()) return false;
+    return model.dispatch.checked.isSet(ordinal);
 }
 
 /// 勾了几块。
 fn deskCheckedCount(model: *const Model) usize {
-    var count: usize = 0;
-    for (model.dispatchChecked) |byte| count += @popCount(byte);
-    return count;
+    return model.dispatch.checked.count();
 }
 
 /// 勾选的最小覆盖：首末置位之间的连续块段。一块也没勾时是 null。
@@ -2502,7 +2494,7 @@ fn coverageSpan(model: *const Model) ?DeskSpan {
     var first: ?usize = null;
     var last: usize = 0;
     var ordinal: usize = 0;
-    while (ordinal < model.dispatchChecked.len * 8) : (ordinal += 1) {
+    while (ordinal < model.dispatch.checked.capacity()) : (ordinal += 1) {
         if (deskBit(model, ordinal)) {
             if (first == null) first = ordinal;
             last = ordinal;
@@ -2648,12 +2640,9 @@ fn deskBlockList(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             ),
         if (count > 0)
             ui.button(.{
-                // deskBlocksNext < 0 = 没有下页（core 的 -1 哨兵）。
-                .disabled = model.deskBlocksNext < 0,
-                .on_press = readBlocksMsg(model, if (model.deskBlocksNext >= 0)
-                    @intCast(model.deskBlocksNext)
-                else
-                    null),
+                // null = 没有下页（旧形用 −1 当哨兵）。
+                .disabled = model.dispatch.blocks_next == null,
+                .on_press = readBlocksMsg(model, if (model.dispatch.blocks_next) |next| @as(u64, next) else null),
                 .semantics = .{ .label = "读入下一页块" },
             }, "再读一页")
         else
@@ -2965,7 +2954,6 @@ fn dispatchPreviewSection(ui: *Adapter.Ui) Adapter.Ui.Node {
 /// `draftAfterEdit` 路径；编辑中的行把「收进资料区／收成正文」换成带
 /// 编辑后正文的版本（`edited_body` 通道，M3 备好的那条）。
 fn materialDraftsSection(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    const DraftInput = @FieldType(Msg, "material_draft_typed");
     const is_drafts = std.mem.eql(u8, snapshot.kind(replies.borrow(.project)), "materialDrafts");
     const listing = snapshot.value(replies.borrow(.project));
     var rows: [mailbox_rows]Adapter.Ui.Node = undefined;
@@ -2989,7 +2977,7 @@ fn materialDraftsSection(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
                                 .language = .markdown,
                                 .editable = true,
                                 .wrap = true,
-                                .on_input = Adapter.Ui.translatedInputMsg(.material_draft_typed, DraftInput),
+                                .on_input = Adapter.Ui.inputMsg(.material_draft_typed),
                                 .semantics = .{ .label = "改这条草稿的正文" },
                             }, model.material_draft.body.slice()),
                             ui.row(.{ .gap = 8 }, .{
@@ -3231,7 +3219,6 @@ fn verdictBento(
     column_width: f32,
     line_height: f32,
 ) ?Adapter.Ui.Node {
-    const ReviseInput = @FieldType(Msg, "revision_typed");
     if (model.review.proposal.slice().len == 0) return null;
     for (document.ranges) |range| {
         if (range.kind != 3) continue;
@@ -3273,7 +3260,7 @@ fn verdictBento(
                             .language = document_language.syntaxOf(document.format),
                             .editable = true,
                             .wrap = true,
-                            .on_input = Adapter.Ui.translatedInputMsg(.revision_typed, ReviseInput),
+                            .on_input = Adapter.Ui.inputMsg(.revision_typed),
                             .semantics = .{ .label = "改写后的正文" },
                         }, model.revising.body.slice()),
                         ui.button(.{
@@ -3299,37 +3286,15 @@ fn verdictBento(
     return null;
 }
 
-/// 点开印点：预编接受/退回两条请求（judgeVerdict），起笔从裁决名录读
-/// （名录没在读就空起笔）。
+/// 点开印点：带提案 id 与起笔（名录没在读就空起笔）。
+///
+/// 单元 13 之前这里还预编两条 `judgeVerdict` 请求随 `Msg` 搭过去，因为受限子集
+/// 拼不出 JSON，只能让 Zig 在渲染时先编好。Zig 核心自己调得动编码器，那一族摆渡
+/// 字段因此不存在（`core/msg.zig` 里有一条测试钉着它不要回来）。
 fn verdictBeginMsg(model: *const Model, range: protocol.AnchorRangeWire) ?Msg {
     if (model.root_id.slice().len == 0 or model.document.path.slice().len == 0) return null;
     const id: []const u8 = &range.id;
-    var accept_writer = project_request.Writer{};
-    const accept = project_request.judgeVerdict(
-        &accept_writer,
-        model.root_id.slice(),
-        model.document.path.slice(),
-        id,
-        "accept",
-        "",
-        "",
-    ) orelse return null;
-    var reject_writer = project_request.Writer{};
-    const reject = project_request.judgeVerdict(
-        &reject_writer,
-        model.root_id.slice(),
-        model.document.path.slice(),
-        id,
-        "reject",
-        "",
-        "",
-    ) orelse return null;
-    return .{ .verdict_begin = .{
-        .proposalId = id,
-        .accept = accept.bytes,
-        .reject = reject.bytes,
-        .seed = proposalSeedById(id),
-    } };
+    return .{ .verdict_begin = .{ .id = id, .seed = proposalSeedById(id) } };
 }
 
 /// 从裁决名录里按 id 读起笔（agent 的建议）。名录没在读就空起笔。
@@ -3363,7 +3328,6 @@ fn judgeRevisionMsg(model: *const Model) ?Msg {
 }
 
 fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    const Input = @FieldType(Msg, "document_input");
     const Scroll = @FieldType(Msg, "document_scroll");
     const document = host_bridge.documentView();
     const total_blocks: u64 = @intCast(@max(model.document.blocks, 0));
@@ -3377,7 +3341,7 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         // 代码文件就有色，零自研着色代码。散文走 markdown 语法。
         .language = document_language.syntaxOf(document.format),
         .editable = model.document.session != 0,
-        .on_input = Adapter.Ui.translatedInputMsg(.document_input, Input),
+        .on_input = Adapter.Ui.inputMsg(.document_input),
         .wrap = true,
         // 列宽 = 生效行长 × 字号：作者调的「行长」在这里真正生效；0（帧前）
         // 自动宽。SDK 按这个宽度换行，Rust 按同一字身数断行，两处不换两套。
@@ -3452,22 +3416,22 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     const depth = panel_stack.fittingDepth(
         @floatCast(@max(model.window.width, 0)),
         @floatCast(model.layout_fraction),
-        panel_stack.visibleDepth(model.panelStack, model.destinationIndex),
+        model.panel_stack.visibleDepth(model.destination),
     );
-    const layered = depth >= 2 and !model.paletteOpen;
+    const layered = depth >= 2 and !model.palette.open;
     // 左 pane 的内容：命令面板住在功能区（打开时整个换成它——模式替换，
     // 舞台规则不许浮层，关掉回原来的去处），否则是当前去处。
-    const leading_content = if (model.paletteOpen)
+    const leading_content = if (model.palette.open)
         palettePanel(ui, model)
     else
-        destinationView(ui, model, track_with_card, model.destinationIndex);
+        destinationView(ui, model, track_with_card, model.destination);
     // 探头态的感应面（2.13）：栏是贴左缘探出来的且作者还没用过它——
     // 指针移出整个栏宽发 `rail_peek_close` 收回稿子。感应面只在探头态挂：
     // 手动开的栏（railPeek==0）永不自动收，这条分支不进。迟滞 = 栏宽天然
     // 提供（开 4px、关约 248px）。只挂 leave 即可：SDK 对链上元素先捕获
     // 配对的 leave 再谈 enter，悬停对不因缺 enter 消息而哑（ui_app.zig
     // 悬停批处理注释）。
-    const leading_hosted = if (!model.paletteOpen and model.railPeek == 1)
+    const leading_hosted = if (!model.palette.open and model.rail_peek)
         ui.el(.stack, .{
             .grow = 1,
             .on_hover_leave = .{ .rail_peek_close = {} },
@@ -3499,12 +3463,12 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             .grow = 1,
         }, .{
             leading,
-            switch (model.destinationIndex) {
+            switch (model.destination) {
                 // 除了稿子与裁决（独占），正文恒在右 pane——作者做任何事时
                 // 都不失去手上这一份（旧版正文让位同源）。
-                1, 3, 4, 5, 6, 7 => track_with_card,
+                .files, .dispatch, .mailbox, .connections, .history, .settings => track_with_card,
                 // 面板开着时正文让位到右 pane（稿子本来独占，裁决仍独占）。
-                else => if (model.paletteOpen and model.destinationIndex == 0)
+                else => if (model.palette.open and model.destination == .manuscript)
                     track_with_card
                 else
                     ui.el(.stack, .{ .grow = 1 }, .{}),
@@ -3527,7 +3491,7 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             ui.el(.stack, .{ .width = rail_lead }, .{}),
             // 呼吸墨线：保存答复未回时在状态行左侧起伏（2.7，ping_pong）。
             // 在飞才有，走了就撤——栏脚不为「没在等什么」留一条死线。
-            if (model.savePending)
+            if (model.document.save_pending)
                 ui.el(.stack, .{
                     .global_key = .{ .str = "busy-ink" },
                     .width = motion.ink_width,
@@ -3547,7 +3511,7 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         ui,
         &themes.themes[currentThemeIndex(model)],
         edge,
-        @floatFromInt(@max(model.window.height, 0)),
+        @floatCast(@max(model.window.height, 0)),
     ) else null;
     // 地在最底层（栏内各层透它），线在最上层（它是分界，不能被任何
     // 一层盖住）。
@@ -3568,7 +3532,7 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     // 关要移出整个栏宽（约 248px，感应面见 split 左 pane 的 railPeek 分支）。
     // 高度取实窗高；窗尺寸未到时帧事件会立刻补上，不做无边界的猜测高度。
     if (!railOpen(model)) {
-        const window_height: f32 = @floatFromInt(@max(model.window.height, 0));
+        const window_height: f32 = @floatCast(@max(model.window.height, 0));
         shell_layers[shell_count] = ui.el(.stack, .{
             .frame = native_sdk.geometry.RectF.init(0, 0, 4, window_height),
             .on_hover_enter = .{ .rail_peek_open = {} },
@@ -3583,7 +3547,7 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
 /// 这一帧有没有功能栏。稿子去处且命令面板没开时正文占满全宽，没有栏——
 /// 地、墨与分栏线三件事都读这一个判据。
 fn railOpen(model: *const Model) bool {
-    return model.paletteOpen or model.destinationIndex != 0;
+    return model.palette.open or model.destination != .manuscript;
 }
 
 /// 栏这一帧有没有**自己的地**。墨跟着地走，否则就会出现「纸的地 + 栏的墨」
@@ -3647,11 +3611,11 @@ fn statuslineText(ui: *Adapter.Ui, model: *const Model, document: host_bridge.Do
 /// 保存段的墙钟打戳：渲染时观测 `savedRevision` 的变化沿，变化的那帧
 /// 打上本地毫秒戳。这是 UI 的观测不是协议——与真实落盘最多差一帧；
 /// core 子集没有墙钟，钟只能长在视图侧（注释即约定，读数别当协议用）。
-var statusline_stamped_revision: i64 = -1;
+var statusline_stamped_revision: u64 = 0;
 var statusline_save_ms: i64 = 0;
 
 fn saveSegment(ui: *Adapter.Ui, model: *const Model) []const u8 {
-    if (model.savePending) return "正在保存…";
+    if (model.document.save_pending) return "正在保存…";
     if (model.document.revision != model.document.saved_revision) return "有未保存改动";
     if (model.document.saved_revision != statusline_stamped_revision) {
         statusline_stamped_revision = model.document.saved_revision;
@@ -3673,7 +3637,7 @@ fn saveSegment(ui: *Adapter.Ui, model: *const Model) []const u8 {
 /// 之一）——叠放在正文轨顶，frame 定位，不进流、不随滚动。宽度沿用
 /// 饭盒的那条公式（`verdictBento`），不新写几何。
 fn karaReturnCard(ui: *Adapter.Ui, model: *const Model, column_width: f32, line_height: f32) Adapter.Ui.Node {
-    if (!model.karaCard) return ui.el(.stack, .{ .height = 0 }, .{});
+    if (!model.kara.card) return ui.el(.stack, .{ .height = 0 }, .{});
     const width = @min(@as(f32, 340), @max(@as(f32, 240), column_width));
     var card = ui.el(.panel, .{
         // 轨顶内缩 12（根栏间距的既有数）；高是一行加 padding 16。
@@ -3774,23 +3738,24 @@ fn destinationView(
     ui: *Adapter.Ui,
     model: *const Model,
     track: Adapter.Ui.Node,
-    index: i64,
+    destination: core.Destination,
 ) Adapter.Ui.Node {
-    return switch (index) {
+    // 枚举而不是裸下标：那条 `else => track` 兵底随之消失，新增一个去处而忘了画它，
+    // 编译器的穷尽性检查先红——而不是作者看到一屏正文。
+    return switch (destination) {
         // 稿子：正文占满（右 pane 空）。文件：文件树最左，可拖宽。
-        0 => track,
-        1 => filesView(ui, model),
+        .manuscript => track,
+        .files => filesView(ui, model),
         // 裁决台画提案，不画 Run 名录：作者在这里判的是「这一改值不值得」。
-        2 => reviewView(ui, model),
+        .review => reviewView(ui, model),
         // 派发台画的是「送什么出去」，不是「送出去了什么」——后者在信箱。
-        3 => dispatchView(ui, model),
-        4 => mailboxView(ui, model),
+        .dispatch => dispatchView(ui, model),
+        .mailbox => mailboxView(ui, model),
         // 连接问的是这台机器有什么，不是这个项目有什么。
-        5 => connectionsView(ui),
+        .connections => connectionsView(ui),
         // 历史读的是落盘的记录，不是内存里那条撤销链。
-        6 => historyView(ui, model),
-        7 => settingsView(ui, model),
-        else => track,
+        .history => historyView(ui, model),
+        .settings => settingsView(ui, model),
     };
 }
 
@@ -3829,10 +3794,9 @@ fn layeredBody(
             .global_key = if (current) .{ .str = "panel-current" } else null,
             .width = width,
         }, .{
-            destinationView(ui, model, track, panel_stack.visibleLayerAt(
-                model.panelStack,
-                model.destinationIndex,
-                at,
+            destinationView(ui, model, track, model.panel_stack.visibleLayerAt(
+                model.destination,
+                @intCast(at),
             )),
         });
         // 功能栏穿上自己的地与墨（`rail.dress`）：材质配方、去弧边、去外框
@@ -3861,7 +3825,6 @@ fn layeredBody(
 /// 空节不画。当前不可用的命令灰掉并在行尾说为什么（v0.2.4 的
 /// availability 提示）——作者是慢鼠标画像，每个键位都印在行上让人学会。
 fn palettePanel(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    const QueryInput = @FieldType(Msg, "palette_query");
     const query = model.palette.query.slice();
     // 命令面板住功能区成树（舞台规则），所以它与功能栏同形：包一层 .panel
     // 交给 `rail.dress`（调用处在 `documentView`）——地、墨、去盒三件事不
@@ -3871,7 +3834,7 @@ fn palettePanel(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             ui.textField(.{
                 .text = query,
                 .placeholder = "输入以过滤命令",
-                .on_input = Adapter.Ui.translatedInputMsg(.palette_query, QueryInput),
+                .on_input = Adapter.Ui.inputMsg(.palette_query),
                 // 边沿触发：面板随挂载出现，这一帧 false→true 拉一次焦点。
                 .autofocus = true,
                 .semantics = .{ .label = "过滤命令" },
@@ -3945,10 +3908,13 @@ fn paletteGoSection(ui: *Adapter.Ui, model: *const Model, query: []const u8) Ada
     for (workbench_view.destinations, 0..) |destination, index| {
         if (query.len > 0 and std.mem.indexOf(u8, destination.label, query) == null) continue;
         const chord = workbench_view.destinationChord(index);
+        // 下标只在这一处变回去处：枚举让「越界的去处」不可表示，代价是从外部数字
+        // 进来的边界上要过一次 `destinationFrom`——而这张表本身就是按去处序写的。
+        const destination_value = core_workbench.destinationFrom(@intCast(index)) orelse continue;
         rows[count] = railTreeRow(ui, .{
             .key = .{ .index = index },
-            .selected = model.destinationIndex == @as(i32, @intCast(index)),
-            .on_press = .{ .workbench_go = @intCast(index) },
+            .selected = model.destination == destination_value,
+            .on_press = .{ .workbench_go = destination_value },
             .semantics = .{ .role = .treeitem, .label = destination.label },
         }, 1, if (chord.len > 0)
             ui.fmt("{s}　{s}", .{ destination.label, chord })

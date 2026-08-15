@@ -193,7 +193,10 @@ pub const Model = struct {
     typography: Typography = .{},
 
     // ---- 去处与面板 ---------------------------------------------------- 7
-    destination: workbench.Destination = .manuscript,
+    /// 首启落**文件**去处而不是稿子：功能区首帧即开，作者第一眼就看到全部入口
+    /// ——文件树、「前往」节、打开项目按钮。稿子去处没有侧栏，从它起步等于把功能
+    /// 全藏起来（v0.3.0 走查问题 1）。
+    destination: workbench.Destination = .files,
     panel_stack: workbench.PanelStack = .empty,
     /// Agent 区（Cmd+4）记住的上次去处。null = 还没记过，回落派发。
     agent_destination: ?workbench.Destination = null,
@@ -280,7 +283,8 @@ test "缺省的模型是一个诚实的空界面" {
     const model: Model = .{};
     try testing.expect(!model.hasDocument());
     try testing.expect(!model.isDirty());
-    try testing.expectEqual(workbench.Destination.manuscript, model.destination);
+    // 首启在文件去处：空界面要把入口摆出来，不是摆一张白纸。
+    try testing.expectEqual(workbench.Destination.files, model.destination);
     try testing.expectEqual(@as(u8, 0), model.panel_stack.depth);
     // 排版缺省与 Rust 的 TypographyConfig::default 同源。
     try testing.expectEqual(@as(f64, 17), model.typography.text_size);

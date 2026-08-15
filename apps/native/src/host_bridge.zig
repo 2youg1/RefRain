@@ -311,14 +311,10 @@ fn Callbacks(comptime Effects: type) type {
             if (!carriesWireText(action)) result.text_len = 0;
             const encoded = protocol.encodeDispatchResponse(result);
             const wire = encoded[0..protocol.encodedResponseLen(result)];
-            // 投影从**线上字节**重建，不从 FFI 返回值取。回放时主机不被调用，
-            // 只有这些字节会被重放；两条路读同一份数据，界面因此在录制与
-            // 回放中一致（可访问性树的哈希正是回放的判据）。
-            if (result.status == 0 and updatesDocumentProjection(action)) {
-                if (protocol.decodeDispatchResponse(wire)) |projected| {
-                    adoptProjection(projected, wire);
-                }
-            }
+            // 投影在这里**不**落地。它由核心的 `host_result` 臂调 `adoptWire` 落，
+            // 理由是 M8：回放时主机不被调用，这个回调根本不跑，只有录好的字节被
+            // 喂进 `update`。在这里落等于把投影挂在一条回放走不到的路上，于是录制
+            // 时有正文、回放时是空白——八条 journal 里五条因此对不了指纹。
             feed(effects, key, result.status == 0, wire);
         }
 
@@ -328,14 +324,19 @@ fn Callbacks(comptime Effects: type) type {
     };
 }
 
-/// Every action except the opaque project group replaces the document
-/// projection the view renders from.
-fn updatesDocumentProjection(action: u16) bool {
-    const resolved = std.enums.fromInt(protocol.Action, action) orelse return false;
-    return switch (resolved) {
-        .open_manuscript, .apply_input, .obtain_projection, .scroll_projection => true,
-        .health, .project => false,
-    };
+/// 收下一段线上字节作为新的投影。
+///
+/// **为什么入口在这里而不在请求回调里**（M8 的闭合）：回放不调主机，它把录好的
+/// 答复字节喂进 `update`。投影必须在**回放也会走的那条路**上重建，否则录制时
+/// 界面有正文、回放时是空白，而可访问性树的哈希正是回放的判据。这与
+/// `core/replies.zig` 收项目答复是同一条纪律，只是这一段字节带着行首与锚定区间。
+///
+/// 投影从**线上字节**重建而不从 FFI 返回值取：两条路读同一份数据，界面因此在
+/// 录制与回放中一致。
+pub fn adoptWire(wire: []const u8) void {
+    const decoded = protocol.decodeDispatchResponse(wire) orelse return;
+    if (decoded.status != 0) return;
+    adoptProjection(decoded, wire);
 }
 
 /// 哪些动作的响应带文本上线。
@@ -370,6 +371,11 @@ const StubEffects = struct {
     }
 };
 
+/// 发一条请求，然后像核心那样收下答复。
+///
+/// 第二步不能省：投影不再在请求回调里落地（M8 的闭合），它由 `update` 的
+/// `host_result` 臂调 `adoptWire` 落。测试在这里走同一条路，而不是自己另开一条
+/// ——否则它守的就不再是生产路径。
 fn call(effects: *StubEffects, key: u64, payload: []const u8) void {
     effects.binding.?.request_fn(
         effects.binding.?.context,
@@ -377,6 +383,7 @@ fn call(effects: *StubEffects, key: u64, payload: []const u8) void {
         key,
         payload,
     );
+    if (effects.response_ok) adoptWire(effects.response[0..effects.response_len]);
 }
 
 const empty_host_record_bytes: usize = protocol.offset_text + protocol.trailing_bytes;
@@ -596,7 +603,6 @@ test "the bridge rejects malformed shapes for each action without a second numbe
     try std.testing.expect(!validateRequest(&undo));
     undo.text_len = 0;
     try std.testing.expect(validateRequest(&undo));
-    try std.testing.expect(updatesDocumentProjection(undo.action));
 
     // Caret flags outside the generated direction set and extend bit are refused.
     var caret = std.mem.zeroes(protocol.RefrainNativeRequest);
@@ -620,14 +626,38 @@ test "the bridge rejects malformed shapes for each action without a second numbe
     revert.text_len = 1;
     try std.testing.expect(validateRequest(&revert));
 
-    // The opaque project group carries text and never replaces the projection.
+    // The opaque project group carries text.
     const project_bytes = "{}";
     var project_input = std.mem.zeroes(protocol.RefrainNativeRequest);
     project_input.action = @intFromEnum(protocol.Action.project);
     project_input.text_len = project_bytes.len;
     project_input.text = project_bytes.ptr;
     try std.testing.expect(validateRequest(&project_input));
-    try std.testing.expect(!updatesDocumentProjection(project_input.action));
+}
+
+test "一段线上字节收成投影，被拒的答复不收" {
+    // M8 的闭合靠这个入口：核心在 `host_result` 臂里调它，而那条臂是回放会走的路。
+    const source = "剑一直握在他手里。";
+    var response = protocol.emptyResponse(@intFromEnum(protocol.Action.obtain_projection));
+    response.text_len = source.len;
+    response.text = source.ptr;
+    const encoded = protocol.encodeDispatchResponse(response);
+    adoptWire(encoded[0..protocol.encodedResponseLen(response)]);
+    defer {
+        has_projection = false;
+        projection_range_count = 0;
+        projection_line_start_count = 0;
+    }
+    try std.testing.expectEqualStrings(source, documentView().text);
+
+    // 被拒的答复不当成新投影：一次失败不该把作者的正文抓成空白。
+    const refused = protocol.encodeProtocolError(.domain_refusal, @intFromEnum(protocol.Action.obtain_projection));
+    adoptWire(&refused);
+    try std.testing.expectEqualStrings(source, documentView().text);
+
+    // 读不懂的字节同理。
+    adoptWire("not a response");
+    try std.testing.expectEqualStrings(source, documentView().text);
 }
 
 test "host record offsets stay derived from the generated field order" {

@@ -14,9 +14,6 @@
     "apps/native": {
       "name": "@refrain/native",
       "version": "0.3.1",
-      "dependencies": {
-        "@native-sdk/core": "0.9.0",
-      },
       "devDependencies": {
         "@native-sdk/cli": "0.9.0",
       },
@@ -24,7 +21,6 @@
   },
   "patchedDependencies": {
     "@native-sdk/cli@0.9.0": "patches/@native-sdk%2Fcli@0.9.0.patch",
-    "@native-sdk/core@0.9.0": "patches/@native-sdk%2Fcore@0.9.0.patch",
   },
   "packages": {
     "@biomejs/biome": ["@biomejs/biome@2.5.5", "", { "optionalDependencies": { "@biomejs/cli-darwin-arm64": "2.5.5", "@biomejs/cli-darwin-x64": "2.5.5", "@biomejs/cli-linux-arm64": "2.5.5", "@biomejs/cli-linux-arm64-musl": "2.5.5", "@biomejs/cli-linux-x64": "2.5.5", "@biomejs/cli-linux-x64-musl": "2.5.5", "@biomejs/cli-win32-arm64": "2.5.5", "@biomejs/cli-win32-x64": "2.5.5" }, "bin": { "biome": "bin/biome" } }, "sha512-r1S8nFsAG1MY+vJFZALzIvwXAJv6ejDQ0mxP21Tgr9YK3ZFtjrvbBwDdNhx1rUqvccEIeNg20cYCNzl6Cr69pQ=="],
@@ -62,8 +58,6 @@
     "@native-sdk/cli-win32-arm64": ["@native-sdk/cli-win32-arm64@0.9.0", "", { "os": "win32", "cpu": "arm64" }, "sha512-Faqpd+etsqjeP6K3Zmox5/wnsqNZhl6RzfJoVbuKyASqnwlRF5cA+9lTD44O/oF19wKxipl5mge/14Gg69j1rA=="],
 
     "@native-sdk/cli-win32-x64": ["@native-sdk/cli-win32-x64@0.9.0", "", { "os": "win32", "cpu": "x64" }, "sha512-nJHSwLHY1UAU4q3RqBWoVvodb9Y12WdW02sRmKe0+l11nRwadkrI7xGvTHfsC5Z1KxVVOgorrLItM2ZirzZ23A=="],
-
-    "@native-sdk/core": ["@native-sdk/core@0.9.0", "", { "dependencies": { "scriptc": "0.0.28" } }, "sha512-3/mT0FN75c2PWBt8fhcpqPQf2OmSh0dMhCdBl+WN4NyYorBxDTmZ0pYSTAms0y1zcBKx/IBQnPWbHOq63fcpTw=="],
 
     "@refrain/native": ["@refrain/native@workspace:apps/native"],
 

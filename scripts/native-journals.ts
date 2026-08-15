@@ -55,10 +55,9 @@ export type JournalStep =
 /**
  * 这条 journal 能不能逐帧对指纹，不能的话被谁挡住。
  *
- * 带理由的枚举而不是布尔：`no-verify` 必须写出挡路的那件事（今天全是
- * M8——正稿住在 `host_bridge` 的模块变量里，回放把主机答复直接喂给 core，
- * 视图没有一条路拿到正稿文本）。M8 闭合时改这张表即改档，而不是去八个
- * 地方找 `--no-verify`。
+ * 带理由的枚举而不是布尔：`no-verify` 必须写出挡路的那件事。今天八条全是
+ * `verify`——M8 是唯一挡过路的那件事，单元 13 之后它不再挡。挡住时改这张表
+ * 即改档，而不是去八个地方找 `--no-verify`。
  */
 export type VerifyTier =
   | { readonly mode: "verify" }
@@ -113,9 +112,11 @@ export const fixtureDocuments: Readonly<Record<string, string>> = {
   "章二.md": "# 第二章\n\n雨停在门外。\n",
 };
 
-/** M8 的原话，八条里用到的地方只写一次。 */
-const manuscriptNodeBlocked =
-  "M8: the manuscript projection lives in host_bridge's module buffer, so replay feeds the core but no path hands the view its text";
+// M8 曾经挡住五条 journal 的指纹核对：正稿投影住在 `host_bridge` 的模块缓冲里，
+// 而回放不调主机，于是录制时界面有正文、回放时是空白。单元 13 把投影的落地从
+// 请求回调移到核心的 `host_result` 臂——回放走的正是那条路——之后八条全部逐帧
+// 对得上（28 个检查点变 81 个）。这条注释留着，是因为「为什么当初不能验」比
+// 「现在能验了」更容易再次丢失。
 
 /** 作者每次都要走的头两步：认领项目文件夹，看见名录。 */
 const adoptProject: readonly JournalStep[] = [
@@ -134,16 +135,16 @@ const openFirstDocument: readonly JournalStep[] = [
 /**
  * 八条 journal。`Record` 而不是数组：漏一个去处 `bun run check:ts` 就红。
  *
- * 分档的实测边界（2026-08-15，本机）：录一条「认领项目、点开稿子」的会话
- * 再 `--verify` 回放，前三个 checkpoint 逐帧对得上，第四帧——点开文档行之后
- * 的那一帧——开始不匹配。所以不开稿子的三条走 `--verify`，开了稿子的五条
- * 走 `--no-verify` 并点名 M8。
+ * 分档的实测边界（2026-08-15，本机）：单元 13 之前，录一条「认领项目、点开
+ * 稿子」的会话再 `--verify` 回放，前三个 checkpoint 逐帧对得上，第四帧——点开
+ * 文档行之后的那一帧——开始不匹配，因为回放拿不到正稿文本（M8）。投影的落地
+ * 移进核心的 `host_result` 臂之后，八条全部逐帧对得上。
  */
 export const journalPlans: Readonly<Record<JournalName, JournalPlan>> = {
   // 稿子：认领、点开、写一句、保存、撤销。整套产品最短的一条真路径。
   manuscript: {
     destination: 0,
-    tier: { mode: "no-verify", blockedBy: manuscriptNodeBlocked },
+    tier: { mode: "verify" },
     steps: [
       ...openFirstDocument,
       // 舞台规则：正文区没有工具栏按钮（壳上不许有 Go to / Theme / Undo / Save）。
@@ -178,7 +179,7 @@ export const journalPlans: Readonly<Record<JournalName, JournalPlan>> = {
   // 裁决：栏上的行是唯一入口——裁决与派发没有固定键位（commands.zig）。
   review: {
     destination: 2,
-    tier: { mode: "no-verify", blockedBy: manuscriptNodeBlocked },
+    tier: { mode: "verify" },
     steps: [
       ...openFirstDocument,
       { kind: "click", role: "treeitem", name: "裁决" },
@@ -190,7 +191,7 @@ export const journalPlans: Readonly<Record<JournalName, JournalPlan>> = {
   // 派发：Ctrl+4 是 Agent 层，默认落在派发（workbench.ts 的 agentDestination）。
   dispatch: {
     destination: 3,
-    tier: { mode: "no-verify", blockedBy: manuscriptNodeBlocked },
+    tier: { mode: "verify" },
     steps: [
       ...openFirstDocument,
       { kind: "shortcut", id: "go.4" },
@@ -201,7 +202,7 @@ export const journalPlans: Readonly<Record<JournalName, JournalPlan>> = {
 
   mailbox: {
     destination: 4,
-    tier: { mode: "no-verify", blockedBy: manuscriptNodeBlocked },
+    tier: { mode: "verify" },
     steps: [
       ...openFirstDocument,
       { kind: "shortcut", id: "go.5" },
@@ -224,7 +225,7 @@ export const journalPlans: Readonly<Record<JournalName, JournalPlan>> = {
 
   history: {
     destination: 6,
-    tier: { mode: "no-verify", blockedBy: manuscriptNodeBlocked },
+    tier: { mode: "verify" },
     steps: [
       ...openFirstDocument,
       { kind: "shortcut", id: "go.7" },
@@ -243,8 +244,12 @@ export const journalPlans: Readonly<Record<JournalName, JournalPlan>> = {
       { kind: "expect", pattern: "专注写作（KARA）" },
       { kind: "expect", pattern: 'name="tou"' },
       { kind: "click", role: "button", name: "换下一套主题" },
-      // 换主题的证据是当前主题名不再是 tou，而不是「按钮还在」。
-      { kind: "absent", pattern: 'name="tou"' },
+      // 换主题的证据是**当前主题名成了下一套**，而不是「按钮还在」。
+      //
+      // 不用 `absent`：它只读一次屏，而换主题要过一趟 Rust（界面立刻换肤，名字显示的
+      // 是落盘那一份）。一条不轮询的断言在这里测的是答复快不快，不是主题换没换
+      // ——踩过的坑 #6。`expect` 轮询，且 kasumi 是一个比「tou 没了」强得多的事实。
+      { kind: "expect", pattern: 'name="kasumi"' },
     ],
   },
 };
