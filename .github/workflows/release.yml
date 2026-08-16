@@ -157,6 +157,15 @@ jobs:
           if ("$env:GITHUB_REF_NAME" -cnotmatch $expected) {
             throw "Tag $env:GITHUB_REF_NAME is not v$version-Pre-alpha-<YYMMDD>"
           }
+          # Everything downstream that needs a version needs *this* one: the
+          # packager compares it against package-manifest.zon, which the SDK
+          # writes from app.zon. Deriving it from the tag instead put the
+          # pre-alpha marker into a field that never carries one. One
+          # derivation, checked against the tag above, consumed by name below.
+          # utf8NoBOM, spelled out: a BOM here becomes part of the variable's
+          # name, and the step that reads it fails by finding nothing.
+          "APP_VERSION=$version" |
+            Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8NoBOM
 
       # `-Dtarget` and `-Dcpu` are the whole reason v0.3.4 exists. Without them
       # the SDK's `b.standardTargetOptions(.{})` resolves to the build machine's
@@ -198,7 +207,7 @@ jobs:
       - name: Build the portable archive twice and compare the bytes
         shell: pwsh
         run: |
-          $version = $env:GITHUB_REF_NAME.TrimStart("v")
+          $version = $env:APP_VERSION
           & target/scriptc/release-assets.exe package `
             $version target/native/refrain-windows-x64 release-assets
           if ($LASTEXITCODE -ne 0) { throw "release packaging failed" }
@@ -215,7 +224,7 @@ jobs:
       - name: Read the archive back with two independent extractors
         shell: pwsh
         run: |
-          $version = $env:GITHUB_REF_NAME.TrimStart("v")
+          $version = $env:APP_VERSION
           & target/scriptc/release-assets.exe verify release-assets/refrain-windows-x64.zip $version
           if ($LASTEXITCODE -ne 0) { throw "release program could not read its own archive" }
           Expand-Archive -LiteralPath release-assets/refrain-windows-x64.zip `
