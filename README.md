@@ -201,10 +201,13 @@ one beside it.
 test the packaging path end to end; they are not something to write in.**
 
 Releases are published on
-[GitHub](https://github.com/kaile9/RefRain/releases) and numbered
-`0.0.N-Pre-alpha-YYMMDD`, where `N` counts published releases and the date is
-the build's. No on-disk format and no protocol is promised to survive to the
-next one.
+[GitHub](https://github.com/kaile9/RefRain/releases) and tagged
+`v0.0.N-Pre-alpha-YYMMDD`, where `N` counts published releases and the date is
+the build's. In the tree the version is the numeric part alone: the Native SDK
+parses `app.zon`'s version as three decimal numbers and rejects a pre-release
+suffix, so the marker rides on the tag while `verify:release-version` holds
+every in-tree surface to one number. No on-disk format and no protocol is
+promised to survive to the next release.
 
 Windows x86-64 is the only target built, and the build names `x86_64_v2` —
 SSE4.2 and POPCNT, every x86-64 part since 2009 — as its instruction floor

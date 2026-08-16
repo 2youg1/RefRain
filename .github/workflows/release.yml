@@ -146,8 +146,16 @@ jobs:
             throw "apps/native/app.zon does not declare a version"
           }
           $version = $Matches[1]
-          if ("v$version" -ne "$env:GITHUB_REF_NAME") {
-            throw "Tag $env:GITHUB_REF_NAME does not match v$version"
+          # The Native SDK parses this version as three decimal numbers
+          # (`parseVersion`, src/tooling/manifest.zig), so the pre-alpha marker
+          # cannot live in the manifest. It lives in the tag. The tag is still
+          # derived from the manifest rather than trusted: nothing but
+          # v<version>-Pre-alpha-<YYMMDD> is a tag this workflow will build.
+          $expected = "^v$([regex]::Escape($version))-Pre-alpha-\d{6}$"
+          # -cnotmatch, not -notmatch: PowerShell compares case-insensitively
+          # by default, and a tag is a name, not a spelling of one.
+          if ("$env:GITHUB_REF_NAME" -cnotmatch $expected) {
+            throw "Tag $env:GITHUB_REF_NAME is not v$version-Pre-alpha-<YYMMDD>"
           }
 
       # `-Dtarget` and `-Dcpu` are the whole reason v0.3.4 exists. Without them
