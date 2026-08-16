@@ -1,7 +1,12 @@
 # Agent rules
 
-Read [ARCHITECTURE.md](ARCHITECTURE.md) before editing. Use its glossary; do not
+The binding rule set for every agent change in this repository. Read
+[ARCHITECTURE.md](ARCHITECTURE.md) before editing. Use its glossary; do not
 invent a second term for an existing concept.
+
+Session state — handoffs, plans, memos, probe results — lives outside the
+repository, in the sibling directory `../RefRain-work/`. Start a session by
+reading its `Handoff.md`; end one by rewriting it.
 
 ## Before any code
 
@@ -122,17 +127,81 @@ matches the CI workflow.
 The recycle-bin tests need a `TMPDIR` the desktop trash service can write to. On
 a Linux host whose `/tmp` sits on a separate mount, `trash` targets
 `/.Trash-1000` and three `refrain-store` tests fail with `PermissionDenied`.
-Point `TMPDIR` at a writable directory first:
+Point `TMPDIR` at a writable directory first.
+
+A local green gate is not CI green. Four lanes run in CI that `bun run gate`
+does not run locally; run them before claiming CI will pass:
 
 ```sh
-TMPDIR=$PWD/.tmp cargo test --workspace --all-targets
+bun scripts/prove-gates-bite.ts                        # CI Linux only
+cargo clippy --workspace --all-targets -- -D warnings  # --workspace matters
+cargo fmt --all --check
+bun scripts/generate-native-protocol.ts --check && git diff --exit-code -- apps/native/src/generated
 ```
 
-A new gate must be injection-verified: break the mechanism it depends on, require a specific red result, restore it, then require green. A missing symbol, fixture, or path must fail closed.
+A new gate must be injection-verified: break the mechanism it depends on, require a specific red result, restore it, then require green. A missing symbol, fixture, or path must fail closed. A new gate also enters `scripts/gate.ts` stages, and — if ScriptC compiles it — `scriptc-tiers.ts` `TIER_A`, or `verify:scriptc-coverage` goes red.
 
 Use fixtures that differ on the field under test. For a two-way mechanism, test both directions. Represent exhaustive sets with a shape that fails to compile when a member is missing.
 
 Measure performance through the production path. Keep platform-specific claims on the platform that produced them.
+
+### What green does not prove
+
+Four ways this repository has shipped a green build that failed the author.
+Each rule binds every future change; the scar beside it proves it is not
+hypothetical. Do not weaken or remove a rule here without recording, in the
+same commit, the evidence that its failure mode can no longer occur.
+
+1. **Unit-green modules can compose into a broken window; assert the composed
+   result.** When a consumer combines values from two modules, take them from
+   one call, and give the change one assertion on what the window shows after
+   composition. Scar: `layeredBody` drew `fittingDepth(...)` layers while
+   `visibleLayerAt` placed layers against the unclamped `visibleDepth` — both
+   modules unit-green, and the page the author had just navigated to was the
+   one clipped out of the window.
+
+2. **Assert what the author sees, not what the function returns.** A change to
+   navigation, notices, or any view is accepted by a real-window snapshot
+   predicate — "the destination's heading is visible", "the rejection text is
+   readable" — never only by the returned variant. Scar: `navigate` returned
+   `needs_document` correctly under test while the notice rendered as an empty
+   grey strip the author could not read.
+
+3. **List every path the lanes short-circuit, and walk each one in a real
+   window before a release claim.** `REFRAIN_AUTOMATION_ROOT` answers every
+   rfd file dialog in every automated lane, so no lane has ever opened the
+   real dialog. Scar: the import and open-project buttons shipped dead; every
+   lane stayed green because none could reach the dialog they bypass.
+
+4. **The release predicate is the author's flow in a real window, not the
+   gate count.** Before any tag: drive the built binary through adopt →
+   document rows visible → open a manuscript → type → save → reach every
+   destination → read every rejection. This extends the v0.3.3 rule ("the
+   artifact must run on this machine before a tag") from booting to using.
+
+## The Native layers, and what each may hold
+
+Checked by `bun run check` and by review. The TypeScript core and the `.native`
+markup view died in unit 13; the application surface is Zig over a Rust
+staticlib. Do not resurrect either dead layer.
+
+| Layer | Holds | Never holds |
+|---|---|---|
+| Rust (`refrain-app`, `refrain-core`, `refrain-store`, `refrain-host`) | Manuscript bytes, block identity, revision, config, every product rule | — |
+| C ABI + generated protocol (`apps/native/src/generated/`, `crates/.../protocol.rs`) | Memory layout, offsets, error codes, fingerprint | Product action semantics; those are Rust enums |
+| Host staticlib (`apps/native/host/`) | The one `unsafe` seam, rfd dialogs, synchronous dispatch into `refrain-app` | Domain rules |
+| Zig core (`apps/native/src/core.zig`, `src/core/`) | Model, Msg, update, destinations, reply slots | A second copy of the text, selection, composition, or undo state |
+| Zig views (`apps/native/src/view/`, `app_main.zig` routing) | Drawing and Msg dispatch, non-ASCII labels | State mutation; a rule the core or Rust already owns |
+
+Operational facts the build system does not confess:
+
+- A new Zig module must be added to the `refAllDecls` block in `app_main.zig`,
+  or its tests silently never run while every lane stays green.
+- A real-window probe needs a `-Dautomation=true` build; without it the
+  automation channel does not exist and the probe reports missing widgets.
+- The automation channel follows the process working directory: launch
+  `refrain.exe` with `cwd = apps/native`.
+- Run one window lane at a time; they share one automation publisher.
 
 ## Rust
 
@@ -143,38 +212,10 @@ Measure performance through the production path. Keep platform-specific claims o
 
 ## TypeScript
 
-**Read [EFFECT.md](EFFECT.md) before you write or review any TypeScript.** It
-holds the compiler settings, the type discipline, the territory map, and the five
-canonical patterns. This file does not repeat them.
-
-Two rules live here because they are not Effect's business:
-
-- The Native core subset (`apps/native/src/core.ts`) is not ordinary TypeScript.
-  See "The Native layers" below for what it can and cannot express.
-- Do not write JavaScript by hand.
-
-## The Native layers, and what each may hold
-
-Enforced by `native check . --strict` and by review.
-
-| Layer | Holds | Never holds |
-|---|---|---|
-| Rust (`refrain-app`, `refrain-core`) | Manuscript bytes, block identity, revision, config, every product rule | — |
-| C ABI + generated protocol | Memory layout, offsets, error codes, fingerprint | Product action semantics; those are Rust enums |
-| Zig (`apps/native/src/*.zig`) | Platform events, immutable projections, drawing, non-ASCII labels | A second copy of the text, selection, composition, or undo state |
-| TypeScript core (`core.ts`) | Interface state, stable identifiers, revision | Manuscript bytes; a document state machine |
-| Markup (`app.native`) | Structure and event bindings | Logic |
-
-Two limits the checker enforces, both of which move code to its right owner:
-
-- The core subset folds numbers, strings, `asciiBytes` literals, array tables
-  and interface-annotated record tables. An `as const` string table fails
-  `NS9001`; a Chinese label belongs in a Zig table beside the theme colours.
-- The core subset has no `Number()`. Parsing a key name into an ordinal is the
-  platform event layer's work, so the core receives the ordinal.
-
-A model field or `Msg` that only Zig reads must be listed in `viewUnbound`
-with the reason. The checker fails on an unlisted one.
+TypeScript is the gate, script, and e2e layer only; application code is Zig
+and Rust. **Read [EFFECT.md](EFFECT.md) before you write or review any
+TypeScript.** It holds the compiler settings, the type discipline, the
+territory map, and the canonical patterns. Do not write JavaScript by hand.
 
 ## Generated and published files
 
@@ -189,7 +230,7 @@ Generated by a script; edit the template, never the output:
 `bun run fmt` reorders generated files and drifts the protocol. Re-run the
 generator after formatting, then `bun scripts/generate-native-protocol.ts --check`.
 
-`docs/SKILL.md` is generated from `refrain_core::agent_protocol::skill_doc()`:
+`docs/SKILL.md` is generated:
 
 ```sh
 cargo run -p refrain-core --example generate_skill_doc -- docs/SKILL.md
@@ -197,7 +238,12 @@ cargo run -p refrain-core --example generate_skill_doc -- docs/SKILL.md
 
 Do not edit the generated document by hand. After generation, run `verify:skill-doc-current` and confirm a second generation changes no bytes.
 
-Repository prose is limited to `README.md` and the approved files under `docs/`. Specifications, plans, memos, previews, and audit notes stay outside the repository.
+Repository prose is limited to `README.md`, the approved files under `docs/`,
+and the two root pointer stubs: `AGENTS.md` (a three-line pointer for
+non-Claude harnesses) and `CLAUDE.md` (an `@docs/AGENTS.md` import, which
+inlines this file for Claude Code — keep it that one import plus the
+session-state line). Specifications, plans, memos, previews, and
+audit notes stay outside the repository, in `../RefRain-work/`.
 
 ## Links
 

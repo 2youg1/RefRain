@@ -43,6 +43,8 @@ specta = { version = "=2.0.0-rc.25", features = ["derive", "uuid"] }
 # The store crate owns every database handle; rusqlite appears nowhere else.
 directories = "=6.0.0"
 rfd = { version = "=0.17.2", default-features = false, features = ["pollster", "xdg-portal"] }
+# rfd 已经把它带进依赖树；直接依赖只为把对话框的 owner 窗句柄交给 rfd（staticlib.rs）。
+raw-window-handle = "0.6"
 rusqlite = { version = "=0.40.1", features = ["bundled"] }
 
 # The icon pipeline (C7): SVG needs a real parser (a hand-rolled one is the

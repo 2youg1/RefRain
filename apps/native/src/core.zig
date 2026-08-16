@@ -120,10 +120,10 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
 
     switch (msg) {
         // ---------------------------------------------------------- 去处与面板
-        .workbench_go => |target| goTo(model, target),
+        .workbench_go => |target| goTo(model, fx, target),
         .workbench_key => |ordinal| {
             const target = workbench.destinationForOrdinal(ordinal, model.agent_destination) orelse return;
-            goTo(model, target);
+            goTo(model, fx, target);
         },
         .panel_back => {
             const popped = model.panel_stack.pop();
@@ -383,7 +383,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             // 提案没有改后正文：键原地不动，与按钮的灰掉同款。
             if (model.destination != .review) return;
             const row = model.roster_cursor orelse return;
-            const proposal = project_view.proposalAt(replies.borrow(.project), row) orelse return;
+            const proposal = project_view.proposalAt(replies.borrow(.proposals), row) orelse return;
             if (proposal.after_text.len == 0) return;
             setEditing(&model.revising, .{ .id = proposal.id, .seed = proposal.after_text });
         },
@@ -730,7 +730,7 @@ fn settleVerdict(model: *Model, fx: *Effects, verdict: Verdict) void {
 fn deskProposalId(model: *const Model) ?[]const u8 {
     if (model.destination != .review) return null;
     const row = model.roster_cursor orelse return null;
-    const proposal = project_view.proposalAt(replies.borrow(.project), row) orelse return null;
+    const proposal = project_view.proposalAt(replies.borrow(.proposals), row) orelse return null;
     if (proposal.id.len == 0) return null;
     return proposal.id;
 }
@@ -856,8 +856,9 @@ fn keepsPeek(msg: Msg) bool {
     };
 }
 
-/// 去某个去处，按 `workbench.navigate` 的裁定落地。
-fn goTo(model: *Model, target: Destination) void {
+/// 去某个去处，按 `workbench.navigate` 的裁定落地。落地即发那一页的读请求
+///（`arriveAt`）：页面自己把数据带来，作者不按刷新。
+fn goTo(model: *Model, fx: *Effects, target: Destination) void {
     switch (workbench.navigate(model.destination, target, model.hasDocument())) {
         .moved => {
             model.panel_stack = model.panel_stack.push(model.destination);
@@ -865,14 +866,71 @@ fn goTo(model: *Model, target: Destination) void {
             // Cmd+4 记住的是 Agent 层的去处。
             if (target.isAgent()) model.agent_destination = target;
             relayout(model);
+            arriveAt(model, fx, target);
         },
         // 同键再按：回正文，不是再看一遍同一个面板。
         .close => backToManuscript(model),
         .unchanged => {},
         .needs_document => {
             var line: model_mod.Line = .empty;
-            _ = line.setTruncated("先打开一份稿子。");
+            _ = line.setTruncated("先打开一份稿子——去「文件」页点开一篇，或按「导入正文」。");
             model.notice = line;
+        },
+    }
+}
+
+/// 进驻一个去处即发它的读请求。
+///
+/// **接上哪个功能**：八个去处的首屏数据。v0.3.4 之前页面只画槽里残留的
+/// 上一条答复，作者打开历史看到的是空白，除非先手按一次「刷新」。
+///
+/// **在全局逻辑中负责什么**：只取数，不设门槛——能不能进由 `navigate` 已裁，
+/// 编不出请求（缺 root／缺稿）就静默不发，页面画自己的空态句。
+/// 各页的「刷新」按钮仍在：它们是同一批编码器的第二个调用点。
+fn arriveAt(model: *Model, fx: *Effects, target: Destination) void {
+    var writer: project_request.Writer = .{};
+    switch (target) {
+        .manuscript => {},
+        .files => {
+            if (model.root_id.isEmpty()) return;
+            const encoded = project_request.documentPage(&writer, model.root_id.slice(), "") orelse return;
+            sendProject(fx, model, encoded.bytes);
+        },
+        .mailbox => {
+            if (model.root_id.isEmpty()) return;
+            const encoded = project_request.readMailbox(&writer, model.root_id.slice(), model.mailbox_discarded) orelse return;
+            sendProject(fx, model, encoded.bytes);
+            // Run 那半屏一起刷：派发回执与信件同屏，只刷一半会读成「另一半坏了」。
+            var second: project_request.Writer = .{};
+            const host_read = project_request.readHost(&second, model.root_id.slice()) orelse return;
+            sendProject(fx, model, host_read.bytes);
+        },
+        .connections => {
+            // 不带 force：自动读吃 15 秒缓存，手按「重新探测」才绕过它。
+            const encoded = project_request.readHarnesses(&writer, false) orelse return;
+            sendProject(fx, model, encoded.bytes);
+        },
+        .history => {
+            if (model.root_id.isEmpty() or model.document.path.isEmpty()) return;
+            const encoded = project_request.readHistory(&writer, model.root_id.slice(), model.document.path.slice()) orelse return;
+            sendProject(fx, model, encoded.bytes);
+        },
+        .settings => {
+            const encoded = project_request.readConfig(&writer) orelse return;
+            sendProject(fx, model, encoded.bytes);
+        },
+        .review => {
+            if (model.root_id.isEmpty() or model.document.path.isEmpty()) return;
+            const encoded = project_request.readProposals(&writer, model.root_id.slice(), model.document.path.slice()) orelse return;
+            sendProject(fx, model, encoded.bytes);
+        },
+        .dispatch => {
+            if (model.root_id.isEmpty()) return;
+            const encoded = project_request.readMaterials(&writer, model.root_id.slice()) orelse return;
+            sendProject(fx, model, encoded.bytes);
+            var second: project_request.Writer = .{};
+            const host_read = project_request.readHost(&second, model.root_id.slice()) orelse return;
+            sendProject(fx, model, host_read.bytes);
         },
     }
 }
@@ -940,16 +998,16 @@ fn applyHostResult(model: *Model, result: native_sdk.EffectHostResult, fx: *Effe
     if (channel == .save) model.document.save_pending = false;
 
     if (!result.ok) {
-        setStatus(model, "Rust 没有应答。");
+        setStatus(model, "内核没有应答——重启应用可恢复。");
         return;
     }
     const response = protocol.decodeDispatchResponse(result.bytes) orelse {
         model.host_ready = false;
-        setStatus(model, "本地内核返回了不合约的答复。");
+        setStatus(model, "内核答复读不出来——版本可能不匹配。");
         return;
     };
     if (response.status != 0) {
-        setStatus(model, "本地内核拒绝了这次请求。");
+        setStatus(model, "这次请求被拒绝了。");
         return;
     }
 
@@ -960,11 +1018,12 @@ fn applyHostResult(model: *Model, result: native_sdk.EffectHostResult, fx: *Effe
                 response.capabilities & protocol.capability_mask != protocol.capability_mask)
             {
                 model.host_ready = false;
-                setStatus(model, "本地内核的能力与表面不匹配。");
+                setStatus(model, "内核版本与界面不匹配——重装同一版本可恢复。");
                 return;
             }
             model.host_ready = true;
-            setStatus(model, "Rust 已就绪。");
+            // 就绪不是一条消息：状态行只说值得说的话，开机正常不占作者一行注意。
+            model.status.clear();
             // 握手只发生一次，顺带把读设置发出去：排版三值与主题随它的答复落地，
             // 设置页与正文首帧不必等作者先按一次「读取设置」。
             var buffer: [replay_seam.max_record_bytes]u8 = undefined;
@@ -1001,7 +1060,6 @@ fn responseText(response: protocol.RefrainNativeResponse) []const u8 {
 /// 另一层就读错；现在读错一个名字是编译错误。
 fn landProject(model: *Model, response: protocol.RefrainNativeResponse, fx: *Effects) void {
     model.host_ready = true;
-    setStatus(model, "Rust 的项目用例完成了。");
     const bytes = responseText(response);
     const kept = replies.store(replies.slotForKind(wire.kindOf(bytes)), bytes);
     const kind = kept.kind();
@@ -1029,6 +1087,23 @@ fn landProject(model: *Model, response: protocol.RefrainNativeResponse, fx: *Eff
         },
         // 送出成功：这次预览已被消费，再送必须重新预览。
         .dispatched => replies.clear(.preview),
+        // 改了名录就重读一页：导入／删除／改披露落地后树自愈，作者不按刷新。
+        // v0.3.4 之前导入成功后树不动，作者读到的是「按钮没有作用」。
+        .imported, .deleted, .disclosure_set => {
+            if (kind == .imported) {
+                // 导入要有看得见的回执：树的变化在侧栏，而作者的眼睛可能
+                // 在正文上——一条提示把事实送到眼前。
+                var line: model_mod.Line = .empty;
+                _ = line.setTruncated("导入完成，已加进文件页的名录。");
+                model.notice = line;
+            }
+            if (!model.root_id.isEmpty()) {
+                var page_writer: project_request.Writer = .{};
+                if (project_request.documentPage(&page_writer, model.root_id.slice(), "")) |page_read| {
+                    sendProject(fx, model, page_read.bytes);
+                }
+            }
+        },
         // 草稿名录刷新 = 一次成稿／退回落了地：行内编辑态随名录换新收起。
         .material_drafts => model.material_draft = .{},
         else => {},
@@ -1203,8 +1278,6 @@ fn inFlightRuns(reply: wire.Reply) bool {
     }
     return false;
 }
-
-
 
 /// 一条投影答复里的会话事实。
 ///
@@ -1482,7 +1555,6 @@ test "没有稿子就不发保存，也不立在飞旗" {
 // 主题与材质的落地在真 `Effects` 上判：它们现在会发一条落盘请求。
 // 见测试「换主题立刻换肤，同时把选择落盘」。
 
-
 test "开盒装好起笔但不开改写框，Alt+E 才开" {
     var model: Model = .{};
     var fx: Effects = undefined;
@@ -1643,6 +1715,12 @@ const CoreHarness = struct {
         try self.app_state.dispatch(&self.harness.runtime, 1, msg);
     }
 
+    /// 停着几条请求。进驻即读（v0.3.4）之后，「这一下没发新请求」要用
+    /// 计数差说，不能用「一条都没有」——导航本身就会留下一条读。
+    fn parkedCount(self: *CoreHarness) usize {
+        return self.app_state.effects.pendingHostCount();
+    }
+
     /// 停住的那条请求的载荷。一条都没发时交出 null。
     fn parkedPayload(self: *CoreHarness) ?[]const u8 {
         const fx = &self.app_state.effects;
@@ -1690,7 +1768,6 @@ fn readScalarU16(payload: []const u8, offset: usize) u16 {
     if (!(value >= 0) or value > std.math.maxInt(u16)) return 0;
     return @intFromFloat(value);
 }
-
 
 /// 一条答复的线上字节，测试专用。
 ///
@@ -2049,9 +2126,16 @@ test "空批次不发提交，有批次才提交" {
     try h.model().root_id.set("r-1");
     _ = h.model().document.path.setTruncated("章一.md");
     try h.dispatch(.{ .workbench_go = .review });
+    // 进驻即读：裁决台落地自己带来提案名录，作者不按刷新。
+    try testing.expectEqualStrings(
+        "{\"kind\":\"readProposals\",\"value\":{\"rootId\":\"r-1\",\"path\":\"章一.md\"}}",
+        h.parkedText(),
+    );
+    const arrived = h.parkedCount();
 
     try h.dispatch(.verdict_settle);
-    try testing.expect(h.parkedPayload() == null);
+    // 空批次不发提交：进驻那一条之外没有新请求。
+    try testing.expectEqual(arrived, h.parkedCount());
 
     h.model().review.staged_count = 2;
     try h.dispatch(.verdict_settle);

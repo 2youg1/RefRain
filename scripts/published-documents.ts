@@ -17,6 +17,8 @@
  */
 export const PUBLISHED = {
   "README.md": "what RefRain is, and how to install it",
+  "AGENTS.md": "root pointer stub: sends every non-Claude harness to docs/AGENTS.md",
+  "CLAUDE.md": "root pointer stub: imports docs/AGENTS.md into Claude Code sessions",
   "docs/ARCHITECTURE.md": "modules, glossary, and where problems live",
   "docs/CONTRIBUTING.md": "how to propose a change",
   "docs/EFFECT.md": "where Effect runs and which patterns are canonical",

@@ -31,7 +31,7 @@ pub fn mailboxView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             ui.text(.{}, "先打开一个项目"),
         });
     }
-    const reply = replies.borrow(.project);
+    const reply = replies.borrow(.mailbox);
     var children: [2 * shell_view.card_rows + 2]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     // 页签决定读哪份投影；未读数只在默认列表有意义，回收站里数它

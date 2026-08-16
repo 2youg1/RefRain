@@ -6,6 +6,7 @@ const std = @import("std");
 const themes = @import("../generated/themes.zig");
 const core = @import("../core.zig");
 const corners = @import("../corners.zig");
+const rail = @import("../rail.zig");
 const material_recipe = @import("../material.zig");
 const workbench_view = @import("../workbench_view.zig");
 const core_workbench = @import("../core/workbench.zig");
@@ -73,9 +74,13 @@ pub const rail_row_gap_px: f32 = 6;
 /// 层级靠左侧的空格说，选中靠行底色说——三件事在这一处定，不在每个
 /// 调用点各写一遍。调用点只说「这一行在第几层」。
 ///
+/// 选中时缩进段穿同一款 wash（`rail.selectedWash`）：选中底色由 SDK 按
+/// controlTokens 给行本体，缩进在行外——不补色就在选中行左侧露一截地
+/// （v0.3.4 作者实测指名的难看）。
+///
 /// 保留 `list_item` 而不自绘：命中、键盘主键、右键菜单、无障碍角色都在
 /// 它身上，为了一个形状把这些重建一遍是把一条规则换成四条。
-pub fn railTreeRow(ui: *Adapter.Ui, options: Adapter.Ui.ElementOptions, depth: u16, label: []const u8) Adapter.Ui.Node {
+pub fn railTreeRow(ui: *Adapter.Ui, model: *const Model, options: Adapter.Ui.ElementOptions, depth: u16, label: []const u8) Adapter.Ui.Node {
     var scoped = options;
     scoped.tree_level = depth;
     scoped.height = rail_row_height_px;
@@ -90,8 +95,15 @@ pub fn railTreeRow(ui: *Adapter.Ui, options: Adapter.Ui.ElementOptions, depth: u
     scoped.grow = 1;
     var item = ui.listItem(scoped, label);
     item.widget.style.radius = corners.squared;
+    var indent = ui.el(.stack, .{
+        .width = rail_indent_px * @as(f32, @floatFromInt(depth)),
+        .height = rail_row_height_px,
+    }, .{});
+    if (options.selected) {
+        indent.widget.style.background = rail.selectedWash(&themes.themes[currentThemeIndex(model)]);
+    }
     return ui.row(.{ .key = options.key }, .{
-        ui.el(.stack, .{ .width = rail_indent_px * @as(f32, @floatFromInt(depth)) }, .{}),
+        indent,
         item,
     });
 }
@@ -107,7 +119,7 @@ pub fn paletteGoSection(ui: *Adapter.Ui, model: *const Model, query: []const u8)
         // 下标只在这一处变回去处：枚举让「越界的去处」不可表示，代价是从外部数字
         // 进来的边界上要过一次 `destinationFrom`——而这张表本身就是按去处序写的。
         const destination_value = core_workbench.destinationFrom(@intCast(index)) orelse continue;
-        rows[count] = railTreeRow(ui, .{
+        rows[count] = railTreeRow(ui, model, .{
             .key = .{ .index = index },
             .selected = model.destination == destination_value,
             .on_press = .{ .workbench_go = destination_value },

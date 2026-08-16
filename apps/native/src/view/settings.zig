@@ -3,6 +3,7 @@
 //! 单元 34 从 `app_main.zig` 搬来，逐字未改；路由仍在那一侧。
 
 const std = @import("std");
+const material_paint = @import("../material_paint.zig");
 const themes = @import("../generated/themes.zig");
 const core = @import("../core.zig");
 const replies = @import("../core/replies.zig");
@@ -55,6 +56,7 @@ pub fn settingsView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             materialButton(ui, model, 0, "实心"),
             materialButton(ui, model, 1, "亚克力"),
             materialButton(ui, model, 2, "液态玻璃"),
+            materialSwatch(ui, model),
         }),
         // KARA：写作状态机的手动开关。Ctrl+Enter（app.zon 的 kara.toggle）
         // 也走同一条消息——两个入口一条路径，不会出现「按钮开了但快捷键
@@ -101,6 +103,25 @@ fn themeButtons(ui: *Adapter.Ui, model: *const Model) [themes.themes.len]Adapter
         }, theme.name);
     }
     return buttons;
+}
+
+/// 当前材质的小样：把配方算出的表面／描边两色画成一块 64×28 的面。
+///
+/// **为什么需要它**：栏地按红线永远实心（rail.zig 模块头），材质的真实
+/// 舞台是浮面（菜单、饭盒、回来卡）——于是在设置页上点三颗按钮只能看出
+/// 亮度微差（v0.3.4 作者实测原话）。小样让选择当场可见，不必先去开
+/// 一个右键菜单。
+fn materialSwatch(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
+    const theme = &themes.themes[shell_view.currentThemeIndex(model)];
+    const kind = shell_view.panelMaterialKind(model);
+    var swatch = ui.el(.stack, .{
+        .width = 64,
+        .height = 28,
+        .semantics = .{ .label = "材质小样" },
+    }, .{});
+    swatch.widget.style.background = material_paint.surfacePaint(kind, theme);
+    swatch.widget.style.border = material_paint.borderPaint(kind, theme);
+    return swatch;
 }
 
 /// 材质三选的一颗按钮：按下记 `material_select` 下标，当前材质高亮

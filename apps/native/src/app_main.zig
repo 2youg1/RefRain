@@ -218,8 +218,9 @@ fn statusItem(model: *const Model, scratch: *Adapter.StatusItemScratch) Adapter.
     return .{ .title = title, .items = scratch.items[0..5] };
 }
 
-/// chrome 动画的唯一登记口：veil（KARA 的纱）、panel-in（换层进场）与
-/// 呼吸墨线（保存在飞）共用 `Options.animations` 这一条通道，按段拼接。
+/// chrome 动画的唯一登记口：veil（KARA 的纱）与呼吸墨线（保存在飞）共用
+/// `Options.animations` 这一条通道，按段拼接。panel-in 随多层渲染一起删
+///（v0.3.4 救援）：去处切换的过渡由 split 的 fraction tween 担任。
 fn chromeAnimations(
     model: *const Model,
     tree: *const TsUiTree,
@@ -227,8 +228,7 @@ fn chromeAnimations(
     out: []native_sdk.canvas.CanvasRenderAnimation,
 ) usize {
     const used = veil.animations(model, tree, start_ns, out);
-    const paneled = used + panel_stack.enterAnimation(model, start_ns, out[used..]);
-    return paneled + inkAnimation(model, start_ns, out[paneled..]);
+    return used + inkAnimation(model, start_ns, out[used..]);
 }
 
 /// 呼吸墨线的一段（2.6/2.7）：保存答复未回时，状态行那条 36×2 的墨线
@@ -403,24 +403,27 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     // split 是其原生等价）：去处切换 = fraction 变化 + 300ms 先快后慢
     // tween（旧版 panel-in 动效），正文不重建、不重排全文。
     //
-    // **单侧极简（旧版 UI 哲学）**：一切从左侧出现——文件树（Rail）最左，
-    // 面板贴着它展开，正文恒在最右；右键菜单与 notice 是仅有的两个浮在
-    // 正文上的东西。裁决是 stage 例外：独占整屏（旧版 takesWholeStage）。
-    // 多层面板栈（2.9）：侧层 + 当前层并排，正文轨按 v0.2.4 的公式右滑。
-    // 面板打开时是功能区的模式替换，不进栈；独占去处当前时没有侧层。
-    // 层深先问语义（栈里有几层），再问几何（这扇窗画得下几层）。三个
-    // 消费点（这里、`railEdgeX`、`layeredBody`）拿同一个数，地、分栏线与
-    // 版式因此不可能对不齐。
-    const depth = panel_stack.fittingDepth(
-        @floatCast(@max(model.window.width, 0)),
-        @floatCast(model.layout_fraction),
-        model.panel_stack.visibleDepth(model.destination),
-    );
-    const layered = depth >= 2 and !model.palette.open;
+    // **单侧极简（旧版 UI 哲学）**：一切从左侧出现——左 pane 恒画**当前去处
+    // 一层**，正文恒在最右；右键菜单与 notice 是仅有的两个浮在正文上的
+    // 东西。裁决是 stage 例外：独占整屏（旧版 takesWholeStage）。
+    //
+    // **多层并排删于 v0.3.4 救援（rescue+SPEC §1 R4/R6）**：那套渲染画层数用
+    // 像素钳过的 `fittingDepth`，排序却按未钳的可见深度，窗宽不够时**被裁掉
+    // 的正是作者刚按的那一页**；且每个侧层都是整张去处视图，导入入口因此
+    // 被画两份。面板栈本体留在 core（Escape 退层读它），只是不再并排。
     // 左 pane 的内容：命令面板住在功能区（打开时整个换成它——模式替换，
     // 舞台规则不许浮层，关掉回原来的去处），否则是当前去处。
     const leading_content = if (model.palette.open)
         palettePanel(ui, model)
+    else if (model.layout_fraction < 0.999)
+        // 前往树是栏的常驻件（v0.3.4 救援）：任何面板去处的左栏都以它开头，
+        // 站在信箱／设置上时鼠标导航不消失（旧形只有文件视图带它，作者一离开
+        // 文件页就无处可点）。唯一权威在这里；文件视图不再自带副本。
+        // 独占去处（稿子／裁决，fraction 1.0）不包：舞台规则不许侧面。
+        ui.column(.{ .gap = 8 }, .{
+            ui.column(.{ .padding = 12 }, .{shell_view.paletteGoSection(ui, model, "")}),
+            destinationView(ui, model, track_with_card, model.destination),
+        })
     else
         destinationView(ui, model, track_with_card, model.destination);
     // 探头态的感应面（2.13）：栏是贴左缘探出来的且作者还没用过它——
@@ -446,32 +449,29 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     // 栏占掉的那一段宽：通知条与状态行都是正文那一栏的事（状态行报的是
     // 稿子的保存点与选区），所以它们从栏的右缘开始，而不是铺到窗左缘
     // 去压在栏上。
-    const rail_lead = if (railEdgeX(model, depth, layered)) |edge|
+    const rail_lead = if (railEdgeX(model)) |edge|
         @max(0, edge - shell_view.shell_padding_px)
     else
         0;
-    const body: Adapter.Ui.Node = if (layered)
-        layeredBody(ui, model, track_with_card, depth)
-    else
-        ui.split(.{
-            .value = @floatCast(model.layout_fraction),
-            .resize_duration = motion.split_settle_ms,
-            .resize_easing = motion.enter_easing,
-            .on_resize = Adapter.Ui.translatedValueMsg(.split_resize, f64),
-            .grow = 1,
-        }, .{
-            leading,
-            switch (model.destination) {
-                // 除了稿子与裁决（独占），正文恒在右 pane——作者做任何事时
-                // 都不失去手上这一份（旧版正文让位同源）。
-                .files, .dispatch, .mailbox, .connections, .history, .settings => track_with_card,
-                // 面板开着时正文让位到右 pane（稿子本来独占，裁决仍独占）。
-                else => if (model.palette.open and model.destination == .manuscript)
-                    track_with_card
-                else
-                    ui.el(.stack, .{ .grow = 1 }, .{}),
-            },
-        });
+    const body: Adapter.Ui.Node = ui.split(.{
+        .value = @floatCast(model.layout_fraction),
+        .resize_duration = motion.split_settle_ms,
+        .resize_easing = motion.enter_easing,
+        .on_resize = Adapter.Ui.translatedValueMsg(.split_resize, f64),
+        .grow = 1,
+    }, .{
+        leading,
+        switch (model.destination) {
+            // 除了稿子与裁决（独占），正文恒在右 pane——作者做任何事时
+            // 都不失去手上这一份（旧版正文让位同源）。
+            .files, .dispatch, .mailbox, .connections, .history, .settings => track_with_card,
+            // 面板开着时正文让位到右 pane（稿子本来独占，裁决仍独占）。
+            else => if (model.palette.open and model.destination == .manuscript)
+                track_with_card
+            else
+                ui.el(.stack, .{ .grow = 1 }, .{}),
+        },
+    });
     const root = ui.column(.{ .gap = 12, .padding = shell_view.shell_padding_px }, .{
         // 通知条横跨整窗，不让位给功能栏：它报的是具名的拒绝（「那个去处要
         // 先打开一份稿子」），而拒绝往往正发生在栏占满窗宽的时候——让位会
@@ -505,7 +505,7 @@ fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     // 而只有壳知道那两条缘在哪里。
     var shell_layers: [4]Adapter.Ui.Node = undefined;
     var shell_count: usize = 0;
-    const railband = if (railEdgeX(model, depth, layered)) |edge| rail.band(
+    const railband = if (railEdgeX(model)) |edge| rail.band(
         ui,
         &themes.themes[shell_view.currentThemeIndex(model)],
         edge,
@@ -561,20 +561,18 @@ fn railHasGround(model: *const Model) bool {
 /// 功能栏的右缘在哪里（窗口坐标 px）。地、分栏线与页脚的让位共用这一个
 /// 几何权威，所以三者不可能对不齐。
 ///
-/// **出处**：根栏左 padding + 可见层数 × 层宽，层宽走
-/// `panel_stack.layerWidth`——与 `veil.rect` 量正文轨宽时同一式，不新造
-/// 第二份版式算术。
+/// **出处**：根栏左 padding + 层宽，层宽走 `panel_stack.layerWidth`——与
+/// `veil.rect` 量正文轨宽时同一式，不新造第二份版式算术。
 ///
 /// **什么时候没有**：没有栏时；栏独占整屏时（`layoutFraction == 1`，稿子
 /// 与裁决）——没有第二栏就没有分界，也无从让位；窗尺寸未到时（不猜）。
-fn railEdgeX(model: *const Model, depth: usize, layered: bool) ?f32 {
+fn railEdgeX(model: *const Model) ?f32 {
     if (!railOpen(model)) return null;
     const fraction: f32 = @floatCast(model.layout_fraction);
     if (fraction >= 0.999) return null;
     const window_width: f32 = @floatCast(@max(model.window.width, 0));
     if (window_width <= 0 or model.window.height <= 0) return null;
-    const columns: f32 = if (layered) @floatFromInt(depth) else 1;
-    return shell_view.shell_padding_px + panel_stack.layerWidth(window_width, fraction) * columns;
+    return shell_view.shell_padding_px + panel_stack.layerWidth(window_width, fraction);
 }
 
 /// 一条具名的拒绝。null = 无事，画一个零高的占位。
@@ -587,19 +585,26 @@ fn railEdgeX(model: *const Model, depth: usize, layered: bool) ?f32 {
 /// 十行标记搬成 Zig。我选后者：一个为了渲染器而存在的状态字段会与真正的状态
 /// 漂开，而这个界面剩下的 4,000 行本来就是 Zig 画的——十行标记不值一个第二权威。
 fn noticeBar(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    const notice = model.notice orelse return ui.el(.stack, .{ .height = 0 }, .{});
+    if (model.notice == null) return ui.el(.stack, .{ .height = 0 }, .{});
+    // 借模型的内存，不借栈拷贝：部件树在本函数返回后才读文本，`orelse`
+    // 解包出的局部 Line 那时已死——真窗拄到过：提示条画出 24 个空格，
+    // 恰是「先打开一份稿子。」的字节数（rescue+SPEC §1 R2）。
+    const notice = &model.notice.?;
     return ui.el(.alert, .{
         .variant = .secondary,
         .semantics = .{ .label = "提示" },
     }, .{
+        // 文本与「知道了」紧挨着，剩余宽度留白：条跨整窗时把 × 推到 1200px
+        // 外，读者会把它读成一个无主的浮标（作者截图里正是如此）。
         ui.row(.{ .gap = 8, .cross = .center }, .{
-            ui.text(.{ .grow = 1 }, notice.slice()),
+            ui.text(.{}, notice.slice()),
             ui.el(.button, .{
                 .variant = .secondary,
                 .icon = "x",
                 .semantics = .{ .label = "知道了" },
                 .on_press = .notice_dismiss,
             }, .{}),
+            ui.spacer(1),
         }),
     });
 }
@@ -631,56 +636,9 @@ fn destinationView(
     };
 }
 
-/// 多层并排的版式：侧层在左、当前层最右、正文轨在它们右边。
-///
-/// **接上哪个功能**：`panelStack` 的可见层（`panel_stack.zig` 投影层深与
-/// 几何）。每层内容是各去处的既有视图（`destinationView`），复用不重写。
-///
-/// **交互设计**：一行里排完，与单层时的 split 同形——层各占一层宽，
-/// 舊台拿剩下的全部。每层包 `.panel`：圆角/材质/分隔全走 token 与
-/// corners，零新几何。当前层带 `global_key = "panel-current"`，panel-in
-/// 动画按它寻址（变换不入流，邻居不跟着动）。
-///
-/// **为什么不再是 z 叠 + 右滑**：上一版把轨铺满整个 body、再按
-/// v0.2.4 的 CSS 公式平移「多出的层宽的一半」，而面板盖在它上面。
-/// 那个公式来自一个轨居中于整窗的版式；在这里它意味着二层起
-/// 正文就落在面板上——实测：打开派发后「# 第一章」与面板的「段落 0
-/// 块」炖在同一行。排成一行之后，正文永远在自己的 pane 里，与单层
-/// 时同一条不变式。
-fn layeredBody(
-    ui: *Adapter.Ui,
-    model: *const Model,
-    track: Adapter.Ui.Node,
-    depth: usize,
-) Adapter.Ui.Node {
-    const width = panel_stack.layerWidth(
-        @floatCast(@max(model.window.width, 0)),
-        @floatCast(model.layout_fraction),
-    );
-    var layers: [panel_stack.MAX_VISIBLE_LAYERS + 1]Adapter.Ui.Node = undefined;
-    var at: usize = 0;
-    while (at < depth) : (at += 1) {
-        const current = at == depth - 1;
-        const panel = ui.el(.panel, .{
-            .key = .{ .index = at },
-            .global_key = if (current) .{ .str = "panel-current" } else null,
-            .width = width,
-        }, .{
-            destinationView(ui, model, track, model.panel_stack.visibleLayerAt(
-                model.destination,
-                @intCast(at),
-            )),
-        });
-        // 功能栏穿上自己的地与墨（`rail.dress`）：材质配方、去弧边、去外框
-        // 与递归着墨四件事在那一处定。侧层与当前层同质，与单层时的左 pane
-        // 也同质——三处消费点共用这一行。
-        layers[at] = rail.dress(ui, &themes.themes[shell_view.currentThemeIndex(model)], panel);
-    }
-    // 层在前、舊台在后，一行排完：舊台 `grow` 拿剩下的全部，所以“正文落
-    // 在面板上”在几何上不可能，而不是靠一个平移量刚好错开。
-    layers[depth] = ui.el(.stack, .{ .grow = 1 }, .{track});
-    return ui.row(.{ .grow = 1 }, @as([]const Adapter.Ui.Node, layers[0 .. depth + 1]));
-}
+// `layeredBody`（多层并排）删于 v0.3.4 救援：它把每个历史层画成整张去处
+// 视图（导入入口 ×2），窗宽不够时被裁掉的又恰好是当前页。单层 split
+// 是现在唯一的版式；面板栈只供 Escape 退层（`core/workbench.zig`）。
 
 /// 命令面板：住在功能区（rail）里，不是浮层。
 ///
@@ -755,7 +713,7 @@ fn paletteCommandRow(ui: *Adapter.Ui, model: *const Model, id: []const u8) Adapt
         ui.fmt("{s}　{s}", .{ label, hint })
     else
         label;
-    return shell_view.railTreeRow(ui, .{
+    return shell_view.railTreeRow(ui, model, .{
         .disabled = !available or msg == null,
         .on_press = if (available) msg else null,
         .semantics = .{ .role = .treeitem, .label = label },

@@ -397,8 +397,8 @@ fn verdictBeginMsg(model: *const Model, range: protocol.AnchorRangeWire) ?Msg {
 
 /// 从裁决名录里按 id 读起笔（agent 的建议）。名录没在读就空起笔。
 fn proposalSeedById(id: []const u8) []const u8 {
-    if (replies.borrow(.project).kind() != .proposals) return "";
-    const listing = replies.borrow(.project);
+    if (replies.borrow(.proposals).kind() != .proposals) return "";
+    const listing = replies.borrow(.proposals);
     var index: usize = 0;
     while (index < shell_view.card_rows) : (index += 1) {
         const proposal = project_view.proposalAt(listing, index) orelse break;

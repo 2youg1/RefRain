@@ -2,7 +2,10 @@
 //!
 //! This module is the one place a raw pointer crosses into Rust. It resolves the
 //! borrowed request text into a safe slice immediately, so every module behind
-//! it works with ordinary borrows under `#![deny(unsafe_code)]`.
+//! it works with ordinary borrows under `#![deny(unsafe_code)]`. The Win32
+//! dialog-owner lookup lives here for the same reason: it is the only other
+//! spot where a platform handle enters Rust, and `project.rs` consumes it as a
+//! safe `DialogOwner` value.
 
 use crate::protocol::{EVENT_TEXT_BYTES, RefrainNativeRequest, RefrainNativeResponse};
 
@@ -54,4 +57,60 @@ pub(crate) fn borrow_response_bytes(response: &RefrainNativeResponse) -> &[u8] {
     // SAFETY: the response borrows the reply buffer owned by the thread that
     // produced it, which stays valid until that thread dispatches again.
     unsafe { std::slice::from_raw_parts(response.text, response.text_len as usize) }
+}
+
+/// The Win32 window that owns the system file dialogs.
+///
+/// rfd shows `IFileDialog` with a NULL owner unless a window is handed to it,
+/// and an unowned modal opens BEHIND the main window while the dispatch thread
+/// blocks inside the dialog's message loop — the author reads that as "the
+/// button does nothing" (v0.3.4 rescue: the open-project and both import
+/// buttons all shipped that way; EnumWindows found the dialog alive with the
+/// main window in the foreground). Dispatch runs on the window's own thread,
+/// so `GetActiveWindow` names the right owner without any title matching;
+/// the foreground window is the fallback when activation has already moved.
+#[cfg(target_os = "windows")]
+pub(crate) mod dialog_owner {
+    use raw_window_handle::{
+        DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawWindowHandle,
+        Win32WindowHandle, WindowHandle,
+    };
+    use std::num::NonZeroIsize;
+
+    unsafe extern "system" {
+        fn GetActiveWindow() -> isize;
+        fn GetForegroundWindow() -> isize;
+    }
+
+    /// A borrowed Win32 window handle, alive for the synchronous dialog call.
+    pub(crate) struct DialogOwner(NonZeroIsize);
+
+    /// The window that should own the next dialog, when one of ours exists.
+    pub(crate) fn current() -> Option<DialogOwner> {
+        // SAFETY: both calls take no arguments and return a bare handle value;
+        // a stale or foreign handle degrades to "no owner", never to UB here.
+        let active = unsafe { GetActiveWindow() };
+        // SAFETY: same contract as above.
+        let window = if active != 0 {
+            active
+        } else {
+            unsafe { GetForegroundWindow() }
+        };
+        NonZeroIsize::new(window).map(DialogOwner)
+    }
+
+    impl HasWindowHandle for DialogOwner {
+        fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
+            let raw = RawWindowHandle::Win32(Win32WindowHandle::new(self.0));
+            // SAFETY: the handle names our own live window; the borrow lasts
+            // only for the synchronous `pick_*` call that shows the dialog.
+            Ok(unsafe { WindowHandle::borrow_raw(raw) })
+        }
+    }
+
+    impl HasDisplayHandle for DialogOwner {
+        fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
+            Ok(DisplayHandle::windows())
+        }
+    }
 }

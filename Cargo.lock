@@ -1731,6 +1731,7 @@ name = "refrain-native-host"
 version = "0.3.4"
 dependencies = [
  "directories",
+ "raw-window-handle",
  "refrain-app",
  "refrain-core",
  "refrain-host",

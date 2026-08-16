@@ -39,12 +39,13 @@ const ASSEMBLY_SOURCES = ["apps/native/host/src/**/*.rs"];
  * 要求下调，否则表就成了一个永不收紧的地板，而下一个人可以在额度内自由新增。
  */
 const ALLOWED: Readonly<Record<string, number>> = {
-  // Win32 没有安全封装：两个 API 都要求调用方先填好结构体的 cbSize/dmSize，
-  // 这个约束表达不进类型系统。已收敛在单个函数内，有 cfg 守卫与非 Windows 回退。
   // Rust 2024 要求覆盖链接符号名显式标为 unsafe；此外这里是唯一把固定 C ABI
-  // 的借用指针解成切片的地方：请求文本一处，测试读回响应投影一处。其后的
-  // 模块一律在 deny(unsafe_code) 下工作，拿到的都是普通借用。
-  "apps/native/host/src/staticlib.rs": 3,
+  // 的借用指针解成切片的地方：请求文本一处，测试读回响应投影一处。
+  // v0.3.4 救援加四处：对话框 owner 的 Win32 外部声明块一行、两次取句柄
+  //（GetActiveWindow／GetForegroundWindow）、一次 borrow_raw —— 无主模态会开在
+  // 主窗背后，作者读作「按钮死了」（rescue+SPEC）。其后的模块一律在
+  // deny(unsafe_code) 下工作，拿到的都是普通借用。
+  "apps/native/host/src/staticlib.rs": 7,
 };
 
 const failures: string[] = [];
@@ -75,9 +76,10 @@ for (const file of assemblyFiles) {
   const text = readFileSync(file, "utf8");
   text.split("\n").forEach((line, index) => {
     if (/^\s*(\/\/|\/\*|\*)/.test(line)) return;
-    // unsafe 块、声明与 Rust 2024 unsafe 属性都算。`unsafe_font_names` 这类
-    // 标识符不算——要求 unsafe 后面是声明、块或属性参数。
-    if (/\bunsafe\s*(\(|\{|fn\b|impl\b|trait\b)/.test(line)) {
+    // unsafe 块、声明、Rust 2024 unsafe 属性与 `unsafe extern` 块都算。
+    // `unsafe_font_names` 这类标识符不算——要求 unsafe 后面是声明、块、
+    // 属性参数或外部块（旧正则漏认 extern，额度对它不设防）。
+    if (/\bunsafe\s*(\(|\{|fn\b|impl\b|trait\b|extern\b)/.test(line)) {
       counted[file] = (counted[file] ?? 0) + 1;
       if (ALLOWED[file] === undefined) {
         failures.push(`${file}:${index + 1}: 未登记的 unsafe — ${line.trim()}`);

@@ -71,12 +71,17 @@ pub const Recipe = struct {
 };
 
 /// 亚克力的 sheen：一道弱光，压在面板顶就收掉。
+///
+/// 0.18（原 0.10）：单层版式后面板不再悬在正文上，backdrop 模糊无物可糊，
+/// 材质只剩自证信号——原值在实测中被读成「只有亮度差」（v0.3.4 作者），
+/// 提一档让「磨砂」自己读得出来。
 const acrylic_sheen_offsets = [2]f32{ 0.0, 1.0 };
-const acrylic_sheen_alphas = [2]f32{ 0.10, 0.0 };
+const acrylic_sheen_alphas = [2]f32{ 0.18, 0.0 };
 /// 液态玻璃的 sheen：三停——顶上最亮，中段留一点余光再收没，比两停
-/// 更像「一道光扫过有厚度的表面」。
+/// 更像「一道光扫过有厚度的表面」。顶停 0.30／中停 0.10（原 0.22／0.06）：
+/// 与亚克力同理由提档，且与它拉开一眼可辨的距离。
 const liquid_sheen_offsets = [3]f32{ 0.0, 0.5, 1.0 };
-const liquid_sheen_alphas = [3]f32{ 0.22, 0.06, 0.0 };
+const liquid_sheen_alphas = [3]f32{ 0.30, 0.10, 0.0 };
 
 /// 停点数的表上限（liquid 的三停）。绘制侧的停点池按它开。
 pub const max_sheen_stops: usize = 3;
@@ -106,7 +111,8 @@ pub fn recipe(kind: Kind) Recipe {
             .blur_radius = 16,
             .sheen_offsets = &acrylic_sheen_offsets,
             .sheen_alphas = &acrylic_sheen_alphas,
-            .edge_alpha = 0.12,
+            // 0.18（原 0.12）：顶缘高光是玻璃感在单层版式下仅剩的边缘信号之一。
+            .edge_alpha = 0.18,
             .border_alpha = 0.60,
             // SDK 纪律：透明填充不投影（投影会读成一块透出来的暗斑）。
             .shadow_blur = 0,

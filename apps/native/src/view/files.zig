@@ -25,30 +25,29 @@ const search_view = @import("search.zig");
 pub fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     if (model.root_id.slice().len == 0) {
         // 还没有项目：这一屏是作者第一次打开软件看到的东西，所以它必须
-        // 自己给出入口，而不是显示一句「没有项目」。
+        // 自己给出入口，而不是显示一句「没有项目」。「前往」树不在这里：
+        // 它是栏的常驻件，由 `app_main.documentView` 给每个面板去处统一戴上
+        //（v0.3.4 救援：旧形只有本视图带树，离开文件页导航就消失）。
         return ui.column(.{ .gap = 12, .padding = 16 }, .{
-            // 「前往」节与命令面板同一份（paletteGoSection，单一来源）：
-            // 空项目时也画全八个去处——够不着的由 core 的 navigate 具名拒绝，
-            // 作者由此学会键位，而不是发现不了功能存在（v0.3.0 走查问题 1）。
-            shell_view.paletteGoSection(ui, model, ""),
             ui.text(.{}, "还没有打开项目"),
-            ui.row(.{ .gap = 8 }, .{
-                ui.button(.{
-                    .variant = .primary,
-                    .on_press = adoptRootMsg(true),
-                    .semantics = .{ .label = "打开一个项目文件夹" },
-                }, "打开项目"),
-                ui.button(.{
-                    .on_press = adoptRootMsg(false),
-                    .semantics = .{ .label = "打开单独一份稿子" },
-                }, "打开文档"),
-            }),
+            // 入口只有一个（v0.3.4 作者裁定：两颗按钮打架就删一颗，留下的必须
+            // 绝对能用）：项目文件夹是产品的真模型，单文件 Root 的能力留在
+            // Rust（RootKind::File），不占第一屏的入口。
+            ui.button(.{
+                .variant = .primary,
+                .on_press = adoptRootMsg(true),
+                .semantics = .{ .label = "打开一个项目文件夹" },
+            }, "打开项目文件夹"),
         });
     }
-    const opened = replies.borrow(.project);
-    // 文件树只画 `opened` 形状的答复：一次搜索会把公共槽换成命中，而在
-    // 命中里数出来的行数会让这一屏画出别的东西。
+    // 树有自己的槽（v0.3.4 救援）：探测、搜索、信箱都冲不掉它——旧形下
+    // 点一次「重新探测」这一屏就永久空白，作者读到的是「打不开任何文档」。
+    // 两种形状同一张树：打开项目是 `.opened`，翻页与刷新是 `.page`——只认
+    // 前者时，按一次「再读一页」树就消失。
+    const opened = replies.borrow(.documents);
     const documents: []const wire.DocumentRow = if (opened.head(.opened)) |head|
+        opened.rows(wire.DocumentRow, head.documents)
+    else if (opened.head(.page)) |head|
         opened.rows(wire.DocumentRow, head.documents)
     else
         &[_]wire.DocumentRow{};
@@ -61,7 +60,7 @@ pub fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     while (index < window) : (index += 1) {
         const rendered = project_view.documentRow(opened, documents[index]);
         rows[index] = if (rendered) |shown|
-            shell_view.railTreeRow(ui, .{
+            shell_view.railTreeRow(ui, model, .{
                 .key = .{ .index = index },
                 .on_press = openDocumentMsg(model, shown.label),
                 // Enter 打开：与点击同一条消息（list_item 键图的行主键）。
@@ -72,13 +71,9 @@ pub fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
                 .semantics = .{ .role = .treeitem, .label = shown.label },
             }, 1, ui.fmt("{s} · {s}", .{ shown.label, shown.detail }))
         else
-            shell_view.railTreeRow(ui, .{ .key = .{ .index = index }, .disabled = true }, 1, "这一行读不出来");
+            shell_view.railTreeRow(ui, model, .{ .key = .{ .index = index }, .disabled = true }, 1, "这一行读不出来");
     }
     return ui.column(.{ .gap = 8, .padding = 12 }, .{
-        // 「前往」节置顶：八个去处的鼠标入口与键位提示（paletteGoSection，
-        // 与命令面板同一份，单一来源）。树状排列与键位印行上，服务慢鼠标
-        // 画像——不大幅移鼠标也够得着全部功能（v0.3.0 走查问题 1）。
-        shell_view.paletteGoSection(ui, model, ""),
         ui.row(.{ .gap = 8, .cross = .center }, .{
             ui.text(.{ .grow = 1 }, "文档"),
             // 画出来的与一共有多少分开说：作者据此知道还有没读到的。

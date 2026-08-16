@@ -609,8 +609,10 @@ fn dispatchPreviewSection(ui: *Adapter.Ui) Adapter.Ui.Node {
 /// `draftAfterEdit` 路径；编辑中的行把「收进资料区／收成正文」换成带
 /// 编辑后正文的版本（`edited_body` 通道，M3 备好的那条）。
 fn materialDraftsSection(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    const is_drafts = replies.borrow(.project).kind() == .material_drafts;
-    const listing = replies.borrow(.project);
+    // 草稿住自己的槽：旧形读 `.project` 而草稿答复按 kind 落 `.material_drafts`，
+    // 这一段因此永远画不出行——两份权威对不上的又一处（v0.3.4 救援）。
+    const is_drafts = replies.borrow(.material_drafts).kind() == .material_drafts;
+    const listing = replies.borrow(.material_drafts);
     var rows: [shell_view.card_rows]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     if (is_drafts) {

@@ -53,6 +53,16 @@ const selected_wash_alpha: f32 = 0.34;
 /// 按下那一瞬的浓度：比选中再实一档，手指抬起就回。
 const pressed_wash_alpha: f32 = 0.46;
 
+/// 选中行铺满整行用的同一款 wash。
+///
+/// **接上哪个功能**：`shell.railTreeRow` 的缩进段。选中底色由 SDK 按
+/// `controlTokens` 给行本体，而缩进是行外的一段 stack——不同色就会在
+/// 选中行左侧露出一截地（作者把它读成「很难看的浮窗缺了一角」）。
+/// 两处共用这一个浓度，选中因此永远是一整条。
+pub fn selectedWash(theme: *const Theme) Color {
+    return wash(theme, selected_wash_alpha);
+}
+
 /// 功能栏的地。**永远实心**，与作者选的面板材质无关。
 ///
 /// 材质表的前提写在 `material.zig` 的模块头里：`surface_mix < 1` 的配方

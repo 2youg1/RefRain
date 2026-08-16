@@ -21,7 +21,7 @@ const Msg = core.Msg;
 /// **在全局逻辑中负责什么**：只画与只派 Msg。「装了没有」「能做到哪一层」
 /// 都由 Rust 探测，这里一条也不猜。中文标签住在 `project_view` 的翻译里。
 pub fn connectionsView(ui: *Adapter.Ui) Adapter.Ui.Node {
-    const listing = replies.borrow(.project);
+    const listing = replies.borrow(.harnesses);
     var rows: [8]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     while (count < rows.len) : (count += 1) {
@@ -36,9 +36,16 @@ pub fn connectionsView(ui: *Adapter.Ui) Adapter.Ui.Node {
                     ui.text(.{}, harness.state),
                 }),
                 // 探不到时不画等级：一个「只能写文件」会被读成它装好了
-                // 而只是能力弱，而实际上它根本没装。
-                ui.text(.{}, if (harness.ready) harness.tier else ""),
-                ui.text(.{}, harness.version),
+                // 而只是能力弱，而实际上它根本没装。空串也不占行：没装的
+                // 卡片曾经留着两行空白，作者把大片留白读成「界面坏了」。
+                if (harness.ready and harness.tier.len > 0)
+                    ui.text(.{}, harness.tier)
+                else
+                    ui.spacer(0),
+                if (harness.version.len > 0)
+                    ui.text(.{}, harness.version)
+                else
+                    ui.spacer(0),
                 // 协议徽章 + 安装/更新：只有装好了的 harness 才有协议可装；
                 // 装协议是 Root 之外唯一的写路径，按钮是它的唯一入口。
                 if (harness.ready)

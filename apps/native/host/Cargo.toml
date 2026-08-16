@@ -13,6 +13,7 @@ crate-type = ["rlib", "staticlib"]
 directories = { workspace = true }
 refrain-app = { workspace = true }
 rfd = { workspace = true }
+raw-window-handle = { workspace = true }
 serde_json = { workspace = true }
 refrain-core = { workspace = true }
 # 答复投影按封闭集过界，所以这两处的枚举要**穷尽匹配**（新增一个变体就是编译

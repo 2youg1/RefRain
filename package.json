@@ -25,6 +25,7 @@
     "evidence:data-performance": "bun scripts/gate.ts --evidence data-performance",
     "evidence:window-performance": "bun scripts/gate.ts --evidence window-performance",
     "verify:no-spec-upload": "bun scripts/verify-no-spec-upload.ts",
+    "verify:agent-entry": "bun scripts/verify-agent-entry.ts",
     "verify:no-network": "bun scripts/verify-no-network.ts",
     "verify:bridge": "bun scripts/verify-bridge.ts",
     "verify:corner-authority": "bun scripts/verify-corner-authority.ts",

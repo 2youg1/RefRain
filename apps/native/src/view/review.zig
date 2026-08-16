@@ -65,7 +65,7 @@ pub fn reviewView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             ui.text(.{}, "先打开一份稿子"),
         });
     }
-    const listing = replies.borrow(.project);
+    const listing = replies.borrow(.proposals);
     const total = project_view.proposalCount(listing);
     const window = @min(total, shell_view.max_visible_rows);
     var rows: [shell_view.max_visible_rows]Adapter.Ui.Node = undefined;
@@ -75,6 +75,12 @@ pub fn reviewView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     }
     return ui.column(.{ .gap = 8, .padding = 12 }, .{
         ui.row(.{ .gap = 8, .cross = .center }, .{
+            // 裁决独占整屏（stage 例外），前往树不在——这枚按钮是鼠标的回路，
+            // 与 Escape 同一个落点（v0.3.4：没有它，慢鼠标画像在裁决台上被困住）。
+            ui.button(.{
+                .on_press = .{ .workbench_go = .manuscript },
+                .semantics = .{ .label = "回稿子" },
+            }, "← 稿子 (Esc)"),
             ui.text(.{ .grow = 1 }, "待裁决的提案"),
             // 批次进度跟着台账走（stagedCount 由 core 从答复提取），
             // 界面不自己数「我判了几条」——那会与账本漂开。
@@ -185,7 +191,7 @@ fn stalePanel(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
 /// （`annotationDraft`），与派发框同一条路径；「这段字够不够清楚」不是
 /// 这一屏能判的，范围对不上块由 Rust 在入口具名拒绝。
 fn annotationsSection(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    const listing = replies.borrow(.project);
+    const listing = replies.borrow(.annotations);
     var rows: [shell_view.card_rows]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     while (count < rows.len) : (count += 1) {

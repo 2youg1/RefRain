@@ -33,12 +33,26 @@ impl NativeProjectPlatform {
     }
 }
 
+/// A file dialog that is guaranteed to surface.
+///
+/// Owned by our window on Windows: an unowned modal opens behind the main
+/// window while dispatch blocks, which the author reads as a dead button
+/// (v0.3.4 rescue). On other platforms the portal/toolkit already fronts it.
+fn owned_dialog() -> rfd::FileDialog {
+    let dialog = rfd::FileDialog::new();
+    #[cfg(target_os = "windows")]
+    if let Some(owner) = crate::staticlib::dialog_owner::current() {
+        return dialog.set_parent(&owner);
+    }
+    dialog
+}
+
 impl ProjectPlatform for NativeProjectPlatform {
     fn choose_root(&self, kind: RootKind) -> Result<Option<PathBuf>, RefrainError> {
         if let Some(path) = &self.automation_root {
             return Ok(Some(path.clone()));
         }
-        let dialog = rfd::FileDialog::new().set_title(match kind {
+        let dialog = owned_dialog().set_title(match kind {
             RootKind::Folder => "选择项目文件夹",
             RootKind::File => "选择一份手稿",
         });
@@ -54,16 +68,14 @@ impl ProjectPlatform for NativeProjectPlatform {
         if let Some(path) = &self.automation_root {
             return Ok(Some(path.clone()));
         }
-        Ok(rfd::FileDialog::new()
-            .set_title("选择项目的父目录")
-            .pick_folder())
+        Ok(owned_dialog().set_title("选择项目的父目录").pick_folder())
     }
 
     fn choose_import(&self, kind: ProjectImport) -> Result<Option<PathBuf>, RefrainError> {
         if let Some(path) = &self.automation_root {
             return Ok(Some(path.clone()));
         }
-        let dialog = rfd::FileDialog::new();
+        let dialog = owned_dialog();
         Ok(match kind {
             ProjectImport::Material => dialog
                 .set_title("选择资料")

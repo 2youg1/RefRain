@@ -29,7 +29,8 @@ const files_view = @import("files.zig");
 /// 走焦点、Enter 跳过去（on_submit）、Space 选择激活，都是 SDK 的 list
 /// 键图原生行为。
 pub fn searchView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    const results = replies.borrow(.project);
+    // 命中住自己的槽：搜一次不再把文件树／提案名录冲成空白（v0.3.4 救援）。
+    const results = replies.borrow(.search);
     const is_blocks = results.kind() == .blocks;
     const hits: []const wire.HitRow = if (results.head(.blocks)) |head|
         results.rows(wire.HitRow, head.hits)

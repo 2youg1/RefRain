@@ -246,7 +246,7 @@ test "paintSheen 恒发两条命令：有料画渐变与高光，没料画零尺
     try std.testing.expectEqual(@as(u64, 101), sheen.id);
     const stops = sheen.fill.linear_gradient.stops;
     try std.testing.expectEqual(@as(usize, 3), stops.len);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.22), stops[0].color.a, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.30), stops[0].color.a, 0.001);
     try std.testing.expectApproxEqAbs(@as(f32, 0), stops[2].color.a, 0.001);
     // 高光在顶缘内侧（让开 1px 描边），高 1px，alpha 取表；两端按
     // panel 半径内缩，不探出弧边的上角。

@@ -48,12 +48,15 @@ pub const Destination = enum(u3) {
 
     /// 这个去处需要手上有一份打开的稿子吗。
     ///
-    /// 读稿子的是裁决、派发、信箱、历史。`workbench.ts` 把这张表压成常量 92，
-    /// 需要一段注释才能读；这里由编译器保证「新增去处忘了归类」编译不过。
+    /// 读稿子的是裁决、派发、历史——它们的每一行都指向当前那份稿。信箱不在
+    /// 其中：`ReadMailbox` 只收 root（数据是项目级的），v0.3.4 把它也拦在稿子
+    /// 门后，作者没开稿时按 Ctrl+5 只得到一条拒绝——那是把门盖在了没有门樽的
+    /// 地方。`workbench.ts` 把这张表压成常量 92，需要一段注释才能读；这里由
+    /// 编译器保证「新增去处忘了归类」编译不过。
     pub fn needsDocument(self: Destination) bool {
         return switch (self) {
-            .review, .dispatch, .mailbox, .history => true,
-            .manuscript, .files, .connections, .settings => false,
+            .review, .dispatch, .history => true,
+            .manuscript, .files, .mailbox, .connections, .settings => false,
         };
     }
 
@@ -175,12 +178,6 @@ pub fn clampRailFraction(fraction: f64) f64 {
     return @min(0.4, @max(0.1, fraction));
 }
 
-/// 可见面板层数上限（含当前层）。更旧的层留在栈里，只是不画。
-///
-/// 三层在 1250px 窗口上按默认比例只给正文剩 4%（ARCHITECTURE《The layout of the
-/// layers》）——所以是三层，不是更多。
-pub const max_visible_layers: u8 = 3;
-
 /// 面板栈能记多少层作者的来路。
 pub const max_depth: usize = 8;
 
@@ -230,45 +227,12 @@ pub const PanelStack = struct {
         rest.depth = self.depth - 1;
         return .{ .destination = self.at(self.depth - 1), .rest = rest };
     }
-
-    /// 可见层数。当前层是独占去处时为 0（它盖住一切）；否则是栈里的面板层与当前
-    /// 面板层的总数，夹到上限。
-    pub fn visibleDepth(self: *const PanelStack, current: Destination) u8 {
-        if (current.isWholeStage()) return 0;
-        return @min(self.panelCount() + 1, max_visible_layers);
-    }
-
-    /// 栈里有几个面板层（独占层不算面板）。
-    fn panelCount(self: *const PanelStack) u8 {
-        var panels: u8 = 0;
-        var index: u8 = 0;
-        while (index < self.depth) : (index += 1) {
-            if (!self.at(index).isWholeStage()) panels += 1;
-        }
-        return panels;
-    }
-
-    /// 可见的第 at_index 层（0 = 最左）是哪个去处。
-    ///
-    /// 栈里的面板层按从底到顶排，当前层恒在最右；超出上限时最旧的层先藏起来。
-    pub fn visibleLayerAt(self: *const PanelStack, current: Destination, at_index: u8) Destination {
-        const visible = self.visibleDepth(current);
-        if (at_index + 1 >= visible) return current;
-        // 当前层占掉最后一席，剩下的窗口只露最新的几层。
-        const window = visible - 1;
-        const panels = self.panelCount();
-        const skip = if (panels > window) panels - window else 0;
-        var seen: u8 = 0;
-        var index: u8 = 0;
-        while (index < self.depth) : (index += 1) {
-            const layer = self.at(index);
-            if (layer.isWholeStage()) continue;
-            if (seen >= skip and seen == skip + at_index) return layer;
-            seen += 1;
-        }
-        return current;
-    }
 };
+
+// 多层并排的可见投影（`visibleDepth`／`visibleLayerAt`／`max_visible_layers`）删于
+// v0.3.4 救援：那套渲染把作者刚按的页裁在窗外（画层数用像素钳过的
+// `fittingDepth`，排序却按未钳的可见深度），并把整张文件视图连导入口画两份。
+// 现在渲染恒画当前去处一层；栈本体留下，只供 Escape 退层。
 
 // ------------------------------------------------------------------ 测试
 // 向量逐条搬自 `workbench.test.ts`，断言的是同一个事实。
@@ -278,7 +242,8 @@ const testing = std.testing;
 test "需要稿子的去处正是那些读稿子的" {
     // `workbench.ts` 的掩码是手算常量，所以那条测试把每一位摊开写死。这里改由
     // switch 穷尽，但仍逐个钉住——算错一位在别处只表现为「某个面板偶尔能空开」。
-    const expected = [_]bool{ false, false, true, true, true, false, true, false };
+    // 信箱（下标 4）不读稿子：它的数据是项目级的（rescue+SPEC §1 R2）。
+    const expected = [_]bool{ false, false, true, true, false, false, true, false };
     try testing.expectEqual(expected.len, destination_count);
     for (expected, 0..) |needs, index| {
         try testing.expectEqual(needs, destinationAt(@intCast(index)).needsDocument());
@@ -317,6 +282,8 @@ test "读稿子的去处没有稿子就打不开" {
         try testing.expectEqual(Navigation.needs_document, navigate(.manuscript, target, false));
         try testing.expectEqual(Navigation.moved, navigate(.manuscript, target, true));
     }
+    // 信箱不要稿子：没开稿也能看送出去的那些。
+    try testing.expectEqual(Navigation.moved, navigate(.manuscript, .mailbox, false));
 }
 
 test "同键再按关闭当前去处" {
@@ -358,30 +325,6 @@ test "有名录的正是那四个有一列可走的去处" {
     // 历史没有名录：它的行是只读的回档名录，由自己的键走。
     try testing.expect(!Destination.history.hasRoster());
     try testing.expect(!Destination.settings.hasRoster());
-}
-
-test "可见栈按从底到顶排面板层，当前层恒在最右" {
-    // 栈记的是离开的去处（当前层不在栈里）：栈底是文件，当前层是派发台。
-    const stack = PanelStack.empty.push(.files);
-    try testing.expectEqual(@as(u8, 2), stack.visibleDepth(.dispatch));
-    try testing.expectEqual(Destination.files, stack.visibleLayerAt(.dispatch, 0));
-    try testing.expectEqual(Destination.dispatch, stack.visibleLayerAt(.dispatch, 1));
-    // 独占去处（裁决）当前时：没有侧层。
-    try testing.expectEqual(@as(u8, 0), stack.visibleDepth(.review));
-
-    // 超过上限时最旧的层先藏：栈 [文件,派发,信箱] + 当前连接 → 只露三层。
-    const deep = PanelStack.empty.push(.files).push(.dispatch).push(.mailbox);
-    try testing.expectEqual(@as(u8, 3), deep.depth);
-    try testing.expectEqual(max_visible_layers, deep.visibleDepth(.connections));
-    try testing.expectEqual(Destination.dispatch, deep.visibleLayerAt(.connections, 0)); // 文件被藏起
-    try testing.expectEqual(Destination.mailbox, deep.visibleLayerAt(.connections, 1));
-    try testing.expectEqual(Destination.connections, deep.visibleLayerAt(.connections, 2));
-
-    // 栈里的独占层不算面板层：栈 [文件,裁决] + 当前派发 → 文件与派发。
-    const mixed = PanelStack.empty.push(.files).push(.review);
-    try testing.expectEqual(@as(u8, 2), mixed.visibleDepth(.dispatch));
-    try testing.expectEqual(Destination.files, mixed.visibleLayerAt(.dispatch, 0));
-    try testing.expectEqual(Destination.dispatch, mixed.visibleLayerAt(.dispatch, 1));
 }
 
 test "栈：根不进栈，空栈弹栈交出稿子，满栈丢最新的" {

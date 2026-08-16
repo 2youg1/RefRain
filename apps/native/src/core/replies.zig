@@ -23,8 +23,28 @@ const protocol = @import("../generated/protocol.zig");
 const wire = @import("../generated/wire.zig");
 
 /// 一条答复该落哪个槽。
+///
+/// v0.3.4 之前文件树、提案、信箱、连接、历史、搜索六种名录共挤 `.project`
+/// 一个槽：点一次「重新探测」，文件树就被探测答复冲成空白——作者读到的是
+/// 「打不开任何文档」。现在每张常驻名录各有自己的槽，互不冲掉。
 pub const Slot = enum {
-    /// 多数屏共用的最近一条答复：文件树、提案名录、信箱、连接、搜索命中。
+    /// 文件树：打开项目（`.opened`）与翻页（`.page`）的文档名录。
+    documents,
+    /// 搜索命中：找正文（`.blocks`）与找文档（`.documents`）。两种 kind 都
+    /// 只由搜索产出（`project_wire.rs` 各只有一个产地），所以它们不会把
+    /// 树冲掉，只会互相接替——那正是搜索框的语义。
+    search,
+    /// 本机 Harness 探测名录。
+    harnesses,
+    /// 信箱名录（含回收站页签的投影）。
+    mailbox,
+    /// 改动记录名录。
+    history,
+    /// 提案名录。裁决台与正文印点都读它。
+    proposals,
+    /// 批注名录（裁决台的另一半）。
+    annotations,
+    /// 其余答复的落脚处：各类回执（判词、送出、收取、删除……）。
     project,
     /// 设置答复。排版三值与面板材质只在它里面出现。
     config,
@@ -55,6 +75,15 @@ var lengths: [slot_count]usize = @splat(0);
 /// 而新增一种答复只改 `protocol/host.json` 一处。
 pub fn slotForKind(kind: wire.Kind) Slot {
     return switch (kind) {
+        .opened, .page => .documents,
+        // kind `.blocks` 是搜索的正文命中；槽 `.blocks` 装的是派发台的块清单
+        // （kind `.document_blocks`）。同名不同物，路由在这一处分开。
+        .blocks, .documents => .search,
+        .harnesses => .harnesses,
+        .mailbox => .mailbox,
+        .history => .history,
+        .proposals => .proposals,
+        .annotations => .annotations,
         .config => .config,
         .host => .host,
         .dispatch_preview => .preview,
@@ -98,7 +127,7 @@ pub fn clearAll() void {
 /// 不是提案名录就交出 null：换了名录之后裁决台的问题一律交出空，而不是在错的
 /// 表里数行——在错的表里数出来的那一行，作者按下去会判到别人身上。
 pub fn proposals() ?*const wire.ProposalsHead {
-    return borrow(.project).head(.proposals);
+    return borrow(.proposals).head(.proposals);
 }
 
 // ------------------------------------------------------------------ 测试
@@ -142,15 +171,32 @@ test "落槽之后借的是模块缓冲，不是原来的那段字节" {
     try testing.expectEqual(@as(u32, 7), borrow(.host).head(.host).?.run_total);
 }
 
-test "换了名录之后裁决台的问题交出空，而不是在错的表里数行" {
+test "提案住自己的槽，别的答复冲不掉它" {
     clearAll();
     const listing = encoded(.proposals, .{ .staged_count = 3 });
-    _ = store(.project, listing[0 .. @sizeOf(wire.Header) + @sizeOf(wire.ProposalsHead)]);
+    _ = store(slotForKind(.proposals), listing[0 .. @sizeOf(wire.Header) + @sizeOf(wire.ProposalsHead)]);
     try testing.expectEqual(@as(u32, 3), proposals().?.staged_count);
 
+    // 搜索答复落搜索槽，提案名录原封不动——旧形下这一下会把裁决台清空。
     const documents = encoded(.documents, .{});
-    _ = store(.project, documents[0 .. @sizeOf(wire.Header) + @sizeOf(wire.DocumentsHead)]);
-    try testing.expect(proposals() == null);
+    _ = store(slotForKind(.documents), documents[0 .. @sizeOf(wire.Header) + @sizeOf(wire.DocumentsHead)]);
+    try testing.expectEqual(@as(u32, 3), proposals().?.staged_count);
+    try testing.expectEqual(wire.Kind.documents, borrow(.search).kind());
+}
+
+test "六张常驻名录各有自己的槽，探测冲不掉文件树" {
+    clearAll();
+    const opened = encoded(.opened, .{});
+    _ = store(slotForKind(.opened), opened[0 .. @sizeOf(wire.Header) + @sizeOf(wire.OpenedHead)]);
+    const probed = encoded(.harnesses, .{});
+    _ = store(slotForKind(.harnesses), probed[0 .. @sizeOf(wire.Header) + @sizeOf(wire.HarnessesHead)]);
+    // 探测之后树还在——这正是 v0.3.4 作者报的「打不开任何文档」的根因。
+    try testing.expectEqual(wire.Kind.opened, borrow(.documents).kind());
+    try testing.expectEqual(wire.Kind.harnesses, borrow(.harnesses).kind());
+    // 翻页答复接替打开答复：同一张树的两种形状同一个槽。
+    const paged = encoded(.page, .{});
+    _ = store(slotForKind(.page), paged[0 .. @sizeOf(wire.Header) + @sizeOf(wire.PageHead)]);
+    try testing.expectEqual(wire.Kind.page, borrow(.documents).kind());
 }
 
 test "超上界的答复按空槽处理，不留半条记录" {

@@ -18,7 +18,7 @@ const Msg = core.Msg;
 /// **在全局逻辑中负责什么**：只画与只派 Msg。已撤销的行仍然显示（灰着），
 /// 因为它们是作者做过的事；从列表里消失会让他以为自己记错了。
 pub fn historyView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
-    const listing = replies.borrow(.project);
+    const listing = replies.borrow(.history);
     var rows: [24]Adapter.Ui.Node = undefined;
     var count: usize = 0;
     while (count < rows.len) : (count += 1) {

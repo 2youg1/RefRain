@@ -32,6 +32,7 @@ export const RELEASE_PROGRAMS: Readonly<Record<string, string>> = {
  * executable is `${SCRIPTC_OUT}/<basename without .ts>`.
  */
 export const TIER_A: Readonly<Record<string, string>> = {
+  "verify:agent-entry": "scripts/verify-agent-entry.ts",
   "verify:alternates-isolation": "scripts/verify-alternates-isolation.ts",
   "verify:bridge": "scripts/verify-bridge.ts",
   "verify:core-purity": "scripts/verify-core-purity.ts",

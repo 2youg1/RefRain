@@ -94,15 +94,29 @@ width gives the hysteresis: it opens at 4 px and closes after approximately
 
 ### The layout of the layers
 
-Put the layers in one row, at the side of the stage. The stage takes the space
-that stays. Two results follow:
+The rail shows one layer: the current destination. The manuscript takes the
+space that stays. Three results follow:
 
 - A panel cannot cover the manuscript, because the manuscript is not in the
   space of the panel.
-- The stage keeps a minimum of one layer width. Three layers at the default
-  fraction of 0.32 leave 4 % of a 1250 px window for the text.
-  `panel_stack.fittingDepth` removes the oldest layer instead. To get the third
-  layer, the author moves the divider and makes the rail smaller.
+- The page the author chose is always the page on the screen. The removed
+  side-by-side row (v0.3.4) drew `fittingDepth` layers but placed them against
+  the unclamped visible depth, so a narrow window clipped exactly the page the
+  author had just opened, and each historic layer repeated a whole destination
+  view (docs/AGENTS.md, "What green does not prove", rule 1).
+- The panel stack is memory, not geometry: Escape returns to the previous
+  destination one layer at a time (`core/workbench.zig`).
+
+The "go" tree is a constant fixture at the top of every panel destination
+(`app_main.documentView`), so mouse navigation does not disappear when the
+author stands on the mailbox or the settings. The two full-stage destinations
+are the exemptions: the manuscript itself, and review — review prints its own
+"← 稿子 (Esc)" button as the mouse way back.
+
+Arrival loads the page: `goTo` sends the destination's read on `.moved`
+(`core.arriveAt`), and each reply lands in its own slot
+(`core/replies.zig`) — the file tree, the search hits, the proposals, the
+mailbox, the history, and the harness listing cannot clear one another.
 
 ### The rail register
 
