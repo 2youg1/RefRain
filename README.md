@@ -5,7 +5,7 @@
 **A local writing workbench for long manuscripts, where an agent may propose and only you may merge.**
 
 [![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](LICENSE)
-[![Download](https://img.shields.io/github/v/release/kaile9/RefRain?label=Download&color=blue)](https://github.com/kaile9/RefRain/releases/latest)
+[![Release](https://img.shields.io/github/v/release/kaile9/RefRain?include_prereleases&label=Release&color=blue)](https://github.com/kaile9/RefRain/releases/latest)
 
 </div>
 
@@ -197,39 +197,27 @@ one beside it.
 
 ## Install
 
+**This project is unfinished and not usable. Releases exist so the author can
+test the packaging path end to end; they are not something to write in.**
+
 Releases are published on
-[GitHub](https://github.com/kaile9/RefRain/releases). **The current release is
-v0.3.4. Do not use the v0.3.3 artifact** — it does not start on Intel.
+[GitHub](https://github.com/kaile9/RefRain/releases) and numbered
+`0.0.N-Pre-alpha-YYMMDD`, where `N` counts published releases and the date is
+the build's. No on-disk format and no protocol is promised to survive to the
+next one.
 
-v0.3.0 and v0.3.1 were tagged and never published: the release workflow requires
-a successful gate run on the tagged commit, and the gate had never once been
-green on a runner. It is green now, on Linux and Windows, so v0.3.3 was the
-first tag since v0.2.5 whose gate meant what it claimed — and its artifact still
-crashed on launch with `0xC000001D`, an illegal instruction.
+Windows x86-64 is the only target built, and the build names `x86_64_v2` —
+SSE4.2 and POPCNT, every x86-64 part since 2009 — as its instruction floor
+rather than inheriting the runner's. The Native SDK's `build.zig` calls
+`b.standardTargetOptions(.{})`, which without an explicit `-Dtarget` compiles
+for whatever silicon happens to sit under the build; such a binary passes every
+gate — a machine can always execute what it just compiled for itself — and then
+dies on launch elsewhere with `0xC000001D`, an illegal instruction.
+`verify:release-target` fails the gate if any CI build stops naming the floor.
 
-The cause was in the build, not the program. The Native SDK's `build.zig` calls
-`b.standardTargetOptions(.{})`, which without an explicit `-Dtarget` resolves to
-the **build machine's own CPU features**. The Windows runner that built v0.3.3
-was AMD, so LLVM emitted `INSERTQ` — an SSE4a instruction Intel does not
-implement — and the binary died on the first Intel machine that ran it. Every
-gate stayed green throughout, because a machine can always execute what it just
-compiled for itself; nothing but running the CI artifact on different silicon
-could have shown it. v0.3.4 names the floor instead of inheriting it
-(`x86_64_v2`: SSE4.2 and POPCNT, every x86-64 part since 2009), and
-`verify:release-target` fails the gate if any CI build stops naming it.
-
-The v0.3.x line stays on the patch position on purpose. The change behind it is
-large — the state machine is Zig and the 7,149 lines of TypeScript that used to
-hold it are gone; the reply channel carries typed rows generated from one schema
-instead of opaque JSON, so neither side parses. But nothing an installed copy
-exchanges with anything else moved: the host protocol is internal to the one
-binary, and the on-disk formats are unchanged, so this build is a drop-in
-replacement for v0.2.5. It exists to be used and reported against. The version
-position is the author's call pending that round of use.
-
-Nothing is claimed for a platform until it has been measured there. Since
-v0.3.3 the scale table above is measured on Windows first, because that is what
-this project releases; Linux readings stay beside them as the CI reference.
+Nothing is claimed for a platform until it has been measured there, so the scale
+table above is measured on Windows first, because that is what this project
+releases; Linux readings stay beside them as the CI reference.
 
 The Windows input-method path is exercised end to end — a real window, the real
 system IME, Chinese committed into a manuscript and saved — but it is not yet

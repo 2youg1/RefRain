@@ -100,7 +100,7 @@ space that stays. Three results follow:
 - A panel cannot cover the manuscript, because the manuscript is not in the
   space of the panel.
 - The page the author chose is always the page on the screen. The removed
-  side-by-side row (v0.3.4) drew `fittingDepth` layers but placed them against
+  side-by-side row drew `fittingDepth` layers but placed them against
   the unclamped visible depth, so a narrow window clipped exactly the page the
   author had just opened, and each historic layer repeated a whole destination
   view (docs/AGENTS.md, "What green does not prove", rule 1).
@@ -250,7 +250,7 @@ L5 has three strata. `native check --strict` and rule NS9001 enforce them.
   structure and event bindings. No logic.
 - **Interface state** — `core.zig` and `core/`. This stratum holds the `Model`,
   the `Msg`, and `update`. It must not hold manuscript bytes or a document state
-  machine. It was TypeScript through v0.3.1, compiled through a restricted
+  machine. It was TypeScript before the Zig rewrite, compiled through a restricted
   subset; the scars that subset left (a packed panel stack, `-1` sentinels,
   pre-encoded request bytes ferried through `Msg`) are named where they were
   removed, because a reader who meets the Zig code alone cannot tell which
@@ -278,7 +278,7 @@ Three rules apply to L5:
   `Array.isArray`, which answers false for a tuple on the ScriptC lane. The Zig
   `update_fx` mutates `*Model` in place and has no tuple to return, so the
   defect's shape is no longer expressible. The line stays struck through rather
-  than deleted because the v0.3.0 first-dispatch crash is easier to understand
+  than deleted because the first-dispatch crash is easier to understand
   with the rule that used to prevent it in view.
 
 ---
@@ -382,7 +382,7 @@ module with no test file has test blocks in the module.
 | Module | Owns | Proven by |
 |---|---|---|
 | `app.zon` | The shortcut and menu declaration. One command-id space for both | `verify:command-space` |
-| `app_main.zig` | The router: `main`, the fonts, the menus, `documentView` (the whole shell frame), `destinationView`, `layeredBody`, the palette, and the rail geometry. It was 4,038 lines through v0.3.2 and is 817 now; the destinations moved out under `view/` | in-file tests; the e2e journals |
+| `app_main.zig` | The router: `main`, the fonts, the menus, `documentView` (the whole shell frame), `destinationView`, `layeredBody`, the palette, and the rail geometry. It was 4,038 lines and is 817 now; the destinations moved out under `view/` | in-file tests; the e2e journals |
 | `view/shell.zig` | The vocabulary more than one destination draws with: `railTreeRow` (no corner, a semantic level, one indent step for each level), the row budgets, the current theme index and material kind, `paletteGoSection` | reached through `app_main.zig`; the e2e journals |
 | `view/document.zig` | The manuscript track: the column and viewport metrics, `documentLayout` (the inverse of Rust's scroll anchor), the anchor dots, the verdict bento, the status line, and the manuscript context menu | in-file test on the scroll anchor; the `manuscript` journal |
 | `view/files.zig` | The file tree, the row menu, and the open/delete/disclose/import Msgs. It owns the 64-slot reference pool a tree row lends to `document_open` | the `files` journal |
@@ -746,7 +746,7 @@ Each item gives the decision, the alternative that was refused, and the
 observation that reverses the decision. No code has moved. Judge the work
 against these statements.
 
-### The interface state left TypeScript — done in v0.3.2's development
+### The interface state left TypeScript
 
 **The decision.** `Model`, `Msg`, and `update` moved from `core.ts` to the Zig
 shell that draws the pixels. `app.zon` now names `src/core.zig`; `core.ts`,
@@ -932,7 +932,7 @@ Use these words. SPEC §2 requires one word for each concept.
 | The rail loses its colour, or a material stops the drawing | `apps/native/src/rail.zig` and `material.zig`. The rail ground takes no material |
 | An input reaches the screen late | `verify:native-document-performance`. Compare the p95 with the present interval in the same report, not with 16.67 ms |
 | A wheel does not move the window, or the scrollbar disagrees with the text | `projection_response` chooses the anchor from the action; `documentLayout` in `apps/native/src/view/document.zig` places the spacers on the same scale |
-| A downloaded release will not start, and the exit code is `0xC000001D` | The build inherited the runner's CPU instead of naming one. `verify:release-target` requires `-Dtarget` and `-Dcpu` on every `native build` in `.github/workflows/`, because `b.standardTargetOptions(.{})` resolves to the build machine's own features when neither is given. v0.3.3 shipped `INSERTQ` (SSE4a, AMD only) from an AMD runner and died on Intel while every gate stayed green — a machine can always run what it just compiled for itself, so no lane that builds and runs on one host can see this |
+| A downloaded release will not start, and the exit code is `0xC000001D` | The build inherited the runner's CPU instead of naming one. `verify:release-target` requires `-Dtarget` and `-Dcpu` on every `native build` in `.github/workflows/`, because `b.standardTargetOptions(.{})` resolves to the build machine's own features when neither is given. A build once shipped `INSERTQ` (SSE4a, AMD only) from an AMD runner and died on Intel while every gate stayed green — a machine can always run what it just compiled for itself, so no lane that builds and runs on one host can see this |
 | The status line reports an absurd time, or a manuscript journal expires on its own | A wall clock reached a string the accessibility fingerprint covers. `saveState` in `apps/native/src/view/document.zig` keeps "no save observed" as its own case rather than a zero, because a sentinel there reads as 1970 and changes every hour |
 | A roster cursor points at a row that is gone | `apps/native/src/core/roster.zig` |
 | A character draws as a block | `verify:font-coverage`, then `manuscript_font` in `apps/native/build.zig` |

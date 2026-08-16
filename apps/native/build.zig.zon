@@ -1,7 +1,7 @@
 .{
     .name = .refrain_native,
     .fingerprint = 0x7148acae8d309af,
-    .version = "0.3.4",
+    .version = "0.0.1-Pre-alpha-260816",
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .native_sdk = .{ .path = "node_modules/@native-sdk/cli" },

@@ -291,6 +291,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
             --verify-tag \
+            --prerelease \
             --generate-notes \
             --notes "$notes" \
             release-assets/refrain-windows-x64.zip

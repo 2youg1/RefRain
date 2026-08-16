@@ -1687,7 +1687,7 @@ dependencies = [
 
 [[package]]
 name = "refrain-app"
-version = "0.3.4"
+version = "0.0.1-Pre-alpha-260816"
 dependencies = [
  "refrain-core",
  "refrain-host",
@@ -1702,7 +1702,7 @@ dependencies = [
 
 [[package]]
 name = "refrain-core"
-version = "0.3.4"
+version = "0.0.1-Pre-alpha-260816"
 dependencies = [
  "blake3",
  "memchr",
@@ -1715,7 +1715,7 @@ dependencies = [
 
 [[package]]
 name = "refrain-host"
-version = "0.3.4"
+version = "0.0.1-Pre-alpha-260816"
 dependencies = [
  "nix",
  "refrain-core",
@@ -1728,7 +1728,7 @@ dependencies = [
 
 [[package]]
 name = "refrain-native-host"
-version = "0.3.4"
+version = "0.0.1-Pre-alpha-260816"
 dependencies = [
  "directories",
  "raw-window-handle",
@@ -1742,7 +1742,7 @@ dependencies = [
 
 [[package]]
 name = "refrain-store"
-version = "0.3.4"
+version = "0.0.1-Pre-alpha-260816"
 dependencies = [
  "html5gum",
  "ignore",

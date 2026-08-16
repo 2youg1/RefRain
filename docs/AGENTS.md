@@ -176,7 +176,7 @@ same commit, the evidence that its failure mode can no longer occur.
 4. **The release predicate is the author's flow in a real window, not the
    gate count.** Before any tag: drive the built binary through adopt →
    document rows visible → open a manuscript → type → save → reach every
-   destination → read every rejection. This extends the v0.3.3 rule ("the
+   destination → read every rejection. This extends the standing rule ("the
    artifact must run on this machine before a tag") from booting to using.
 
 ## The Native layers, and what each may hold
