@@ -23,7 +23,7 @@ refrain-app = { path = "crates/refrain-app" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.147"
 blake3 = "=1.8.3"
-thiserror = "=2.0.18"
+thiserror = "=2.0.20"
 
 # Config is ruled TOML (SPEC 10.1, D-N8): a real format needs a real parser,
 # and a hand-rolled one would re-create exactly the escaping/typing edge cases
