@@ -276,11 +276,17 @@ pub struct ProjectStore {
     /// refresh cost 2.1 million file reads on the 100,000-document fixture and
     /// put 104ms of bigramming on the path that opens a 10 MiB manuscript.
     ///
-    /// A boolean rather than a second fingerprint: freshness must be *claimed*
-    /// by a successful build. Comparing two `Option`s reported "current" when
-    /// neither existed, so a store that had never reconciled searched an empty
-    /// index and said the manuscript contained nothing.
-    pub(crate) index_is_fresh: bool,
+    /// Not a second fingerprint: freshness must be *claimed* by a successful
+    /// build. Comparing two `Option`s reported "current" when neither existed,
+    /// so a store that had never reconciled searched an empty index and said
+    /// the manuscript contained nothing. `IndexFreshness::Unbuilt` is that
+    /// claim in the type — only a build can take it away.
+    ///
+    /// It was a boolean until the growth probe measured what the boolean cost.
+    /// 「不新鲜」有两种，代价差一个数量级，而布尔只能说出一种：作者新建一章只欠
+    /// 那一章，却按「从未建过」付钱，于是下一次检索重读整份语料。所以它现在带着
+    /// 欠账路径，见 `catalog::IndexFreshness` 与 `tests/index_growth_probe.rs`。
+    pub(crate) index_freshness: crate::project::catalog::IndexFreshness,
     /// 一次性旗标：`ensure_indexed` 真正建过索引才立起，读者取走即清。
     /// 安静的 KARA 事件「索引刷新」以它为事实来源——旗标不立起时，
     /// 搜索走的是现成索引，没有发生「刷新」这个事实。
@@ -321,7 +327,7 @@ impl ProjectStore {
             layout,
             db,
             reconciled: None,
-            index_is_fresh: false,
+            index_freshness: catalog::IndexFreshness::Unbuilt,
             index_built_pending: false,
         };
         let backup = root::take_source_backup(&canonical, locator.kind, &store.layout).into();
@@ -580,9 +586,11 @@ impl ProjectStore {
     /// One cheap lookup, no bigramming and no writes. Opening an unchanged
     /// chapter — the common case — leaves the index alone and costs one
     /// indexed read.
+    ///
+    /// 欠的是这一篇，不是整份语料：一章的字变了说不出另一章的字也变了。
     fn invalidate_index_if_stale(&mut self, relative: &str, digest: &str) {
         if !self.index_is_current(relative, digest) {
-            self.index_is_fresh = false;
+            self.index_freshness.owe(relative);
         }
     }
 

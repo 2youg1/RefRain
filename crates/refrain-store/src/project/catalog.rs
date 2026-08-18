@@ -12,9 +12,39 @@ use refrain_core::search_rank::{Candidate, PathMatch, rank_top};
 use refrain_core::{DocumentRole, ErrorCode, Id, RefrainError, digest};
 use rusqlite::{OptionalExtension, params};
 
+use std::collections::BTreeSet;
+
 use super::{ProjectFailure, ProjectStore, infer_role};
 use crate::files::index::{ScanOptions, scan_checked};
 use crate::root::RootKind;
+
+/// 搜索索引相对磁盘的状态。
+///
+/// 两种不新鲜的代价差一个数量级，而布尔标志说不出它们的区别：从未建过要读
+/// 全部文档，而作者新建一份只欠这一份。两者共用 `false` 时，后者按前者付钱：
+/// 实测新建一份后的首次检索，400 份语料 51ms、800 份 95ms、1600 份 190ms——
+/// 每份恒定 119µs，即一次全语料的读盘与摘要，而稳态检索只要 1.8ms。
+/// 见 `tests/index_growth_probe.rs`。
+///
+/// 新鲜仍然必须由一次成功的构建**声张**，这是旧布尔字段守住的那条：比两个
+/// `Option` 曾经在两者都不存在时报「当前」，于是从未对账的库搜一个空索引，说
+/// 稿子里什么都没有。`Unbuilt` 正是那条声张的类型化：它只能被构建走掉。
+#[derive(Debug)]
+pub(crate) enum IndexFreshness {
+    /// 从未建过。下一次检索读全部文档——采纳一个作者早就写好的目录走这里。
+    Unbuilt,
+    /// 建过了。集合是自那以后到达或改动、尚未入索引的路径；空集即完全新鲜。
+    Built(BTreeSet<String>),
+}
+
+impl IndexFreshness {
+    /// 记下一条路径欠着入索引。尚未建过时不记：全量那一趟本就包含它。
+    pub(crate) fn owe(&mut self, path: &str) {
+        if let Self::Built(owed) = self {
+            owed.insert(path.to_string());
+        }
+    }
+}
 
 /// Name one scanned set by its paths and inferred roles.
 ///
@@ -327,6 +357,7 @@ impl ProjectStore {
 
         let transaction = self.db.transaction()?;
         let departed: Vec<String>;
+        let arrived: Vec<String>;
         transaction.execute_batch(
             "CREATE TEMP TABLE IF NOT EXISTS refreshed_documents (
                  id   TEXT NOT NULL,
@@ -346,9 +377,15 @@ impl ProjectStore {
             let mut insert_new = transaction.prepare(
                 "INSERT INTO documents (id, path, role, digest)
                  SELECT id, path, role, NULL FROM refreshed_documents WHERE true
-                 ON CONFLICT(path) DO NOTHING",
+                 ON CONFLICT(path) DO NOTHING
+                 RETURNING path",
             )?;
-            insert_new.execute([])?;
+            // 到达的路径与离开的路径同一个机制取：`RETURNING` 让 upsert 自己说出它真
+            // 插了谁，比事后拿扫描结果减去目录少一次来源。`DO NOTHING` 吹掉的行
+            // 不进这个集合，正是想要的：早就在目录里的篇目没有到达。
+            arrived = insert_new
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<String>>>()?;
 
             let mut remove_absent = transaction.prepare(
                 "DELETE FROM documents
@@ -373,7 +410,17 @@ impl ProjectStore {
         self.reconciled = Some(fingerprint);
         // The index is not built here. Reconciliation runs on every refresh and
         // must stay cheap; indexing reads every file. See `index_catalog`.
-        self.index_is_fresh = false;
+        //
+        // 欠的只是到达的那几条。成员身份变了并不意味着旧篇目的内容变了，而把
+        // 整个索引判为陈旧会让下一次检索重读全语料：作者每新建一章就付一次
+        // 全语料的钱，那正是「越用越卡」。离开的那几条上面已经 `forget_document`
+        // 过，不该再欠。内容改动不走这里，走 `invalidate_index_if_stale`。
+        if let IndexFreshness::Built(owed) = &mut self.index_freshness {
+            owed.extend(arrived);
+            for path in &departed {
+                owed.remove(path);
+            }
+        }
         Ok(())
     }
 
@@ -396,19 +443,25 @@ impl ProjectStore {
     /// searched an empty one. A flag that must be *set* to claim freshness
     /// cannot make that mistake.
     pub(crate) fn ensure_indexed(&mut self) -> Result<(), RefrainError> {
-        if self.index_is_fresh {
-            return Ok(());
-        }
-        self.index_catalog().map_err(|failure| match failure {
-            ProjectFailure::Domain(error) => error,
-            other => RefrainError::new(
-                ErrorCode::StateUnavailable,
-                "build the search index",
-                "refrain.db",
-            )
-            .with_detail(other.to_string()),
-        })?;
-        self.index_is_fresh = true;
+        // 欠账在进构建前就取走：一趟失败不该把路径守在集合里等下一趟，因为
+        // `index_document` 已经按摘要自己判断该不该重写；读不到的文件被跳过，
+        // 它下一次被打开时由 `invalidate_index_if_stale` 重新欠上。
+        let owed = match &mut self.index_freshness {
+            IndexFreshness::Built(owed) if owed.is_empty() => return Ok(()),
+            IndexFreshness::Built(owed) => Some(std::mem::take(owed)),
+            IndexFreshness::Unbuilt => None,
+        };
+        self.index_catalog(owed.as_ref())
+            .map_err(|failure| match failure {
+                ProjectFailure::Domain(error) => error,
+                other => RefrainError::new(
+                    ErrorCode::StateUnavailable,
+                    "build the search index",
+                    "refrain.db",
+                )
+                .with_detail(other.to_string()),
+            })?;
+        self.index_freshness = IndexFreshness::Built(BTreeSet::new());
         // 建成是一次事实：立起一次性旗标，让「索引刷新」这个安静事件有据可依。
         self.index_built_pending = true;
         Ok(())
@@ -476,17 +529,29 @@ impl ProjectStore {
     ///
     /// A file that cannot be read is skipped, not fatal. A permission error on
     /// one chapter must not stop the author searching.
-    fn index_catalog(&mut self) -> Result<(), ProjectFailure> {
-        let mut statement = self
-            .db
-            .prepare("SELECT path FROM documents")
-            .map_err(crate::schema::StoreError::from)?;
-        let known: Vec<String> = statement
-            .query_map([], |row| row.get(0))
-            .map_err(crate::schema::StoreError::from)?
-            .collect::<rusqlite::Result<_>>()
-            .map_err(crate::schema::StoreError::from)?;
-        drop(statement);
+    ///
+    /// # 为什么它接一个路径集合
+    ///
+    /// `None` 是全量那一趟（采纳一个已写好的目录），上面那些数字都是它的。
+    /// `Some` 是作者写作时的常态：新建一章只欠一章，读盘量从整份语料降到
+    /// 改动本身。循环体两者共用，包括包含性缓存与那一个事务——差别只在读谁。
+    fn index_catalog(&mut self, owed: Option<&BTreeSet<String>>) -> Result<(), ProjectFailure> {
+        let known: Vec<String> = match owed {
+            Some(paths) => paths.iter().cloned().collect(),
+            None => {
+                let mut statement = self
+                    .db
+                    .prepare("SELECT path FROM documents")
+                    .map_err(crate::schema::StoreError::from)?;
+                let all = statement
+                    .query_map([], |row| row.get(0))
+                    .map_err(crate::schema::StoreError::from)?
+                    .collect::<rusqlite::Result<_>>()
+                    .map_err(crate::schema::StoreError::from)?;
+                drop(statement);
+                all
+            }
+        };
 
         // Read and digest outside the transaction: file I/O must not hold a
         // write lock, and the bytes are needed before anything can be written.
