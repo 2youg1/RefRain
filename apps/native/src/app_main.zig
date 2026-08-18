@@ -134,6 +134,12 @@ test "the latin and japanese slots parse and cover their own scripts" {
     for ([_]u21{ 'A', 'z', '0', 0xe9, 0x2014 }) |codepoint| {
         try std.testing.expect(latin.glyphIndex(codepoint) != 0);
     }
+    // 正向覆盖签不出这一槽装错了谁——CJK 面照样画得出 'A' 与 em dash，上面
+    // 五个码位在 Latin 槽误指 Noto 时全绿。能分辨身份的只有反向断言：纯
+    // Latin 面必然缺 CJK，这里的缺失是身份证明，不是缺陷。
+    for ([_]u21{ 0x4e2d, 0x6587, 0x3042 }) |codepoint| {
+        try std.testing.expect(latin.glyphIndex(codepoint) == 0);
+    }
     const japanese = try native_sdk.canvas.font_ttf.Face.parse(japanese_font_bytes);
     for ([_]u21{ 'A', 0x3042, 0x30a2, 0x65e5, 0x672c }) |codepoint| {
         try std.testing.expect(japanese.glyphIndex(codepoint) != 0);
