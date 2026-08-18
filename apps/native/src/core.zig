@@ -192,9 +192,16 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         // 打字：事件翻成生成的输入词汇表，正稿的文本状态机在 Rust。
         .document_input => |event| {
             if (!model.hasDocument()) return;
-            const encoded = encodeTextEvent(event) orelse {
-                setStatus(model, "这次文本事件超出了固定的 ABI 上限。");
-                return;
+            const encoded = switch (encodeTextEvent(event)) {
+                .encoded => |value| value,
+                .over_abi_limit => {
+                    setStatus(model, "这次文本事件超出了固定的 ABI 上限。");
+                    return;
+                },
+                .unworded => {
+                    setStatus(model, "整行删除还没有接进正稿的输入词汇表。");
+                    return;
+                },
             };
             var record = projectionRecord(model);
             record.action = .apply_input;
@@ -571,14 +578,30 @@ const EncodedTextEvent = struct {
     text: []const u8 = "",
 };
 
-/// 超上限时交出 null：截断会把一次合法的长输入变成一次语义不同的短输入。
-fn encodeTextEvent(event: canvas.TextInputEvent) ?EncodedTextEvent {
+/// 一次文本事件能不能过桥，以及过不了时是哪一种缘故。两种拒绝各说各的话，
+/// 因为作者能做的处置不同：一个分几次输入就行，另一个只能换一个键。
+const TextEventEncoding = union(enum) {
+    encoded: EncodedTextEvent,
+    /// 截断会把一次合法的长输入变成一次语义不同的短输入，所以超上限就拒。
+    over_abi_limit,
+    /// SDK 发得出、`protocol.Input` 还没有词条的事件。
+    unworded,
+};
+
+fn encodeTextEvent(event: canvas.TextInputEvent) TextEventEncoding {
     const encoded: EncodedTextEvent = switch (event) {
         .insert_text => |text| .{ .input = @intFromEnum(protocol.Input.insert_text), .text = text },
         .delete_backward => .{ .input = @intFromEnum(protocol.Input.delete_backward) },
         .delete_forward => .{ .input = @intFromEnum(protocol.Input.delete_forward) },
         .delete_word_backward => .{ .input = @intFromEnum(protocol.Input.delete_word_backward) },
         .delete_word_forward => .{ .input = @intFromEnum(protocol.Input.delete_word_forward) },
+        // SDK 0.9.3 (#377) 起 macOS 的 Command+Backspace 会发这两支：删到字段
+        // 开头、删到逻辑行开头。正稿的文本状态机在 Rust，`protocol.Input`
+        // 没有对应词条，而“退而求其次”地送一个 delete_word_backward 会把一次
+        // 删一行变成一次删一词，在撒销栈里同样记一笔——那是猜，不是翻译。
+        // 退出：给 host.json 加两个 Input 词条并在 refrain-core 实现行边界，
+        // 那时这两支各自编码。
+        .delete_to_start, .delete_to_line_start => return .unworded,
         .clear => .{ .input = @intFromEnum(protocol.Input.clear) },
         .move_caret => |move| .{
             .input = @intFromEnum(protocol.Input.move_caret),
@@ -597,8 +620,8 @@ fn encodeTextEvent(event: canvas.TextInputEvent) ?EncodedTextEvent {
         .commit_composition => .{ .input = @intFromEnum(protocol.Input.commit_composition) },
         .cancel_composition => .{ .input = @intFromEnum(protocol.Input.cancel_composition) },
     };
-    if (encoded.text.len > protocol.event_text_bytes) return null;
-    return encoded;
+    if (encoded.text.len > protocol.event_text_bytes) return .over_abi_limit;
+    return .{ .encoded = encoded };
 }
 
 /// 方向码加一面「同时拉选区」的旗。

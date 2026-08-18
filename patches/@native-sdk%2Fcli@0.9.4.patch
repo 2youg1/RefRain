@@ -1,84 +1,8 @@
-diff --git a/build.zig b/build.zig
-index 6e2629a..7f3dc5c 100644
---- a/build.zig
-+++ b/build.zig
-@@ -41,6 +41,8 @@ pub const AppArtifacts = @import("build/app.zig").AppArtifacts;
- pub const addAppArtifacts = @import("build/app.zig").addAppArtifacts;
- pub const MobileLibOptions = @import("build/app.zig").MobileLibOptions;
- pub const addMobileLib = @import("build/app.zig").addMobileLib;
-+pub const TsCoreStage = @import("build/app.zig").TsCoreStage;
-+pub const appTsCoreStage = @import("build/app.zig").appTsCoreStage;
- const mobile_export_symbol_names = @import("build/app.zig").mobile_export_symbol_names;
- 
- test "service archive support matches ScriptC localized object formats" {
 diff --git a/build/app.zig b/build/app.zig
-index 6241e41..c43d204 100644
+index 9a26196..080ea36 100644
 --- a/build/app.zig
 +++ b/build/app.zig
-@@ -94,7 +94,7 @@ const core_compiler_teaching =
- /// as main.zig) — plus the compiled-core archive the app module links
- /// behind the mirror. Built once per app build and shared by the exe
- /// and test modules.
--const TsCoreStage = struct {
-+pub const TsCoreStage = struct {
-     main_root: std.Build.LazyPath,
-     /// The compiled-core archive: the app module links it (with libc,
-     /// for the toolchain's runtime) beside the staged mirror.
-@@ -557,6 +557,53 @@ fn tsCorePreflight(b: *std.Build, dep: *std.Build.Dependency, app_root: []const
- /// its own compile. The staged module directory carries core.zig (the
- /// mirror) + its staged runtime + app.native + main.zig, so the
- /// generated wiring imports one fixed shape.
-+/// RefRain carry (see patches/ in the RefRain repository): stage an app's
-+/// TypeScript core when the app owns its entry point. `addAppArtifacts`
-+/// stages only for the detected `src/main.zig` entry, so an app whose
-+/// shell is hand-written Zig (`.main = "src/app_main.zig"`) while its
-+/// Model/Msg/update stays in `src/core.ts` has no other route to the
-+/// mirror module and the compiled archive.
-+///
-+/// Capabilities are read from app.zon. The `-Dservice-carrier` and
-+/// `-Dservice-pool-size` overrides are deliberately not consulted here:
-+/// this entry is meant to run AFTER `addAppArtifacts` in the same build,
-+/// which already declared both options, and `std.Build.option` panics on a
-+/// second declaration of the same name. The app.zon pool size is range
-+/// checked here anyway, so the two staging routes refuse the same manifest.
-+///
-+/// Exit: offer upstream as an `AppOptions` field ("stage the TypeScript
-+/// core even though I own `main`") so the hybrid shape needs no fork.
-+pub fn appTsCoreStage(
-+    b: *std.Build,
-+    dep: *std.Build.Dependency,
-+    target: std.Build.ResolvedTarget,
-+    app_root: []const u8,
-+    app_name: []const u8,
-+) TsCoreStage {
-+    const app_config = appManifestBuildConfig(b, app_root);
-+    return tsCoreStage(
-+        b,
-+        dep,
-+        target,
-+        app_root,
-+        app_name,
-+        app_config.persist_capability,
-+        app_config.store_capability,
-+        app_config.relational_capability,
-+        app_config.credentials_capability,
-+        app_config.credentials_permission,
-+        app_config.persist_version,
-+        app_config.service_packages,
-+        parseServiceCarrierOption(app_config.service_carrier),
-+        pool: {
-+            if (app_config.service_pool_size) |count| {
-+                if (count < 1 or count > 16) @panic("\nservice pool size must be between 1 and 16\n");
-+            }
-+            break :pool app_config.service_pool_size;
-+        },
-+    );
-+}
-+
- fn tsCoreStage(
-     b: *std.Build,
-     dep: *std.Build.Dependency,
-@@ -1384,7 +1431,12 @@ pub fn addAppArtifacts(b: *std.Build, dep: *std.Build.Dependency, app_options: A
+@@ -1876,7 +1876,12 @@ pub fn addAppArtifacts(b: *std.Build, dep: *std.Build.Dependency, app_options: A
          .root_module = analysis_mod,
          .use_llvm = useLlvmWorkaround(target),
      });
@@ -92,75 +16,11 @@ index 6241e41..c43d204 100644
  
      // `zig build model-contract`: reflect the app's Model/Msg into
      // zig-out/model-contract.zon so `native check` can verify markup
-diff --git a/packages/core/package.json b/packages/core/package.json
-index 775d777..2e554dd 100644
---- a/packages/core/package.json
-+++ b/packages/core/package.json
-@@ -16,15 +16,15 @@
-   ],
-   "exports": {
-     ".": {
--      "types": "./sdk/core.ts",
-+      "types": "./sdk/core.d.ts",
-       "default": "./sdk/core.ts"
-     },
-     "./text": {
--      "types": "./sdk/text.ts",
-+      "types": "./sdk/text.d.ts",
-       "default": "./sdk/text.ts"
-     },
-     "./events": {
--      "types": "./sdk/events.ts",
-+      "types": "./sdk/events.d.ts",
-       "default": "./sdk/events.ts"
-     }
-   },
-diff --git a/packages/core/scripts/compiler_typecheck.mjs b/packages/core/scripts/compiler_typecheck.mjs
-index 2d7823a..1979189 100644
---- a/packages/core/scripts/compiler_typecheck.mjs
-+++ b/packages/core/scripts/compiler_typecheck.mjs
-@@ -38,17 +38,34 @@ try {
- // The shipped declaration files stand in for the SDK's module surface;
- // value imports stay external-host findings, which is correct — the
- // compile stage links the real implementations.
-+// RefRain patch: stage the shipped declarations into a scratch directory
-+// that carries NO implementation sources. The events.d.ts -> "./text.js"
-+// edge otherwise resolves to the text.ts implementation (extension
-+// substitution tries .ts before .d.ts), and the analyzer then typechecks
-+// SDK implementation sources under the APP's adopted strictness
-+// (noUncheckedIndexedAccess), false-failing `native check` for any strict
-+// app. With only declarations present, "./text.js" lands on text.d.ts and
-+// the pass reads the SDK's type surface only -- what --external-types means.
-+const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), "native-core-types-"));
-+const stagedSdk = path.join(stageDir, "sdk");
-+fs.mkdirSync(stagedSdk, { recursive: true });
-+for (const f of fs.readdirSync(path.join(coreRoot, "sdk"))) {
-+  if (f.endsWith(".d.ts")) fs.copyFileSync(path.join(coreRoot, "sdk", f), path.join(stagedSdk, f));
-+}
- const maps = [];
- for (const [specifier, file] of [
-   ["@native-sdk/core", "sdk/core.d.ts"],
-   ["@native-sdk/core/text", "sdk/text.d.ts"],
-   ["@native-sdk/core/events", "sdk/events.d.ts"],
- ]) {
-+  // RefRain patch: the SDK's own three maps read the staged declarations,
-+  // never coreRoot, so "./text.js" cannot land on the .ts implementation.
-   const p = specifier === "@native-sdk/core" && generatedCore !== null
-     ? path.resolve(generatedCore)
--    : path.join(coreRoot, file);
--  if (fs.existsSync(p)) maps.push("--external-types", `${specifier}=${p}`);
-+    : path.join(stageDir, file);
-+  if (fs.existsSync(p)) maps.push("--external-types", `${specifier}=${p.split("\\").join("/")}`);
- }
-+process.on("exit", () => { fs.rmSync(stageDir, { recursive: true, force: true }); });
- const servicesClient = path.resolve(path.dirname(entry), "..", "node_modules", "@native-sdk", "services", "index.d.ts");
- if (fs.existsSync(servicesClient)) maps.push("--external-types", `@native-sdk/services=${servicesClient}`);
- const sourceRoot = path.dirname(entry);
 diff --git a/src/automation/snapshot.zig b/src/automation/snapshot.zig
-index f86cbef..22d54d3 100644
+index aec5432..6aea782 100644
 --- a/src/automation/snapshot.zig
 +++ b/src/automation/snapshot.zig
-@@ -206,6 +206,10 @@ pub const Widget = struct {
+@@ -207,6 +207,10 @@ pub const Widget = struct {
      actions: WidgetActions = .{},
      text_selection: ?TextRange = null,
      text_composition: ?TextRange = null,
@@ -171,7 +31,7 @@ index f86cbef..22d54d3 100644
      /// The widget's declared context-menu items in declared order —
      /// what a right-click presents (natively, or through the anchored
      /// fallback surface) and what `widget-context-menu` invokes by
-@@ -590,6 +594,7 @@ pub fn writeText(input: Input, writer: anytype) !void {
+@@ -599,6 +603,7 @@ pub fn writeText(input: Input, writer: anytype) !void {
          try writeWidgetState(widget, writer);
          try writeWidgetActions(widget.actions, writer);
          try writeWidgetTextRanges(widget, writer);
@@ -179,7 +39,7 @@ index f86cbef..22d54d3 100644
          try writeWidgetContextMenu(widget, writer);
          try writer.writeByte('\n');
      }
-@@ -719,6 +724,7 @@ pub fn writeA11yText(input: Input, writer: anytype) !void {
+@@ -762,6 +767,7 @@ pub fn writeA11yText(input: Input, writer: anytype) !void {
          try writeWidgetState(widget, writer);
          try writeWidgetActions(widget.actions, writer);
          try writeWidgetTextRanges(widget, writer);
@@ -187,7 +47,7 @@ index f86cbef..22d54d3 100644
          try writeWidgetContextMenu(widget, writer);
          try writer.writeByte('\n');
      }
-@@ -848,6 +854,16 @@ fn writeWidgetTextRanges(widget: Widget, writer: anytype) !void {
+@@ -916,6 +922,16 @@ fn writeWidgetTextRanges(widget: Widget, writer: anytype) !void {
      if (widget.text_composition) |composition| try writer.print(" composition={d}..{d}", .{ composition.start, composition.end });
  }
  
@@ -204,7 +64,7 @@ index f86cbef..22d54d3 100644
  /// The widget's declared context-menu items: quoted labels in declared
  /// order (list position = the `widget-context-menu` item index), bare
  /// `separator` for divider slots, `(disabled)` marking items a real
-@@ -1224,6 +1240,7 @@ test "snapshot emits widget semantics" {
+@@ -1345,6 +1361,7 @@ test "snapshot emits widget semantics" {
              .actions = .{ .focus = true, .press = true, .set_selection = true, .drag = true, .drop_files = true, .dismiss = true },
              .text_selection = .{ .start = 4, .end = 4 },
              .text_composition = .{ .start = 0, .end = 3 },
@@ -212,7 +72,7 @@ index f86cbef..22d54d3 100644
          },
          .{
              .window_id = 1,
-@@ -1255,6 +1272,7 @@ test "snapshot emits widget semantics" {
+@@ -1376,6 +1393,7 @@ test "snapshot emits widget semantics" {
      try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "actions=[focus,press,set_selection,drag,drop_files,dismiss]") != null);
      try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "selection=4..4") != null);
      try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "composition=0..3") != null);
@@ -221,10 +81,10 @@ index f86cbef..22d54d3 100644
      var a11y_buffer: [2048]u8 = undefined;
      var a11y_writer = std.Io.Writer.fixed(&a11y_buffer);
 diff --git a/src/platform/linux/gtk_host.c b/src/platform/linux/gtk_host.c
-index 67b1d64..04ebe28 100644
+index 98b68f9..b344dd6 100644
 --- a/src/platform/linux/gtk_host.c
 +++ b/src/platform/linux/gtk_host.c
-@@ -208,18 +208,17 @@ typedef struct native_sdk_gtk_native_view {
+@@ -211,18 +211,17 @@ typedef struct native_sdk_gtk_native_view {
       * removes itself (the macOS host's placeholder display timer, in
       * GLib terms). Steady state never ticks it. */
      guint gpu_frame_timer;
@@ -254,7 +114,7 @@ index 67b1d64..04ebe28 100644
      guint gpu_emit_source;
      uint64_t gpu_last_emit_ns;
      int gpu_presented;
-@@ -1181,6 +1180,25 @@ static void native_sdk_gpu_surface_schedule_frame_emission(native_sdk_gtk_native
+@@ -1241,6 +1240,25 @@ static void native_sdk_gpu_surface_schedule_frame_emission(native_sdk_gtk_native
      view->gpu_emit_source = g_timeout_add_full(G_PRIORITY_DEFAULT_IDLE, (guint)((delay_ns + 500000ull) / 1000000ull), native_sdk_gpu_surface_emit_scheduled, view, NULL);
  }
  
@@ -280,7 +140,7 @@ index 67b1d64..04ebe28 100644
  /* Placeholder pump: arms the scheduler every 16 ms until the first
   * present lands, so the runtime's install choreography (fonts, first
   * rebuild, first present) has frame events to ride before any producer
-@@ -4328,14 +4346,40 @@ int native_sdk_gtk_request_gpu_surface_frame(native_sdk_gtk_host_t *host, uint64
+@@ -4432,14 +4450,40 @@ int native_sdk_gtk_request_gpu_surface_frame(native_sdk_gtk_host_t *host, uint64
      native_sdk_gtk_native_view_t *view = native_sdk_find_native_view(win, label_copy);
      free(label_copy);
      if (!view || view->kind != NATIVE_SDK_GTK_VIEW_GPU_SURFACE || !view->widget) return 0;
@@ -326,10 +186,10 @@ index 67b1d64..04ebe28 100644
      (void)scale;
      (void)has_dirty_rect;
 diff --git a/src/platform/linux/gtk_host.h b/src/platform/linux/gtk_host.h
-index ee933a1..71f1762 100644
+index 2b821d5..963ed88 100644
 --- a/src/platform/linux/gtk_host.h
 +++ b/src/platform/linux/gtk_host.h
-@@ -231,6 +231,7 @@ int native_sdk_gtk_set_view_visible(native_sdk_gtk_host_t *host, uint64_t window
+@@ -232,6 +232,7 @@ int native_sdk_gtk_set_view_visible(native_sdk_gtk_host_t *host, uint64_t window
  int native_sdk_gtk_focus_view(native_sdk_gtk_host_t *host, uint64_t window_id, const char *label, size_t label_len);
  int native_sdk_gtk_close_view(native_sdk_gtk_host_t *host, uint64_t window_id, const char *label, size_t label_len);
  int native_sdk_gtk_request_gpu_surface_frame(native_sdk_gtk_host_t *host, uint64_t window_id, const char *label, size_t label_len);
@@ -338,10 +198,10 @@ index ee933a1..71f1762 100644
   * view-local LOGICAL x/y — the same coordinate space the gpu-surface
   * input path reports pointer events in, which is the pointing-rect space
 diff --git a/src/platform/linux/root.zig b/src/platform/linux/root.zig
-index 8deb1cb..c606fca 100644
+index a9e23fe..446585a 100644
 --- a/src/platform/linux/root.zig
 +++ b/src/platform/linux/root.zig
-@@ -147,6 +147,7 @@ extern fn native_sdk_gtk_set_view_visible(host: *GtkHost, window_id: u64, label:
+@@ -148,6 +148,7 @@ extern fn native_sdk_gtk_set_view_visible(host: *GtkHost, window_id: u64, label:
  extern fn native_sdk_gtk_focus_view(host: *GtkHost, window_id: u64, label: [*]const u8, label_len: usize) c_int;
  extern fn native_sdk_gtk_close_view(host: *GtkHost, window_id: u64, label: [*]const u8, label_len: usize) c_int;
  extern fn native_sdk_gtk_request_gpu_surface_frame(host: *GtkHost, window_id: u64, label: [*]const u8, label_len: usize) c_int;
@@ -349,7 +209,7 @@ index 8deb1cb..c606fca 100644
  extern fn native_sdk_gtk_present_gpu_surface_pixels(host: *GtkHost, window_id: u64, label: [*]const u8, label_len: usize, width: usize, height: usize, scale: f64, has_dirty_rect: c_int, dirty_x: f64, dirty_y: f64, dirty_width: f64, dirty_height: f64, rgba8: [*]const u8, rgba8_len: usize) c_int;
  extern fn native_sdk_gtk_create_webview(host: *GtkHost, window_id: u64, label: [*]const u8, label_len: usize, url: [*]const u8, url_len: usize, x: f64, y: f64, width: f64, height: f64, layer: c_int, transparent: c_int, bridge_enabled: c_int) c_int;
  extern fn native_sdk_gtk_set_webview_frame(host: *GtkHost, window_id: u64, label: [*]const u8, label_len: usize, x: f64, y: f64, width: f64, height: f64) c_int;
-@@ -378,6 +379,7 @@ pub const LinuxPlatform = struct {
+@@ -379,6 +380,7 @@ pub const LinuxPlatform = struct {
                  .focus_view_fn = focusView,
                  .close_view_fn = closeView,
                  .request_gpu_surface_frame_fn = requestGpuSurfaceFrame,
@@ -357,7 +217,7 @@ index 8deb1cb..c606fca 100644
                  .present_gpu_surface_pixels_fn = presentGpuSurfacePixels,
                  .show_context_menu_fn = showContextMenu,
                  .create_webview_fn = createWebView,
-@@ -1109,6 +1111,12 @@ fn requestGpuSurfaceFrame(context: ?*anyopaque, window_id: platform_mod.WindowId
+@@ -1129,6 +1131,12 @@ fn requestGpuSurfaceFrame(context: ?*anyopaque, window_id: platform_mod.WindowId
      if (native_sdk_gtk_request_gpu_surface_frame(self.host, window_id, label.ptr, label.len) == 0) return error.ViewNotFound;
  }
  
@@ -371,10 +231,10 @@ index 8deb1cb..c606fca 100644
      const self: *LinuxPlatform = @ptrCast(@alignCast(context.?));
      if (self.web_engine != .system) return error.UnsupportedViewKind;
 diff --git a/src/platform/macos/appkit_host.h b/src/platform/macos/appkit_host.h
-index 204fe0b..756e8df 100644
+index 0e13bd4..26b9044 100644
 --- a/src/platform/macos/appkit_host.h
 +++ b/src/platform/macos/appkit_host.h
-@@ -597,6 +597,7 @@ void native_sdk_appkit_wake(native_sdk_appkit_host_t *host);
+@@ -603,6 +603,7 @@ void native_sdk_appkit_wake(native_sdk_appkit_host_t *host);
   * backgrounded and its NSTimers are being coalesced. */
  void native_sdk_appkit_request_frame(native_sdk_appkit_host_t *host);
  int native_sdk_appkit_update_widget_accessibility(native_sdk_appkit_host_t *host, uint64_t window_id, const char *label, size_t label_len, const native_sdk_appkit_widget_accessibility_node_t *nodes, size_t node_count);
@@ -383,7 +243,7 @@ index 204fe0b..756e8df 100644
  double native_sdk_appkit_measure_text(uint64_t font_id, double size, const char *text, size_t text_len);
  
 diff --git a/src/platform/macos/appkit_host.m b/src/platform/macos/appkit_host.m
-index e8dc636..270fdfb 100644
+index a9b7075..66fa86d 100644
 --- a/src/platform/macos/appkit_host.m
 +++ b/src/platform/macos/appkit_host.m
 @@ -22,6 +22,7 @@
@@ -394,10 +254,10 @@ index e8dc636..270fdfb 100644
  #include <stdlib.h>
  #include <string.h>
  #include <time.h>
-@@ -665,6 +666,12 @@ static int NativeSdkCredentialStatus(OSStatus status, int missingCode) {
- @property(nonatomic, assign) NSRange selectedTextRange;
+@@ -676,6 +677,12 @@ static int NativeSdkCredentialStatus(OSStatus status, int missingCode) {
  @property(nonatomic, assign) BOOL interpretedKeyEventEmittedInput;
  @property(nonatomic, strong) NSArray<NSAccessibilityElement *> *widgetAccessibilityElements;
+ @property(nonatomic, strong) NSArray<NSAccessibilityElement *> *widgetAccessibilityRootElements;
 +/* Exact y-down canvas geometry for the focused shaped-text caret. AppKit
 + * converts it to unflipped view and screen coordinates only at the
 + * NSTextInputClient boundary. */
@@ -407,7 +267,7 @@ index e8dc636..270fdfb 100644
  @property(nonatomic, strong) NSMutableArray<NativeSdkScrollDriverView *> *scrollDrivers;
  @property(nonatomic, assign) NSPoint wheelGesturePoint;
  @property(nonatomic, assign) BOOL wheelGestureActive;
-@@ -1040,6 +1047,7 @@ static int NativeSdkCredentialStatus(OSStatus status, int missingCode) {
+@@ -1063,6 +1070,7 @@ static int NativeSdkCredentialStatus(OSStatus status, int missingCode) {
  - (BOOL)uploadGpuSurfaceImageWithId:(uint64_t)imageId width:(NSUInteger)width height:(NSUInteger)height rgba8:(const uint8_t *)rgba8 byteLength:(NSUInteger)byteLength;
  - (BOOL)removeGpuSurfaceImageWithId:(uint64_t)imageId;
  - (BOOL)updateWidgetAccessibilityInWindow:(uint64_t)windowId label:(NSString *)label nodes:(const native_sdk_appkit_widget_accessibility_node_t *)nodes count:(NSUInteger)count;
@@ -415,30 +275,22 @@ index e8dc636..270fdfb 100644
  - (BOOL)nativeView:(NSView *)candidate isInSubtreeRootedAt:(NSView *)root;
  - (NSArray<NSString *> *)nativeViewKeysInSubtreeForWindow:(uint64_t)windowId rootKey:(NSString *)rootKey;
  - (BOOL)closeNativeViewInWindow:(uint64_t)windowId label:(NSString *)label;
-@@ -7084,30 +7092,48 @@ static BOOL NativeSdkScrollDriverCanConsumeHorizontally(NativeSdkScrollDriverVie
+@@ -7228,9 +7236,28 @@ static BOOL NativeSdkScrollDriverCanConsumeHorizontally(NativeSdkScrollDriverVie
  }
  
  - (NSRect)firstRectForCharacterRange:(NSRange)range actualRange:(NSRangePointer)actualRange {
--    NSAccessibilityElement *element = [self focusedTextAccessibilityElement];
-+    if (actualRange) *actualRange = range;
+-    NativeSdkWidgetAccessibilityElement *element = [self focusedTextAccessibilityElement];
 +    NSRect canvasRect = NSZeroRect;
      NSRect localRect = NSZeroRect;
 -    if (element) {
--        NSRect frame = element.accessibilityFrameInParentSpace;
--        NSInteger characterCount = MAX(0, element.accessibilityNumberOfCharacters);
--        NSUInteger location = range.location == NSNotFound ? 0 : MIN(range.location, (NSUInteger)characterCount);
--        NSUInteger length = range.location == NSNotFound ? 0 : MIN(range.length, (NSUInteger)characterCount - location);
--        if (actualRange) *actualRange = NSMakeRange(location, length);
--
--        CGFloat inset = MIN(12.0, MAX(4.0, frame.size.width * 0.08));
--        CGFloat usableWidth = MAX(1.0, frame.size.width - inset * 2.0);
--        CGFloat denominator = MAX(1.0, (CGFloat)MAX(1, characterCount));
--        CGFloat startRatio = (CGFloat)location / denominator;
--        CGFloat endRatio = (CGFloat)(location + MAX((NSUInteger)1, length)) / denominator;
--        CGFloat x = frame.origin.x + inset + usableWidth * MIN(1.0, MAX(0.0, startRatio));
--        CGFloat width = MAX(1.0, usableWidth * (MIN(1.0, MAX(0.0, endRatio)) - MIN(1.0, MAX(0.0, startRatio))));
--        localRect = NSMakeRect(x, frame.origin.y, width, MAX(1.0, frame.size.height));
++    /* RefRain increment: the runtime publishes the focused input's exact
++     * caret rectangle, so prefer it. The accessibility-element branch below
++     * is upstream's estimate — it spreads characters evenly across the frame
++     * and drifts under shaped CJK text, which is the whole reason this
++     * increment exists. It stays as the fallback for a focused input that
++     * has published no caret geometry yet. */
 +    if (self.hasTextInputCaretRect && self.focusedTextInputId != 0) {
++        if (actualRange) *actualRange = range;
 +        canvasRect = self.textInputCaretRect;
 +        CGFloat nativeY = self.isFlipped
 +            ? canvasRect.origin.y
@@ -449,6 +301,17 @@ index e8dc636..270fdfb 100644
 +            MAX(1.0, canvasRect.size.width),
 +            MAX(1.0, canvasRect.size.height)
 +        );
++    } else if ([self focusedTextAccessibilityElement]) {
++        NativeSdkWidgetAccessibilityElement *element = [self focusedTextAccessibilityElement];
+         NSRect frame = element.surfaceFrame;
+         NSInteger characterCount = MAX(0, element.accessibilityNumberOfCharacters);
+         NSUInteger location = range.location == NSNotFound ? 0 : MIN(range.location, (NSUInteger)characterCount);
+@@ -7245,13 +7272,36 @@ static BOOL NativeSdkScrollDriverCanConsumeHorizontally(NativeSdkScrollDriverVie
+         CGFloat x = frame.origin.x + inset + usableWidth * MIN(1.0, MAX(0.0, startRatio));
+         CGFloat width = MAX(1.0, usableWidth * (MIN(1.0, MAX(0.0, endRatio)) - MIN(1.0, MAX(0.0, startRatio))));
+         localRect = NSMakeRect(x, frame.origin.y, width, MAX(1.0, frame.size.height));
++    } else {
++        if (actualRange) *actualRange = range;
      }
      if (NSIsEmptyRect(localRect)) {
 -        if (actualRange) *actualRange = range;
@@ -481,8 +344,8 @@ index e8dc636..270fdfb 100644
 +    return screenRect;
  }
  
- - (NSAccessibilityElement *)focusedTextAccessibilityElement {
-@@ -8720,6 +8746,17 @@ static float NativeSdkCaptureReadRemixedSample(const AudioBufferList *buffers, c
+ - (NativeSdkWidgetAccessibilityElement *)focusedTextAccessibilityElement {
+@@ -8897,6 +8947,17 @@ static float NativeSdkCaptureReadRemixedSample(const AudioBufferList *buffers, c
      return YES;
  }
  
@@ -500,7 +363,7 @@ index e8dc636..270fdfb 100644
  - (BOOL)nativeView:(NSView *)candidate isInSubtreeRootedAt:(NSView *)root {
      for (NSView *view = candidate; view; view = view.superview) {
          if (view == root) return YES;
-@@ -12679,6 +12716,16 @@ int native_sdk_appkit_update_widget_accessibility(native_sdk_appkit_host_t *host
+@@ -12970,6 +13031,16 @@ int native_sdk_appkit_update_widget_accessibility(native_sdk_appkit_host_t *host
      return [object updateWidgetAccessibilityInWindow:window_id label:labelString ?: @"" nodes:nodes count:node_count] ? 1 : 0;
  }
  
@@ -518,10 +381,10 @@ index e8dc636..270fdfb 100644
      NativeSdkAppKitHost *object = (__bridge NativeSdkAppKitHost *)host;
      NSString *labelString = label ? [[NSString alloc] initWithBytes:label length:label_len encoding:NSUTF8StringEncoding] : @"";
 diff --git a/src/platform/macos/root.zig b/src/platform/macos/root.zig
-index cebcf9a..75cb300 100644
+index 3689e72..6a3fca7 100644
 --- a/src/platform/macos/root.zig
 +++ b/src/platform/macos/root.zig
-@@ -230,6 +230,7 @@ extern fn native_sdk_appkit_present_gpu_surface_packet_binary(host: *AppKitHost,
+@@ -243,6 +243,7 @@ extern fn native_sdk_appkit_present_gpu_surface_packet_binary(host: *AppKitHost,
  extern fn native_sdk_appkit_upload_gpu_surface_image(host: *AppKitHost, image_id: u64, width: usize, height: usize, rgba8: [*]const u8, rgba8_len: usize) c_int;
  extern fn native_sdk_appkit_remove_gpu_surface_image(host: *AppKitHost, image_id: u64) c_int;
  extern fn native_sdk_appkit_update_widget_accessibility(host: *AppKitHost, window_id: u64, label: [*]const u8, label_len: usize, nodes: [*]const AppKitWidgetAccessibilityNode, node_count: usize) c_int;
@@ -529,7 +392,7 @@ index cebcf9a..75cb300 100644
  extern fn native_sdk_appkit_create_webview(host: *AppKitHost, window_id: u64, label: [*]const u8, label_len: usize, url: [*]const u8, url_len: usize, x: f64, y: f64, width: f64, height: f64, layer: c_int, transparent: c_int, bridge_enabled: c_int) c_int;
  extern fn native_sdk_appkit_set_webview_frame(host: *AppKitHost, window_id: u64, label: [*]const u8, label_len: usize, x: f64, y: f64, width: f64, height: f64) c_int;
  extern fn native_sdk_appkit_navigate_webview(host: *AppKitHost, window_id: u64, label: [*]const u8, label_len: usize, url: [*]const u8, url_len: usize) c_int;
-@@ -794,6 +795,7 @@ pub const MacPlatform = struct {
+@@ -810,6 +811,7 @@ pub const MacPlatform = struct {
                  .register_gpu_surface_font_fn = registerGpuSurfaceFont,
                  .unregister_gpu_surface_font_fn = unregisterGpuSurfaceFont,
                  .update_widget_accessibility_fn = updateWidgetAccessibility,
@@ -537,7 +400,7 @@ index cebcf9a..75cb300 100644
                  .measure_text_fn = measureText,
                  .measure_text_advances_fn = measureTextAdvances,
                  .decode_image_fn = decodeImage,
-@@ -1967,6 +1969,24 @@ fn unregisterGpuSurfaceFont(context: ?*anyopaque, id: u64, token: u64) anyerror!
+@@ -2085,6 +2087,24 @@ fn unregisterGpuSurfaceFont(context: ?*anyopaque, id: u64, token: u64) anyerror!
      if (native_sdk_appkit_unregister_font(id, token) == 0) return error.InvalidGpuSurfaceFont;
  }
  
@@ -562,7 +425,7 @@ index cebcf9a..75cb300 100644
  fn updateWidgetAccessibility(context: ?*anyopaque, snapshot: platform_mod.WidgetAccessibilitySnapshot) anyerror!void {
      const self: *MacPlatform = @ptrCast(@alignCast(context.?));
      if (self.web_engine != .system) return error.UnsupportedViewKind;
-@@ -3032,6 +3052,16 @@ test "mac gpu surface input maps pinch phases and carries the magnification delt
+@@ -3287,6 +3307,16 @@ test "mac gpu surface input maps pinch phases and carries the magnification delt
      try std.testing.expectEqual(@as(f32, 0), end.scale);
  }
  
@@ -580,10 +443,10 @@ index cebcf9a..75cb300 100644
      try std.testing.expectEqual(platform_mod.ColorScheme.light, appKitColorScheme(0));
      try std.testing.expectEqual(platform_mod.ColorScheme.dark, appKitColorScheme(1));
 diff --git a/src/platform/root.zig b/src/platform/root.zig
-index cf5dfd1..78e0aab 100644
+index 596bdf2..b38c2fd 100644
 --- a/src/platform/root.zig
 +++ b/src/platform/root.zig
-@@ -185,6 +185,7 @@ pub const WidgetAccessibilityActions = types.WidgetAccessibilityActions;
+@@ -197,6 +197,7 @@ pub const WidgetAccessibilityActions = types.WidgetAccessibilityActions;
  pub const WidgetAccessibilityTextRange = types.WidgetAccessibilityTextRange;
  pub const WidgetAccessibilityNode = types.WidgetAccessibilityNode;
  pub const WidgetAccessibilitySnapshot = types.WidgetAccessibilitySnapshot;
@@ -592,10 +455,10 @@ index cf5dfd1..78e0aab 100644
  pub const WidgetAccessibilityActionEvent = types.WidgetAccessibilityActionEvent;
  pub const ClipboardData = types.ClipboardData;
 diff --git a/src/platform/types.zig b/src/platform/types.zig
-index 7d8b39e..d8f47c3 100644
+index 4e1893c..4733567 100644
 --- a/src/platform/types.zig
 +++ b/src/platform/types.zig
-@@ -2319,6 +2319,12 @@ pub const WidgetAccessibilityNode = struct {
+@@ -2421,6 +2421,12 @@ pub const WidgetAccessibilityNode = struct {
      placeholder: []const u8 = "",
      text_selection: ?WidgetAccessibilityTextRange = null,
      text_composition: ?WidgetAccessibilityTextRange = null,
@@ -608,7 +471,7 @@ index 7d8b39e..d8f47c3 100644
      value: ?f32 = null,
      bounds: geometry.RectF = .{},
      grid_row_index: ?usize = null,
-@@ -2351,6 +2357,17 @@ pub const WidgetAccessibilitySnapshot = struct {
+@@ -2453,6 +2459,17 @@ pub const WidgetAccessibilitySnapshot = struct {
      nodes: []const WidgetAccessibilityNode = &.{},
  };
  
@@ -626,7 +489,7 @@ index 7d8b39e..d8f47c3 100644
  pub const WidgetAccessibilityActionKind = enum(c_int) {
      focus = 0,
      press = 1,
-@@ -2847,6 +2864,7 @@ pub const PlatformServices = struct {
+@@ -2952,6 +2969,7 @@ pub const PlatformServices = struct {
      /// — with no host font state there is nothing to return.
      unregister_gpu_surface_font_fn: ?*const fn (context: ?*anyopaque, id: u64, token: u64) anyerror!void = null,
      update_widget_accessibility_fn: ?*const fn (context: ?*anyopaque, snapshot: WidgetAccessibilitySnapshot) anyerror!void = null,
@@ -634,7 +497,7 @@ index 7d8b39e..d8f47c3 100644
      /// Reconcile the native scroll drivers for a gpu-surface view against
      /// the full desired set: create missing drivers, update frames /
      /// content extents / (per set-offset flag) offsets, remove drivers whose
-@@ -3498,6 +3516,18 @@ pub const PlatformServices = struct {
+@@ -3633,6 +3651,18 @@ pub const PlatformServices = struct {
          return update_fn(self.context, snapshot);
      }
  
@@ -652,12 +515,12 @@ index 7d8b39e..d8f47c3 100644
 +
      /// Decode encoded image bytes through the platform codec into
      /// straight-alpha RGBA8 (see `decode_image_fn`). Loop-thread only.
-     pub fn decodeImage(self: PlatformServices, bytes: []const u8, buffer: []u8) anyerror!DecodedImage {
+     pub fn decodeImage(self: PlatformServices, bytes: []const u8, buffer: []u8, max_pixels: usize) anyerror!DecodedImage {
 diff --git a/src/platform/windows/root.zig b/src/platform/windows/root.zig
-index de759af..1e5d593 100644
+index 7f8f761..69fdf14 100644
 --- a/src/platform/windows/root.zig
 +++ b/src/platform/windows/root.zig
-@@ -177,6 +177,7 @@ extern fn native_sdk_windows_upload_gpu_surface_image(host: *WindowsHost, id: u6
+@@ -178,6 +178,7 @@ extern fn native_sdk_windows_upload_gpu_surface_image(host: *WindowsHost, id: u6
  extern fn native_sdk_windows_remove_gpu_surface_image(host: *WindowsHost, id: u64) c_int;
  extern fn native_sdk_windows_register_gpu_surface_font(host: *WindowsHost, id: u64, ttf: [*]const u8, ttf_len: usize, token: *u64) c_int;
  extern fn native_sdk_windows_unregister_gpu_surface_font(host: *WindowsHost, id: u64, token: u64) c_int;
@@ -665,7 +528,7 @@ index de759af..1e5d593 100644
  extern fn native_sdk_windows_create_webview(host: *WindowsHost, window_id: u64, label: [*]const u8, label_len: usize, url: [*]const u8, url_len: usize, x: f64, y: f64, width: f64, height: f64, layer: c_int, transparent: c_int, bridge_enabled: c_int) c_int;
  extern fn native_sdk_windows_set_webview_frame(host: *WindowsHost, window_id: u64, label: [*]const u8, label_len: usize, x: f64, y: f64, width: f64, height: f64) c_int;
  extern fn native_sdk_windows_navigate_webview(host: *WindowsHost, window_id: u64, label: [*]const u8, label_len: usize, url: [*]const u8, url_len: usize) c_int;
-@@ -455,6 +456,7 @@ pub const WindowsPlatform = struct {
+@@ -456,6 +457,7 @@ pub const WindowsPlatform = struct {
                  .remove_gpu_surface_image_fn = removeGpuSurfaceImage,
                  .register_gpu_surface_font_fn = registerGpuSurfaceFont,
                  .unregister_gpu_surface_font_fn = unregisterGpuSurfaceFont,
@@ -673,7 +536,7 @@ index de759af..1e5d593 100644
                  .show_context_menu_fn = showContextMenu,
                  .create_webview_fn = createWebView,
                  .set_webview_frame_fn = setWebViewFrame,
-@@ -1312,6 +1314,24 @@ fn unregisterGpuSurfaceFont(context: ?*anyopaque, id: u64, token: u64) anyerror!
+@@ -1332,6 +1334,24 @@ fn unregisterGpuSurfaceFont(context: ?*anyopaque, id: u64, token: u64) anyerror!
      }
  }
  
@@ -698,7 +561,7 @@ index de759af..1e5d593 100644
  /// Win32 menus treat `&` in an item label as a mnemonic marker —
  /// AppendMenuW eats the ampersand and underlines the next character —
  /// so an app-authored label like "R&D" must cross the ABI with the
-@@ -2649,6 +2669,19 @@ fn flattenFilters(filters: []const platform_mod.FileFilter, buffer: []u8) []cons
+@@ -2678,6 +2698,19 @@ fn flattenFilters(filters: []const platform_mod.FileFilter, buffer: []u8) []cons
      return buffer[0..offset];
  }
  
@@ -719,10 +582,10 @@ index de759af..1e5d593 100644
      _ = WindowsPlatform;
  }
 diff --git a/src/platform/windows/webview2_host.cpp b/src/platform/windows/webview2_host.cpp
-index 155cb3c..0e46fb8 100644
+index d811823..98699eb 100644
 --- a/src/platform/windows/webview2_host.cpp
 +++ b/src/platform/windows/webview2_host.cpp
-@@ -520,6 +520,15 @@ struct NativeView {
+@@ -521,6 +521,15 @@ struct NativeView {
       * composition. Mirrors gpu_preedit_text in the GTK host and markedText
       * in the AppKit host. */
      std::string gpu_ime_preedit;
@@ -738,7 +601,7 @@ index 155cb3c..0e46fb8 100644
      /* The runtime-pushed window-drag mirror (hidden-titlebar windows):
       * WM_NCHITTEST consults it so the markup's drag header behaves like
       * the system caption. */
-@@ -2623,6 +2632,78 @@ static void emitGpuSurfaceTextInput(Host *host, NativeView &view, int input_kind
+@@ -2643,6 +2652,78 @@ static void emitGpuSurfaceTextInput(Host *host, NativeView &view, int input_kind
      emitGpuSurfaceEvent(host, view, event);
  }
  
@@ -817,7 +680,7 @@ index 155cb3c..0e46fb8 100644
  /* Fetch one composition string (GCS_COMPSTR / GCS_RESULTSTR) from the
   * input context. ImmGetCompositionStringW returns a byte count for the
   * sizing call and the data for the filling call; errors return empty. */
-@@ -3529,10 +3610,11 @@ static LRESULT CALLBACK gpuSurfaceProc(HWND hwnd, UINT message, WPARAM wparam, L
+@@ -3549,10 +3630,11 @@ static LRESULT CALLBACK gpuSurfaceProc(HWND hwnd, UINT message, WPARAM wparam, L
               * from ime_set_composition events, like the other hosts. */
              return DefWindowProcW(hwnd, message, wparam, lparam & ~(LPARAM)ISC_SHOWUICOMPOSITIONWINDOW);
          case WM_IME_STARTCOMPOSITION:
@@ -833,7 +696,7 @@ index 155cb3c..0e46fb8 100644
              return 0;
          case WM_IME_COMPOSITION:
              gpuSurfaceImeComposition(host, *view, hwnd, lparam);
-@@ -7104,6 +7186,32 @@ int native_sdk_windows_unregister_gpu_surface_font(Host *host, uint64_t id, uint
+@@ -7153,6 +7235,32 @@ int native_sdk_windows_unregister_gpu_surface_font(Host *host, uint64_t id, uint
      return host->gpu_renderer->unregisterFont(id, token) ? 1 : -1;
  }
  
@@ -933,7 +796,7 @@ index 3e29baf..4fe159d 100644
  
  pub const TextLine = struct {
 diff --git a/src/primitives/canvas/widget_metrics.zig b/src/primitives/canvas/widget_metrics.zig
-index 8f5b0c7..7f22aa8 100644
+index 5f841d6..eca8f8b 100644
 --- a/src/primitives/canvas/widget_metrics.zig
 +++ b/src/primitives/canvas/widget_metrics.zig
 @@ -28,6 +28,8 @@ pub fn widgetButtonTextSize(widget: Widget, tokens: DesignTokens) f32 {
@@ -955,7 +818,7 @@ index 8f5b0c7..7f22aa8 100644
          .alignment = widget.text_alignment,
          .typography = tokens.typography,
 diff --git a/src/primitives/canvas/widget_render_controls.zig b/src/primitives/canvas/widget_render_controls.zig
-index 29a6151..c869abd 100644
+index 052dbae..ee388d9 100644
 --- a/src/primitives/canvas/widget_render_controls.zig
 +++ b/src/primitives/canvas/widget_render_controls.zig
 @@ -74,6 +74,8 @@ const widgetBackgroundColor = widget_render_style.widgetBackgroundColor;
@@ -967,7 +830,7 @@ index 29a6151..c869abd 100644
  const widgetAccentForegroundColor = widget_render_style.widgetAccentForegroundColor;
  const widgetRadius = widget_render_style.widgetRadius;
  const controlRadius = widget_render_style.controlRadius;
-@@ -751,7 +753,7 @@ pub fn emitMenuItemWidget(builder: *Builder, widget: Widget, tokens: DesignToken
+@@ -752,7 +754,7 @@ pub fn emitMenuItemWidget(builder: *Builder, widget: Widget, tokens: DesignToken
      }
      const text_size = widgetBodyTextSize(widget, tokens);
      const text_inset = widgetControlInset(widget, tokens, tokens.spacing.md);
@@ -976,7 +839,7 @@ index 29a6151..c869abd 100644
      // EVERY row reserves the trailing checkmark slot, committed or not,
      // so labels measure and elide identically and moving the commit
      // never reflows a row's text.
-@@ -836,7 +838,7 @@ pub fn emitListItemWidget(builder: *Builder, widget: Widget, tokens: DesignToken
+@@ -837,7 +839,7 @@ pub fn emitListItemWidget(builder: *Builder, widget: Widget, tokens: DesignToken
      if (widget.state.focused) try emitWidgetFocusRing(builder, widget, tokens, 2);
      const text_size = widgetBodyTextSize(widget, tokens);
      const text_inset = widgetControlInset(widget, tokens, tokens.spacing.md);
@@ -985,7 +848,7 @@ index 29a6151..c869abd 100644
      // Leading icon slot: drawn as part of the row's own rendering
      // so icon + label are one hit target with one tint, mirroring the
      // button's inline icon. The label shifts right by the shared metric
-@@ -884,7 +886,7 @@ pub fn emitDataCellWidget(builder: *Builder, widget: Widget, tokens: DesignToken
+@@ -885,7 +887,7 @@ pub fn emitDataCellWidget(builder: *Builder, widget: Widget, tokens: DesignToken
              .font_id = tokens.typography.font_id,
              .size = text_size,
              .origin = pixelSnapTextPoint(tokens, boundedTextOrigin(widget.frame, text_size, text_inset)),
@@ -995,11 +858,11 @@ index 29a6151..c869abd 100644
              .text_layout = boundedTextLayout(widget.frame, text_size, text_inset, widget.text_alignment, .none, widget.text_overflow, tokens),
          });
 diff --git a/src/primitives/canvas/widget_render_style.zig b/src/primitives/canvas/widget_render_style.zig
-index ce8b03a..518f0e4 100644
+index ff01f76..e30cd10 100644
 --- a/src/primitives/canvas/widget_render_style.zig
 +++ b/src/primitives/canvas/widget_render_style.zig
 @@ -173,6 +173,20 @@ pub fn widgetForegroundColor(widget: Widget, tokens: DesignTokens, fallback: Col
-     return widget.style.foreground orelse fallback;
+     return disabledWash(color, widget.state.disabled, tokens.states.disabled_alpha);
  }
  
 +/// RefRain patch: the ROW register's ink, disabled included.
@@ -1017,8 +880,8 @@ index ce8b03a..518f0e4 100644
 +}
 +
  pub fn widgetAccentForegroundColor(widget: Widget, tokens: DesignTokens, fallback: Color) Color {
-     if (widget.state.disabled) return tokens.colors.text_muted;
-     return widget.style.accent_foreground orelse fallback;
+     const color = widget.style.accent_foreground orelse fallback;
+     return disabledWash(color, widget.state.disabled, tokens.states.disabled_alpha);
 diff --git a/src/primitives/canvas/widget_text_input.zig b/src/primitives/canvas/widget_text_input.zig
 index 176d399..0f3477e 100644
 --- a/src/primitives/canvas/widget_text_input.zig
@@ -1042,10 +905,10 @@ index 176d399..0f3477e 100644
          // reachable (caret, selection, and scroll address every byte),
          // so the honest treatment is the frame clip, not an ellipsis
 diff --git a/src/primitives/canvas/widgets.zig b/src/primitives/canvas/widgets.zig
-index 75ab443..6cf58c1 100644
+index 0da67d2..6906334 100644
 --- a/src/primitives/canvas/widgets.zig
 +++ b/src/primitives/canvas/widgets.zig
-@@ -940,6 +940,19 @@ pub const Widget = struct {
+@@ -942,6 +942,19 @@ pub const Widget = struct {
      /// tooling and write-back can round-trip it. Span paragraphs
      /// (`spans`) wrap by design and ignore it.
      text_no_wrap: bool = false,
@@ -1066,10 +929,10 @@ index 75ab443..6cf58c1 100644
      /// Zero keeps an ordinary paragraph; a positive value is the decimal
      /// digit width of the largest marker. The gutter is decoration, not
 diff --git a/src/runtime/automation_snapshot.zig b/src/runtime/automation_snapshot.zig
-index 83eedbf..7593295 100644
+index 180e2b3..ae054db 100644
 --- a/src/runtime/automation_snapshot.zig
 +++ b/src/runtime/automation_snapshot.zig
-@@ -198,6 +198,12 @@ pub fn RuntimeAutomationSnapshot(comptime Runtime: type) type {
+@@ -210,6 +210,12 @@ pub fn RuntimeAutomationSnapshot(comptime Runtime: type) type {
                  const semantics = view.widgetSemantics();
                  for (semantics) |node| {
                      if (widget_count.* >= self.automation_widgets.len) return;
@@ -1082,7 +945,7 @@ index 83eedbf..7593295 100644
                      self.automation_widgets[widget_count.*] = .{
                          .window_id = view.window_id,
                          .view_label = view.label,
-@@ -225,7 +231,7 @@ pub fn RuntimeAutomationSnapshot(comptime Runtime: type) type {
+@@ -237,7 +243,7 @@ pub fn RuntimeAutomationSnapshot(comptime Runtime: type) type {
                          },
                          .virtual_range = canvasVirtualRange(layout.virtualRangeById(node.id)),
                          .bounds = node.bounds.translate(geometry.OffsetF.init(view.frame.x, view.frame.y)),
@@ -1091,7 +954,7 @@ index 83eedbf..7593295 100644
                          .enabled = !node.state.disabled,
                          .hovered = node.state.hovered or (node.id != 0 and node.id == view.canvas_widget_hovered_id),
                          .pressed = node.state.pressed or (node.id != 0 and node.id == view.canvas_widget_pressed_id),
-@@ -237,6 +243,13 @@ pub fn RuntimeAutomationSnapshot(comptime Runtime: type) type {
+@@ -249,6 +255,13 @@ pub fn RuntimeAutomationSnapshot(comptime Runtime: type) type {
                          .actions = canvasWidgetActions(node.actions),
                          .text_selection = canvasTextRange(node.text_selection),
                          .text_composition = canvasTextRange(node.text_composition),
@@ -1106,10 +969,10 @@ index 83eedbf..7593295 100644
                      };
                      widget_count.* += 1;
 diff --git a/src/runtime/canvas_widget_accessibility_tests.zig b/src/runtime/canvas_widget_accessibility_tests.zig
-index cd49913..5354aea 100644
+index ba10f8e..24418f8 100644
 --- a/src/runtime/canvas_widget_accessibility_tests.zig
 +++ b/src/runtime/canvas_widget_accessibility_tests.zig
-@@ -756,6 +756,9 @@ test "runtime publishes canvas widget accessibility snapshots to platform" {
+@@ -1031,6 +1031,9 @@ test "runtime publishes canvas widget accessibility snapshots to platform" {
          view_label_len: usize = 0,
          nodes: [16]platform.WidgetAccessibilityNode = undefined,
          node_count: usize = 0,
@@ -1119,7 +982,7 @@ index cd49913..5354aea 100644
  
          fn platformValue(self: *@This()) platform.Platform {
              return .{
-@@ -769,6 +772,7 @@ test "runtime publishes canvas widget accessibility snapshots to platform" {
+@@ -1044,6 +1047,7 @@ test "runtime publishes canvas widget accessibility snapshots to platform" {
                      .create_view_fn = createView,
                      .focus_view_fn = focusView,
                      .update_widget_accessibility_fn = updateWidgetAccessibility,
@@ -1127,7 +990,7 @@ index cd49913..5354aea 100644
                  },
              };
          }
-@@ -805,6 +809,13 @@ test "runtime publishes canvas widget accessibility snapshots to platform" {
+@@ -1080,6 +1084,13 @@ test "runtime publishes canvas widget accessibility snapshots to platform" {
                  self.nodes[index] = node;
              }
          }
@@ -1141,7 +1004,7 @@ index cd49913..5354aea 100644
      };
  
      const TestApp = struct {
-@@ -912,6 +923,11 @@ test "runtime publishes canvas widget accessibility snapshots to platform" {
+@@ -1187,6 +1198,11 @@ test "runtime publishes canvas widget accessibility snapshots to platform" {
      const edited_node = platformWidgetAccessibilityNodeById(platform_state.nodes[0..platform_state.node_count], 6).?;
      try std.testing.expect(edited_node.can_undo);
      try std.testing.expect(!edited_node.can_redo);
@@ -1222,13 +1085,13 @@ index fdaccb8..0669336 100644
      switch (@typeInfo(@TypeOf(value))) {
          .bool => hasher.update(&.{@intFromBool(value)}),
 diff --git a/src/runtime/effects.zig b/src/runtime/effects.zig
-index 5162720..bd18152 100644
+index ce420b0..0d515fd 100644
 --- a/src/runtime/effects.zig
 +++ b/src/runtime/effects.zig
-@@ -4697,6 +4697,12 @@ pub fn Effects(comptime Msg: type) type {
-         /// Capability-installed Tier-3 relational database. Queries execute
-         /// synchronously on the loop thread and stage bounded page results.
-         relational_store_binding: ?RelationalStoreBinding = null,
+@@ -4878,6 +4878,12 @@ pub fn Effects(comptime Msg: type) type {
+         /// embedding API's legacy unrestricted behavior; shipping app
+         /// runners always bind an explicit policy.
+         file_access_binding: ?file_access.Binding = null,
 +        /// Revision of synchronous external state that an app view reads
 +        /// outside its model. A host request that mutates such state calls
 +        /// `noteViewStateChanged`; UiApp then rebuilds from the real state
@@ -1238,8 +1101,8 @@ index 5162720..bd18152 100644
          /// Window-action mirror: counts and the last requested label,
          /// observable in tests (`windowActionState`).
          window_action_state: WindowActionState = .{},
-@@ -6089,6 +6095,20 @@ pub fn Effects(comptime Msg: type) type {
-             if (self.relational_store_binding == null) self.relational_store_binding = binding;
+@@ -6316,6 +6322,20 @@ pub fn Effects(comptime Msg: type) type {
+             };
          }
  
 +        /// Report that a synchronous host call changed external state the
@@ -1256,119 +1119,14 @@ index 5162720..bd18152 100644
 +            return self.view_state_revision;
 +        }
 +
-         /// Switch this channel into session-replay mode: the fake
-         /// executor (no processes, no network, no file or pasteboard
-         /// I/O — requests park in their slots) with journaled results as
-diff --git a/src/runtime/ts_core_host.zig b/src/runtime/ts_core_host.zig
-index 9ffd3b0..e3097e9 100644
---- a/src/runtime/ts_core_host.zig
-+++ b/src/runtime/ts_core_host.zig
-@@ -896,15 +896,26 @@ pub fn TsCoreHost(comptime core: type) type {
-         /// callback as a dropped entry's terminal is swallowed here —
-         /// the silent drop the keyed-effect discipline promises.
-         pub fn dispatch(fx: *Fx, msg: Msg) void {
-+            _ = dispatchChanged(fx, msg);
-+        }
-+
-+        /// The dispatch cycle plus the one fact a view adapter needs to
-+        /// avoid deriving the same committed root twice: true only when
-+        /// the cycle committed a different root. Commands still run when
-+        /// this returns false, and their routed results still arrive on
-+        /// the next effects drain.
-+        pub fn dispatchChanged(fx: *Fx, msg: Msg) bool {
-             if (swallow_next_dispatch) {
-                 swallow_next_dispatch = false;
--                return;
-+                return false;
-             }
-             if (pending_service_channel_close) |channel_key| {
-                 pending_service_channel_close = null;
-                 fx.closeChannel(channel_key);
-             }
-+            const before = model_root;
-             dispatchDepth(fx, msg, 0);
-+            return before != model_root;
-         }
- 
-         /// Drain every queued effect completion into the core — the
-diff --git a/src/runtime/ts_ui_app.zig b/src/runtime/ts_ui_app.zig
-index 7891969..1da1250 100644
---- a/src/runtime/ts_ui_app.zig
-+++ b/src/runtime/ts_ui_app.zig
-@@ -49,7 +49,7 @@
- //! menu-bar item through `status_item_fn`: install-time icon/tooltip/click
- //! hooks plus the live presentation and menu. In hand wiring, empty
- //! install-time fields inherit the static `status_item` options. The two
--//! seams the core owns — `update_fx` and
-+//! seams the core owns — `update_fx_changed` and
- //! `init_fx` — are stamped by this adapter and must be left null.
- //!
- //! `Options.sync` is deliberately unsupported: it mutates the model in
-@@ -277,9 +277,10 @@ pub fn TsUiApp(comptime core: type) type {
-         };
- 
-         /// Construct the UiApp over the committed TS model. `options`
--        /// carries the wiring seams only — `update`, `update_fx`, and
--        /// `init_fx` belong to the core and must be null; `sync` cannot
--        /// exist for a committed model (see the module doc).
-+        /// carries the wiring seams only — `update`, `update_fx`,
-+        /// `update_fx_changed`, and `init_fx` belong to the core and must
-+        /// be null; `sync` cannot exist for a committed model (see the
-+        /// module doc).
-         pub fn init(backing: std.mem.Allocator, core_options: CoreOptions, options: Options) App {
-             const stamped = stampOptions(options);
-             Host.boot();
-@@ -335,8 +336,8 @@ pub fn TsUiApp(comptime core: type) type {
-         }
- 
-         fn stampOptions(options: Options) Options {
--            if (options.update != null or options.update_fx != null) {
--                @panic("TsUiApp owns update: the TypeScript core is the update loop - remove the wiring's update/update_fx");
-+            if (options.update != null or options.update_fx != null or options.update_fx_changed != null) {
-+                @panic("TsUiApp owns update: the TypeScript core is the update loop - remove the wiring's update/update_fx/update_fx_changed");
-             }
-             if (options.init_fx != null) {
-                 @panic("TsUiApp owns init_fx: the core's initialModel boots the app - remove the wiring's init_fx");
-@@ -349,7 +350,7 @@ pub fn TsUiApp(comptime core: type) type {
-             lifecycle_flush_after_update = false;
-             stamped.on_lifecycle = lifecycleAdapter;
-             stamped.init_fx = initFx;
--            stamped.update_fx = updateFx;
-+            stamped.update_fx_changed = updateFxChanged;
-             // A TypeScript core can select a built-in pack from ordinary
-             // model state without ejecting the generated launcher. The
-             // exported single-model helper emits as a Model method, so it
-@@ -1116,17 +1117,19 @@ pub fn TsUiApp(comptime core: type) type {
-             validateChannelRecord(@FieldType(T, "buttons"), &.{ "x", "y", "width", "height" }, "chromeMsg's buttons", &.{ "x", "y" });
-         }
- 
--        /// `Options.update_fx`: one full core dispatch cycle, then the
--        /// app-held root becomes the new committed value. The incoming
--        /// model pointer is the previous root value — the bridge holds
--        /// the authoritative one, so it is overwritten, never read.
--        fn updateFx(model: *Model, msg: Msg, fx: *Effects) void {
--            Host.dispatch(fx, msg);
-+        /// `Options.update_fx_changed`: one full core dispatch cycle,
-+        /// then the app-held root becomes the new committed value. Root
-+        /// identity proves whether a view can derive anything new: a
-+        /// command-only cycle can skip its old-root rebuild while its
-+        /// routed result retains the ordinary next-drain boundary.
-+        fn updateFxChanged(model: *Model, msg: Msg, fx: *Effects) bool {
-+            const changed = Host.dispatchChanged(fx, msg);
-             model.* = Host.model().*;
-             if (lifecycle_flush_after_update) {
-                 lifecycle_flush_after_update = false;
-                 flushPersistence();
-             }
-+            return changed;
-         }
-     };
- }
+         fn takeTestFileFailure(self: *Self) ?EffectFileOutcome {
+             const err = self.test_next_file_error orelse return null;
+             self.test_next_file_error = null;
 diff --git a/src/runtime/ui_app.zig b/src/runtime/ui_app.zig
-index ee3f245..446b622 100644
+index e921233..59c3847 100644
 --- a/src/runtime/ui_app.zig
 +++ b/src/runtime/ui_app.zig
-@@ -497,17 +497,26 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -562,17 +562,26 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
              /// appearances snap instead of animating. Returns the
              /// number of tweens written to `out`.
              layout_tweens: ?*const fn (model: *const ModelT, tree: *const Ui.Tree, out: []canvas.CanvasWidgetLayoutTween) usize = null,
@@ -1400,7 +1158,7 @@ index ee3f245..446b622 100644
              /// TEA's init command: runs exactly once, on the installing
              /// frame, after the effects channel is bound and before the
              /// first view build — so a boot-time `fx.spawn`/`fx.fetch`
-@@ -1179,6 +1188,11 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -1274,6 +1283,11 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
          /// staged terminal — still re-renders the house chrome instead
          /// of leaving controls painted for a playback that is gone.
          video_rendered_snapshot: Effects.VideoSnapshot = .{},
@@ -1412,7 +1170,7 @@ index ee3f245..446b622 100644
          /// Applied declarative-video state: whether a declared src owns
          /// the playback right now, the src it loaded (so an unchanged
          /// declaration never reloads — loadVideo replaces the playback
-@@ -1331,7 +1345,10 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -1426,7 +1440,10 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
  
          fn assertOptions(options: Options) void {
              std.debug.assert(options.view != null or options.markup != null);
@@ -1423,8 +1181,8 @@ index ee3f245..446b622 100644
 +            std.debug.assert(update_forms == 1);
              // Declared windows need the per-window view to build them.
              std.debug.assert(options.windows_fn == null or options.window_view != null);
-             if (comptime !features.runtime_markup) std.debug.assert(options.markup == null);
-@@ -1628,7 +1645,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+             std.debug.assert(options.theme_fn == null or options.theme_state_fn == null);
+@@ -1744,7 +1761,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
          pub fn dispatch(self: *Self, runtime: *Runtime, window_id: platform.WindowId, msg: MsgT) anyerror!void {
              self.bindEffectsChannel(runtime);
              self.syncModel(runtime, self.canvas_window_id);
@@ -1433,7 +1191,7 @@ index ee3f245..446b622 100644
              self.publishAudioState(runtime);
              // Before the installing frame there is nothing to render
              // against: canvas size and scale arrive with the first frame
-@@ -1648,12 +1665,22 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -1764,12 +1781,22 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
              // event the event's own tail drains instead, and the
              // drain's own dispatches re-enter here guarded.
              var rebuild_error: ?anyerror = null;
@@ -1462,7 +1220,7 @@ index ee3f245..446b622 100644
              if (self.hover_msg_event_depth == 0 and !self.hover_msg_draining) {
                  self.drainHoverMsgs(runtime) catch |err| {
                      if (rebuild_error == null) rebuild_error = err;
-@@ -1667,10 +1694,16 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -1783,10 +1810,16 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
              _ = window_id;
          }
  
@@ -1483,7 +1241,7 @@ index ee3f245..446b622 100644
                  update_fx(&self.model, msg, &self.effects);
              } else {
                  self.options.update.?(&self.model, msg);
-@@ -1678,7 +1711,15 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -1794,7 +1827,15 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
              // One update call is one complete command batch. Re-run live
              // relational reads only after the batch has walked so several
              // writes touching the same table still coalesce into one result.
@@ -1499,7 +1257,7 @@ index ee3f245..446b622 100644
          }
  
          /// Drain the effect completion queue on the loop thread: every
-@@ -1692,7 +1733,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -1808,7 +1849,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
              if (!self.effects.hasPending()) return;
              self.bindEffectsChannel(runtime);
              self.syncModel(runtime, self.canvas_window_id);
@@ -1508,7 +1266,7 @@ index ee3f245..446b622 100644
              // One pass consumes only completions that existed when it
              // began: a load started by an update handler in THIS pass
              // that finishes while the pass still runs waits for the wake
-@@ -1703,26 +1744,21 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -1819,26 +1860,21 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
              // finds the parked request (see Effects.DrainBoundary).
              var boundary = self.effects.drainBoundary();
              while (self.effects.takeMsgWithin(&boundary)) |msg| {
@@ -1541,7 +1299,7 @@ index ee3f245..446b622 100644
                  self.rebuild(runtime, self.canvas_window_id) catch |err| {
                      rebuild_error = err;
                  };
-@@ -1913,8 +1949,11 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -2066,8 +2102,11 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
              // the post-build reconcile (`applyVideoDeclaration`) can
              // move them, and `drainEffects` uses the stamp to know the
              // published chrome no longer matches (see
@@ -1554,7 +1312,7 @@ index ee3f245..446b622 100644
              const next_index = self.contextMenuRebuildIndex(null, self.arena_index);
              // Widget layout is inset by the runtime's viewport chrome
              // (safe areas + keyboard on mobile, zero on desktop); the
-@@ -1984,6 +2023,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -2137,6 +2176,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
              live_tree_reset = false;
              self.main_tree_current = true;
              self.build_generation +%= 1;
@@ -1562,7 +1320,7 @@ index ee3f245..446b622 100644
              // Captures track EVERY tree transition (see
              // refreshHoverLeaveCaptures) — a transient failure is
              // retried at the next commit or drain and lands in the
-@@ -4290,7 +4330,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -4565,7 +4605,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
                  // hidden-titlebar header is padded in the very first
                  // paint.
                  if (self.chromeInsetsMsg(runtime, frame_event.window_id)) |msg| {
@@ -1571,48 +1329,3 @@ index ee3f245..446b622 100644
                  }
                  try self.rebuild(runtime, frame_event.window_id);
                  if (self.options.chrome == null) {
-diff --git a/tools/corewire/emit.zig b/tools/corewire/emit.zig
-index 3e7add7..68465c1 100644
---- a/tools/corewire/emit.zig
-+++ b/tools/corewire/emit.zig
-@@ -900,6 +900,9 @@ const Emitter = struct {
-             \\comptime {{
-             \\    // The union and the tag table are emitted from one arm list;
-             \\    // hold them equal anyway so a hand edit cannot skew dispatch.
-+            \\    // RefRain patch: the per-field name compare multiplies branches
-+            \\    // by the arm count — lift the quota so a big Msg union compiles.
-+            \\    @setEvalBranchQuota(100_000);
-             \\    const fields = @typeInfo({f}).@"union".fields;
-             \\    if (fields.len != msg_tags.len) @compileError("core_shim: msg_tags and the message union disagree — regenerate from the sidecar");
-             \\    for (fields, msg_tags) |field, tag_name| {{
-diff --git a/tools/corewire/emit_facade.zig b/tools/corewire/emit_facade.zig
-index fb6189f..910d4ea 100644
---- a/tools/corewire/emit_facade.zig
-+++ b/tools/corewire/emit_facade.zig
-@@ -1029,6 +1029,26 @@ const FacadeEmitter = struct {
-             try self.print("  \"{s}\",\n", .{try tsString(self.arena, name)});
-         }
-         try self.raw("];\n");
-+        // RefRain patch: the compile stage's fact reader (scriptc's
-+        // entryContractFacts) expects the SPLIT pair modelUnbound/msgUnbound
-+        // ("a generated facade declares these; authors declare nothing").
-+        // Emitting only the combined viewUnbound leaves the compile-emitted
-+        // sidecar's unbound lists empty, and the mirror then carries no
-+        // view_unbound — `native check --strict` flags every Zig-read field.
-+        try self.raw("\n// The split spellings the compile stage reads (same facts, resolved model-first above).\n");
-+        try self.raw("export const modelUnbound = [\n");
-+        for (field_unbound.items) |name| {
-+            try self.print("  \"{s}\",\n", .{try tsString(self.arena, name)});
-+        }
-+        for (helper_unbound.items) |name| {
-+            try self.print("  \"{s}\",\n", .{try tsString(self.arena, name)});
-+        }
-+        try self.raw("] as const;\n");
-+        try self.raw("export const msgUnbound = [\n");
-+        for (self.sidecar.msg.unbound) |name| {
-+            try self.print("  \"{s}\",\n", .{try tsString(self.arena, name)});
-+        }
-+        try self.raw("] as const;\n");
-     }
- 
-     // ------------------------------------------------- helper wrappers

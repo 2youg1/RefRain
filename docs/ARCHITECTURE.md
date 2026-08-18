@@ -950,7 +950,7 @@ projects and the reason for each one.
 | | |
 |---|---|
 | **Languages** | [Rust](https://rust-lang.org) for the domain. [Zig](https://ziglang.org) for the interface state, the platform and the drawing. [TypeScript](https://www.typescriptlang.org) runs the gates and the release scripts; none of it ships |
-| **Application shell** | [Native SDK](https://native-sdk.dev) `@native-sdk/cli` 0.9.0, with an increment in `patches/`. Native rendering. No WebView and no JavaScript runtime in the binary |
+| **Application shell** | [Native SDK](https://native-sdk.dev) `@native-sdk/cli` 0.9.4, with an increment in `patches/`. Native rendering. No WebView and no JavaScript runtime in the binary |
 | **Surface** | Zig views built against `UiApp(Model, Msg)`. [Biome](https://biomejs.dev) formats the TypeScript tooling |
 | **Build tooling** | [ScriptC](https://github.com/vercel-labs/scriptc) compiles the tier A gates and the release scripts to binaries. [Bun](https://bun.sh) runs the other scripts. Neither ships |
 | **Storage** | [SQLite](https://sqlite.org) through [rusqlite](https://github.com/rusqlite/rusqlite), FTS5 `unicode61`, and a bigram tokeniser in the application |
@@ -998,7 +998,7 @@ only for a paragraph with a long unbreakable run.
 
 ### The carried SDK increment
 
-`patches/` is not a private fork. It is an increment on `@native-sdk/cli` 0.9.0.
+`patches/` is not a private fork. It is an increment on `@native-sdk/cli` 0.9.4.
 Each hunk answers three questions: what RefRain cannot do without it, why the SDK
 cannot supply it today, and how it leaves. Delete a hunk that cannot answer all
 three at the next upgrade.
@@ -1008,7 +1008,7 @@ three at the next upgrade.
 | **The typeset breaks** — `hard_breaks` on the text layout | `refrain_core::typeset` is the line-breaking authority. The SDK breaks at space and tab only, and a Chinese paragraph has neither | Offer upstream as a layout input |
 | **Per-widget text size and line height** | The measure of the manuscript comes from the typography settings of the author. The token ladder cannot state this for each widget | The same pull request as the breaks |
 | **The caret rectangle** — `text_caret_bounds` and `TextInputGeometrySnapshot` | An IME candidate window must sit at the caret. Without this the platform host estimates the position, and shaped CJK text moves the caret in the frame | Offer upstream. The runtime already has this geometry |
-| **Change-aware dispatch** — `update_fx_changed`, `dispatchChanged`, `view_state_revision` | The projection is in the buffer of the bridge, not in the Model. A host callback can change what a view reads without a change to the model root | M8 stood on this and is now closed from the app side: the core adopts the projection in its `host_result` arm, which replay walks. The increment becomes unnecessary when the projection moves into the Model |
+| **Change-aware dispatch** — `update_fx_changed`, `view_state_revision` | The projection is in the buffer of the bridge, not in the Model. A host callback can change what a view reads without a change to the model root | M8 stood on this and is now closed from the app side: the core adopts the projection in its `host_result` arm, which replay walks. The increment becomes unnecessary when the projection moves into the Model |
 | **The disabled ink of the row register** — `rowForegroundColor` | The rail is a second surface register beside the paper. `ControlVisualTokens.disabled_foreground` documents this ink, and the button ladder uses it, but the row ladder used the global `text_muted`. On four of seven themes that ink reads at \|Lc\| 8 to 20 against the rail | Offer upstream as a defect correction. Delete it on the day it lands |
 | **Windows semantic-analysis object** — `build/app.zig` | The Zig COFF backend cannot merge several archives into one object, and this application links a Rust staticlib. Cost: on Windows, `zig build test` does not force semantic analysis of the app module | A Zig backend limit. Test again at each Zig release |
 
