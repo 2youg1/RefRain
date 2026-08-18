@@ -25,7 +25,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { inflateSync } from "node:zlib";
+import { decodePng, distance, hex, type Rgb } from "./png-pixels.ts";
 
 const root = process.cwd();
 const nativeDir = join(root, "apps/native");
@@ -74,57 +74,23 @@ process.on("SIGINT", () => {
  *
  * 自己解而不是拉一个图像库：只需要第一行，而这道验收的全部意义就是
  * 「屏幕上真的是这个颜色」——多一层依赖就多一处可能骗过自己的地方。
- * 只认 RGBA8（color type 6），SDK 的截图就是这一种；换了格式应当报错而不是
- * 猜一个值出来。
  *
- * **为什么只解第一行**：第一行的上方扫描线按 PNG 规范当全 0，所以五种
- * filter 退化成只依赖左侧像素的形式，一行就能自含地还原。这比解整张图
- * 少一大截代码，而验收要看的两栏（功能栏与纸）在第一行上就已经分开。
+ * **为什么只读第一行**：验收要看的两栏（功能栏与纸）在第一行上就已经分开，
+ * 多读一行不多一分证据。解码归 `png-pixels.ts`：这道门禁与真输入通道问的是
+ * 同一个问题——那个像素是什么颜色——不该有两个答案。
  */
-const firstRowPixels = (path: string): number[][] => {
-  const png = readFileSync(path);
-  if (png.readUInt32BE(0) !== 0x89504e47) throw new Error(`${path} is not a PNG`);
-  let offset = 8;
-  let width = 0;
-  let colorType = 0;
-  const idat: Buffer[] = [];
-  while (offset < png.length) {
-    const length = png.readUInt32BE(offset);
-    const type = png.toString("ascii", offset + 4, offset + 8);
-    const data = png.subarray(offset + 8, offset + 8 + length);
-    if (type === "IHDR") {
-      width = data.readUInt32BE(0);
-      colorType = data.readUInt8(9);
-    } else if (type === "IDAT") idat.push(data);
-    else if (type === "IEND") break;
-    offset += 12 + length;
-  }
-  if (colorType !== 6) throw new Error(`${path} has colour type ${colorType}, expected 6 (RGBA8)`);
-  if (width === 0) throw new Error(`${path} declares no width`);
-  const raw = inflateSync(Buffer.concat(idat));
-  const filter = raw[0] ?? 0;
-  const bytes = new Uint8Array(width * 4);
-  for (let index = 0; index < bytes.length; index += 1) {
-    const encoded = raw[1 + index] ?? 0;
-    const left = index >= 4 ? (bytes[index - 4] ?? 0) : 0;
-    // 上方与左上恒为 0（第一行），所以 Up = 原值、Average = left>>1、
-    // Paeth = left。它们不是简化，是规范在这一行上的真值。
-    const predictor =
-      filter === 1 ? left : filter === 3 ? left >> 1 : filter === 4 ? left : filter === 2 ? 0 : 0;
-    bytes[index] = (encoded + predictor) & 0xff;
-  }
-  const row: number[][] = [];
-  for (let x = 0; x < width; x += 1) {
-    row.push([bytes[x * 4] ?? 0, bytes[x * 4 + 1] ?? 0, bytes[x * 4 + 2] ?? 0]);
-  }
-  return row;
+const BLACK: Rgb = { r: 0, g: 0, b: 0 };
+
+const firstRow = (path: string): Rgb[] => {
+  const surface = decodePng(readFileSync(path));
+  return Array.from({ length: surface.width }, (_unused, x) => surface.at(x, 0) ?? BLACK);
 };
 
-const hex = (rgb: readonly number[]): string =>
-  rgb.map((v) => v.toString(16).padStart(2, "0")).join("");
-
-const distance = (a: readonly number[], b: readonly number[]): number =>
-  Math.hypot((a[0] ?? 0) - (b[0] ?? 0), (a[1] ?? 0) - (b[1] ?? 0), (a[2] ?? 0) - (b[2] ?? 0));
+const rgbOf = (channels: readonly number[]): Rgb => ({
+  r: channels[0] ?? 0,
+  g: channels[1] ?? 0,
+  b: channels[2] ?? 0,
+});
 
 writeFileSync(
   manifestPath,
@@ -232,7 +198,7 @@ try {
 
   const seen = new Set<string>();
   for (const [index, slug] of slugs.entries()) {
-    const expected = hex(papers[index] ?? [0, 0, 0]);
+    const expected = hex(rgbOf(papers[index] ?? []));
 
     // **判据是 PNG 里的像素，不是 snapshot 的 gpu_sample。**
     //
@@ -241,17 +207,17 @@ try {
     // 所以这里反过来：先截图，再读 PNG 左上角那个像素，它就是这一帧真正画出
     // 来的纸色。视觉审核当场发现了那次错位，机器读数没有。
     let painted = "";
-    let row: number[][] = [];
+    let row: Rgb[] = [];
     const settle = Bun.nanoseconds() + 40_000_000_000;
     let produced = shoot();
-    row = firstRowPixels(produced);
-    painted = hex(row[row.length - 8] ?? [0, 0, 0]);
+    row = firstRow(produced);
+    painted = hex(row[row.length - 8] ?? BLACK);
     while (painted !== expected && Bun.nanoseconds() < settle) {
       if (index > 0) nextTheme();
       await Bun.sleep(400);
       produced = shoot();
-      row = firstRowPixels(produced);
-      painted = hex(row[row.length - 8] ?? [0, 0, 0]);
+      row = firstRow(produced);
+      painted = hex(row[row.length - 8] ?? BLACK);
     }
     if (painted !== expected) {
       throw new Error(`${slug} painted #${painted} but the table says #${expected}`);
@@ -263,9 +229,9 @@ try {
     // 地要经材质配方折算再与纸合成，把那个公式在这里再写一遍就多了一个
     // 权威。可机检的事实是方向：栏区那一点必须离主题的 `rail` 比离纸近。
     // 把地换回 `surface`（M12 之前的形态）这一条就红。
-    const railPixel = row[8] ?? [0, 0, 0];
-    const paperRgb = papers[index] ?? [0, 0, 0];
-    const railRgb = rails[index] ?? [0, 0, 0];
+    const railPixel = row[8] ?? BLACK;
+    const paperRgb = rgbOf(papers[index] ?? []);
+    const railRgb = rgbOf(rails[index] ?? []);
     if (distance(railPixel, railRgb) >= distance(railPixel, paperRgb)) {
       throw new Error(
         `${slug} painted the rail column #${hex(railPixel)}, which is nearer the paper #${hex(paperRgb)} than the rail #${hex(railRgb)}`,

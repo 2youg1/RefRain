@@ -60,7 +60,9 @@
     "e2e:record": "bun scripts/record-native-journals.ts",
     "e2e:ime": "bun e2e/ime/run-native.ts -Shell native -Binary apps/native/zig-out/bin/refrain.exe",
     "e2e:ime:macos": "bun e2e/ime/driver/drive-native-macos.ts",
-    "check:ts": "tsc --noEmit"
+    "check:ts": "tsc --noEmit",
+    "e2e:input": "powershell -NoProfile -ExecutionPolicy Bypass -File e2e/native-input/drive-windows.ps1",
+    "e2e:input:chords": "bun e2e/native-input/chords.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.5",

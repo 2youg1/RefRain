@@ -36,3 +36,6 @@ e2e/ime/results/
 # while debugging).
 probe-results/
 apps/native/e2e-run/
+
+# 真输入通道的运行产物：截图、快照与清单都是一次运行的证据，不入库。
+e2e/native-input/results/
