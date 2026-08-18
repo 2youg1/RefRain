@@ -30,6 +30,7 @@
     "verify:bridge": "bun scripts/verify-bridge.ts",
     "verify:corner-authority": "bun scripts/verify-corner-authority.ts",
     "verify:command-space": "bun scripts/verify-command-space.ts",
+    "verify:chord-table": "bun scripts/verify-chord-table.ts",
     "verify:wire-shapes": "bun scripts/verify-wire-shapes.ts",
     "verify:effect-territory": "bun scripts/verify-effect-territory.ts",
     "verify:scriptc-coverage": "bun scripts/verify-scriptc-coverage.ts",
