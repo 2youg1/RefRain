@@ -950,7 +950,7 @@ projects and the reason for each one.
 | | |
 |---|---|
 | **Languages** | [Rust](https://rust-lang.org) for the domain. [Zig](https://ziglang.org) for the interface state, the platform and the drawing. [TypeScript](https://www.typescriptlang.org) runs the gates and the release scripts; none of it ships |
-| **Application shell** | [Native SDK](https://native-sdk.dev) `@native-sdk/cli` 0.9.4, with an increment in `patches/`. Native rendering. No WebView and no JavaScript runtime in the binary |
+| **Application shell** | [Native SDK](https://native-sdk.dev) `@native-sdk/cli` 0.10.0, with an increment in `patches/`. Native rendering. No WebView and no JavaScript runtime in the binary |
 | **Surface** | Zig views built against `UiApp(Model, Msg)`. [Biome](https://biomejs.dev) formats the TypeScript tooling |
 | **Build tooling** | [ScriptC](https://github.com/vercel-labs/scriptc) compiles the tier A gates and the release scripts to binaries. [Bun](https://bun.sh) runs the other scripts. Neither ships |
 | **Storage** | [SQLite](https://sqlite.org) through [rusqlite](https://github.com/rusqlite/rusqlite), FTS5 `unicode61`, and a bigram tokeniser in the application |
@@ -998,7 +998,7 @@ only for a paragraph with a long unbreakable run.
 
 ### The carried SDK increment
 
-`patches/` is not a private fork. It is an increment on `@native-sdk/cli` 0.9.4.
+`patches/` is not a private fork. It is an increment on `@native-sdk/cli` 0.10.0.
 Each hunk answers three questions: what RefRain cannot do without it, why the SDK
 cannot supply it today, and how it leaves. Delete a hunk that cannot answer all
 three at the next upgrade.

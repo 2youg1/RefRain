@@ -1,8 +1,8 @@
 diff --git a/build/app.zig b/build/app.zig
-index 9a26196..080ea36 100644
+index 0ec7a26..f70855a 100644
 --- a/build/app.zig
 +++ b/build/app.zig
-@@ -1876,7 +1876,12 @@ pub fn addAppArtifacts(b: *std.Build, dep: *std.Build.Dependency, app_options: A
+@@ -1886,7 +1886,12 @@ pub fn addAppArtifacts(b: *std.Build, dep: *std.Build.Dependency, app_options: A
          .root_module = analysis_mod,
          .use_llvm = useLlvmWorkaround(target),
      });
@@ -17,7 +17,7 @@ index 9a26196..080ea36 100644
      // `zig build model-contract`: reflect the app's Model/Msg into
      // zig-out/model-contract.zon so `native check` can verify markup
 diff --git a/src/automation/snapshot.zig b/src/automation/snapshot.zig
-index aec5432..6aea782 100644
+index 2ac61b4..49d6abd 100644
 --- a/src/automation/snapshot.zig
 +++ b/src/automation/snapshot.zig
 @@ -207,6 +207,10 @@ pub const Widget = struct {
@@ -31,7 +31,7 @@ index aec5432..6aea782 100644
      /// The widget's declared context-menu items in declared order —
      /// what a right-click presents (natively, or through the anchored
      /// fallback surface) and what `widget-context-menu` invokes by
-@@ -599,6 +603,7 @@ pub fn writeText(input: Input, writer: anytype) !void {
+@@ -602,6 +606,7 @@ pub fn writeText(input: Input, writer: anytype) !void {
          try writeWidgetState(widget, writer);
          try writeWidgetActions(widget.actions, writer);
          try writeWidgetTextRanges(widget, writer);
@@ -39,7 +39,7 @@ index aec5432..6aea782 100644
          try writeWidgetContextMenu(widget, writer);
          try writer.writeByte('\n');
      }
-@@ -762,6 +767,7 @@ pub fn writeA11yText(input: Input, writer: anytype) !void {
+@@ -801,6 +806,7 @@ pub fn writeA11yText(input: Input, writer: anytype) !void {
          try writeWidgetState(widget, writer);
          try writeWidgetActions(widget.actions, writer);
          try writeWidgetTextRanges(widget, writer);
@@ -47,7 +47,7 @@ index aec5432..6aea782 100644
          try writeWidgetContextMenu(widget, writer);
          try writer.writeByte('\n');
      }
-@@ -916,6 +922,16 @@ fn writeWidgetTextRanges(widget: Widget, writer: anytype) !void {
+@@ -955,6 +961,16 @@ fn writeWidgetTextRanges(widget: Widget, writer: anytype) !void {
      if (widget.text_composition) |composition| try writer.print(" composition={d}..{d}", .{ composition.start, composition.end });
  }
  
@@ -64,7 +64,7 @@ index aec5432..6aea782 100644
  /// The widget's declared context-menu items: quoted labels in declared
  /// order (list position = the `widget-context-menu` item index), bare
  /// `separator` for divider slots, `(disabled)` marking items a real
-@@ -1345,6 +1361,7 @@ test "snapshot emits widget semantics" {
+@@ -1433,6 +1449,7 @@ test "snapshot emits widget semantics" {
              .actions = .{ .focus = true, .press = true, .set_selection = true, .drag = true, .drop_files = true, .dismiss = true },
              .text_selection = .{ .start = 4, .end = 4 },
              .text_composition = .{ .start = 0, .end = 3 },
@@ -72,7 +72,7 @@ index aec5432..6aea782 100644
          },
          .{
              .window_id = 1,
-@@ -1376,6 +1393,7 @@ test "snapshot emits widget semantics" {
+@@ -1464,6 +1481,7 @@ test "snapshot emits widget semantics" {
      try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "actions=[focus,press,set_selection,drag,drop_files,dismiss]") != null);
      try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "selection=4..4") != null);
      try std.testing.expect(std.mem.indexOf(u8, writer.buffered(), "composition=0..3") != null);
@@ -231,10 +231,10 @@ index a9e23fe..446585a 100644
      const self: *LinuxPlatform = @ptrCast(@alignCast(context.?));
      if (self.web_engine != .system) return error.UnsupportedViewKind;
 diff --git a/src/platform/macos/appkit_host.h b/src/platform/macos/appkit_host.h
-index 0e13bd4..26b9044 100644
+index e5986d3..32de9e5 100644
 --- a/src/platform/macos/appkit_host.h
 +++ b/src/platform/macos/appkit_host.h
-@@ -603,6 +603,7 @@ void native_sdk_appkit_wake(native_sdk_appkit_host_t *host);
+@@ -626,6 +626,7 @@ void native_sdk_appkit_wake(native_sdk_appkit_host_t *host);
   * backgrounded and its NSTimers are being coalesced. */
  void native_sdk_appkit_request_frame(native_sdk_appkit_host_t *host);
  int native_sdk_appkit_update_widget_accessibility(native_sdk_appkit_host_t *host, uint64_t window_id, const char *label, size_t label_len, const native_sdk_appkit_widget_accessibility_node_t *nodes, size_t node_count);
@@ -243,7 +243,7 @@ index 0e13bd4..26b9044 100644
  double native_sdk_appkit_measure_text(uint64_t font_id, double size, const char *text, size_t text_len);
  
 diff --git a/src/platform/macos/appkit_host.m b/src/platform/macos/appkit_host.m
-index a9b7075..66fa86d 100644
+index 3225c78..8eab0a0 100644
 --- a/src/platform/macos/appkit_host.m
 +++ b/src/platform/macos/appkit_host.m
 @@ -22,6 +22,7 @@
@@ -254,7 +254,7 @@ index a9b7075..66fa86d 100644
  #include <stdlib.h>
  #include <string.h>
  #include <time.h>
-@@ -676,6 +677,12 @@ static int NativeSdkCredentialStatus(OSStatus status, int missingCode) {
+@@ -688,6 +689,12 @@ static int NativeSdkCredentialStatus(OSStatus status, int missingCode) {
  @property(nonatomic, assign) BOOL interpretedKeyEventEmittedInput;
  @property(nonatomic, strong) NSArray<NSAccessibilityElement *> *widgetAccessibilityElements;
  @property(nonatomic, strong) NSArray<NSAccessibilityElement *> *widgetAccessibilityRootElements;
@@ -267,7 +267,7 @@ index a9b7075..66fa86d 100644
  @property(nonatomic, strong) NSMutableArray<NativeSdkScrollDriverView *> *scrollDrivers;
  @property(nonatomic, assign) NSPoint wheelGesturePoint;
  @property(nonatomic, assign) BOOL wheelGestureActive;
-@@ -1063,6 +1070,7 @@ static int NativeSdkCredentialStatus(OSStatus status, int missingCode) {
+@@ -1094,6 +1101,7 @@ static int NativeSdkCredentialStatus(OSStatus status, int missingCode) {
  - (BOOL)uploadGpuSurfaceImageWithId:(uint64_t)imageId width:(NSUInteger)width height:(NSUInteger)height rgba8:(const uint8_t *)rgba8 byteLength:(NSUInteger)byteLength;
  - (BOOL)removeGpuSurfaceImageWithId:(uint64_t)imageId;
  - (BOOL)updateWidgetAccessibilityInWindow:(uint64_t)windowId label:(NSString *)label nodes:(const native_sdk_appkit_widget_accessibility_node_t *)nodes count:(NSUInteger)count;
@@ -275,7 +275,7 @@ index a9b7075..66fa86d 100644
  - (BOOL)nativeView:(NSView *)candidate isInSubtreeRootedAt:(NSView *)root;
  - (NSArray<NSString *> *)nativeViewKeysInSubtreeForWindow:(uint64_t)windowId rootKey:(NSString *)rootKey;
  - (BOOL)closeNativeViewInWindow:(uint64_t)windowId label:(NSString *)label;
-@@ -7228,9 +7236,28 @@ static BOOL NativeSdkScrollDriverCanConsumeHorizontally(NativeSdkScrollDriverVie
+@@ -7340,9 +7348,28 @@ static BOOL NativeSdkScrollDriverCanConsumeHorizontally(NativeSdkScrollDriverVie
  }
  
  - (NSRect)firstRectForCharacterRange:(NSRange)range actualRange:(NSRangePointer)actualRange {
@@ -306,7 +306,7 @@ index a9b7075..66fa86d 100644
          NSRect frame = element.surfaceFrame;
          NSInteger characterCount = MAX(0, element.accessibilityNumberOfCharacters);
          NSUInteger location = range.location == NSNotFound ? 0 : MIN(range.location, (NSUInteger)characterCount);
-@@ -7245,13 +7272,36 @@ static BOOL NativeSdkScrollDriverCanConsumeHorizontally(NativeSdkScrollDriverVie
+@@ -7357,13 +7384,36 @@ static BOOL NativeSdkScrollDriverCanConsumeHorizontally(NativeSdkScrollDriverVie
          CGFloat x = frame.origin.x + inset + usableWidth * MIN(1.0, MAX(0.0, startRatio));
          CGFloat width = MAX(1.0, usableWidth * (MIN(1.0, MAX(0.0, endRatio)) - MIN(1.0, MAX(0.0, startRatio))));
          localRect = NSMakeRect(x, frame.origin.y, width, MAX(1.0, frame.size.height));
@@ -345,7 +345,7 @@ index a9b7075..66fa86d 100644
  }
  
  - (NativeSdkWidgetAccessibilityElement *)focusedTextAccessibilityElement {
-@@ -8897,6 +8947,17 @@ static float NativeSdkCaptureReadRemixedSample(const AudioBufferList *buffers, c
+@@ -9024,6 +9074,17 @@ static float NativeSdkCaptureReadRemixedSample(const AudioBufferList *buffers, c
      return YES;
  }
  
@@ -363,7 +363,7 @@ index a9b7075..66fa86d 100644
  - (BOOL)nativeView:(NSView *)candidate isInSubtreeRootedAt:(NSView *)root {
      for (NSView *view = candidate; view; view = view.superview) {
          if (view == root) return YES;
-@@ -12970,6 +13031,16 @@ int native_sdk_appkit_update_widget_accessibility(native_sdk_appkit_host_t *host
+@@ -13518,6 +13579,16 @@ int native_sdk_appkit_update_widget_accessibility(native_sdk_appkit_host_t *host
      return [object updateWidgetAccessibilityInWindow:window_id label:labelString ?: @"" nodes:nodes count:node_count] ? 1 : 0;
  }
  
@@ -381,10 +381,10 @@ index a9b7075..66fa86d 100644
      NativeSdkAppKitHost *object = (__bridge NativeSdkAppKitHost *)host;
      NSString *labelString = label ? [[NSString alloc] initWithBytes:label length:label_len encoding:NSUTF8StringEncoding] : @"";
 diff --git a/src/platform/macos/root.zig b/src/platform/macos/root.zig
-index 3689e72..6a3fca7 100644
+index 0e186e7..3b909d5 100644
 --- a/src/platform/macos/root.zig
 +++ b/src/platform/macos/root.zig
-@@ -243,6 +243,7 @@ extern fn native_sdk_appkit_present_gpu_surface_packet_binary(host: *AppKitHost,
+@@ -251,6 +251,7 @@ extern fn native_sdk_appkit_present_gpu_surface_packet_binary(host: *AppKitHost,
  extern fn native_sdk_appkit_upload_gpu_surface_image(host: *AppKitHost, image_id: u64, width: usize, height: usize, rgba8: [*]const u8, rgba8_len: usize) c_int;
  extern fn native_sdk_appkit_remove_gpu_surface_image(host: *AppKitHost, image_id: u64) c_int;
  extern fn native_sdk_appkit_update_widget_accessibility(host: *AppKitHost, window_id: u64, label: [*]const u8, label_len: usize, nodes: [*]const AppKitWidgetAccessibilityNode, node_count: usize) c_int;
@@ -392,15 +392,15 @@ index 3689e72..6a3fca7 100644
  extern fn native_sdk_appkit_create_webview(host: *AppKitHost, window_id: u64, label: [*]const u8, label_len: usize, url: [*]const u8, url_len: usize, x: f64, y: f64, width: f64, height: f64, layer: c_int, transparent: c_int, bridge_enabled: c_int) c_int;
  extern fn native_sdk_appkit_set_webview_frame(host: *AppKitHost, window_id: u64, label: [*]const u8, label_len: usize, x: f64, y: f64, width: f64, height: f64) c_int;
  extern fn native_sdk_appkit_navigate_webview(host: *AppKitHost, window_id: u64, label: [*]const u8, label_len: usize, url: [*]const u8, url_len: usize) c_int;
-@@ -810,6 +811,7 @@ pub const MacPlatform = struct {
+@@ -861,6 +862,7 @@ pub const MacPlatform = struct {
                  .register_gpu_surface_font_fn = registerGpuSurfaceFont,
                  .unregister_gpu_surface_font_fn = unregisterGpuSurfaceFont,
                  .update_widget_accessibility_fn = updateWidgetAccessibility,
 +                .update_text_input_geometry_fn = updateTextInputGeometry,
                  .measure_text_fn = measureText,
                  .measure_text_advances_fn = measureTextAdvances,
-                 .decode_image_fn = decodeImage,
-@@ -2085,6 +2087,24 @@ fn unregisterGpuSurfaceFont(context: ?*anyopaque, id: u64, token: u64) anyerror!
+                 .measure_text_ink_fn = measureTextInk,
+@@ -2155,6 +2157,24 @@ fn unregisterGpuSurfaceFont(context: ?*anyopaque, id: u64, token: u64) anyerror!
      if (native_sdk_appkit_unregister_font(id, token) == 0) return error.InvalidGpuSurfaceFont;
  }
  
@@ -425,7 +425,7 @@ index 3689e72..6a3fca7 100644
  fn updateWidgetAccessibility(context: ?*anyopaque, snapshot: platform_mod.WidgetAccessibilitySnapshot) anyerror!void {
      const self: *MacPlatform = @ptrCast(@alignCast(context.?));
      if (self.web_engine != .system) return error.UnsupportedViewKind;
-@@ -3287,6 +3307,16 @@ test "mac gpu surface input maps pinch phases and carries the magnification delt
+@@ -3489,6 +3509,16 @@ test "mac gpu surface input maps pinch phases and carries the magnification delt
      try std.testing.expectEqual(@as(f32, 0), end.scale);
  }
  
@@ -443,10 +443,10 @@ index 3689e72..6a3fca7 100644
      try std.testing.expectEqual(platform_mod.ColorScheme.light, appKitColorScheme(0));
      try std.testing.expectEqual(platform_mod.ColorScheme.dark, appKitColorScheme(1));
 diff --git a/src/platform/root.zig b/src/platform/root.zig
-index 596bdf2..b38c2fd 100644
+index 7a2987c..dcc67a5 100644
 --- a/src/platform/root.zig
 +++ b/src/platform/root.zig
-@@ -197,6 +197,7 @@ pub const WidgetAccessibilityActions = types.WidgetAccessibilityActions;
+@@ -209,6 +209,7 @@ pub const WidgetAccessibilityActions = types.WidgetAccessibilityActions;
  pub const WidgetAccessibilityTextRange = types.WidgetAccessibilityTextRange;
  pub const WidgetAccessibilityNode = types.WidgetAccessibilityNode;
  pub const WidgetAccessibilitySnapshot = types.WidgetAccessibilitySnapshot;
@@ -455,10 +455,10 @@ index 596bdf2..b38c2fd 100644
  pub const WidgetAccessibilityActionEvent = types.WidgetAccessibilityActionEvent;
  pub const ClipboardData = types.ClipboardData;
 diff --git a/src/platform/types.zig b/src/platform/types.zig
-index 4e1893c..4733567 100644
+index 5c8a270..bfe8546 100644
 --- a/src/platform/types.zig
 +++ b/src/platform/types.zig
-@@ -2421,6 +2421,12 @@ pub const WidgetAccessibilityNode = struct {
+@@ -2485,6 +2485,12 @@ pub const WidgetAccessibilityNode = struct {
      placeholder: []const u8 = "",
      text_selection: ?WidgetAccessibilityTextRange = null,
      text_composition: ?WidgetAccessibilityTextRange = null,
@@ -471,7 +471,7 @@ index 4e1893c..4733567 100644
      value: ?f32 = null,
      bounds: geometry.RectF = .{},
      grid_row_index: ?usize = null,
-@@ -2453,6 +2459,17 @@ pub const WidgetAccessibilitySnapshot = struct {
+@@ -2517,6 +2523,17 @@ pub const WidgetAccessibilitySnapshot = struct {
      nodes: []const WidgetAccessibilityNode = &.{},
  };
  
@@ -489,7 +489,7 @@ index 4e1893c..4733567 100644
  pub const WidgetAccessibilityActionKind = enum(c_int) {
      focus = 0,
      press = 1,
-@@ -2952,6 +2969,7 @@ pub const PlatformServices = struct {
+@@ -3017,6 +3034,7 @@ pub const PlatformServices = struct {
      /// — with no host font state there is nothing to return.
      unregister_gpu_surface_font_fn: ?*const fn (context: ?*anyopaque, id: u64, token: u64) anyerror!void = null,
      update_widget_accessibility_fn: ?*const fn (context: ?*anyopaque, snapshot: WidgetAccessibilitySnapshot) anyerror!void = null,
@@ -497,7 +497,7 @@ index 4e1893c..4733567 100644
      /// Reconcile the native scroll drivers for a gpu-surface view against
      /// the full desired set: create missing drivers, update frames /
      /// content extents / (per set-offset flag) offsets, remove drivers whose
-@@ -3633,6 +3651,18 @@ pub const PlatformServices = struct {
+@@ -3706,6 +3724,18 @@ pub const PlatformServices = struct {
          return update_fn(self.context, snapshot);
      }
  
@@ -517,7 +517,7 @@ index 4e1893c..4733567 100644
      /// straight-alpha RGBA8 (see `decode_image_fn`). Loop-thread only.
      pub fn decodeImage(self: PlatformServices, bytes: []const u8, buffer: []u8, max_pixels: usize) anyerror!DecodedImage {
 diff --git a/src/platform/windows/root.zig b/src/platform/windows/root.zig
-index 7f8f761..69fdf14 100644
+index 9a559a8..6ff37ff 100644
 --- a/src/platform/windows/root.zig
 +++ b/src/platform/windows/root.zig
 @@ -178,6 +178,7 @@ extern fn native_sdk_windows_upload_gpu_surface_image(host: *WindowsHost, id: u6
@@ -561,7 +561,7 @@ index 7f8f761..69fdf14 100644
  /// Win32 menus treat `&` in an item label as a mnemonic marker —
  /// AppendMenuW eats the ampersand and underlines the next character —
  /// so an app-authored label like "R&D" must cross the ABI with the
-@@ -2678,6 +2698,19 @@ fn flattenFilters(filters: []const platform_mod.FileFilter, buffer: []u8) []cons
+@@ -2751,6 +2771,19 @@ fn flattenFilters(filters: []const platform_mod.FileFilter, buffer: []u8) []cons
      return buffer[0..offset];
  }
  
@@ -730,10 +730,10 @@ index d811823..98699eb 100644
      if (!host || label_len == 0) return 0;
      auto found = host->native_views.find(nativeViewKey(window_id, slice(label, label_len)));
 diff --git a/src/primitives/canvas/text_layout.zig b/src/primitives/canvas/text_layout.zig
-index 0f2c59a..0551d5b 100644
+index 20d9091..7f8cdc2 100644
 --- a/src/primitives/canvas/text_layout.zig
 +++ b/src/primitives/canvas/text_layout.zig
-@@ -366,6 +366,23 @@ pub const TextLineIterator = struct {
+@@ -370,6 +370,23 @@ pub const TextLineIterator = struct {
              return self.emit(0, 0, 0, 0, .{});
          }
          const start = self.cursor;
@@ -758,7 +758,7 @@ index 0f2c59a..0551d5b 100644
          if (end >= bytes.len) {
              self.finished = true;
 diff --git a/src/primitives/canvas/text_layout_hash.zig b/src/primitives/canvas/text_layout_hash.zig
-index 3d0c3c3..e948092 100644
+index 0fc887b..197d075 100644
 --- a/src/primitives/canvas/text_layout_hash.zig
 +++ b/src/primitives/canvas/text_layout_hash.zig
 @@ -1,3 +1,4 @@
@@ -766,7 +766,7 @@ index 3d0c3c3..e948092 100644
  const geometry = @import("geometry");
  const canvas = @import("root.zig");
  const hash_model = @import("hash.zig");
-@@ -103,6 +104,11 @@ fn resourceHashOptionalTextLayoutOptions(hash: u64, options: ?TextLayoutOptions)
+@@ -105,6 +106,11 @@ fn resourceHashOptionalTextLayoutOptions(hash: u64, options: ?TextLayoutOptions)
          next = resourceHashEnum(next, @intFromEnum(value.wrap));
          next = resourceHashEnum(next, @intFromEnum(value.alignment));
          next = hashTextOverflow(next, value.overflow);
@@ -779,10 +779,10 @@ index 3d0c3c3..e948092 100644
      }
      return resourceHashU8(hash, 0);
 diff --git a/src/primitives/canvas/text_layout_types.zig b/src/primitives/canvas/text_layout_types.zig
-index 3e29baf..4fe159d 100644
+index cf25712..449dc5a 100644
 --- a/src/primitives/canvas/text_layout_types.zig
 +++ b/src/primitives/canvas/text_layout_types.zig
-@@ -60,6 +60,12 @@ pub const TextLayoutOptions = struct {
+@@ -63,6 +63,12 @@ pub const TextLayoutOptions = struct {
      /// Deliberately excluded from equality, hashing, and serialization:
      /// it is process-local layout context, not drawn content.
      measure: ?*const text_metrics.TextMeasureProvider = null,
@@ -818,7 +818,7 @@ index 5f841d6..eca8f8b 100644
          .alignment = widget.text_alignment,
          .typography = tokens.typography,
 diff --git a/src/primitives/canvas/widget_render_controls.zig b/src/primitives/canvas/widget_render_controls.zig
-index 052dbae..ee388d9 100644
+index 169efe9..c419059 100644
 --- a/src/primitives/canvas/widget_render_controls.zig
 +++ b/src/primitives/canvas/widget_render_controls.zig
 @@ -74,6 +74,8 @@ const widgetBackgroundColor = widget_render_style.widgetBackgroundColor;
@@ -830,7 +830,7 @@ index 052dbae..ee388d9 100644
  const widgetAccentForegroundColor = widget_render_style.widgetAccentForegroundColor;
  const widgetRadius = widget_render_style.widgetRadius;
  const controlRadius = widget_render_style.controlRadius;
-@@ -752,7 +754,7 @@ pub fn emitMenuItemWidget(builder: *Builder, widget: Widget, tokens: DesignToken
+@@ -753,7 +755,7 @@ pub fn emitMenuItemWidget(builder: *Builder, widget: Widget, tokens: DesignToken
      }
      const text_size = widgetBodyTextSize(widget, tokens);
      const text_inset = widgetControlInset(widget, tokens, tokens.spacing.md);
@@ -839,7 +839,7 @@ index 052dbae..ee388d9 100644
      // EVERY row reserves the trailing checkmark slot, committed or not,
      // so labels measure and elide identically and moving the commit
      // never reflows a row's text.
-@@ -837,7 +839,7 @@ pub fn emitListItemWidget(builder: *Builder, widget: Widget, tokens: DesignToken
+@@ -838,7 +840,7 @@ pub fn emitListItemWidget(builder: *Builder, widget: Widget, tokens: DesignToken
      if (widget.state.focused) try emitWidgetFocusRing(builder, widget, tokens, 2);
      const text_size = widgetBodyTextSize(widget, tokens);
      const text_inset = widgetControlInset(widget, tokens, tokens.spacing.md);
@@ -848,7 +848,7 @@ index 052dbae..ee388d9 100644
      // Leading icon slot: drawn as part of the row's own rendering
      // so icon + label are one hit target with one tint, mirroring the
      // button's inline icon. The label shifts right by the shared metric
-@@ -885,7 +887,7 @@ pub fn emitDataCellWidget(builder: *Builder, widget: Widget, tokens: DesignToken
+@@ -886,7 +888,7 @@ pub fn emitDataCellWidget(builder: *Builder, widget: Widget, tokens: DesignToken
              .font_id = tokens.typography.font_id,
              .size = text_size,
              .origin = pixelSnapTextPoint(tokens, boundedTextOrigin(widget.frame, text_size, text_inset)),
@@ -929,10 +929,10 @@ index 0da67d2..6906334 100644
      /// Zero keeps an ordinary paragraph; a positive value is the decimal
      /// digit width of the largest marker. The gutter is decoration, not
 diff --git a/src/runtime/automation_snapshot.zig b/src/runtime/automation_snapshot.zig
-index 180e2b3..ae054db 100644
+index 67eaa55..2acd2a9 100644
 --- a/src/runtime/automation_snapshot.zig
 +++ b/src/runtime/automation_snapshot.zig
-@@ -210,6 +210,12 @@ pub fn RuntimeAutomationSnapshot(comptime Runtime: type) type {
+@@ -213,6 +213,12 @@ pub fn RuntimeAutomationSnapshot(comptime Runtime: type) type {
                  const semantics = view.widgetSemantics();
                  for (semantics) |node| {
                      if (widget_count.* >= self.automation_widgets.len) return;
@@ -945,7 +945,7 @@ index 180e2b3..ae054db 100644
                      self.automation_widgets[widget_count.*] = .{
                          .window_id = view.window_id,
                          .view_label = view.label,
-@@ -237,7 +243,7 @@ pub fn RuntimeAutomationSnapshot(comptime Runtime: type) type {
+@@ -240,7 +246,7 @@ pub fn RuntimeAutomationSnapshot(comptime Runtime: type) type {
                          },
                          .virtual_range = canvasVirtualRange(layout.virtualRangeById(node.id)),
                          .bounds = node.bounds.translate(geometry.OffsetF.init(view.frame.x, view.frame.y)),
@@ -954,7 +954,7 @@ index 180e2b3..ae054db 100644
                          .enabled = !node.state.disabled,
                          .hovered = node.state.hovered or (node.id != 0 and node.id == view.canvas_widget_hovered_id),
                          .pressed = node.state.pressed or (node.id != 0 and node.id == view.canvas_widget_pressed_id),
-@@ -249,6 +255,13 @@ pub fn RuntimeAutomationSnapshot(comptime Runtime: type) type {
+@@ -252,6 +258,13 @@ pub fn RuntimeAutomationSnapshot(comptime Runtime: type) type {
                          .actions = canvasWidgetActions(node.actions),
                          .text_selection = canvasTextRange(node.text_selection),
                          .text_composition = canvasTextRange(node.text_composition),
@@ -1123,10 +1123,10 @@ index ce420b0..0d515fd 100644
              const err = self.test_next_file_error orelse return null;
              self.test_next_file_error = null;
 diff --git a/src/runtime/ui_app.zig b/src/runtime/ui_app.zig
-index e921233..59c3847 100644
+index 02589cb..4b182ef 100644
 --- a/src/runtime/ui_app.zig
 +++ b/src/runtime/ui_app.zig
-@@ -562,17 +562,26 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -566,17 +566,26 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
              /// appearances snap instead of animating. Returns the
              /// number of tweens written to `out`.
              layout_tweens: ?*const fn (model: *const ModelT, tree: *const Ui.Tree, out: []canvas.CanvasWidgetLayoutTween) usize = null,
@@ -1158,7 +1158,7 @@ index e921233..59c3847 100644
              /// TEA's init command: runs exactly once, on the installing
              /// frame, after the effects channel is bound and before the
              /// first view build — so a boot-time `fx.spawn`/`fx.fetch`
-@@ -1274,6 +1283,11 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -1278,6 +1287,11 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
          /// staged terminal — still re-renders the house chrome instead
          /// of leaving controls painted for a playback that is gone.
          video_rendered_snapshot: Effects.VideoSnapshot = .{},
@@ -1170,7 +1170,7 @@ index e921233..59c3847 100644
          /// Applied declarative-video state: whether a declared src owns
          /// the playback right now, the src it loaded (so an unchanged
          /// declaration never reloads — loadVideo replaces the playback
-@@ -1426,7 +1440,10 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -1430,7 +1444,10 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
  
          fn assertOptions(options: Options) void {
              std.debug.assert(options.view != null or options.markup != null);
@@ -1182,7 +1182,7 @@ index e921233..59c3847 100644
              // Declared windows need the per-window view to build them.
              std.debug.assert(options.windows_fn == null or options.window_view != null);
              std.debug.assert(options.theme_fn == null or options.theme_state_fn == null);
-@@ -1744,7 +1761,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -1748,7 +1765,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
          pub fn dispatch(self: *Self, runtime: *Runtime, window_id: platform.WindowId, msg: MsgT) anyerror!void {
              self.bindEffectsChannel(runtime);
              self.syncModel(runtime, self.canvas_window_id);
@@ -1191,7 +1191,7 @@ index e921233..59c3847 100644
              self.publishAudioState(runtime);
              // Before the installing frame there is nothing to render
              // against: canvas size and scale arrive with the first frame
-@@ -1764,12 +1781,22 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -1768,12 +1785,22 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
              // event the event's own tail drains instead, and the
              // drain's own dispatches re-enter here guarded.
              var rebuild_error: ?anyerror = null;
@@ -1220,7 +1220,7 @@ index e921233..59c3847 100644
              if (self.hover_msg_event_depth == 0 and !self.hover_msg_draining) {
                  self.drainHoverMsgs(runtime) catch |err| {
                      if (rebuild_error == null) rebuild_error = err;
-@@ -1783,10 +1810,16 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -1787,10 +1814,16 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
              _ = window_id;
          }
  
@@ -1241,7 +1241,7 @@ index e921233..59c3847 100644
                  update_fx(&self.model, msg, &self.effects);
              } else {
                  self.options.update.?(&self.model, msg);
-@@ -1794,7 +1827,15 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -1798,7 +1831,15 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
              // One update call is one complete command batch. Re-run live
              // relational reads only after the batch has walked so several
              // writes touching the same table still coalesce into one result.
@@ -1257,7 +1257,7 @@ index e921233..59c3847 100644
          }
  
          /// Drain the effect completion queue on the loop thread: every
-@@ -1808,7 +1849,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -1812,7 +1853,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
              if (!self.effects.hasPending()) return;
              self.bindEffectsChannel(runtime);
              self.syncModel(runtime, self.canvas_window_id);
@@ -1266,7 +1266,7 @@ index e921233..59c3847 100644
              // One pass consumes only completions that existed when it
              // began: a load started by an update handler in THIS pass
              // that finishes while the pass still runs waits for the wake
-@@ -1819,26 +1860,21 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -1823,26 +1864,21 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
              // finds the parked request (see Effects.DrainBoundary).
              var boundary = self.effects.drainBoundary();
              while (self.effects.takeMsgWithin(&boundary)) |msg| {
@@ -1299,7 +1299,7 @@ index e921233..59c3847 100644
                  self.rebuild(runtime, self.canvas_window_id) catch |err| {
                      rebuild_error = err;
                  };
-@@ -2066,8 +2102,11 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -2070,8 +2106,11 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
              // the post-build reconcile (`applyVideoDeclaration`) can
              // move them, and `drainEffects` uses the stamp to know the
              // published chrome no longer matches (see
@@ -1312,7 +1312,7 @@ index e921233..59c3847 100644
              const next_index = self.contextMenuRebuildIndex(null, self.arena_index);
              // Widget layout is inset by the runtime's viewport chrome
              // (safe areas + keyboard on mobile, zero on desktop); the
-@@ -2137,6 +2176,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -2141,6 +2180,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
              live_tree_reset = false;
              self.main_tree_current = true;
              self.build_generation +%= 1;
@@ -1320,7 +1320,7 @@ index e921233..59c3847 100644
              // Captures track EVERY tree transition (see
              // refreshHoverLeaveCaptures) — a transient failure is
              // retried at the next commit or drain and lands in the
-@@ -4565,7 +4605,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
+@@ -4569,7 +4609,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
                  // hidden-titlebar header is padded in the very first
                  // paint.
                  if (self.chromeInsetsMsg(runtime, frame_event.window_id)) |msg| {

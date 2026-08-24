@@ -72,6 +72,6 @@
     "typescript": "7.0.2"
   },
   "patchedDependencies": {
-    "@native-sdk/cli@0.9.4": "patches/@native-sdk%2Fcli@0.9.4.patch"
+    "@native-sdk/cli@0.10.0": "patches/@native-sdk%2Fcli@0.10.0.patch"
   }
 }

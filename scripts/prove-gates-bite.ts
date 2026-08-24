@@ -113,10 +113,10 @@ const INJECTIONS: readonly Injection[] = [
   },
   {
     gate: "verify:native-ime",
-    file: "patches/@native-sdk%2Fcli@0.9.4.patch",
+    file: "patches/@native-sdk%2Fcli@0.10.0.patch",
     anchor: "const bool queried = ImmGetCandidateWindow(imc, 0, &observed) != FALSE;",
     replacement: "const bool queried = syntheticCandidate(imc, &observed) != FALSE;",
-    expect: "@native-sdk%2Fcli@0.9.4.patch",
+    expect: "@native-sdk%2Fcli@0.10.0.patch",
   },
   {
     gate: "verify:gates-run",
