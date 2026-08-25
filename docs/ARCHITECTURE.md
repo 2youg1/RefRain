@@ -232,17 +232,23 @@ other types. A gate makes the refusal.
 
 | Layer | Holds | Never holds | Enforced by | Scale (modules / lines) |
 |---|---|---|---|---|
-| **L0 `refrain-core`** — the domain | The product rules: manuscript, blocks, formats, line breaking, the agent protocol, ranking, KARA | A database, a file path, a process, a window | `verify:core-purity`, `#![forbid(unsafe_code)]` | 32 / 11,794 |
-| **L1 `refrain-store`** — persistence | The two databases, the mutable disk paths, the atomic writer, the Root guard, the indexes, the Config file, the trash | Domain rules, orchestration semantics | `verify:write-path`, `verify:trash-only` | 23 / 8,893 |
-| **L2 `refrain-host`** — orchestration | Task, Run, and Authorization state, staging, workspaces, process launch, harness adapters | The database. It writes through the `HostJournal` trait. Domain rules | INV-12 by review, and the journal seam | 6 / 4,751 |
-| **L3 `refrain-app`** — use cases | The flows that need more than one layer below, the one `Application`, and `DocumentSurface` | FFI, raw pointers, platform APIs | `#![forbid(unsafe_code)]` | 24 / 9,417 |
-| **L4 `apps/native/host`** — the bridge | The C ABI: one entry, the generated layout, the session table, bounded replies, the handshake | Product semantics. Those are Rust enums below | `verify:bridge`, the protocol generator `--check` | 6 / 1,660 |
-| **L5 `apps/native/src`** — the surface | Markup and declarations, interface state, platform events, drawing | Manuscript bytes, product rules | `native check . --strict`; the layer table is in [AGENTS.md](AGENTS.md) | 33 hand-written / 13,826 |
+| **L0 `refrain-core`** — the domain | The product rules: manuscript, blocks, formats, line breaking, the agent protocol, ranking, KARA | A database, a file path, a process, a window | `verify:core-purity`, `#![forbid(unsafe_code)]` | 32 / 11,805 |
+| **L1 `refrain-store`** — persistence | The two databases, the mutable disk paths, the atomic writer, the Root guard, the indexes, the Config file, the trash | Domain rules, orchestration semantics | `verify:write-path`, `verify:trash-only` | 23 / 9,098 |
+| **L2 `refrain-host`** — orchestration | Task, Run, and Authorization state, staging, workspaces, process launch, harness adapters | The database. It writes through the `HostJournal` trait. Domain rules | INV-12 by review, and the journal seam | 6 / 4,745 |
+| **L3 `refrain-app`** — use cases | The flows that need more than one layer below, the one `Application`, and `DocumentSurface` | FFI, raw pointers, platform APIs | `#![forbid(unsafe_code)]` | 25 / 9,485 |
+| **L4 `apps/native/host`** — the bridge | The C ABI: one entry, the generated layout, the session table, bounded replies, the handshake | Product semantics. Those are Rust enums below | `verify:bridge`, the protocol generator `--check` | 6 / 2,299 |
+| **L5 `apps/native/src`** — the surface | Markup and declarations, interface state, platform events, drawing | Manuscript bytes, product rules | `native check . --strict`; the layer table is in [AGENTS.md](AGENTS.md) | 33 / 13,928 |
 
-The line counts include each hand-written source file below `src/`. They do not
-include the generated files (1,131 lines). L5 has no separate test files: every
-test block sits in the module it proves, and `app_main.zig`'s `refAllDecls`
-block is what reaches them.
+The Scale column counts every hand-written source file in the crate, the crate
+root included, and no generated file. Two layers hold generated code beside the
+hand-written kind and it is **not** in the numbers above: L4 carries `wire.rs`
+and `protocol.rs` (1,716 lines), L5 carries `generated/` (1,412). Take a count
+with `find <dir> -name '*.rs' -exec cat {} + | wc -l`; the numbers in this column
+were each wrong by the time somebody checked, because the column stated a result
+and not a way to reproduce it.
+
+L5 has no separate test files: every test block sits in the module it proves,
+and `app_main.zig`'s `refAllDecls` block is what reaches them.
 
 L5 has three strata. `native check --strict` and rule NS9001 enforce them.
 
@@ -383,6 +389,8 @@ module with no test file has test blocks in the module.
 | `protocol` | The generated ABI layout from `protocol/host.json` | the generator `--check`; `protocol.test.ts` |
 | `document` | The document sessions, the action demux, and the protocol-version check | app tests and e2e |
 | `project` | `ACTION_PROJECT`: decode one `ProjectInput`, call the router, lend back a bounded reply. `NativeProjectPlatform` uses `REFRAIN_AUTOMATION_ROOT` for e2e. `truncate_output` degrades a reply that is too large | `verify:wire-shapes` |
+| `project_wire` | One `ProjectOutput` written as the rows the surface reads. Projection only, no judgement: the shape follows what a screen actually reads, not the Rust type tree | `verify:wire-shapes`; the e2e journals |
+| `wire` | **Generated.** The reply rows on the Rust side, from `protocol/host.json`. Each member pushes its own little-endian bytes, so no `unsafe` and no `repr(C)` | the generator `--check` |
 | `contract` | The health use case on the generated contract | in-module |
 
 ### L5 · `apps/native/src` — the surface
@@ -424,7 +432,7 @@ module with no test file has test blocks in the module.
 | `material.zig` | The panel-material recipe table: surface blend, blur radius, sheen stops. The manuscript track and the rail ground do not use it | in-file tests |
 | `material_paint.zig` | Recipes to pixels: plane blending, border blending, the widget apply, the sheen plan | in-file tests |
 | `rail.zig` | The rail register: `band`, `dress`, and `controlTokens`. The ground is always solid. It holds no colour: each value comes from the theme table | in-file tests; `verify:native-theme-pixels` |
-| `generated/` | `protocol.ts`, `protocol.zig`, `themes.zig`. Regenerate them. Do not edit them | `verify:themes-current`; protocol `--check` |
+| `generated/` | `protocol.ts`, `protocol.zig`, `wire.zig`, `themes.zig`. Regenerate them. Do not edit them. Two more generated files live outside this directory, in `apps/native/host/src/` — [AGENTS.md](AGENTS.md) names all six | `verify:themes-current`; protocol `--check` |
 
 ---
 
