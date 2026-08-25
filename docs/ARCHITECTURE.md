@@ -587,6 +587,20 @@ that the journal writes.
 scripts on the disk with the scripts that something invokes. It fails if a
 script exists that nothing invokes.
 
+Each stage in `scripts/gate.ts` declares one **requirement** — the one thing it
+needs from the machine that runs it. The requirement is what `gate.yml` splits
+on, so a job installs what its stages need and nothing else:
+
+| Requirement | Needs | Command | Stages |
+|---|---|---|---|
+| `files` | the repository and ScriptC | `bun run gate --needs files` | 31 |
+| `cargo` | a Rust toolchain | `bun run gate --needs cargo` | 4 |
+| `native` | the Native SDK toolchain: Zig, and cargo, because `build.zig` builds the Rust staticlib | `bun run gate --needs native` | 2 |
+
+`bun run gate` with no selector runs all three. The `files` stages are
+read-only scans, thus they run concurrently; the other two take the same cargo
+target lock and run in sequence.
+
 Three evidence lanes are outside the blocking gate, because a data-layer
 assertion cannot make their claims. Each lane names the one thing that it needs
 from the machine that runs it, and `scripts/gate.ts` holds the three lanes in
@@ -595,10 +609,19 @@ one table:
 | Lane | Needs | Command | Where it runs |
 |---|---|---|---|
 | `pixels` | a GPU view | `bun run evidence:pixels` | the author's machine |
-| `data-performance` | a release build and a disk | `bun run evidence:data-performance` | `evidence.yml`, on all three platforms, weekly and on request |
+| `data-performance` | a release build and a disk | `bun run evidence:data-performance` | `evidence.yml`, on both target platforms, weekly and on request |
 | `window-performance` | a real window on the release platform | `bun run evidence:window-performance` | the author's machine |
 
 `bun run evidence:performance` runs the two performance lanes together.
+
+`verify:manuscript-scale` and `verify:open-latency` are in `data-performance`,
+not on the blocking path. Both built the release profile inside a pull request
+and both judged a timing. One machine, one commit, three runs of
+`verify:open-latency`: 89.3 ms, 80.5 ms, 143.7 ms. A budget that moves 60%
+between runs of identical bytes cannot block a merge without teaching everyone
+to press rerun. What each also asserted about correctness did not move:
+`review.rs` and `open_probe` are still compiled and run in debug by
+`cargo test --workspace --all-targets`.
 
 A lane that runs where its requirement is absent measures the runner and not the
 product. A shared runner has no GPU view and no real window, thus `gate.yml`
@@ -697,6 +720,14 @@ asks a machine for something the machine does not have, comes out.
 |---|---|---|
 | `gate.yml` | Does this commit pass every blocking gate on Linux and Windows? | each push and each pull request |
 | `evidence.yml` | Does the data layer stay inside the budget that each platform states? | weekly, on request, and when a budget file changes |
+
+`gate.yml` asks its question in three jobs, one for each requirement above:
+`source` (one platform, no Rust and no Zig installed), `rust` (both platforms,
+debug profile only), and `native` (both platforms, the Zig build and the
+journals). They run at once, each caches what it alone builds, and each states
+a timeout it can meet. The single 45-minute job they replaced ran every step in
+sequence on both platforms, so any failure cost a rerun of all of it, and the
+debug and release profiles evicted each other from one shared cache.
 | `ime-gate.yml` | Does a real Windows input method reach the manuscript? | weekly and on request, while the lane is under construction (P7) |
 | `release.yml` | Does this tag point at a green commit, and does the archive read back? | a tag that starts with `v` |
 

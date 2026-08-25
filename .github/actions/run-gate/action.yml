@@ -1,0 +1,66 @@
+name: Run a slice of the gate
+description: >-
+  Run `bun run gate --needs <requirement>` and make its failure readable from
+  outside the repository.
+
+inputs:
+  needs:
+    description: The requirement whose stages this job runs — files, cargo, or native.
+    required: true
+  label:
+    description: A name for the log artifact, unique within the workflow run.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # Keep the gate's own output. A red gate on a runner was unreadable from
+    # outside the repository: the job log needs admin rights, and nothing else
+    # survived the job. An artifact makes the red legible to whoever must fix
+    # it, which is the only reason a gate reports at all.
+    #
+    # This lives in a composite action because three jobs need it. Copied into
+    # each one it would be three authorities for one report format, and the
+    # annotation greps below are coupled to the format `scripts/gate.ts` prints.
+    #
+    # `shell: bash` on both runners: GitHub runs it with `-o pipefail`, so `tee`
+    # cannot turn a red gate green.
+    - name: Run the gate
+      shell: bash
+      run: |
+        log="gate-${{ inputs.label }}.log"
+        if bun run gate --needs "${{ inputs.needs }}" 2>&1 | tee "$log"; then exit 0; fi
+        # An artifact needs a token to download and a job log needs admin
+        # rights, so neither can be read by the person holding the red.
+        # A check annotation is the one channel that is public on a public
+        # repository, so the reason rides out on it.
+        escape() { printf '%s' "$1" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' | awk 'BEGIN{ORS="%0A"}{print}'; }
+        fails=$(grep -E '^FAIL' "$log" | head -20)
+        if [ -n "$fails" ]; then
+          echo "::error title=${{ inputs.label }} stages that failed::$(escape "$fails")"
+        fi
+        # The stage that failed printed its reason long before the summary,
+        # so a tail alone reports the summary and loses the reason.
+        reasons=$(grep -nE '^\(fail\)|^error:|error: expect|Expected:|Received:|panic|thread .* panicked' "$log" | head -40)
+        if [ -n "$reasons" ]; then
+          echo "::error title=${{ inputs.label }} failure lines::$(escape "$reasons")"
+        fi
+        # An annotation message is capped near 4 KiB, so a long tail arrives
+        # as the summary with the reason cut off. Send the window around the
+        # FIRST error instead: that is where the compiler or the runner
+        # prints why, and the summary is already in the stage-name annotation.
+        first=$(grep -nE '^error:|^error\[|panicked|error: process exited' "$log" | head -1 | cut -d: -f1)
+        if [ -n "$first" ]; then
+          start=$((first > 90 ? first - 90 : 1))
+          echo "::error title=${{ inputs.label }} first failure context::$(escape "$(sed -n "${start},$((first + 10))p" "$log" | tail -c 3600)")"
+        fi
+        echo "::error title=${{ inputs.label }} output, last lines::$(escape "$(tail -c 3600 "$log")")"
+        exit 1
+
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      if: always()
+      with:
+        name: gate-log-${{ inputs.label }}
+        path: gate-${{ inputs.label }}.log
+        if-no-files-found: warn
+        retention-days: 14

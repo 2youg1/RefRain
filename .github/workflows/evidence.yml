@@ -3,17 +3,29 @@ name: evidence
 # Data-layer performance evidence, on each platform that RefRain states a
 # budget for.
 #
-# It is not in `gate.yml` for two reasons. It costs twenty minutes of release
-# builds and a 100,000-file scan, which no pull request should wait for; and its
-# verdict is a wall-clock reading, which a shared runner makes noisy. It is
-# still allowed to go red: a scheduled lane that nobody can fail teaches nothing.
+# It is not in `gate.yml` for two reasons. It costs a release build and a
+# 100,000-file scan, which no pull request should wait for; and its verdict is a
+# wall-clock reading, which a shared runner makes noisy. It is still allowed to
+# go red: a scheduled lane that nobody can fail teaches nothing.
 #
-# The two lanes here need only a release build and a disk, thus any runner can
-# produce them. The lanes that need a GPU view (`evidence:pixels`) or a real
-# window on the release platform (`evidence:window-performance`) are not here,
-# because a shared runner cannot meet either requirement. Those run on the
-# author's machine and their readings enter the release notes and
-# ARCHITECTURE.md.
+# The four stages here need only a release build and a disk, thus any runner can
+# produce them. `verify:manuscript-scale` and `verify:open-latency` joined the
+# lane late: both were on the pull-request path, both built the release profile
+# there, and both judged a timing. Measured on one machine with one commit,
+# `verify:open-latency` read 89.3 ms, then 80.5 ms, then 143.7 ms for the same
+# manuscript, and `verify:large-input-performance` failed once and passed on the
+# next run with nothing changed but the machine's load. A budget that moves by
+# 60% between runs of the same bytes cannot block a pull request without
+# teaching everyone to rerun the job.
+#
+# The correctness those two also carried stayed behind: `review.rs` and
+# `open_probe` are still compiled and run in debug by the `rust` job's
+# `cargo test --workspace --all-targets`. What moved is the reading.
+#
+# The lanes that need a GPU view (`evidence:pixels`) or a real window on the
+# release platform (`evidence:window-performance`) are not here, because a
+# shared runner cannot meet either requirement. Those run on the author's
+# machine and their readings enter the release notes and ARCHITECTURE.md.
 
 on:
   schedule:
@@ -24,6 +36,9 @@ on:
       - ".github/workflows/evidence.yml"
       - "crates/refrain-store/tests/project_performance.rs"
       - "crates/refrain-store/tests/large_input_performance.rs"
+      - "crates/refrain-core/tests/review.rs"
+      - "scripts/verify-open-latency.ts"
+      - "scripts/verify-manuscript-scale.ts"
       - "scripts/gate.ts"
 
 concurrency:
@@ -45,8 +60,12 @@ jobs:
     timeout-minutes: 90
     strategy:
       fail-fast: false
+      # macOS is gone for the reason `gate.yml` records: RefRain publishes a
+      # Windows artifact, no macOS build has ever succeeded, and a scheduled
+      # lane reporting a colour about a platform nobody builds for is the
+      # colour everybody learns to explain away.
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -71,7 +90,7 @@ jobs:
       - run: bun run corpora
 
       # A warm catalogue refresh reads the metadata of every file, and NTFS is
-      # several times slower than ext4 at that work. One budget for all three
-      # platforms cannot be correct on both, so each platform states its own and
-      # this matrix is what keeps the statement honest.
+      # several times slower than ext4 at that work. One budget for both
+      # platforms cannot be correct on either, so each platform states its own
+      # and this matrix is what keeps the statement honest.
       - run: bun run evidence:data-performance

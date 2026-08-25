@@ -13,8 +13,8 @@
  * them.
  */
 
-import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
+import { mapConcurrent, run } from "./command-pool.ts";
 import { scriptcCommand, scriptcVersion } from "./scriptc-compiler.ts";
 import { executableFor, SCRIPTC_OUT, SCRIPTC_PROGRAMS, TIER_A } from "./scriptc-tiers.ts";
 
@@ -23,17 +23,17 @@ mkdirSync(SCRIPTC_OUT, { recursive: true });
 const [compiler, bootstrap] = scriptcCommand();
 const version = scriptcVersion();
 
-const failures: string[] = [];
-for (const [program, script] of Object.entries(SCRIPTC_PROGRAMS)) {
-  const out = executableFor(script);
-  const result = spawnSync(compiler, [bootstrap, "build", script, "-o", out], {
-    encoding: "utf8",
-  });
-  if (result.status !== 0) {
-    const detail = `${result.stderr ?? ""}${result.stdout ?? ""}`.trim().split("\n").slice(-3);
-    failures.push(`${program}: ${detail.join(" ")}`);
-  }
-}
+// Each program is an independent compile with its own output path, so the
+// eighteen of them run as wide as the machine allows. Serially they cost 36 to
+// 66 seconds, and every gate run and every CI job pays that before the first
+// tier A gate can start.
+const programs = Object.entries(SCRIPTC_PROGRAMS);
+const outcomes = await mapConcurrent(programs, async ([program, script]) => {
+  const result = await run([compiler, bootstrap, "build", script, "-o", executableFor(script)]);
+  if (result.status === 0) return null;
+  return `${program}: ${result.output.trim().split("\n").slice(-3).join(" ")}`;
+});
+const failures = outcomes.filter((outcome) => outcome !== null);
 
 if (failures.length > 0) {
   console.error(`FAIL  scriptc:build — ${failures.length} ScriptC programs did not compile`);

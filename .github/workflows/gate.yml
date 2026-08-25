@@ -1,5 +1,21 @@
 name: gate
 
+# Three jobs, split by what a verdict depends on rather than by which language
+# produced it. Each stage in `scripts/gate.ts` declares one requirement, and
+# each job here runs exactly the stages that name its own — so a job installs
+# what it needs and nothing else, and a red job says which capability broke.
+#
+# Before this there was one `quality` job with a 45 minute budget doing every
+# step in sequence on both platforms: toolchains, ScriptC, the whole gate, the
+# bite proof, fmt, clippy, test, the Zig build and the journals. Whatever failed,
+# the fix cost a rerun of all of it, and the two heaviest stages on that path
+# were wall-clock budgets that a shared runner cannot judge. Those stages now
+# live in `evidence.yml`.
+#
+# `source` installs no Rust and no Zig, so it starts returning verdicts while
+# the other two are still fetching toolchains: 31 stages, 17 seconds measured
+# on the author's machine.
+
 on:
   push:
     branches: [main, v0.2-rebuild]
@@ -24,18 +40,142 @@ env:
   ZIG_VERSION: "0.16.0"
 
 jobs:
-  quality:
-    name: quality (${{ matrix.platform }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
-    # One C driver on every platform. The runner's own clang differs per OS —
-    # on Windows it defaults to MSVC mode, whose <sys/types.h> lacks the
-    # `ssize_t` the ScriptC runtime declares its transport ops with, so every
-    # Windows ScriptC build failed inside scr_runtime.h. zig ships the mingw
-    # headers and is already required by this job, and ScriptC supports the
-    # driver natively (SCRIPTC_CC=zigcc).
+  # ---------------------------------------------------------------- source ---
+  # Reads the repository and compiles nothing but ScriptC. One platform is
+  # enough: every stage here is a deterministic scan of committed bytes, so a
+  # second runner would answer the same question twice.
+  source:
+    name: source
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       SCRIPTC_CC: zigcc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      # ScriptC compiles C, and one C driver on every platform keeps the
+      # artefacts comparable. zig is here for that alone; no Zig code is built
+      # in this job.
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - run: bun install --frozen-lockfile
+
+      # Tier A gates run as compiled executables with no Bun fallback (D15), so
+      # the gate cannot start until they exist. This step also prints the
+      # resolved compiler version, which is what the deleted global install and
+      # its `scriptc --version` used to report.
+      - run: bun run scriptc:build
+
+      - uses: ./.github/actions/run-gate
+        with:
+          needs: files
+          label: source
+
+      # Injection proof for every source gate: break what each one guards,
+      # require the specific red, restore, require green. It reads only files,
+      # thus it belongs beside the stages it proves.
+      - name: Prove every source gate can fail
+        run: bun scripts/prove-gates-bite.ts
+
+  # ------------------------------------------------------------------ rust ---
+  # Debug profile only. The release profile left this path with the wall-clock
+  # budgets that needed it: a second full compile of rusqlite, resvg and image
+  # for a timing a shared runner cannot judge. One profile also means the cache
+  # holds one profile, instead of debug and release evicting each other.
+  #
+  # No GTK here. `Cargo.lock` carries no gtk, glib or gdk crate — rfd reaches
+  # the desktop through xdg-portal and trash through zbus — so the window
+  # libraries belong to the Zig build in `native`, not to cargo.
+  rust:
+    name: rust (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            os: ubuntu-latest
+          - platform: windows
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      # Rust's x86_64-pc-windows-gnu target needs a dlltool, and the pinned Zig
+      # ships one. The Native SDK is not built in this job; this is the only
+      # reason Zig is installed on the Windows row.
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        if: runner.os == 'Windows'
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Expose Zig's dlltool to Rust GNU target
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $shim = Join-Path $env:RUNNER_TEMP "refrain-zig-shims"
+          New-Item -ItemType Directory -Force $shim | Out-Null
+          foreach ($name in @("dlltool.cmd", "x86_64-w64-mingw32-dlltool.cmd")) {
+            Set-Content -Path (Join-Path $shim $name) `
+              -Value "@echo off`r`nzig dlltool %*" -Encoding Ascii
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $shim
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt, clippy
+
+      - name: Match Cargo to the Native SDK Windows ABI
+        if: runner.os == 'Windows'
+        run: rustup target add x86_64-pc-windows-gnu
+
+      # A key of its own. Sharing one cache with the release artefacts of the
+      # `native` job is what made both jobs slow: each run evicted the other's
+      # profile and recompiled the dependency tree from source.
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          prefix-key: rust-debug
+
+      - run: bun install --frozen-lockfile
+
+      # The roundtrip corpora are generated and are not committed, and
+      # `crates/refrain-core/tests/source_layout.rs` reads them with
+      # `include_bytes!` at compile time. Without this, cargo exits 101 before
+      # one test runs. The full gate would also generate them; this job needs
+      # only that one stage.
+      - run: bun run corpora
+
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace --all-targets
+
+      # Four gates that read what cargo produces. They run after the workspace
+      # is built, thus they reuse the artefacts above rather than paying for
+      # their own.
+      - uses: ./.github/actions/run-gate
+        with:
+          needs: cargo
+          label: rust-${{ matrix.platform }}
+
+  # ---------------------------------------------------------------- native ---
+  # The Native SDK toolchain: Zig, and cargo, because `apps/native/build.zig`
+  # runs `cargo build -p refrain-native-host --release` and links the staticlib
+  # into both the executable and the test module.
+  native:
+    name: native (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -65,7 +205,6 @@ jobs:
           # to judge it on; a green row bought by guessing at another platform's
           # linker is not evidence, and this gate's whole defect was colour
           # without evidence behind it.
-
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -95,13 +234,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
-          components: rustfmt, clippy
 
       - name: Match Cargo to the Native SDK Windows ABI
         if: runner.os == 'Windows'
         run: rustup target add x86_64-pc-windows-gnu
 
+      # The release profile, kept apart from the debug cache in `rust`.
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          prefix-key: rust-release
 
       # GTK4 is the Linux window host for the Native SDK. This is the whole
       # platform dependency list now: no embedded browser, no app indicator,
@@ -133,72 +274,12 @@ jobs:
           sdk=$(node -e "console.log(require('fs').realpathSync('apps/native/node_modules/@native-sdk/cli'))")
           echo "NODE_PATH=$(dirname "$(dirname "$sdk")")" >> "$GITHUB_ENV"
 
-      - name: Install clang for ScriptC
-        if: runner.os == 'Linux'
-        run: sudo apt-get install --yes clang
+      - run: bun run corpora
 
-      # Tier A gates run as compiled executables with no Bun fallback (D15), so
-      # the gate cannot start until they exist. This step also prints the
-      # resolved compiler version, which is what the deleted global install and
-      # its `scriptc --version` used to report.
-      - run: bun run scriptc:build
-
-      # Keep the gate's own output. A red gate on a runner was unreadable from
-      # outside the repository: the job log needs admin rights, and nothing
-      # else survived the job. This gate has been red on every run since the
-      # workflow existed while it passed on the author's machine, and the
-      # difference could not be read. An artifact makes the red legible to
-      # whoever must fix it, which is the only reason a gate reports at all.
-      #
-      # `shell: bash` on all three runners: GitHub runs it with `-o pipefail`,
-      # so `tee` cannot turn a red gate green.
-      - name: Run the gate
-        shell: bash
-        run: |
-          log="gate-${{ matrix.platform }}.log"
-          if bun run gate 2>&1 | tee "$log"; then exit 0; fi
-          # An artifact needs a token to download and a job log needs admin
-          # rights, so neither can be read by the person holding the red.
-          # A check annotation is the one channel that is public on a public
-          # repository, so the reason rides out on it.
-          escape() { printf '%s' "$1" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' | awk 'BEGIN{ORS="%0A"}{print}'; }
-          fails=$(grep -E '^FAIL' "$log" | head -20)
-          if [ -n "$fails" ]; then
-            echo "::error title=gate stages that failed::$(escape "$fails")"
-          fi
-          # The stage that failed printed its reason long before the summary,
-          # so a tail alone reports the summary and loses the reason.
-          reasons=$(grep -nE '^\(fail\)|^error:|error: expect|Expected:|Received:|panic|thread .* panicked' "$log" | head -40)
-          if [ -n "$reasons" ]; then
-            echo "::error title=gate failure lines::$(escape "$reasons")"
-          fi
-          # An annotation message is capped near 4 KiB, so a long tail arrives
-          # as the summary with the reason cut off. Send the window around the
-          # FIRST error instead: that is where the compiler or the runner
-          # prints why, and the summary is already in the stage-name annotation.
-          first=$(grep -nE '^error:|^error\[|panicked|error: process exited' "$log" | head -1 | cut -d: -f1)
-          if [ -n "$first" ]; then
-            start=$((first > 90 ? first - 90 : 1))
-            echo "::error title=gate first failure context::$(escape "$(sed -n "${start},$((first + 10))p" "$log" | tail -c 3600)")"
-          fi
-          echo "::error title=gate output, last lines::$(escape "$(tail -c 3600 "$log")")"
-          exit 1
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        if: always()
+      - uses: ./.github/actions/run-gate
         with:
-          name: gate-log-${{ matrix.platform }}
-          path: gate-${{ matrix.platform }}.log
-          if-no-files-found: warn
-          retention-days: 14
-
-      - name: Prove every source gate can fail
-        if: runner.os == 'Linux'
-        run: bun scripts/prove-gates-bite.ts
-
-      - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace --all-targets
+          needs: native
+          label: native-${{ matrix.platform }}
 
       # The cross-boundary protocol is generated from one schema. Drift here is
       # a silently rejected request at runtime, so it is checked, not trusted.

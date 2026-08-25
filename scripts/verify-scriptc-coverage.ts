@@ -28,6 +28,7 @@
 
 import { spawnSync } from "node:child_process";
 import { readdirSync } from "node:fs";
+import { mapConcurrent, run } from "./command-pool.ts";
 import { scriptcCommand } from "./scriptc-compiler.ts";
 import { RELEASE_ASSETS_SOURCE, SCRIPTC_PROGRAMS } from "./scriptc-tiers.ts";
 
@@ -62,9 +63,16 @@ const staleMembers: string[] = [];
 const missingMembers: string[] = [];
 const blocked: Array<{ readonly script: string; readonly codes: string }> = [];
 
-for (const script of scripts) {
-  const result = spawnSync(compiler, [bootstrap, "coverage", script], { encoding: "utf8" });
-  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+// One `scriptc coverage` per script, and they do not see each other. Serially
+// this gate was the slowest in the whole run at 40.6 seconds for 37 scripts —
+// almost all of it process startup. `mapConcurrent` keeps the findings in
+// script order, so the report stays byte-identical between runs.
+const measured = await mapConcurrent(scripts, async (script) => {
+  const result = await run([compiler, bootstrap, "coverage", script]);
+  return { script, output: result.output };
+});
+
+for (const { script, output } of measured) {
   const isStatic = /fully static/i.test(output);
   if (isStatic && !listed.has(script)) missingMembers.push(script);
   if (!isStatic && listed.has(script)) staleMembers.push(script);
