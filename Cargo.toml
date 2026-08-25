@@ -77,11 +77,13 @@ trash = "=5.2.6"
 # what is enforced and nothing else.
 #
 # What is **not** here, with the count `cargo clippy --workspace -- -W
-# clippy::<lint>` reported on rustc 1.97.1 for production code alone:
+# clippy::<lint>` reported on rustc 1.97.1 for production code alone. The
+# command that produces all six at once, and the per-file concentration, are in
+# `docs/ARCHITECTURE.md`; re-measure before quoting these:
 #
-#   arithmetic_side_effects  282    indexing_slicing  154
-#   as_conversions           131    string_slice       93
-#   expect_used               20    unreachable         7
+#   arithmetic_side_effects  277    indexing_slicing  149
+#   as_conversions           127    string_slice       93
+#   expect_used               11    unreachable         5
 #
 # Those are not oversights and they are not one flag away. The four
 # `unreachable!` in `manuscript/block_sequence.rs` stand where the tree's depth

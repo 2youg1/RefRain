@@ -690,17 +690,30 @@ holds at zero across `--workspace --all-targets`, and `[profile.release]` sets
 is tested.
 
 Six clippy lints that the discipline calls for are **not** in that table,
-because production code still trips them. Measured on rustc 1.97.1, production
-targets only:
+because production code still trips them. Take the count from the compiler, not
+from this page — one command reports all six, and it is how the numbers below
+were produced (rustc 1.97.1, production targets only, 662 sites in all):
 
-| Lint | Sites | Where they concentrate |
+```sh
+cargo clippy --workspace --message-format=json -- \
+  -W clippy::arithmetic_side_effects -W clippy::indexing_slicing \
+  -W clippy::as_conversions -W clippy::string_slice \
+  -W clippy::expect_used -W clippy::unreachable
+```
+
+| Lint | Sites | The largest single file |
 |---|---|---|
-| `arithmetic_side_effects` | 282 | `refrain-core` 205 — offset and layout arithmetic |
-| `indexing_slicing` | 154 | `refrain-core` 96, `refrain-host` 45 |
-| `as_conversions` | 131 | `refrain-store` 45, `apps/native/host` 36 |
-| `string_slice` | 93 | `refrain-core` 53, `refrain-store` 38 |
-| `expect_used` | 12 | `refrain-core`, after the separator type change removed five |
-| `unreachable` | 7 | `manuscript/block_sequence.rs` 4, `store/atomic.rs` 1 |
+| `arithmetic_side_effects` | 277 | `manuscript/align.rs` 38, `native_document.rs` 32, `typeset.rs` 27 |
+| `indexing_slicing` | 149 | `host.rs` 36, `manuscript/mod.rs` 15, `manuscript/align.rs` 14 |
+| `as_conversions` | 127 | `native/host/document.rs` 22, `native/host/wire.rs` 14 |
+| `string_slice` | 93 | `ingest/office.rs` 30, `agent_protocol.rs` 30 |
+| `expect_used` | 11 | `manuscript/mod.rs` 6 |
+| `unreachable` | 5 | `manuscript/block_sequence.rs` 4, `store/atomic.rs` 1 |
+
+This table published 282 / 154 / 131 / 93 / 12 / 7 until the command above was
+run against it. Four of the six were wrong, and no reader could have found that
+out: a count with no command beside it is a claim, and the number that nobody
+can reproduce is the one that drifts.
 
 The last two are design gaps, not oversights: the block tree's depth and its
 node shape are not related by a type, so four `unreachable!` stand where a type
