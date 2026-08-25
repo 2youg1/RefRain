@@ -1,7 +1,7 @@
 //! 命令的唯一权威：每个 command id 的中文标签与键位显示串。
 //!
 //! **接上哪个功能**：`app.zon` 的 shortcuts/menus（SDK 的 on_command 通道）、
-//! core.ts 的 `commandMsg`（id 的落点）与 `keyMsg`（Alt 系台内键位），以及
+//! `core.zig` 的 `commandMsg`（id 的落点）与 `keyMsg`（Alt 系台内键位），以及
 //! 一切把键位印在界面上的地方——按钮文案、右键菜单、命令面板。
 //!
 //! **在全局逻辑中负责什么**：一处回答「这个命令叫什么、按什么」。此前键位
@@ -24,8 +24,8 @@ pub const Command = struct {
 
 /// 全部命令。zon 系（快捷键与菜单）在前，Alt 系（keyMsg 台内键位）在后。
 ///
-/// **Ctrl+N 的真实顺序以 core.ts 为准**（`workbench.ts` 的
-/// `destinationForOrdinal`）：Ctrl+1 是设置、Ctrl+2 文件、Ctrl+3 稿子、
+/// **Ctrl+N 的真实顺序以 `core/workbench.zig` 的 `destinationForOrdinal`
+/// 为准**：Ctrl+1 是设置、Ctrl+2 文件、Ctrl+3 稿子、
 /// Ctrl+4 是动态的 Agent 去处——不是去处表的下标顺序。标签与 app.zon
 /// 菜单同一套字（门禁比对），它们不是去处名下标。
 pub const commands = [_]Command{
@@ -49,7 +49,7 @@ pub const commands = [_]Command{
     .{ .id = "theme.next", .label = "换主题", .hint = "Ctrl+Shift+T" },
     .{ .id = "kara.toggle", .label = "专注写作", .hint = "Ctrl+Enter" },
     .{ .id = "app.quit", .label = "退出", .hint = "Ctrl+Q" },
-    // Alt 系：core.ts keyMsg 的台内键位（裁决台），不在 app.zon。
+    // Alt 系：`core.zig` 的 `keyMsg` 台内键位（裁决台），不在 app.zon。
     .{ .id = "verdict.accept", .label = "接受", .hint = "Alt+A" },
     .{ .id = "verdict.reject", .label = "退回", .hint = "Alt+B" },
     .{ .id = "verdict.revise", .label = "改写", .hint = "Alt+E" },

@@ -24,8 +24,8 @@ const wire = @import("generated/wire.zig");
 const project_request = @import("project_request.zig");
 const project_view = @import("project_view.zig");
 const document_language = @import("document_language.zig");
-// P2 的回放缝：Zig 核心问 Rust 的出口。今天只有它自己的测试是读者——
-// 车道切换在 P5，届时 update_fx 成为第二个读者、TS 车道成为零个。
+// 回放缝：Zig 核心问 Rust 的唯一出口。`core.zig` 的 `update` 与握手都经它，
+// 录制与回放因此看见同一条记录。
 const replay_seam = @import("replay_seam.zig");
 // 单元 12 的规则层：去处/导航/面板栈与名录游标。
 const core_workbench = @import("core/workbench.zig");
@@ -652,7 +652,7 @@ fn destinationView(
 /// `palette_query` 过滤词、`workbench_go` 与各命令臂是行的落点。
 ///
 /// **在全局逻辑中负责什么**：只画与只派 Msg。「这个去处现在够不够得着」
-/// 由 `core.ts` 的 `navigate` 判，这里不复制那条规则。
+/// 由 `core/workbench.zig` 的 `navigate` 判，这里不复制那条规则。
 ///
 /// **交互设计**：舞台规则不许浮层——面板打开时功能区整个换成它（模式
 /// 替换），关掉回原来的去处；正文让位到右 pane，作者不失去手上这份。
@@ -726,7 +726,7 @@ fn paletteCommandRow(ui: *Adapter.Ui, model: *const Model, id: []const u8) Adapt
     }, 1, shown);
 }
 
-/// 命令 id → Msg。与 core.ts `commandMsg` 同一个落点：直接发它翻译出的
+/// 命令 id → Msg。与 `core.zig` 的 `commandMsg` 同一个落点：直接发它翻译出的
 /// 那条臂（面板行与快捷键因此必然一致）。
 fn paletteMsg(id: []const u8) ?Msg {
     if (std.mem.eql(u8, id, "document.save")) return .{ .document_save = {} };
