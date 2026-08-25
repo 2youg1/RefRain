@@ -12,9 +12,14 @@ concurrency:
 permissions:
   contents: read
 
+# No ScriptC version is declared here. The compiler that builds the tier A
+# gates is the one `bun.lock` resolved for the Native SDK, and
+# `scripts/scriptc-compiler.ts` resolves it. A version in this file would be a
+# second authority for that fact, which is exactly the split this workflow used
+# to carry: it installed 0.0.21 globally while the lockfile pinned 0.0.35, so
+# every tier A verdict described a compiler no file in the repository named.
 env:
   BUN_VERSION: 1.3.14
-  SCRIPTC_VERSION: "0.0.21"
   RUST_VERSION: "1.97.1"
   ZIG_VERSION: "0.16.0"
 
@@ -128,17 +133,14 @@ jobs:
           sdk=$(node -e "console.log(require('fs').realpathSync('apps/native/node_modules/@native-sdk/cli'))")
           echo "NODE_PATH=$(dirname "$(dirname "$sdk")")" >> "$GITHUB_ENV"
 
-      # Tier A gates run as compiled executables with no Bun fallback (D15),
-      # so the gate cannot start until they exist.
-      - name: Install ScriptC
-        run: |
-          bun install --global scriptc@${{ env.SCRIPTC_VERSION }}
-          scriptc --version
-
       - name: Install clang for ScriptC
         if: runner.os == 'Linux'
         run: sudo apt-get install --yes clang
 
+      # Tier A gates run as compiled executables with no Bun fallback (D15), so
+      # the gate cannot start until they exist. This step also prints the
+      # resolved compiler version, which is what the deleted global install and
+      # its `scriptc --version` used to report.
       - run: bun run scriptc:build
 
       # Keep the gate's own output. A red gate on a runner was unreadable from

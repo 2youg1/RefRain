@@ -49,11 +49,21 @@ const releaseRequirements: ReadonlyArray<readonly [string, string]> = [
   ],
   ["--web-layer exclude", "exclude the legacy web layer"],
   ["--signing none", "declare the unsigned portable-package boundary"],
-  ["scriptc build scripts/verify-release-version.ts", "compile the release version gate"],
+  ["bun scripts/scriptc-compiler.ts", "take the ScriptC compiler from the lockfile"],
+  [
+    "node $env:SCRIPTC_BOOTSTRAP build scripts/verify-release-version.ts",
+    "compile the release version gate",
+  ],
   ["target/scriptc/verify-release-version.exe", "run the compiled release version gate"],
-  ["scriptc coverage scripts/release-assets.ts", "measure the production release program"],
+  [
+    "node $env:SCRIPTC_BOOTSTRAP coverage scripts/release-assets.ts",
+    "measure the production release program",
+  ],
   ["if ($coverage -notmatch 'fully static')", "fail on a ScriptC dynamic remainder"],
-  ["scriptc build scripts/release-assets.ts", "compile the production release program"],
+  [
+    "node $env:SCRIPTC_BOOTSTRAP build scripts/release-assets.ts",
+    "compile the production release program",
+  ],
   ["target/scriptc/release-assets.exe", "run the ScriptC-compiled release program"],
   ["release-assets-repeat", "build a second archive from the same input"],
   ["Get-FileHash -Algorithm SHA256", "compare both package byte hashes"],
@@ -168,6 +178,15 @@ const forbiddenWorkflowPatterns: ReadonlyArray<readonly [RegExp, string]> = [
     "Bun executed the production release program",
   ],
   [/sbom-action|anchore/i, "an external SBOM step bypassed the embedded ScriptC SBOM"],
+  // The ScriptC that compiles the tier A gates and the release packager is the
+  // one `bun.lock` resolved for the Native SDK. A version in a workflow, or a
+  // global install, is a second authority for the same fact — and that split
+  // shipped: the workflows installed 0.0.21 while the lockfile carried 0.0.35,
+  // so every tier A verdict described a compiler no file in the repository
+  // named. Both patterns skip comment lines, because the comments above the
+  // deleted variable explain why it is gone.
+  [/^\s*SCRIPTC_VERSION\s*:/m, "a second ScriptC version authority returned"],
+  [/^\s*[^#\n]*install\s+--global\s+scriptc/m, "a globally installed ScriptC returned"],
 ];
 for (const [pattern, meaning] of forbiddenWorkflowPatterns) {
   forbidPattern("release/gate/IME workflows", workflows, pattern, meaning);

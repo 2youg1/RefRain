@@ -18,18 +18,33 @@
  * `verify-`. SCRIPTC_RELEASE_SOURCE lets its counterfactual test substitute one
  * isolated dynamic source. It does not change production membership.
  *
- * This gate needs `scriptc` on PATH. Without it the gate reports a capability
- * failure and exits non-zero. It never reports a pass it did not measure.
+ * The compiler is the one `bun.lock` resolved for the Native SDK
+ * (`scriptc-compiler.ts`), never one from PATH. Measuring with a different
+ * compiler than the one that builds the executables would report coverage for
+ * a program nobody runs. Without the dependency installed the gate reports a
+ * capability failure and exits non-zero; it never reports a pass it did not
+ * measure.
  */
 
 import { spawnSync } from "node:child_process";
 import { readdirSync } from "node:fs";
+import { scriptcCommand } from "./scriptc-compiler.ts";
 import { RELEASE_ASSETS_SOURCE, SCRIPTC_PROGRAMS } from "./scriptc-tiers.ts";
 
-const probe = spawnSync("scriptc", ["--version"], { encoding: "utf8" });
+let compiler: string;
+let bootstrap: string;
+try {
+  [compiler, bootstrap] = scriptcCommand();
+} catch (error: unknown) {
+  console.error("FAIL  verify:scriptc-coverage: capability failure");
+  console.error(`      ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+}
+
+const probe = spawnSync(compiler, [bootstrap, "--version"], { encoding: "utf8" });
 if (probe.status !== 0) {
-  console.error("FAIL  verify:scriptc-coverage: scriptc is not on PATH (capability failure)");
-  console.error("      install it with: bun install --global scriptc@0.0.21");
+  console.error("FAIL  verify:scriptc-coverage: the resolved ScriptC did not run");
+  console.error(`      ${bootstrap} exited ${probe.status ?? "on a signal"}; run bun install`);
   process.exit(1);
 }
 
@@ -48,7 +63,7 @@ const missingMembers: string[] = [];
 const blocked: Array<{ readonly script: string; readonly codes: string }> = [];
 
 for (const script of scripts) {
-  const result = spawnSync("scriptc", ["coverage", script], { encoding: "utf8" });
+  const result = spawnSync(compiler, [bootstrap, "coverage", script], { encoding: "utf8" });
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
   const isStatic = /fully static/i.test(output);
   if (isStatic && !listed.has(script)) missingMembers.push(script);

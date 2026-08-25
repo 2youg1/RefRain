@@ -11,11 +11,15 @@ concurrency:
 permissions:
   contents: read
 
+# No ScriptC version is declared here. The compiler is the one `bun.lock`
+# resolved for the Native SDK; `scripts/scriptc-compiler.ts` puts it in
+# SCRIPTC_BOOTSTRAP below. NODE_VERSION stays because that resolution runs the
+# compiler through node, which the ScriptC package requires
+# (`engines.node >= 24`).
 env:
   BUN_VERSION: 1.3.14
   NODE_VERSION: "24"
   RUST_VERSION: "1.97.1"
-  SCRIPTC_VERSION: "0.0.21"
   ZIG_VERSION: "0.16.0"
 
 jobs:
@@ -121,10 +125,17 @@ jobs:
           sdk=$(node -e "console.log(require('fs').realpathSync('apps/native/node_modules/@native-sdk/cli'))")
           echo "NODE_PATH=$(dirname "$(dirname "$sdk")")" >> "$GITHUB_ENV"
 
-      - name: Install ScriptC
+      # One compiler for the whole release, taken from the lockfile rather than
+      # from PATH. Before this the workflow installed scriptc globally at a
+      # version written here, while the SDK's own pin in `bun.lock` was a
+      # different one — so the archive that shipped was built by a compiler no
+      # file in the repository named.
+      - name: Resolve the ScriptC compiler from the lockfile
+        shell: bash
         run: |
-          bun install --global scriptc@${{ env.SCRIPTC_VERSION }}
-          scriptc --version
+          bootstrap=$(bun scripts/scriptc-compiler.ts)
+          echo "SCRIPTC_BOOTSTRAP=$bootstrap" >> "$GITHUB_ENV"
+          node "$bootstrap" --version
           zig version
 
       # The version gate is ScriptC-owned. Running it through Bun here would
@@ -133,7 +144,7 @@ jobs:
       - name: Check every version surface with the compiled gate
         shell: pwsh
         run: |
-          scriptc build scripts/verify-release-version.ts `
+          node $env:SCRIPTC_BOOTSTRAP build scripts/verify-release-version.ts `
             -o target/scriptc/verify-release-version.exe --no-keep-c
           & target/scriptc/verify-release-version.exe
           if ($LASTEXITCODE -ne 0) { throw "release version gate failed" }
@@ -193,12 +204,12 @@ jobs:
       - name: Measure the release program before trusting it
         shell: pwsh
         run: |
-          $coverage = scriptc coverage scripts/release-assets.ts | Out-String
+          $coverage = node $env:SCRIPTC_BOOTSTRAP coverage scripts/release-assets.ts | Out-String
           Write-Output $coverage
           if ($coverage -notmatch 'fully static') {
             throw "release-assets.ts has a ScriptC dynamic remainder"
           }
-          scriptc build scripts/release-assets.ts `
+          node $env:SCRIPTC_BOOTSTRAP build scripts/release-assets.ts `
             -o target/scriptc/release-assets.exe --no-keep-c
 
       # Build the archive twice from the same input. Equal hashes are the
