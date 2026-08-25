@@ -134,13 +134,16 @@ evidence lanes, which are measured separately on an Intel Iris Xe.
 | 1GB Markdown | opens — 7,206,321 blocks: read 1.0s, split 1.9s, manuscript 0.5s | opens — 7.2 million blocks |
 | 11.4MB manuscript, 100k blocks | open to the bridge, p95 **83.9ms** | p95 68ms |
 | 100MB PDF import | parses in **315ms** | 195ms |
-| 100k-file project directory | warm refresh p95 **1074.6ms**; the path an author waits on (reconcile + one page) p95 **843.7ms** | warm refresh p95 404ms |
+| 100k-file project directory | warm refresh p95 **508.1ms**; the path an author waits on (reconcile + one page) p95 **281.4ms** | warm refresh p95 404ms, measured before the walk stopped re-stating each file |
 | 100k-row document | search p95 **23.2ms**; one page p95 **14.1ms** | p95 under 10ms |
 
 The project-directory row is the one to read before judging the others: a warm
-refresh is a metadata walk of every file, and NTFS charges several times what
-ext4 charges for it. `crates/refrain-store/tests/project_performance.rs`
-therefore holds a budget per platform, each carrying the reading that set it.
+refresh is a metadata walk of every file, and NTFS charges more than ext4 for
+that walk. `crates/refrain-store/tests/project_performance.rs` therefore holds a
+budget per platform, each carrying the reading that set it. The Windows figures
+halved on 2026-08-25, when the walk stopped asking the filesystem for a file
+type it had already been given; the Linux figure above predates that change and
+CI's next run replaces it.
 The 1GB row comes from `huge_input_probe.rs`, which is `#[ignore]`d because it
 writes a multi-gigabyte corpus; run it with `--ignored` to reproduce.
 

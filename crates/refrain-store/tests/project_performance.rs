@@ -48,23 +48,58 @@ const WARM_RUNS: usize = 20;
 /// never reds the gate, tight enough that doubling the per-document work still
 /// does.
 ///
+/// **The Windows budgets halved on 2026-08-25.** `files::index::Entry::from`
+/// took a `PathBuf` and called `symlink_metadata` on it, although the walk had
+/// already handed it the file type. `refresh_phase_probe` charged that second
+/// call 651 ms of a 1,080 ms warm refresh, against 69 ms for the whole
+/// traversal. The function now takes the `DirEntry`. Three times on the same
+/// machine after the change: warm p95 508.1 / 505.6 / 477.1 ms, product p95
+/// 281.4 / 311.8 / 228.0 ms, search p95 22.3 / 22.0 / 22.0 ms, page p95 14.4 /
+/// 14.5 / 13.6 ms, first refresh 1.88 / 1.67 / 1.63 s, all refreshes 10.75 /
+/// 9.83 / 9.84 s. Search and page are unmoved, as they must be: neither walks
+/// the tree. The budgets below are the slowest of the three with roughly 50%
+/// headroom, by the same rule the pre-change budgets used.
+///
+/// **The budget was watched going red.** Putting the per-entry
+/// `symlink_metadata` back, minutes later on the same machine, gave warm p50
+/// 1218.8 ms, warm p95 1573.1 ms, product p95 1051.7 ms, all refreshes 28.59 s
+/// — and this gate failed with `warm refresh p95 took 1.5731091s, budget
+/// 800ms`. Read that pair rather than the pair against the 2026-08-16 record:
+/// it is the same machine in the same session, so it isolates the call instead
+/// of also measuring five months of machine drift.
+///
+/// **Take the readings on a quiet machine.** A third reading, taken while two
+/// 100,000-file probe corpora still sat in the temp directory, gave warm p95
+/// 1560.7 ms against a median of 561.3 ms. `WARM_RUNS` is 20, so this p95 is
+/// the nineteenth of twenty samples — an order statistic that reports the tail,
+/// and the tail is what a loaded machine moves first. The medians and the
+/// twenty-one-refresh total agreed with the clean readings throughout.
+///
 /// The Linux numbers are unchanged; they are what CI measures and what the
 /// pre-fix N+1 baseline (54.161335 s for the first refresh) was judged against.
+/// The change helps Linux too — a stat is a syscall on ext4 as well — but by
+/// how much is unmeasured here, and a budget nobody measured is a guess with a
+/// gate attached. CI's next Linux run sets those three numbers.
 struct Budget;
 
 impl Budget {
     /// One warm `refresh_documents`: walk, fingerprint, then the complete
     /// internal view of every row.
-    const WARM_REFRESH_P95: Duration =
-        Duration::from_millis(if cfg!(windows) { 1_600 } else { 500 });
+    const WARM_REFRESH_P95: Duration = Duration::from_millis(if cfg!(windows) { 800 } else { 500 });
     /// The product path an author actually waits on: reconcile, then one page.
-    const PRODUCT_P95: Duration = Duration::from_millis(if cfg!(windows) { 1_200 } else { 500 });
+    ///
+    /// One number on both platforms since 2026-08-25, and the convergence is
+    /// the finding rather than a tidy-up: the per-file `symlink_metadata` was
+    /// most of what NTFS charged over ext4 here, so removing it removed the
+    /// reason this budget needed two numbers. Split it again only against a
+    /// Linux reading that asks for the split.
+    const PRODUCT_P95: Duration = Duration::from_millis(500);
     /// One document search over 100,000 rows.
     const SEARCH_P95: Duration = Duration::from_millis(if cfg!(windows) { 32 } else { 10 });
     /// One document page over 100,000 rows.
     const PAGE_P95: Duration = Duration::from_millis(if cfg!(windows) { 20 } else { 10 });
     /// The first refresh plus all twenty warm ones.
-    const ALL_REFRESHES: Duration = Duration::from_secs(if cfg!(windows) { 32 } else { 20 });
+    const ALL_REFRESHES: Duration = Duration::from_secs(if cfg!(windows) { 16 } else { 20 });
     /// The first refresh alone. One number on both platforms: it exists to
     /// catch the N+1 shape returning, and 54 s against 10 s is not a margin
     /// any filesystem difference reaches.
