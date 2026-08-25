@@ -68,7 +68,7 @@ fn open_project(application: &Application, root: &Path) -> String {
 }
 
 fn queued(application: &Application) -> Vec<QuietEvent> {
-    application.kara_state().unwrap().queued
+    application.kara().state().unwrap().queued
 }
 
 #[test]

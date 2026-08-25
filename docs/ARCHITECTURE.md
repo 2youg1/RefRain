@@ -204,18 +204,18 @@ a link is missing; see *Open items*. **○** not on the native surface.
 | **F1 · Edit the manuscript** | `manuscript/`, `source_layout`, `document_format` | `atomic`, `project`, `history` | — | `native_document`, `document` | `document.rs` | document Msgs in `core.zig`, `host_bridge`, `view/document.zig` | ● |
 | **F2 · Break lines, measure text** | `typeset`, `block_shape`, `text_width`, `inline_span` | — | — | projection in `native_document` | protocol layout | `host_bridge`, `view/document.zig` | ● |
 | **F3 · Plain-text formats** | `document_format`, `source_layout`, `typeset` code path | round-trip in `project` | — | `native_document` | `document.rs` | `document_language` | ● |
-| **F4 · Roots and the catalogue** | `role` | `root`, `project`, `schema`, `files/index` | — | `application` | `project.rs` | `project_request`, `project_view`, `snapshot` | ● |
-| **F5 · Search and jump** | `chinese_index`, `searchable_block`, `search_rank`, `inline_span` | `project/search`, `project/catalog` | — | `application` | `project.rs` | `view/search.zig`, `document_jump` | ● |
+| **F4 · Roots and the catalogue** | `role` | `root`, `project`, `schema`, `files/index` | — | `root` | `project.rs` | `project_request`, `project_view`, `snapshot` | ● |
+| **F5 · Search and jump** | `chinese_index`, `searchable_block`, `search_rank`, `inline_span` | `project/search`, `project/catalog` | — | `search`, `scope` | `project.rs` | `view/search.zig`, `document_jump` | ● |
 | **F6 · Settings** | — | `config` | — | `application::apply_config` | `project.rs` | `view/settings.zig` | ● |
 | **F7 · Harnesses and connections** | — | `config` | `adapters`, `Tier` | `harness` | `project.rs` | connections screen | ● |
-| **F8 · Dispatch and edges** | `context_compiler`, `material_listing`, `upstream_work`, `persona` | `materials`, `orchestration` | `host`, `run_edge`, `staging`, `process`, `adapters` | `dispatch`, `scope`, `upstream`, `cancel`, `runner` | `project.rs` | dispatch screen, `LaunchRun` | ● |
-| **F9 · Collect, review, decide** | `agent_protocol`, `manuscript/review`, `manuscript/decision` | `ledger`, `history` | Run records in `host` | `collect`, `decide`, `review`, `journal` | `project.rs` | review screen | ● |
+| **F8 · Dispatch and edges** | `context_compiler`, `material_listing`, `upstream_work`, `persona` | `materials`, `orchestration` | `host`, `run_edge`, `staging`, `process`, `adapters` | `dispatch`, `scope`, `upstream`, `cancel`, `runner`, `host_session` | `project.rs` | dispatch screen, `LaunchRun` | ● |
+| **F9 · Collect, review, decide** | `agent_protocol`, `manuscript/review`, `manuscript/decision` | `ledger`, `history` | Run records in `host` | `collect`, `decide`, `review`, `journal`, `host_session` | `project.rs` | review screen | ● |
 | **F10 · The mailbox** | — | `mailbox` | — | `mailbox` | `project.rs` | mailbox screen | ● |
 | **F11 · History and rollback** | `manuscript/persist` | `history` | — | `history`, `RevertTo` | `INPUT_REVERT_TO` | history screen | ● |
 | **F12 · Annotations** | — | `annotations` | — | `history`, `Annotate` | `project.rs` | annotations section, anchor dots | ● |
-| **F13 · Materials and import** | `material_listing` | `ingest`, `materials` | — | import in `application` | `project.rs` | import entries, disclosure menu, draft rows | ● |
-| **F14 · KARA** | `kara` | `config` | — | `application::kara_step` | `project.rs` | `veil.zig`, the mode strip, the return card | ● |
-| **F15 · Width conversion** | `text_width` | `history` | — | `ConvertWidth`, `scope` | `project.rs` | context menu | ● |
+| **F13 · Materials and import** | `material_listing` | `ingest`, `materials` | — | `materials`, `platform` | `project.rs` | import entries, disclosure menu, draft rows | ● |
+| **F14 · KARA** | `kara` | `config` | — | `kara` | `project.rs` | `veil.zig`, the mode strip, the return card | ● |
+| **F15 · Width conversion** | `text_width` | `history` | — | `text_width`, `scope` | `project.rs` | context menu | ● |
 | **F16 · Themes and corners** | — | `config` | — | `application::apply_config` | `project.rs` | `generated/themes.zig`, `corners.zig`, `material.zig`, `material_paint.zig`, `rail.zig`, `workbench_view` | ● |
 | **F17 · Icons** | — | `icons` | — | — | — | — | ○ no consumer above the store |
 | **F18 · Health and the handshake** | `health` | — | — | `native` | `contract.rs`, `document.rs` | handshake in `core.zig` | ● |
@@ -235,7 +235,7 @@ other types. A gate makes the refusal.
 | **L0 `refrain-core`** — the domain | The product rules: manuscript, blocks, formats, line breaking, the agent protocol, ranking, KARA | A database, a file path, a process, a window | `verify:core-purity`, `#![forbid(unsafe_code)]` | 32 / 11,794 |
 | **L1 `refrain-store`** — persistence | The two databases, the mutable disk paths, the atomic writer, the Root guard, the indexes, the Config file, the trash | Domain rules, orchestration semantics | `verify:write-path`, `verify:trash-only` | 23 / 8,893 |
 | **L2 `refrain-host`** — orchestration | Task, Run, and Authorization state, staging, workspaces, process launch, harness adapters | The database. It writes through the `HostJournal` trait. Domain rules | INV-12 by review, and the journal seam | 6 / 4,751 |
-| **L3 `refrain-app`** — use cases | The flows that need more than one layer below, the one `Application`, and `DocumentSurface` | FFI, raw pointers, platform APIs | `#![forbid(unsafe_code)]` | 17 / 8,493 |
+| **L3 `refrain-app`** — use cases | The flows that need more than one layer below, the one `Application`, and `DocumentSurface` | FFI, raw pointers, platform APIs | `#![forbid(unsafe_code)]` | 24 / 9,417 |
 | **L4 `apps/native/host`** — the bridge | The C ABI: one entry, the generated layout, the session table, bounded replies, the handshake | Product semantics. Those are Rust enums below | `verify:bridge`, the protocol generator `--check` | 6 / 1,660 |
 | **L5 `apps/native/src`** — the surface | Markup and declarations, interface state, platform events, drawing | Manuscript bytes, product rules | `native check . --strict`; the layer table is in [AGENTS.md](AGENTS.md) | 33 hand-written / 13,826 |
 
@@ -350,21 +350,29 @@ module with no test file has test blocks in the module.
 
 | Module | Owns | Proven by |
 |---|---|---|
-| `application` | The one router: `ProjectInput` (35 variants) to `ProjectOutput` (20 variants) | `tests/project` |
+| `application` | The one router: one arm for each input, each arm one call. It holds the four things a use case composes — the open Roots, KARA, the config, the producer runner — and no rule. An arm that grows a rule has put it where nothing can name it | `tests/project` |
+| `project_channel` | The vocabulary of W5: `ProjectInput` (42 variants) to `ProjectOutput` (24 variants), and the two refusals that read one variant out (`into_opened`, `into_imported`). Each reply type is defined by the module that produces it | `verify:wire-shapes`; the e2e journals |
+| `root` | `OpenRoots`: app.db, the map of adopted Roots, `adopt`, and `with`. A Root enters the map once, through `adopt`. Also the catalogue page and the project directory | `tests/project` |
+| `platform` | The chooser seam (`ProjectPlatform`) and the rule that a chosen path never enters an error | `tests/project`; review |
+| `kara` | The application-side KARA gate: the machine, the policy fixed at construction, and what counts as an event (`quiet`, `run_completed`, `manuscript_opened`) | `tests/kara_quiet_events`, `tests/project` |
+| `host_session` | One `AgentHost` session over a `ProjectEntry`: open, execute, snapshot, and the launch order every launch path shares — workspace naming, the host drop, then the upstream feed | `tests/launch_run`, `downstream_launch`, `runner` |
+| `search` | The two catalogue searches, and the one-shot "the index became built" flag that leaves the project lock with the reply | `tests/project` |
+| `materials` | Import (the source is only ever read and cloned), the material listing, disclosure, and the drafts an agent proposed | `tests/project` |
+| `text_width` | Width conversion as one journaled Text Action: locate the scope, join the whole document with the manuscript's own separator, convert | `tests/project` |
 | `native_document` | `DocumentSurface`: bytes, selection, IME composition, undo, and bounded projections. Three operations: `open`, `apply`, `project` | `tests/editor_walkthrough`, `native_history`, `revert`; `verify:editor-kernel` |
-| `document` | The document lifecycle: open, continuity hydration, journal replay, save confirmation | `tests/editor_walkthrough` |
-| `dispatch` | The order of the dispatch: draft, authorize, launch. Not the rules | `tests/dispatch` |
+| `document` | The document lifecycle: open, create, continuity hydration, journal replay, and the reconciliation of a saved chain | `tests/editor_walkthrough` |
+| `dispatch` | The order of the dispatch: draft, authorize, launch. Not the rules. Two levels: from an open project, and the round-level seam the tests drive | `tests/dispatch` |
 | `runner` | The producer pump: one non-blocking pass for each `ReadHost` poll | `tests/runner` |
 | `collect` | The collection of an attempt: validate against the frozen request, complete, then freeze the proposals | `tests/collect`, `k3_full_flow` |
-| `decide` | The commit of a decision batch and the countermand of a merged one | `tests/decide_durability`, `countermand` |
+| `decide` | The commit of a decision batch and the countermand of a merged one, and the three-state report each lands as | `tests/decide_durability`, `countermand` |
 | `journal` | The translation between entities and rows. `StoreJournal` implements `HostJournal` | `tests/journal` |
-| `mailbox` | The content of the mailbox screen | `tests/mailbox_service` |
+| `mailbox` | The content of the mailbox screen, and the five arrangement actions. Each answers with the refreshed mailbox | `tests/mailbox_service` |
 | `harness` | The probe for the harnesses on this machine, with a 15-second cache | in-module |
-| `history` | The history and annotation views | `tests/annotate`, `native_history` |
-| `scope` | `before_sections` and `locate_scope` | `tests/scope`, `scope_scale` |
+| `history` | The history and annotation views, and where an annotation lands | `tests/annotate`, `native_history` |
+| `scope` | `before_sections`, `locate_scope`, and the block listing a scope is named from | `tests/scope`, `scope_scale` |
 | `upstream` | The upstream artifact in a promoted request | `tests/upstream`, `edge_end_to_end` |
 | `cancel` | The states in which a Run can stop, and the alternative when it cannot | `tests/cancel` |
-| `review` | The rebuild of a domain `Proposal` from a stored row | `tests/review_round_trip` |
+| `review` | What the verdict bench reads (proposals, the staged batch, the anchor sources) and the ledger rows one verdict writes | `tests/review_round_trip`, `countermand` |
 | `native` | `native_health`: protocol agreement between the two build modes | in-module |
 
 ### L4 · `apps/native/host` — the bridge
@@ -500,6 +508,7 @@ Each fact below has one authority. A second copy is a defect.
 | Line breaking | `refrain-core/src/typeset.rs` | A second set of rules |
 | Full-width and half-width conversion | `refrain-core/src/text_width.rs` | A conversion table in the surface |
 | The output of a project input | `ProjectOutput::into_opened` and `into_imported` | A catch-all match arm at each call site |
+| The order that launches a Run | `refrain-app/src/host_session.rs` | A second `format!` of a Run workspace, or a second execute-then-feed. The three steps are one unit: name the workspace through `staging::run_workspace`, execute `LaunchRun`, drop the host, then feed the upstream. Four copies of it existed — two router arms, the sweep after a collect, and the runner's own — and the fourth copy's comment said it was repeating the third |
 | The number of documents in a catalogue reply | The `documents` array in the reply, counted where it is drawn | A count field beside the array |
 | The size and the cursor of a page | `documentTotal` and `documentCursor`, in each reply that gives them | A second spelling for each reply |
 | Settings | `ConfigStore::apply`, through `Application::apply_config` | A string key-value update path |
@@ -989,7 +998,7 @@ Use these words. SPEC §2 requires one word for each concept.
 | A request carried the wrong context | `refrain-core/src/context_compiler.rs` |
 | A Run started too early, or did not start | `refrain-host/src/host.rs` |
 | A dispatched Run does not advance | `refrain-app/src/runner.rs`. Check `inFlightRuns` in `core.zig` |
-| A downstream Run did not get the upstream work | `refrain-app/src/upstream.rs`, `refrain-core/src/upstream_work.rs` |
+| A downstream Run did not get the upstream work | `refrain-app/src/host_session.rs` runs the launch order; `refrain-app/src/upstream.rs`, `refrain-core/src/upstream_work.rs` |
 | A proposal could not be applied | `refrain-app/src/decide.rs`, `refrain-core/src/manuscript/review.rs` |
 | A countermand reverted the wrong text | `refrain-app/src/decide.rs` |
 | A mailbox entry is in the wrong box | `refrain-app/src/mailbox.rs` |

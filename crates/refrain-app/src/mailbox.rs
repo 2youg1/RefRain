@@ -36,6 +36,7 @@ use refrain_store::mailbox::MailboxBoxName;
 use refrain_store::project::{ProjectStore, ProposalRow};
 
 use crate::journal::{into_domain, into_domain_store};
+use crate::root::ProjectEntry;
 
 /// 一单在信箱里的样子。
 ///
@@ -153,6 +154,105 @@ pub fn discarded(store: &ProjectStore) -> Result<Vec<MailboxEntryView>, RefrainE
                 .map(|row| view_of(row, standing.box_name, standing.rank, standing.pinned))
         })
         .collect())
+}
+
+/// Pin 或解 Pin 一单。Pin 是「这一单不参与后续排序」的陈述，两个方向都是
+/// 作者在说话，所以都持久。答复即刷新后的信箱——视图与事实同一生灭。
+///
+/// # Errors
+///
+/// 安排表写不进去、或刷新信箱失败时具名失败。
+pub fn set_pinned(
+    project: &mut ProjectEntry,
+    entry_id: &str,
+    box_name: MailboxBoxName,
+    pinned: bool,
+    now: u64,
+) -> Result<Vec<MailboxEntryView>, RefrainError> {
+    project
+        .store
+        .mailbox()
+        .set_pinned(entry_id, box_name, pinned, now)
+        .map_err(into_domain_store)?;
+    entries(&project.store)
+}
+
+/// 排一单在那一格里的位次。
+///
+/// # Errors
+///
+/// 与 [`set_pinned`] 相同。
+pub fn set_rank(
+    project: &mut ProjectEntry,
+    entry_id: &str,
+    box_name: MailboxBoxName,
+    rank: u32,
+    now: u64,
+) -> Result<Vec<MailboxEntryView>, RefrainError> {
+    project
+        .store
+        .mailbox()
+        .set_rank(entry_id, box_name, rank, now)
+        .map_err(into_domain_store)?;
+    entries(&project.store)
+}
+
+/// 交换两单的位次，一次事务。相邻交换是界面唯一需要的移动语义；两条
+/// [`set_rank`] 拼不出原子交换（中间态两单同位次、按时间排）。
+///
+/// # Errors
+///
+/// 与 [`set_pinned`] 相同。
+pub fn swap_ranks(
+    project: &mut ProjectEntry,
+    entry_id: &str,
+    other_id: &str,
+    now: u64,
+) -> Result<Vec<MailboxEntryView>, RefrainError> {
+    project
+        .store
+        .mailbox()
+        .swap_ranks(entry_id, other_id, now)
+        .map_err(into_domain_store)?;
+    entries(&project.store)
+}
+
+/// 弃置一单：软删除。提案行与账本一行不动（INV-4），取回走 [`restore`]。
+///
+/// # Errors
+///
+/// 与 [`set_pinned`] 相同。
+pub fn discard(
+    project: &mut ProjectEntry,
+    entry_id: &str,
+    box_name: MailboxBoxName,
+    now: u64,
+) -> Result<Vec<MailboxEntryView>, RefrainError> {
+    project
+        .store
+        .mailbox()
+        .discard(entry_id, box_name, now)
+        .map_err(into_domain_store)?;
+    entries(&project.store)
+}
+
+/// 取回一弃置的单。从没弃置过改 0 行——空操作，不是错误，照常返回
+/// 刷新后的信箱。
+///
+/// # Errors
+///
+/// 与 [`set_pinned`] 相同。
+pub fn restore(
+    project: &mut ProjectEntry,
+    entry_id: &str,
+    now: u64,
+) -> Result<Vec<MailboxEntryView>, RefrainError> {
+    project
+        .store
+        .mailbox()
+        .restore(entry_id, now)
+        .map_err(into_domain_store)?;
+    entries(&project.store)
 }
 
 /// 一行提案投影成界面要的那几列；格、位次与 Pin 由调用方判好送进来。

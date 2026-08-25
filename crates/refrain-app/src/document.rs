@@ -3,12 +3,17 @@
 //! Opening, continuity hydration, journal replay, material creation, and save
 //! confirmation all cross both the domain and store. Keeping that sequence here
 //! prevents Desktop and Native adapters from becoming competing authorities.
+//!
+//! 打开与新建都经 `Kara::manuscript_opened`：「第一份正文打开了」是一个事实，
+//! 不是四条路径各自的附带动作——打开、新建、拖入正文、草稿提拔成正文，
+//! 四条路里的任何一条忘了它，作者就会遇到一个不肯进场的 KARA。
 
-use crate::application::ProjectEntry;
+use crate::history::{HistoryEntry, recent_history};
 use crate::journal::{into_domain, into_domain_store, parse_id};
+use crate::root::ProjectEntry;
 use refrain_core::{
     BlockScan, DocumentFormat, EditorAction, EditorChange, ErrorCode, Id, Insertion, Lineage,
-    Manuscript, RefrainError, Replacement, SourceSnapshot, TextCommand, TextTransition,
+    Manuscript, RefrainError, Replacement, SourceSnapshot, TextAction, TextCommand, TextTransition,
 };
 use refrain_store::history::HYDRATION_DEPTH;
 use refrain_store::project::{
@@ -104,6 +109,48 @@ pub enum SaveOutcomeDto {
 pub(crate) struct ImportedFrom<'a> {
     pub digest: &'a str,
     pub format: &'a str,
+}
+
+/// 打开一份已注册的文档：读回字节、重放 journal、记住落点、必要时请 KARA 进场。
+///
+/// # Errors
+///
+/// 文档不在册、字节读不出来、或重放失败时具名失败。
+pub fn open(
+    entry: &mut ProjectEntry,
+    kara: &crate::kara::Kara,
+    path: &str,
+) -> Result<OpenDocumentDto, RefrainError> {
+    let opened = entry
+        .store
+        .open_registered_document(path)
+        .map_err(into_domain)?;
+    entry.store.remember_landing(path).map_err(into_domain)?;
+    let transition = kara.manuscript_opened(opened.row.role, path)?;
+    open_in_entry(entry, path, opened, transition)
+}
+
+/// 新建一份文档并立刻打开它。标题到路径的映射在存储层（含重名避让）。
+///
+/// # Errors
+///
+/// 标题非法、磁盘写不进去、或打开失败时具名失败。
+pub fn create(
+    entry: &mut ProjectEntry,
+    kara: &crate::kara::Kara,
+    title: &str,
+    role: refrain_core::DocumentRole,
+) -> Result<OpenDocumentDto, RefrainError> {
+    let created = entry
+        .store
+        .create(&refrain_store::project::CreateDocument {
+            title: title.to_string(),
+            role,
+        })
+        .map_err(into_domain)?;
+    let path = created.row.path.clone();
+    let transition = kara.manuscript_opened(role, &path)?;
+    open_in_entry(entry, &path, created, transition)
 }
 
 pub(crate) fn open_in_entry(
@@ -335,6 +382,60 @@ pub(crate) fn apply_editor_journaled(
         .journal_remove(journal_id)
         .map_err(into_domain)?;
     Ok(())
+}
+
+/// 原生编辑完成一次保存：把刚落盘的动作链 reconcile 进 `text_actions`，
+/// 返回最新历史。
+///
+/// 视图与 `.refrain-state.json` 同一生灭——会话里没保存的编辑两样都不是，
+/// 历史表不假装记得它们。链式联结是 `chain()` 能回溯的依据：每个动作的
+/// head 是下一个动作的 base，末动作指向刚保存的 head。
+///
+/// # Errors
+///
+/// 文档不在册、状态文件读不出来、或历史表写不进去时具名失败。
+pub fn reconcile_saved_chain(
+    entry: &mut ProjectEntry,
+    path: &str,
+) -> Result<Vec<HistoryEntry>, RefrainError> {
+    let file = entry.store.document_file(path).map_err(into_domain)?;
+    let state_path = file.with_extension("refrain-state.json");
+    if let Some(chain) =
+        crate::native_document::read_saved_chain(&file, &state_path).map_err(|error| {
+            RefrainError::new(ErrorCode::Io, "read the saved native chain", path)
+                .with_detail(error.to_string())
+        })?
+    {
+        let heads = chain
+            .actions
+            .iter()
+            .map(|action| action.base())
+            .skip(1)
+            .chain([chain.head]);
+        for (action, head) in chain.actions.iter().zip(heads) {
+            if !entry
+                .store
+                .action_history()
+                .contains(path, action.id())
+                .map_err(into_domain_store)?
+            {
+                entry
+                    .store
+                    .action_history()
+                    .record(path, action, head)
+                    .map_err(into_domain_store)?;
+            }
+        }
+        // 活链是动作 id，不是块 id——sync_chain 按动作 id 判「还在不在链上」，
+        // 与本文件表内同步（`persist_in_entry`）同一口径。
+        let live: Vec<Id> = chain.actions.iter().map(TextAction::id).collect();
+        entry
+            .store
+            .action_history()
+            .sync_chain(path, &live)
+            .map_err(into_domain_store)?;
+    }
+    recent_history(&entry.store, path)
 }
 
 pub(crate) fn persist_in_entry(

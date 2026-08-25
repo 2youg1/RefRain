@@ -17,8 +17,27 @@ use refrain_core::{
 };
 use refrain_store::ledger::{VerdictKindName, VerdictRecord};
 use refrain_store::project::{DocumentCommit, FileStamp, ProjectFailure, ProjectStore};
+use serde::{Deserialize, Serialize};
+use specta::Type;
 
 use crate::journal::into_domain;
+use crate::root::ProjectEntry;
+
+/// 一次裁决落盘的结局，跨界的那一面。
+///
+/// **三态而不是成功/失败二值**（D1／F-03）：正文落了盘但派生状态待修，与
+/// 磁盘被别人改过，是两件不同的事；压进一个错误通道就是 F-03 的成因——
+/// 重试会拿旧戳去比对自己刚写下的字节，把自己判成外部冲突。
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase", tag = "state")]
+pub enum DecisionReport {
+    /// 正文与派生状态全部落盘。
+    Durable,
+    /// 正文已落盘，派生状态待修复。`detail` 说明待修的是什么。
+    BodyDurable { detail: String },
+    /// 磁盘上的字节不是作者盖戳时看到的那一份。不能覆盖。
+    Conflict,
+}
 
 /// 裁决走完之后，这次动作留在磁盘上的事实。
 ///
@@ -564,6 +583,86 @@ pub fn countermand_proposals(
     }
     // 账本已记下「已冲销」，磁盘必须同真（D1／F-01，方向相反，同一个分裂）。
     persist_manuscript(store, manuscript, path, expected, transition)
+}
+
+/// 提交这份文档暂存的裁决批次。
+///
+/// **裁决即落盘**（D1／F-01）：账本说「已接受」的那一刻磁盘必须同真。
+/// `expected` 取自这份文档当前注册的戳——裁决没有比手工保存更多的权力去
+/// 覆盖别人的改动，所以它走同一个 compare-and-swap。
+///
+/// # Errors
+///
+/// 稿子没打开、批次重建不出来、或落盘失败时具名失败。
+pub fn commit_verdicts(
+    entry: &mut ProjectEntry,
+    path: &str,
+) -> Result<DecisionReport, RefrainError> {
+    let stamp = entry.store.open_document(path).map_err(into_domain)?.stamp;
+    let mut manuscript = entry
+        .manuscripts
+        .get(path)
+        .ok_or_else(|| {
+            RefrainError::new(
+                ErrorCode::StateUnavailable,
+                "commit verdicts on a document that is not open",
+                path,
+            )
+        })?
+        .clone();
+    let outcome = commit_decision_batch(&mut entry.store, &mut manuscript, path, Some(stamp))?;
+    let Some(report) = decision_report(outcome) else {
+        return Ok(DecisionReport::Conflict);
+    };
+    entry.manuscripts.insert(path.to_owned(), manuscript);
+    Ok(report)
+}
+
+/// 对一组已合并的提案下冲销，并把正文回退到冻结前的字节。
+///
+/// 与 [`commit_verdicts`] 同一条纪律：冲销要在稿子里定位当初合并进去的字节，
+/// 而块 id 只在打开着的那份稿子上成立；落盘走同一个 compare-and-swap。
+///
+/// # Errors
+///
+/// 稿子没打开、提案集为空、或落盘失败时具名失败。
+pub fn countermand(
+    entry: &mut ProjectEntry,
+    path: &str,
+    proposal_ids: &[String],
+    now: u64,
+) -> Result<DecisionReport, RefrainError> {
+    let stamp = entry.store.open_document(path).map_err(into_domain)?.stamp;
+    let mut manuscript = entry.manuscripts.get(path).cloned().ok_or_else(|| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "countermand in a document that is not open",
+            path.to_owned(),
+        )
+    })?;
+    let outcome = countermand_proposals(
+        &mut entry.store,
+        &mut manuscript,
+        path,
+        proposal_ids,
+        Some(stamp),
+        now,
+    )?;
+    let Some(report) = decision_report(outcome) else {
+        return Ok(DecisionReport::Conflict);
+    };
+    entry.manuscripts.insert(path.to_owned(), manuscript);
+    Ok(report)
+}
+
+/// `DecisionOutcome` 跨界的形状。冲突时不交回内存里那一份：磁盘上的字节
+/// 不是作者盖戳时看到的，留下裁决结果会让界面显示一个盘上并不存在的正文。
+fn decision_report(outcome: DecisionOutcome) -> Option<DecisionReport> {
+    match outcome {
+        DecisionOutcome::Durable { .. } => Some(DecisionReport::Durable),
+        DecisionOutcome::BodyDurable { detail, .. } => Some(DecisionReport::BodyDurable { detail }),
+        DecisionOutcome::Conflict { .. } => None,
+    }
 }
 
 #[cfg(test)]

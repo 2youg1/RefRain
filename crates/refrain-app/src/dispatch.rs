@@ -39,6 +39,7 @@ use refrain_store::ledger::{VerdictKindName, VerdictRecord};
 use refrain_store::project::ProjectStore;
 
 use crate::journal::{StoreJournal, into_domain, into_domain_host};
+use crate::root::ProjectEntry;
 use crate::scope::{ScopeLocation, locate_scope};
 
 /// 作者要派发的一段：正文的原文，以及它在稿子里的位置。
@@ -425,12 +426,102 @@ pub(crate) fn adapter_channel_id(kind: &AdapterKind) -> Option<&'static str> {
     }
 }
 
-/// 派发一次改写请求。
+/// 派发一次改写请求：从一个开着的项目出发。
+///
+/// **资料、接续与装载的事实都要在 host 借走 store 之前查完。** 接续与协议
+/// 装载住在 Config 与工作区里，不在请求里：请求只带作者点的东西（范围、
+/// 要求、勾选的资料路径）。
+///
+/// 派发要把选中的原文对回块 id，而块 id 只存在于打开着的那份稿子里——与收取
+/// 同一条理由。稿子没打开就具名拒绝，而不是拿磁盘上的字节顶替。
+///
+/// # Errors
+///
+/// 稿子没打开、资料解析不出来、host 拒绝，以及 [`dispatch_round`] 的全部
+/// 拒绝。
+pub fn dispatch(
+    entry: &mut ProjectEntry,
+    config: &Config,
+    request: &DispatchRequest,
+) -> Result<Dispatched, RefrainError> {
+    let manuscript = manuscript_of(entry, &request.document, "dispatch")?;
+    let materials = resolve_materials(&mut entry.store, &request.materials)?;
+    let context = DirectoryContext::new(entry.store.layout().state_dir.clone());
+    let mut round = round_facts(config, &context, request, materials)?;
+    // 增量带稿的裁决行也在借走之前查：它读的是账本。
+    round.changes = carry_changes(&entry.store, request)?;
+    let mut host = crate::host_session::open(&mut entry.store)?;
+    dispatch_round(&mut host, &manuscript, request, &round)
+}
+
+/// 预览一次派发：与 [`dispatch`] 同一批事实、同一份装配，但不碰编排状态
+/// ——预览不铸 Run。作者送出时把这份 digest 带回（`expected_digest`），
+/// 对不上就是预览之后稿子或资料变了，派发具名拒绝。
+///
+/// # Errors
+///
+/// 与 [`dispatch`] 相同，不含 host 的拒绝。
+pub fn preview(
+    entry: &mut ProjectEntry,
+    config: &Config,
+    request: &DispatchRequest,
+) -> Result<DispatchPackage, RefrainError> {
+    let manuscript = manuscript_of(entry, &request.document, "preview a dispatch on")?;
+    let materials = resolve_materials(&mut entry.store, &request.materials)?;
+    let context = DirectoryContext::new(entry.store.layout().state_dir.clone());
+    let mut round = round_facts(config, &context, request, materials)?;
+    // 与 [`dispatch`] 同一份装配：预览看到的包与送出的是同一条规则算出来的，
+    // 增量带稿的裁决行也不例外。
+    round.changes = carry_changes(&entry.store, request)?;
+    preview_round(&manuscript, request, &round)
+}
+
+/// 要改的那份稿子，按值取出。没打开就具名拒绝：磁盘上那份可能已经被
+/// 别处改过，而块 id 只在打开着的稿子上成立。
+fn manuscript_of(
+    entry: &ProjectEntry,
+    document: &str,
+    action: &str,
+) -> Result<Manuscript, RefrainError> {
+    entry.manuscripts.get(document).cloned().ok_or_else(|| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            format!("{action} a manuscript that is not open"),
+            document.to_owned(),
+        )
+    })
+}
+
+/// 增量带稿（`CarryMode::Diff`）的裁决行：这份文档账本里还成立的裁决，
+/// 按决定先后排。其余带稿模式是空——旧载荷旧行为。
+fn carry_changes(
+    store: &ProjectStore,
+    request: &DispatchRequest,
+) -> Result<Vec<refrain_core::ChangeEntry>, RefrainError> {
+    if request.carry != CarryMode::Diff {
+        return Ok(Vec::new());
+    }
+    let records = store
+        .ledger()
+        .for_document(&request.document)
+        .map_err(crate::journal::into_domain_store)?;
+    Ok(verdict_changes(&records))
+}
+
+/// 派发的三步本身：轮一级的缝，收一份已经查好的 [`RoundFacts`]。
 ///
 /// 三步都在这里发生，但每一步的拒绝都来自领域层：范围对不上是这里的
 /// `ScopeMoved`／`ScopeAmbiguous`，其余（任务已关闭、Run 不可授权）由
 /// `HostRefusal` 给出。
-pub fn dispatch(
+///
+/// 与 [`dispatch`] 分开是因为两者回答不同的问题：那一条是「从一个开着的项目
+/// 出发」，这一条是「三步的次序与它们的拒绝」——后者是 `tests/dispatch.rs`
+/// 逐条问的那个缝，不需要一个真实的项目。
+///
+/// # Errors
+///
+/// agent 数为零、范围为空、范围对不上、digest 不匹配，以及 host 的拒绝。
+pub fn dispatch_round(
     host: &mut AgentHost<StoreJournal<'_>, DirectoryContext>,
     manuscript: &Manuscript,
     request: &DispatchRequest,
@@ -521,17 +612,18 @@ pub fn dispatch(
     })
 }
 
-/// 预览一次派发：定位范围、编译请求包，不动编排状态。
+/// 预览的编译本身：定位范围、编译请求包，不动编排状态。轮一级的缝，
+/// 与 [`dispatch_round`] 成对。
 ///
-/// 与 `dispatch` 共用同一份顺序知识（`prepare_package`）——预览看到的
+/// 与 [`dispatch_round`] 共用同一份顺序知识（`prepare_package`）——预览看到的
 /// digest 与送出时核对的 digest 因此必然是同一条规则算出来的。这正是
 /// 「送前核对」的读法：清单（各节名字/来源/字节/token）加 digest 前 12 位。
 ///
 /// # Errors
 ///
-/// 范围对不上（`ScopeMoved`／`ScopeAmbiguous`）与资料不在册都在这里失败——
-/// 这些拒绝发生在花掉一次真实调用之前。
-pub fn preview(
+/// 范围为空、范围对不上（`ScopeMoved`／`ScopeAmbiguous`）与资料不在册都在这里
+/// 失败——这些拒绝发生在花掉一次真实调用之前。
+pub fn preview_round(
     manuscript: &Manuscript,
     request: &DispatchRequest,
     round: &RoundFacts,

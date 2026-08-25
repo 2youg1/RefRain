@@ -129,10 +129,7 @@ fn dispatch_pair(
 }
 
 /// 这个 Root 的编排快照（经 ReadHost，与界面读的是同一条）。
-fn host_snapshot(
-    application: &Application,
-    root_id: &str,
-) -> refrain_app::application::HostSnapshot {
+fn host_snapshot(application: &Application, root_id: &str) -> refrain_app::HostSnapshot {
     let host = application
         .project(
             &nothing(),

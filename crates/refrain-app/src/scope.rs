@@ -1,10 +1,122 @@
-//! 冻结请求与当前稿子之间的对照。
+//! 一份稿子上「哪一段」的三个问题：请求当初框了什么、它现在在哪、
+//! 以及界面能拿什么来指名一段。
 //!
 //! 派发出去的那一刻，请求里写下了每个范围的原文。结果回来时要回答两个问题：
 //! 请求当初给出的是哪几段原文，以及这几段原文现在还在稿子的什么位置。两个问题
 //! 都只读文本，不碰数据库，也不认识 host——所以它们在这里，可以被单独问清楚。
+//!
+//! 第三个问题是派发台的：作者要勾选范围，就得先看见一份可指名的块清单。
+//! 清单与定位在同一个模块，因为它们说的是同一件事——**块 id 只在打开着的
+//! 那份稿子上成立**。界面按清单里的 id 指名范围，不自己猜切法。
 
-use refrain_core::{Id, Manuscript};
+use refrain_core::block_shape::{BlockKind, BlockShape};
+use refrain_core::{BlockScan, ErrorCode, Id, Manuscript, RefrainError};
+use serde::{Deserialize, Serialize};
+use specta::Type;
+
+use crate::root::ProjectEntry;
+
+/// 块清单的一行：派发台块段按 `id` 指名范围。
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentBlockRow {
+    /// 块 id（36 字节 uuid）。
+    pub id: String,
+    /// 第几块，从 0 起。
+    pub ordinal: u32,
+    /// 块种类线名，与索引库存的是同一个（`heading:N`／`fence`／`table`／
+    /// `paragraph`——见 `block_kind_wire_name` 的镜像注释）。
+    pub kind: String,
+    /// 前 60 个字符的行预览（char 边界安全），不是截断的正文。
+    pub peek: String,
+    /// 正文的字符数。
+    pub chars: u32,
+}
+
+/// 一份稿子的块清单，分页给出。
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentBlocks {
+    pub blocks: Vec<DocumentBlockRow>,
+    /// 还有剩余时，下一页从这个 ordinal 起（本页末行 ordinal+1）。
+    pub next: Option<u32>,
+}
+
+/// 一份打开着的稿子的块清单，按 ordinal 分页。
+///
+/// 列的是**活 Manuscript**（正在写的那份），不是磁盘字节：磁盘那份可能已经
+/// 被别处改过，而块 id 只在打开着的稿子上成立（与派发同一条理由）。空块也
+/// 在行里——清单的职责是让界面能按 id 指名任何一个块，与搜索索引「空块不
+/// 占行」的取舍不同。
+///
+/// `after` 是上一页 `next` 给出的游标：下一页**从它起（含）**；`next` 只在
+/// 还有剩余时给出。`count` 夹到 1..=100。
+///
+/// # Errors
+///
+/// 稿子没打开时具名拒绝，而不是拿磁盘上的字节顶替。
+pub fn list_blocks(
+    entry: &ProjectEntry,
+    path: &str,
+    after: Option<u32>,
+    count: u32,
+) -> Result<DocumentBlocks, RefrainError> {
+    let manuscript = entry.manuscripts.get(path).ok_or_else(|| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "list blocks of a document that is not open",
+            path.to_owned(),
+        )
+    })?;
+    let count = count.clamp(1, 100) as usize;
+    let scan = manuscript.scan();
+    let blocks = manuscript.head().blocks();
+    let mut rows: Vec<DocumentBlockRow> = Vec::new();
+    for (ordinal, block) in blocks.iter().enumerate() {
+        let ordinal = ordinal as u32;
+        // 翻页游标是「从这里起（含）」：跳过它之前的行。
+        if after.is_some_and(|after| ordinal < after) {
+            continue;
+        }
+        if rows.len() == count {
+            break;
+        }
+        let text = block.text();
+        rows.push(DocumentBlockRow {
+            id: block.id().to_string(),
+            ordinal,
+            kind: block_kind_wire_name(scan, text),
+            // 前 60 个字符：按 char 取，永远不会截在半个字上。
+            peek: text.chars().take(60).collect(),
+            chars: text.chars().count() as u32,
+        });
+    }
+    // 还有剩余时，下一页从本页末行的下一个 ordinal 起。空页没有下一页。
+    let next = rows
+        .last()
+        .and_then(|last| (last.ordinal as usize + 1 < blocks.len()).then_some(last.ordinal + 1));
+    Ok(DocumentBlocks { blocks: rows, next })
+}
+
+/// 块种类的线名：与索引库存的是同一个词。
+///
+/// 词汇的唯一权威是 refrain-store 的 `search::kind_name`，但它是
+/// pub(crate)，够不着——这里镜像一份。那份没有兜底臂（新 `BlockKind`
+/// 必须逼出一个命名决定），镜像同样没有。kind 的判法与
+/// `searchable_block` 同一条规则：Markdown 扫描按块自己的字节判形状，
+/// Plain 扫描下 `#`、栅栏、表格行都是文字，一切是段落。
+fn block_kind_wire_name(scan: BlockScan, text: &str) -> String {
+    let kind = match scan {
+        BlockScan::Markdown => BlockShape::of(text).kind,
+        BlockScan::Plain => BlockKind::Paragraph,
+    };
+    match kind {
+        BlockKind::Paragraph => "paragraph".to_string(),
+        BlockKind::Heading(level) => format!("heading:{}", level.get()),
+        BlockKind::Fence => "fence".to_string(),
+        BlockKind::Table(_) => "table".to_string(),
+    }
+}
 
 /// 冻结请求里 `# Before` 那一节列出的范围：范围 id 与它当初的原文。
 ///

@@ -761,7 +761,7 @@ fn adopting_a_project_rearms_karas_one_automatic_entry() {
         panic!("opening a manuscript must use the Project use case");
     };
     assert_eq!(
-        application.kara_state().unwrap().auto_entry,
+        application.kara().state().unwrap().auto_entry,
         KaraAutoEntry::Consumed
     );
 
@@ -777,7 +777,7 @@ fn adopting_a_project_rearms_karas_one_automatic_entry() {
         panic!("re-adoption must open the project");
     };
     assert_eq!(
-        application.kara_state().unwrap().auto_entry,
+        application.kara().state().unwrap().auto_entry,
         KaraAutoEntry::Pending
     );
 

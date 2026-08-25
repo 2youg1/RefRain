@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use refrain_app::dispatch::{
     CarryMode, DispatchChannel, DispatchRequest, DispatchScope, Orchestration, RoundFacts,
-    ScopeSpan, dispatch, preview, resolve_materials, round_facts, verdict_changes,
+    ScopeSpan, dispatch_round, preview_round, resolve_materials, round_facts, verdict_changes,
 };
 use refrain_app::journal::StoreJournal;
 use refrain_core::digest::content_hex;
@@ -97,7 +97,7 @@ fn run_dispatch(
     let manuscript = manuscript_of(root);
     let context = DirectoryContext::new(store.layout().state_dir.clone());
     let mut host = AgentHost::open(StoreJournal { store }, context).unwrap();
-    match dispatch(&mut host, &manuscript, request, &RoundFacts::default()) {
+    match dispatch_round(&mut host, &manuscript, request, &RoundFacts::default()) {
         Ok(dispatched) => Ok((dispatched.runs, dispatched.prefix_bytes)),
         Err(error) => Err(error.to_string()),
     }
@@ -111,7 +111,7 @@ fn preview_compiles_the_package_and_a_stale_digest_refuses_the_dispatch() {
     let base = request(FIRST, 1);
 
     // 预览：编译出请求包（清单与 digest），不铸 Run。
-    let package = preview(&manuscript, &base, &RoundFacts::default()).unwrap();
+    let package = preview_round(&manuscript, &base, &RoundFacts::default()).unwrap();
     assert!(
         !package.manifest.is_empty(),
         "the preview carries the section list"
@@ -224,7 +224,7 @@ fn topology_of(
     let manuscript = manuscript_of(root);
     let context = DirectoryContext::new(store.layout().state_dir.clone());
     let mut host = AgentHost::open(StoreJournal { store }, context).unwrap();
-    dispatch(&mut host, &manuscript, &wanted, &RoundFacts::default()).unwrap();
+    dispatch_round(&mut host, &manuscript, &wanted, &RoundFacts::default()).unwrap();
     host.runs()
         .iter()
         .map(|run| {
@@ -315,7 +315,8 @@ fn frozen_request(root: &Path, store: &mut ProjectStore, wanted: &DispatchReques
     let state_dir = store.layout().state_dir.clone();
     let context = DirectoryContext::new(state_dir.clone());
     let mut host = AgentHost::open(StoreJournal { store }, context).unwrap();
-    let dispatched = dispatch(&mut host, &manuscript, wanted, &RoundFacts::default()).unwrap();
+    let dispatched =
+        dispatch_round(&mut host, &manuscript, wanted, &RoundFacts::default()).unwrap();
     staged_request(&state_dir, dispatched.runs[0])
 }
 
@@ -385,7 +386,7 @@ fn dispatch_with_round(
     let materials = resolve_materials(store, &wanted.materials).unwrap();
     let round = round_facts(config, &context, wanted, materials).unwrap();
     let mut host = AgentHost::open(StoreJournal { store }, context).unwrap();
-    let dispatched = dispatch(&mut host, &manuscript, wanted, &round).unwrap();
+    let dispatched = dispatch_round(&mut host, &manuscript, wanted, &round).unwrap();
     staged_request(&state_dir, dispatched.runs[0])
 }
 
@@ -668,7 +669,7 @@ fn a_block_span_scope_names_the_blocks_and_rust_joins_their_text() {
     let ids = manuscript.head().block_ids();
     assert_eq!(ids.len(), 3, "the fixture has three blocks");
 
-    let package = preview(&manuscript, &span_request(1, 2), &RoundFacts::default())
+    let package = preview_round(&manuscript, &span_request(1, 2), &RoundFacts::default())
         .expect("a span whose start block is present compiles");
     // 块 id 按顺序进 BeforeScope：从第二块起取两块。
     assert_eq!(package.scopes[0].blocks, vec![ids[1], ids[2]]);
@@ -705,7 +706,7 @@ fn a_block_span_whose_start_block_is_gone_is_a_named_refusal() {
     let manuscript = manuscript_of(&root);
 
     // 起始序号越出稿子（清单过期或稿子被改短）：具名拒绝，不是拿别的块顶替。
-    let error = preview(&manuscript, &span_request(99, 1), &RoundFacts::default())
+    let error = preview_round(&manuscript, &span_request(99, 1), &RoundFacts::default())
         .unwrap_err()
         .to_string();
     assert!(
@@ -729,7 +730,7 @@ fn a_block_span_past_the_end_clamps_to_the_last_block() {
     let ids = manuscript.head().block_ids();
 
     // 剩余不足 count 就取到末尾：作者指名的是「从这里起的这些块」。
-    let package = preview(&manuscript, &span_request(1, 99), &RoundFacts::default())
+    let package = preview_round(&manuscript, &span_request(1, 99), &RoundFacts::default())
         .expect("an over-long span clamps to the end");
     assert_eq!(package.scopes[0].blocks, vec![ids[1], ids[2]]);
     assert_eq!(
@@ -752,7 +753,7 @@ fn a_block_span_of_zero_blocks_is_a_named_refusal() {
     ));
     let (_app, _store) = store_at(&root);
     let manuscript = manuscript_of(&root);
-    let error = preview(&manuscript, &span_request(0, 0), &RoundFacts::default())
+    let error = preview_round(&manuscript, &span_request(0, 0), &RoundFacts::default())
         .unwrap_err()
         .to_string();
     assert!(error.contains("zero blocks"), "unexpected refusal: {error}");
@@ -771,7 +772,7 @@ fn carry_full_embeds_the_whole_manuscript() {
     let mut wanted = request(FIRST, 1);
     wanted.carry = CarryMode::Full;
 
-    let package = preview(&manuscript, &wanted, &RoundFacts::default()).unwrap();
+    let package = preview_round(&manuscript, &wanted, &RoundFacts::default()).unwrap();
     // 全文进包：不在任何 scope 里的第二段也在。
     assert!(
         package.request_md.contains(FIRST) && package.request_md.contains(SECOND),
@@ -814,7 +815,7 @@ fn carry_diff_embeds_the_verdict_lines_but_not_the_manuscript() {
         ..RoundFacts::default()
     };
 
-    let package = preview(&manuscript, &wanted, &round).unwrap();
+    let package = preview_round(&manuscript, &wanted, &round).unwrap();
     assert!(
         package.request_md.contains("<changes>")
             && package.request_md.contains("ref=\"p1:0\"")
@@ -863,7 +864,7 @@ fn carry_none_keeps_the_old_payload_shape() {
         ..RoundFacts::default()
     };
 
-    let package = preview(&manuscript, &wanted, &round).unwrap();
+    let package = preview_round(&manuscript, &wanted, &round).unwrap();
     assert!(
         !package.request_md.contains("<changes>") && !package.request_md.contains(SECOND),
         "none carries neither verdicts nor manuscript:

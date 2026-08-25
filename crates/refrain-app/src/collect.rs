@@ -22,8 +22,68 @@ use refrain_host::run_edge::ResolvedEdge;
 use refrain_host::staging::DirectoryContext;
 use refrain_store::project::ProjectStore;
 
+use crate::host_session::{Admission, launch_awaiting};
 use crate::journal::{StoreJournal, into_domain, into_domain_host, json_of};
+use crate::root::ProjectEntry;
 use crate::scope::{ScopeLocation, before_sections, locate_scope, locate_scope_by_identity};
+use serde::{Deserialize, Serialize};
+use specta::Type;
+
+/// 一次收取的结局，跨界的那一面。与 [`Collected`] 同形但不同职：那一个是
+/// 领域事实，这一个是界面读到的词。
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase", tag = "state")]
+pub enum CollectReport {
+    /// 结果文件还没出现，什么都没动。
+    Waiting,
+    Completed {
+        proposals: u32,
+        memos: u32,
+        drafts: u32,
+    },
+    /// 这一次派发失败。`code` 是失败的种类，已经写进 Run 记录。
+    Failed { code: String, detail: String },
+}
+
+/// 收取一条 Run，并在成功时发射等到了的下游。
+///
+/// **收取成功才发射**：`Waiting` 什么都不发。发射用无条件准入（与
+/// `runner` 的过滤式扫描不同）：L0 下游被提升后等作者的手工产出，那是
+/// 手动收取时本就有的形状（2.2 回迁）。
+///
+/// # Errors
+///
+/// run id 读不出来、收取本身失败、或发射下游失败时具名失败。
+pub fn collect_run(
+    entry: &mut ProjectEntry,
+    run_id: &str,
+    now: u64,
+) -> Result<CollectReport, RefrainError> {
+    let run = run_id.parse::<Id>().map_err(|error| {
+        RefrainError::new(ErrorCode::StateUnavailable, "read a run id", run_id)
+            .with_detail(error.to_string())
+    })?;
+    // 收取要把冻结的原文对回块 id，而块 id 只存在于打开着的那份稿子里
+    // ——所以送进去的是当前打开的全部稿子。
+    let manuscripts = entry.manuscripts.clone();
+    let collected = collect_attempt(&mut entry.store, &manuscripts, run, now)?;
+    if matches!(collected, Collected::Completed { .. }) {
+        launch_awaiting(entry, |_run, _agent| Admission::Launch)?;
+    }
+    Ok(match collected {
+        Collected::Waiting => CollectReport::Waiting,
+        Collected::Completed {
+            proposals,
+            memos,
+            drafts,
+        } => CollectReport::Completed {
+            proposals,
+            memos,
+            drafts,
+        },
+        Collected::Failed { code, detail } => CollectReport::Failed { code, detail },
+    })
+}
 
 /// 收取的三种结局。
 ///

@@ -9,7 +9,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use refrain_app::application::ProjectEntry;
+use refrain_app::ProjectEntry;
 use refrain_app::journal::StoreJournal;
 use refrain_app::runner::{ChannelFactory, LaunchChannel, PumpReport, Runner, pump_with};
 use refrain_core::context_compiler::DispatchPackage;

@@ -9,7 +9,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use refrain_app::application::HostSnapshot;
+use refrain_app::HostSnapshot;
 use refrain_app::dispatch::{
     CarryMode, DispatchChannel, DispatchRequest, DispatchScope, Orchestration,
 };

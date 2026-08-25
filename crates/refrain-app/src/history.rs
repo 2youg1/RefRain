@@ -21,6 +21,7 @@ use refrain_store::annotations::{AnnotationKind, AnnotationRow};
 use refrain_store::project::ProjectStore;
 
 use crate::journal::{into_domain, into_domain_read};
+use crate::root::ProjectEntry;
 use crate::scope::{ScopeLocation, locate_scope};
 
 /// 历史面板一次读多少行。
@@ -86,6 +87,39 @@ pub fn recent_history(
             undone: row.undone,
         })
         .collect())
+}
+
+/// 在一份打开着的稿子上留一条批注，返回刷新后的批注名录。
+///
+/// 批注要把原文对回块 id，而块 id 只存在于打开着的那份稿子里——与派发、
+/// 收取同一条理由。稿子没打开就具名拒绝，而不是拿磁盘上的字节顶替。
+///
+/// # Errors
+///
+/// 稿子没打开、选区定位不唯一、或批注表写不进去时具名失败。
+pub fn annotate_selection(
+    project: &mut ProjectEntry,
+    document: &str,
+    selected: &str,
+    body: Option<String>,
+    now: u64,
+) -> Result<Vec<AnnotationView>, RefrainError> {
+    let manuscript = project.manuscripts.get(document).cloned().ok_or_else(|| {
+        RefrainError::new(
+            ErrorCode::StateUnavailable,
+            "annotate a manuscript that is not open",
+            document.to_owned(),
+        )
+    })?;
+    annotate(
+        &mut project.store,
+        &manuscript,
+        document,
+        selected,
+        body,
+        now as i64,
+    )?;
+    annotations_of(&project.store, document)
 }
 
 /// 一份文档上的批注。

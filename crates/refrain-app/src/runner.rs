@@ -39,16 +39,17 @@ use refrain_core::{ErrorCode, Id, RefrainError};
 use refrain_host::adapters::{
     DispatchSpec, HarnessAdapter, PrintAdapter, ProducerOutcome, channel,
 };
-use refrain_host::host::{AgentHost, FrozenContext, HostCommand, HostRefusal, RunProgress};
+use refrain_host::host::{FrozenContext, HostCommand, RunProgress};
 use refrain_host::process::ProcessCancel;
 use refrain_host::run_edge::ResolvedEdge;
 use refrain_host::staging::DirectoryContext;
 use refrain_store::config::Config;
 use refrain_store::project::ProjectStore;
 
-use crate::application::ProjectEntry;
 use crate::collect::Collected;
-use crate::journal::{StoreJournal, into_domain_host};
+use crate::host_session::{self, Admission};
+use crate::journal::into_domain_host;
+use crate::root::ProjectEntry;
 
 /// 一条 Run 的现场观察：观察线程，以及杀整棵进程树的凭据。
 struct InFlight {
@@ -158,14 +159,6 @@ fn configured_channel(
     }))
 }
 
-/// 打开借 store 的 host——与 collect 同一条路：host 不出作用域，事实落账。
-fn open_host(
-    store: &mut ProjectStore,
-) -> Result<AgentHost<StoreJournal<'_>, DirectoryContext>, RefrainError> {
-    let context = DirectoryContext::new(store.layout().state_dir.clone());
-    AgentHost::open(StoreJournal { store }, context).map_err(into_domain_host)
-}
-
 /// 把一次失败记进 Run 的历史。失败先写进 host 再返回（与 collect 的 `fail`
 /// 同一条纪律）：Run 的历史是产品要展示的事实，不能只活在返回值里。
 fn record_failure(
@@ -180,7 +173,7 @@ fn record_failure(
     } else {
         format!("{code}: {detail}")
     };
-    open_host(store)?
+    host_session::open(store)?
         .execute(HostCommand::FailRun {
             run_id,
             failure,
@@ -231,7 +224,7 @@ pub fn pump_with(
     // 2. 派发：Launching、不在恢复名单（或虽是名单上的、却是本会话自己
     //    提升的）、本机还没握着句柄的 Run。
     let launching: Vec<(Id, Id, String)> = {
-        let host = open_host(&mut entry.store)?;
+        let host = host_session::open(&mut entry.store)?;
         let recovery: Vec<Id> = host.runs_requiring_recovery().to_vec();
         host.runs()
             .iter()
@@ -289,7 +282,7 @@ pub fn pump_with(
                 // 顺序与 §8.2-3 一致，崩在中间留下的是恢复路径认得的状态。
                 let cancel = receipt.handle.cancel_token();
                 let receipt_id = receipt.receipt.clone();
-                open_host(&mut entry.store)?
+                host_session::open(&mut entry.store)?
                     .execute(HostCommand::CompleteDispatch {
                         run_id,
                         receipt: receipt_id,
@@ -319,7 +312,7 @@ pub fn pump_with(
     //    HostCommand 取消了它）——杀整棵树，句柄丢出活动表。观察线程随
     //    EOF 自行结束，JoinHandle 丢弃即分离：正确性从不依赖它。
     let stale: Vec<Id> = {
-        let host = open_host(&mut entry.store)?;
+        let host = host_session::open(&mut entry.store)?;
         bucket
             .in_flight
             .keys()
@@ -357,7 +350,7 @@ pub fn pump_with(
         };
         // 收尾前再看一眼账本：观察跑着的时候作者可能取消了这条 Run。
         let still_dispatched = {
-            let host = open_host(&mut entry.store)?;
+            let host = host_session::open(&mut entry.store)?;
             matches!(
                 host.runs()
                     .iter()
@@ -408,7 +401,7 @@ pub fn pump_with(
             report.failed.push(run_id);
         } else {
             let workspace = {
-                let host = open_host(&mut entry.store)?;
+                let host = host_session::open(&mut entry.store)?;
                 host.runs()
                     .iter()
                     .find(|run| run.id == run_id)
@@ -439,7 +432,7 @@ pub fn pump_with(
     let pending: Vec<Id> = bucket.pending_collect.iter().copied().collect();
     for run_id in pending {
         let still_dispatched = {
-            let host = open_host(&mut entry.store)?;
+            let host = host_session::open(&mut entry.store)?;
             matches!(
                 host.runs()
                     .iter()
@@ -508,15 +501,15 @@ fn collect_landed(
     //
     // 这里发射的下游同样要登记进 launched：它与第一步发射的处在同一个
     // `Launching`，下一泵的恢复名单会把两者都装进去。
-    let downstream = crate::application::launch_awaiting_runs(entry)?;
-    bucket.launched.extend(downstream);
+    let downstream = host_session::launch_awaiting(entry, |_run, _agent| Admission::Launch)?;
+    bucket.launched.extend(downstream.launched);
     Ok(())
 }
 
 /// 发射轮到的、且 runner 能伺候的已授权 Run：解析得出启动通道的。
 ///
-/// 与 `application::launch_awaiting_runs` 同一套次序纪律（host 判条件、
-/// 吞「等上游」、发射成功才喂上游），多出来的一道判是**谁伺候它**：
+/// 次序纪律（host 判条件、吞「等上游」、发射成功才喂上游）在
+/// `host_session::launch_awaiting`；这里只多一道**谁伺候它**的准入判：
 ///
 /// - `Ok(Some)`：runner 起进程的，提升进 `Launching`，下一泵派发。
 /// - `Ok(None)`：L0（无连接，含匿名 agent）。留在 Authorized 等作者手动
@@ -524,10 +517,9 @@ fn collect_landed(
 /// - `Err`：配过却配不上的（连接删了、种类没通道）。这条 Run 永远不会
 ///   有人起，具名记 Failed，不永远占着 Authorized。
 ///
-/// 下游的自动发射不走这里：收取成功后的那一发（`collect_landed`）沿用
-/// `launch_awaiting_runs` 的无条件版本，与手动 `CollectRun` 的既有行为
-/// 逐字对齐（2.2 回迁）——L0 下游被提升后等作者的手工产出，那是手动
-/// 收取时本就有的形状。
+/// 下游的自动发射不走这里：收取成功后的那一发（`collect_landed`）用无条件
+/// 准入，与手动 `CollectRun` 的既有行为逐字对齐（2.2 回迁）——L0 下游被
+/// 提升后等作者的手工产出，那是手动收取时本就有的形状。
 fn launch_servable_awaiting(
     entry: &mut ProjectEntry,
     config: &Config,
@@ -535,53 +527,18 @@ fn launch_servable_awaiting(
     now: u64,
     report: &mut PumpReport,
 ) -> Result<Vec<Id>, RefrainError> {
-    let (launched, refused) = {
-        let mut host = open_host(&mut entry.store)?;
-        let awaiting = host.runs_awaiting_launch().to_vec();
-        let mut launched = Vec::new();
-        let mut refused = Vec::new();
-        for run_id in awaiting {
-            let Some(agent_id) = host
-                .runs()
-                .iter()
-                .find(|run| run.id == run_id)
-                .map(|run| run.agent_id)
-            else {
-                continue;
-            };
-            match channel_for(config, agent_id) {
-                Ok(Some(_)) => {}
-                Ok(None) => continue,
-                Err((code, detail)) => {
-                    // host 还借着 store，失败出作用域再记。
-                    refused.push((run_id, code, detail));
-                    continue;
-                }
-            }
-            // workspace 的组成只有一个权威（`staging::run_workspace`）——与
-            // 自动发射、与界面同一个算式，不各自 format!。
-            let workspace = refrain_host::staging::run_workspace(agent_id, run_id);
-            match host.execute(HostCommand::LaunchRun { run_id, workspace }) {
-                Ok(()) => launched.push(run_id),
-                Err(
-                    HostRefusal::UpstreamNotTerminal { .. }
-                    | HostRefusal::UpstreamWithoutArtifact { .. },
-                ) => {}
-                Err(refusal) => return Err(into_domain_host(refusal)),
-            }
+    let sweep = host_session::launch_awaiting(entry, |_run, agent_id| {
+        match channel_for(config, agent_id) {
+            Ok(Some(_)) => Admission::Launch,
+            Ok(None) => Admission::Skip,
+            Err((code, detail)) => Admission::Refuse { code, detail },
         }
-        (launched, refused)
-    };
-    for (run_id, code, detail) in refused {
+    })?;
+    for (run_id, code, detail) in sweep.refused {
         record_failure(&mut entry.store, run_id, &code, &detail, now)?;
         report.failed.push(run_id);
     }
-    // host 先放掉（它借着 &mut store）：喂上游会自己再开一份 host 来读边
-    // 与工作区——与既有两条发射路径同一条次序纪律，锁不嵌套。
-    for run_id in &launched {
-        crate::upstream::feed_upstream(&mut entry.store, *run_id)?;
-    }
-    Ok(launched)
+    Ok(sweep.launched)
 }
 
 /// 清孤：上游死了且没留下产出，等它的下游永远等不到发射那天。
@@ -601,7 +558,7 @@ fn resolve_orphans(
     loop {
         let orphans: Vec<(Id, String)> = {
             let context = DirectoryContext::new(store.layout().state_dir.clone());
-            let host = open_host(store)?;
+            let host = host_session::open(store)?;
             let mut found = Vec::new();
             for run in host.runs() {
                 let upstream_id = match run.edge {
@@ -652,7 +609,7 @@ fn resolve_orphans(
         if orphans.is_empty() {
             return Ok(());
         }
-        let mut host = open_host(store)?;
+        let mut host = host_session::open(store)?;
         for (run_id, reason) in orphans {
             host.execute(HostCommand::FailRun {
                 run_id,
