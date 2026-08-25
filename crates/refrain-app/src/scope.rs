@@ -78,7 +78,7 @@ pub fn locate_scope(manuscript: &Manuscript, before: &str) -> ScopeLocation {
     // Blocks join with the manuscript's own separator: two newlines in prose,
     // one in plain text. A scope read that joins with the wrong separator
     // compares against bytes the document never had, and every scope misses.
-    let join = std::str::from_utf8(manuscript.scan().separator()).expect("separators are ASCII");
+    let join = manuscript.scan().separator();
 
     // 每个块在拼接全文里的起始偏移。ends[i] 是第 i 块结束处的偏移。
     let mut starts = Vec::with_capacity(blocks.len());

@@ -1479,8 +1479,7 @@ impl Application {
                     // （与 locate_scope 同一来源），转换后按同一个 scan
                     // 重新切回块。
                     let source: String = if whole_document {
-                        let join = std::str::from_utf8(manuscript.scan().separator())
-                            .expect("separators are ASCII");
+                        let join = manuscript.scan().separator();
                         let mut joined = String::new();
                         for (index, block) in manuscript.head().blocks().iter().enumerate() {
                             if index > 0 {

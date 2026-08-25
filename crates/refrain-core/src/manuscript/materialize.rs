@@ -9,8 +9,9 @@ pub(super) fn blocks(
     source.layout.reproduce(source.bytes())?;
     let spans = source.layout.blocks();
     // Freshly minted blocks join with the scan's separator; untouched gaps
-    // reproduce from the source verbatim below.
-    let separator = source.scan.separator();
+    // reproduce from the source verbatim below. This is the one caller that
+    // wants the bytes rather than the text — it builds a byte buffer.
+    let separator = source.scan.separator().as_bytes();
     // A derived lineage answers "which source block is this id" by inverting
     // the bijection — no map, O(1) per block. A resumed lineage keeps its ids
     // verbatim and needs the map materialisation always built.

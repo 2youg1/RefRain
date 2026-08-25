@@ -26,3 +26,6 @@ uuid = { workspace = true }
 # 自己不碰 rusqlite——这条界线由依赖表本身守着。
 [dev-dependencies]
 rusqlite = { workspace = true }
+
+[lints]
+workspace = true

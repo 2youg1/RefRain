@@ -59,11 +59,18 @@ impl BlockScan {
     /// Untouched gaps never go through here: they are reproduced from the
     /// source verbatim. This separator is only what an edit *adds* — a new
     /// paragraph in prose, a new line in plain text.
+    ///
+    /// The type carries the fact that these bytes are text. It used to return
+    /// `&'static [u8]`, and each of the five callers that joins block text
+    /// re-established the same fact at run time with
+    /// `from_utf8(...).expect("separators are ASCII")` — five assertions of
+    /// something this `match` decides. Callers that want the bytes ask for
+    /// them; `materialize` is the only one.
     #[must_use]
-    pub fn separator(self) -> &'static [u8] {
+    pub fn separator(self) -> &'static str {
         match self {
-            Self::Markdown => b"\n\n",
-            Self::Plain => b"\n",
+            Self::Markdown => "\n\n",
+            Self::Plain => "\n",
         }
     }
 }

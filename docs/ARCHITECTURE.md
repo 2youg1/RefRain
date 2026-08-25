@@ -630,15 +630,54 @@ Run these commands in this order. Run all of them for each change.
 
 ```sh
 bun run scriptc:build    # the tier A gates run the compiled artifact
+bun run gate
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-targets
-bun run gate
 ```
 
 `bun run scriptc:build` must run first. The tier A gates execute the compiled
 binary. A missing artifact fails the gate. The gate does not use the interpreter
 instead.
+
+`bun run gate` must run before cargo. `tests/corpora/*.md` are generated and are
+not committed, and `crates/refrain-core/tests/source_layout.rs` reads them with
+`include_bytes!` at compile time, thus on a clean checkout cargo exits 101
+before one test runs. This document published the reverse order until
+`verify:verification-order` began reading it: that gate compares the two
+positions in each document that publishes the sequence, and its list held
+AGENTS.md and CONTRIBUTING.md only. A rule with a gate and a document outside
+the gate's list is a rule with two authorities, and the one nobody checks is the
+one that drifts.
+
+### What the manifest enforces, and what it does not
+
+`[workspace.lints]` in the root `Cargo.toml` denies the constructs this tree
+holds at zero across `--workspace --all-targets`, and `[profile.release]` sets
+`overflow-checks = true` so the profile that ships agrees with the profile that
+is tested.
+
+Six clippy lints that the discipline calls for are **not** in that table,
+because production code still trips them. Measured on rustc 1.97.1, production
+targets only:
+
+| Lint | Sites | Where they concentrate |
+|---|---|---|
+| `arithmetic_side_effects` | 282 | `refrain-core` 205 — offset and layout arithmetic |
+| `indexing_slicing` | 154 | `refrain-core` 96, `refrain-host` 45 |
+| `as_conversions` | 131 | `refrain-store` 45, `apps/native/host` 36 |
+| `string_slice` | 93 | `refrain-core` 53, `refrain-store` 38 |
+| `expect_used` | 12 | `refrain-core`, after the separator type change removed five |
+| `unreachable` | 7 | `manuscript/block_sequence.rs` 4, `store/atomic.rs` 1 |
+
+The last two are design gaps, not oversights: the block tree's depth and its
+node shape are not related by a type, so four `unreachable!` stand where a type
+should; `Index<usize>` panics because the trait says so; `SourceSnapshot::read`
+is the documented panicking half of a pair whose other half returns `Result`.
+Each closes by a change to the module, not by a lint level, and a
+`#[expect(clippy::expect_used)]` would hide the gap rather than close it.
+`overflow-checks` is the runtime half of the first row until the compile-time
+half can be turned on.
 
 **Injection-verify each gate.** Break the thing that the gate guards. See the
 gate fail. Restore the thing. See the gate pass. A gate that never failed proves

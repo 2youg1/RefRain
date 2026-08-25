@@ -237,6 +237,14 @@ impl HeadingLevel {
     /// Markdown 的层级上限。第七个 `#` 起不再是标题。
     pub const MAX: u8 = 6;
 
+    /// 一级标题。
+    ///
+    /// 四处调用方知道自己要的就是一级：索引反解读到损坏后缀时的兑底值、
+    /// 没带层级的 `"heading"` 行、以及两处测试。它们原本各自写
+    /// `from_level(1)` 再在运行期断言一次「1 是一个层级」。写成常量后，
+    /// 那句断言由编译器说，而且只说一次。
+    pub const ONE: Self = Self(1);
+
     /// 从首行字节数出 `#`。非标题（或超过六个 `#`）返回 `None`。
     #[must_use]
     pub fn of_line(content: &[u8]) -> Option<Self> {

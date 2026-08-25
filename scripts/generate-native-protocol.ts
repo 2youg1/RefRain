@@ -353,7 +353,10 @@ pub const EVENT_TEXT_BYTES: usize = ${schema.layout.eventTextBytes};
 pub const DEFAULT_VIEWPORT_BLOCKS: u32 = ${schema.layout.defaultViewportBlocks};
 pub const VIRTUAL_BLOCK_HEIGHT: f64 = ${schema.layout.virtualBlockHeight}.0;
 pub const ANCHOR_RANGE_CAPACITY: usize = ${schema.layout.anchorRangeCapacity};
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "generated: the fingerprint is read across the boundary, not by this crate"
+)]
 pub const PROTOCOL_FINGERPRINT: &str =
     "${hash}";
 ${errors}

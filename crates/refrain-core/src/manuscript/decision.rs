@@ -198,7 +198,7 @@ pub fn merged_text(proposal: &Proposal, verdicts: &[Verdict]) -> String {
 }
 
 fn scope_text(head: &TextHead, scope: &EditScope, scan: crate::BlockScan) -> String {
-    let separator = std::str::from_utf8(scan.separator()).expect("block separators are ASCII");
+    let separator = scan.separator();
     scope
         .blocks()
         .iter()

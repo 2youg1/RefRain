@@ -236,10 +236,7 @@ pub fn collect_attempt(
                                         .map(|block| block.text().to_string())
                                 })
                                 .collect::<Vec<_>>()
-                                .join(
-                                    std::str::from_utf8(manuscript.scan().separator())
-                                        .expect("separators are ASCII"),
-                                );
+                                .join(manuscript.scan().separator());
                             if current == *before {
                                 ScopeLocation::Unique(blocks)
                             } else {

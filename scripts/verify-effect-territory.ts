@@ -3,13 +3,14 @@
  * Effect 的领地边界（docs/EFFECT.md 的机器形态）。
  *
  * Effect 进入的是 shell 会话层；它不进排版热路径、不进构建脚本、不进组件。
- * 这条边界成不成立，与 typeset-purity 同理，完全取决于没人「顺手 import
- * 一下」——注释挡不住 import，这道门禁挡得住。
+ * 这条边界成不成立，完全取决于没人「顺手 import 一下」——注释挡不住 import，
+ * 这道门禁挡得住。排版热路径那一条也归它管：`docs/EFFECT.md` 一度把那条规则
+ * 写成一道叫 `verify:typeset-purity` 的门禁，而那道门禁从来没有存在过。
  *
  * 三条规则：
  *   一、禁区（typeset/editor/scripts/e2e/ui）不出现 effect import；
- *       ui 的唯一例外是 Solid 适配器，它是全仓唯一同时 import solid-js
- *       与 effect 的文件。
+ *       将来会话层回来时，它的视图适配器是唯一例外——全仓唯一同时 import
+ *       视图库与 effect 的那个文件。步骤 10 之后没有这样的文件。
  *   二、运行时只在边缘启动：Effect.runPromise / runSync / runFork 只准
  *       出现在 main.tsx 与适配器；组件与会话层内部只组合、不执行。
  *   三、版本钉死：任何 package.json 声明 effect 都必须是精确版本，

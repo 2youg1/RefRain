@@ -129,12 +129,10 @@ fn kind_of(name: &str) -> BlockKind {
         // failing the read: a corrupt suffix should cost the outline its
         // indentation, not cost the author the search index.
         let parsed = level.parse::<u8>().ok().and_then(HeadingLevel::from_level);
-        return BlockKind::Heading(
-            parsed.unwrap_or_else(|| HeadingLevel::from_level(1).expect("1 is a level")),
-        );
+        return BlockKind::Heading(parsed.unwrap_or(HeadingLevel::ONE));
     }
     match name {
-        "heading" => BlockKind::Heading(HeadingLevel::from_level(1).expect("1 is a level")),
+        "heading" => BlockKind::Heading(HeadingLevel::ONE),
         "fence" => BlockKind::Fence,
         // 反解时列数已经丢了（写入时就没存），给一个最小的合法形状。索引只
         // 用 kind 做排序权重，读不到列数不影响任何判断；真要排版时视图层

@@ -19,17 +19,29 @@
  * this gate should be deleted rather than left as a rule nobody can explain.
  *
  * Injection-verified three ways:
- *   1. Swap the cargo block above `bun run gate` in either document → red,
+ *   1. Swap the cargo block above `bun run gate` in any listed document → red,
  *      naming that document and both line numbers.
  *   2. Delete the gate/corpora line from a document → red, "never generates".
  *   3. Remove `include_bytes!` from source_layout.rs → red, telling the reader
  *      the premise is gone.
+ *
+ * ARCHITECTURE.md joined the list after publishing the reverse order for as
+ * long as it has had a verification block: cargo above `bun run gate`, which is
+ * the exact failure this gate exists to prevent. The gate was correct and its
+ * list was short, which is the cheaper of the two ways to be wrong and the
+ * harder one to notice — a green run reported that every document it knew
+ * about was ordered.
  */
 
 import { readFileSync } from "node:fs";
 
-/** Documents that publish the verification sequence to a reader. */
-const DOCUMENTS = ["docs/AGENTS.md", "docs/CONTRIBUTING.md"] as const;
+/**
+ * Documents that publish the verification sequence to a reader.
+ *
+ * Every document that shows a cargo command belongs here. A document outside
+ * this list is a second authority for the order, and it is the one that drifts.
+ */
+const DOCUMENTS = ["docs/AGENTS.md", "docs/CONTRIBUTING.md", "docs/ARCHITECTURE.md"] as const;
 
 /** The file whose compile-time read of the corpora creates the constraint. */
 const COMPILE_TIME_READER = "crates/refrain-core/tests/source_layout.rs";

@@ -69,7 +69,63 @@ rayon = "=1.12.0"
 memchr = "=2.8.3"
 trash = "=5.2.6"
 
+# The rules `docs/AGENTS.md` states for Rust, in the place the compiler reads.
+#
+# **Every entry here is measured at zero across `--workspace --all-targets`.** A
+# level the tree cannot hold would either break the build or, set to `warn`,
+# become an error anyway under the CI command `-D warnings`. So this table says
+# what is enforced and nothing else.
+#
+# What is **not** here, with the count `cargo clippy --workspace -- -W
+# clippy::<lint>` reported on rustc 1.97.1 for production code alone:
+#
+#   arithmetic_side_effects  282    indexing_slicing  154
+#   as_conversions           131    string_slice       93
+#   expect_used               20    unreachable         7
+#
+# Those are not oversights and they are not one flag away. The four
+# `unreachable!` in `manuscript/block_sequence.rs` stand where the tree's depth
+# and its node shape are not related by the type; `Index<usize>` panics because
+# the trait says so; `SourceSnapshot::read` is the documented panicking half of
+# a pair whose other half returns `Result`. Turning those into `#[expect]`
+# attributes buys attribute noise and hides the design gap, so the gap is
+# recorded in `docs/ARCHITECTURE.md` Open items instead, where this repository
+# keeps its gaps. `overflow-checks` below is the runtime half of the arithmetic
+# entry until the compile-time half can be turned on.
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+# A construct with no path to a correct answer. Nothing in this tree has one,
+# and nothing should acquire one without the review a red build forces.
+todo = "deny"
+unimplemented = "deny"
+# Dead ends that hide a decision the code should be making.
+exit = "deny"
+mem_forget = "deny"
+# Debug residue. `dbg!` in a shipped binary prints an author's manuscript to a
+# console nobody reads.
+dbg_macro = "deny"
+# Float literals that silently change value on the way into the type.
+lossy_float_literal = "deny"
+# `read_to_string(File::open(p))` loses the path from the error message; the
+# `fs::` helpers keep it.
+verbose_file_reads = "deny"
+# An enum variant written `A {}` reads as a struct variant that lost its fields.
+empty_enum_variants_with_brackets = "deny"
+# Suppression hygiene. `#[expect]` reports itself when its reason expires;
+# `#[allow]` does not, and a suppression without a reason cannot be reviewed.
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+
 [profile.release]
 strip = true
 lto = true
 codegen-units = 1
+# The root AGENTS.md dislike list opens with silently overflowing arithmetic,
+# and release is the one profile where the compiler permits it. 282 production
+# expressions still do bare integer arithmetic (see the note above the lint
+# table), so this is where that half is caught: a wrong offset written into a
+# manuscript is worse than a crash that never writes one. Debug already checks;
+# this makes the profile the author ships agree with the profile they test.
+overflow-checks = true

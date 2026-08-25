@@ -1,9 +1,17 @@
 # Effect conventions
 
-Effect (`effect@beta`, pinned exact) is the concurrency and error runtime for
-the TypeScript session layer. This document is the authority for where Effect
-runs, which patterns are canonical, and which are forbidden. Read
-[AGENTS.md](AGENTS.md) first; every rule there still applies.
+Effect is the concurrency and error runtime a TypeScript session layer in this
+repository **must** use, on the day one exists. This document is the authority
+for where Effect may run, which patterns are canonical, and which are
+forbidden. Read [AGENTS.md](AGENTS.md) first; every rule there still applies.
+
+**`effect` is not a dependency today, and no file imports it.** The session
+layer it governed was deleted with the Solid surface in step 10, and
+`package.json` carries no `effect` entry. The document stays because the rules
+below are what the *next* such layer adopts instead of hand-writing a second
+epoch scheme — which is exactly what the deleted one did. Read every
+present-tense sentence about a runtime, a component, or a bundle as a rule
+waiting for its first consumer, not as a description of code on the disk.
 
 ## Type discipline
 
@@ -26,14 +34,12 @@ points here rather than repeating them.
 | `apps/native/src/` | **Forbidden** | The Native core is a synchronous `update` compiled through a restricted subset (`native check --strict`). A runtime cannot enter it, and effects are the SDK's `Cmd`. |
 | A future TypeScript session layer | **Required** when it appears | Nothing occupies this row today. |
 
-**Effect currently has no consumer in this repository.** The session layer it
-governed lived in `apps/desktop/src/shell/` and was deleted with the Solid
-surface in step 10; the orchestration it managed (epochs, cancel flags,
-exclusive locks) now lives in Rust — `AgentHost` owns Run lifecycles, and
-`DocumentSurface` owns the document state machine. The dependency stays pinned
-and this document stays authoritative because the *next* TypeScript layer that
-needs concurrency must adopt these patterns rather than hand-write a second
-epoch scheme, which is exactly what the deleted one did.
+**Effect has no consumer in this repository.** The session layer it governed
+lived in `apps/desktop/src/shell/` and was deleted with the Solid surface in
+step 10; the orchestration it managed (epochs, cancel flags, exclusive locks)
+now lives in Rust — `AgentHost` owns Run lifecycles, and `DocumentSurface` owns
+the document state machine. Nothing in the tree imports `effect`, and the
+package is not installed.
 
 **The gate is coupled to these paths.** `scripts/verify-effect-territory.ts`
 fails when a scan matches no files at all — that self-check is deliberate,
@@ -87,7 +93,8 @@ order, exactly once.
 - Do not store `(() => void) | null` unsubscribe fields.
 - Do not write epoch counters to invalidate stale async answers. Interrupt the
   fiber instead; interruption cancels the in-flight request and the sleep with
-  it. `shell/run-watch.ts` is the reference conversion.
+  it. The reference conversion was `shell/run-watch.ts`, deleted with the rest
+  of the session layer in step 10; the pattern outlived the file.
 - One `ManagedRuntime` exists, created at the session layer's entry point.
   Components never call `Effect.runPromise`; the adapter does.
 
@@ -97,8 +104,9 @@ Observable session state lives in `SubscriptionRef`. Derived facts (for
 example "everything just settled") are derived from `changes` with `Stream`,
 not stored in a second mutable field that can disagree with the first.
 
-An adapter module converts `SubscriptionRef<A>` to whatever the view layer
-signal. It is the only file that imports both `solid-js` and `effect`.
+An adapter module converts `SubscriptionRef<A>` into whatever signal that
+session layer's view library uses. It is the one file allowed to import both
+`effect` and that library.
 
 ### 4. Operations: Effect.fn, exclusivity as a combinator
 
@@ -127,12 +135,18 @@ stale-answer refusal become exact assertions, not sleeps and hopes.
 
 ## Dependency discipline
 
-- `effect` is pinned exact in `package.json`; upgrades are one commit that
-  also runs the full gate.
-- No other `@effect/*` package enters without a consumer in the same commit.
-- The bundle cost of the runtime was measured at 54 KB gzip once
-  (probe, 2026-08-03); a change that imports Effect into `packages/*` fails
-  `verify:typeset-purity` and is a regression, not a trade-off.
+- `effect` enters `package.json` in the same commit as its first consumer, at
+  an exact version. `verify:effect-territory` reads both manifests and refuses
+  a range: a `^` makes today's green prove nothing about tomorrow's install.
+- No `@effect/*` package enters without a consumer in the same commit.
+- The runtime measured 54 KB gzip in one probe (2026-08-03). That cost is
+  acceptable in a session layer and is not acceptable on the typesetting path,
+  which is why the territory table above forbids `effect` there. **No gate is
+  named for the typesetting rule.** The forbidden-path half of
+  `verify:effect-territory` is the whole enforcement; an earlier version of
+  this line cited `verify:typeset-purity`, which has never existed on the disk
+  or in `scripts/gate.ts`, and a reader who trusted it would have believed a
+  guard was standing where none was.
 
 ## Migration order
 

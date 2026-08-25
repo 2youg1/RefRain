@@ -32,3 +32,6 @@ html5gum = "=0.8.4"
 
 [dev-dependencies]
 serde_json = { workspace = true }
+
+[lints]
+workspace = true

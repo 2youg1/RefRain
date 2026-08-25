@@ -21,3 +21,6 @@ refrain-core = { workspace = true }
 # 第二处权威——直接依赖那两个 crate 更便宜。
 refrain-store = { workspace = true }
 refrain-host = { workspace = true }
+
+[lints]
+workspace = true

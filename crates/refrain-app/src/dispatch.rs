@@ -636,7 +636,7 @@ fn join_block_texts<'a>(
     manuscript: &Manuscript,
     blocks: impl Iterator<Item = &'a Block>,
 ) -> String {
-    let join = std::str::from_utf8(manuscript.scan().separator()).expect("separators are ASCII");
+    let join = manuscript.scan().separator();
     let mut out = String::new();
     for (index, block) in blocks.enumerate() {
         if index > 0 {

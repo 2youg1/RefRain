@@ -957,8 +957,9 @@ impl Manuscript {
     pub fn undo_last(&mut self) -> Result<TextTransition, TextRefusal> {
         // Undoing hydrates an action whose block ids the index must resolve;
         // the index was skipped at open (derived lineages cost one mint), so
-        // build it now if the first edit never did.
-        self.ensure_block_at();
+        // build it now if the first edit never did. `local_undo_plan` reads the
+        // field, thus this call is here for the build and not for the value.
+        Self::block_index(&mut self.block_at, &self.head);
         let local = {
             let action = self.actions.last().ok_or(TextRefusal::NothingToUndo)?;
             if !action.verdicts.is_empty() {
@@ -1232,35 +1233,50 @@ impl Manuscript {
         Ok(transition)
     }
 
-    /// Build the id → position index on first use. Opening skips it (a
+    /// The id → position index, built on first use. Opening skips it (a
     /// derived lineage costs one mint, an index would cost one hash per
     /// block); the first edit or undo pays the build once.
-    fn ensure_block_at(&mut self) {
-        if self.block_at.is_none() {
-            self.block_at = Some(
-                self.head
-                    .blocks
-                    .iter()
-                    .enumerate()
-                    .map(|(index, block)| (block.id, index))
-                    .collect(),
-            );
-        }
+    ///
+    /// This returns the index rather than filling the field, so no caller ever
+    /// holds the `Option`. It used to be `ensure_block_at()`, after which two
+    /// call sites re-established the same fact — one with `unwrap()`, one with
+    /// `expect("ensured above")`. Both were correct and both were the kind of
+    /// correctness that stops being true when someone reorders two lines.
+    ///
+    /// It takes the two fields rather than `&mut self` so the caller can hold
+    /// the index and `&self.head` at once: they are disjoint fields, and
+    /// cloning either to satisfy one `&mut self` would put an allocation on
+    /// the path that every keystroke takes.
+    fn block_index<'a>(
+        block_at: &'a mut Option<HashMap<Id, usize>>,
+        head: &TextHead,
+    ) -> &'a HashMap<Id, usize> {
+        block_at.get_or_insert_with(|| {
+            head.blocks
+                .iter()
+                .enumerate()
+                .map(|(index, block)| (block.id, index))
+                .collect()
+        })
     }
 
     pub fn execute(&mut self, command: TextCommand) -> Result<TextTransition, TextRefusal> {
+        // The index is built on the editor arm only: a decision batch does not
+        // address blocks by id, and building it there would cost one hash per
+        // block for nothing.
         let local = match &command {
-            TextCommand::Editor(editor) => {
-                self.ensure_block_at();
-                local_replacement(editor, self.block_at.as_ref().unwrap(), self.scan)
-            }
+            TextCommand::Editor(editor) => local_replacement(
+                editor,
+                Self::block_index(&mut self.block_at, &self.head),
+                self.scan,
+            ),
             TextCommand::CommitDecisionBatch(_) => None,
         };
         let (head, action) = match command {
             TextCommand::Editor(editor) => action::apply_editor_indexed(
                 &self.head,
                 &editor,
-                self.block_at.as_ref().expect("ensured above"),
+                Self::block_index(&mut self.block_at, &self.head),
                 self.scan,
             )?,
             TextCommand::CommitDecisionBatch(batch) => {

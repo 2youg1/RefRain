@@ -8,7 +8,10 @@ pub const EVENT_TEXT_BYTES: usize = 12000;
 pub const DEFAULT_VIEWPORT_BLOCKS: u32 = 96;
 pub const VIRTUAL_BLOCK_HEIGHT: f64 = 36.0;
 pub const ANCHOR_RANGE_CAPACITY: usize = 512;
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "generated: the fingerprint is read across the boundary, not by this crate"
+)]
 pub const PROTOCOL_FINGERPRINT: &str =
     "2be82cd976501fb657b6db59d738537fcaf6dba256c3e85ee74bc34d8a66c033";
 pub const ERROR_PROTOCOL_MISMATCH: u32 = 1;
