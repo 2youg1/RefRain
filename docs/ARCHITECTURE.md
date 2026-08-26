@@ -234,7 +234,7 @@ other types. A gate makes the refusal.
 |---|---|---|---|---|
 | **L0 `refrain-core`** — the domain | The product rules: manuscript, blocks, formats, line breaking, the agent protocol, ranking, KARA | A database, a file path, a process, a window | `verify:core-purity`, `#![forbid(unsafe_code)]` | 32 / 11,891 |
 | **L1 `refrain-store`** — persistence | The two databases, the mutable disk paths, the atomic writer, the Root guard, the indexes, the Config file, the trash | Domain rules, orchestration semantics | `verify:write-path`, `verify:trash-only` | 23 / 9,054 |
-| **L2 `refrain-host`** — orchestration | Task, Run, and Authorization state, staging, workspaces, process launch, harness adapters | The database. It writes through the `HostJournal` trait. Domain rules | INV-12 by review, and the journal seam | 6 / 4,745 |
+| **L2 `refrain-host`** — orchestration | Task, Run, and Authorization state, staging, workspaces, process launch, harness adapters | The database. It writes through the `HostJournal` trait. Domain rules | INV-12 by review, and the journal seam | 6 / 4,873 |
 | **L3 `refrain-app`** — use cases | The flows that need more than one layer below, the one `Application`, and `DocumentSurface` | FFI, raw pointers, platform APIs | `#![forbid(unsafe_code)]` | 25 / 9,595 |
 | **L4 `apps/native/host`** — the bridge | The C ABI: one entry, the generated layout, the session table, bounded replies, the handshake | Product semantics. Those are Rust enums below | `verify:bridge`, the protocol generator `--check` | 6 / 2,525 |
 | **L5 `apps/native/src`** — the surface | Markup and declarations, interface state, platform events, drawing | Manuscript bytes, product rules | `native check . --strict`; the layer table is in [AGENTS.md](AGENTS.md) | 33 / 14,120 |
@@ -345,7 +345,7 @@ module with no test file has test blocks in the module.
 
 | Module | Owns | Proven by |
 |---|---|---|
-| `host` | The `AgentHost` state machine and the dispatch protocol: pre-check, staging, atomic authorization, per-Run launch, restart recovery | in-module; app `tests/edge_end_to_end` |
+| `host` | The `AgentHost` state machine and the dispatch protocol: pre-check, staging, atomic authorization, per-Run launch, restart recovery. A command reaches a Task or a Run through `task`/`run`/`task_and_journal`/`run_and_journal`, never through a position it resolved earlier: `runs` stays an ordered `Vec` because `run_edge` expresses an edge as a position, and it is the *lookup result* that must not be carried around | in-module; app `tests/edge_end_to_end` |
 | `run_edge` | `RunEdge` and `ResolvedEdge`, and the cycle check at authorization | in-module |
 | `staging` | The private staging directory and the Run workspaces. Promotion is a rename | in-module; `verify:alternates-isolation` |
 | `process` | The launch, the observation, and the cancel of a producer process | `tests/fake_claude` |
@@ -754,7 +754,7 @@ cargo clippy --workspace --message-format=json -- \
 | Lint | Sites | The largest single file |
 |---|---|---|
 | `arithmetic_side_effects` | 277 | `manuscript/align.rs` 38, `native_document.rs` 32, `typeset.rs` 27 |
-| `indexing_slicing` | 149 | `host.rs` 36, `manuscript/mod.rs` 15, `manuscript/align.rs` 14 |
+| `indexing_slicing` | 113 | `manuscript/mod.rs` 15, `manuscript/align.rs` 14, `manuscript/review.rs` 12 |
 | `as_conversions` | 127 | `native/host/document.rs` 22, `native/host/wire.rs` 14 |
 | `string_slice` | 93 | `ingest/office.rs` 30, `agent_protocol.rs` 30 |
 | `expect_used` | 11 | `manuscript/mod.rs` 6 |

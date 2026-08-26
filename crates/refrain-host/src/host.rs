@@ -460,17 +460,74 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
         &self.awaiting_launch
     }
 
-    fn task_index(&self, id: Id) -> Result<usize, HostRefusal> {
+    /// The four ways this module reaches a Task or a Run it was named.
+    ///
+    /// **Why an accessor and not a position.** These replaced a pair of
+    /// `*_index` finders whose `usize` then travelled through thirty-six bare
+    /// subscripts. Each subscript was correct only while no `push` ran between
+    /// the lookup and the use, and proving that took a reading of the whole
+    /// 1,810-line file — again after every edit. A name cannot go stale that
+    /// way, and a Run that is not on record now leaves through
+    /// `HostRefusal::UnknownRun` from one place instead of panicking from
+    /// thirty-six.
+    ///
+    /// **What did not change.** `runs` stays a `Vec` and stays in order.
+    /// `run_edge` expresses an edge as a position into the authorized round
+    /// (`edges point at positions, not Run ids`), so the order is semantics;
+    /// a map keyed by id would break authorization, not just move it.
+    fn task(&self, id: Id) -> Result<&ReviewTask, HostRefusal> {
         self.tasks
             .iter()
-            .position(|task| task.id == id)
+            .find(|task| task.id == id)
             .ok_or(HostRefusal::UnknownTask(id))
     }
 
-    fn run_index(&self, id: Id) -> Result<usize, HostRefusal> {
+    fn run(&self, id: Id) -> Result<&Run, HostRefusal> {
         self.runs
             .iter()
-            .position(|run| run.id == id)
+            .find(|run| run.id == id)
+            .ok_or(HostRefusal::UnknownRun(id))
+    }
+
+    /// A Task and the journal that records it, borrowed apart.
+    ///
+    /// Every state change here is "change it, then write it down", and the two
+    /// halves need disjoint borrows of `self`. Handing both out of one call is
+    /// what lets the arms below name a Task instead of subscripting it — a
+    /// `&self` accessor plus `&mut self.journal` would be one borrow too many.
+    fn task_and_journal(&mut self, id: Id) -> Result<(&mut ReviewTask, &mut J), HostRefusal> {
+        let Self { tasks, journal, .. } = self;
+        let task = tasks
+            .iter_mut()
+            .find(|task| task.id == id)
+            .ok_or(HostRefusal::UnknownTask(id))?;
+        Ok((task, journal))
+    }
+
+    /// A Run and the journal that records it, borrowed apart. See
+    /// [`Self::task_and_journal`].
+    fn run_and_journal(&mut self, id: Id) -> Result<(&mut Run, &mut J), HostRefusal> {
+        let Self { runs, journal, .. } = self;
+        let run = runs
+            .iter_mut()
+            .find(|run| run.id == id)
+            .ok_or(HostRefusal::UnknownRun(id))?;
+        Ok((run, journal))
+    }
+
+    /// The Task named by `id`, for a change this call does not journal.
+    fn task_mut(&mut self, id: Id) -> Result<&mut ReviewTask, HostRefusal> {
+        self.tasks
+            .iter_mut()
+            .find(|task| task.id == id)
+            .ok_or(HostRefusal::UnknownTask(id))
+    }
+
+    /// The Run named by `id`, for a change this call does not journal.
+    fn run_mut(&mut self, id: Id) -> Result<&mut Run, HostRefusal> {
+        self.runs
+            .iter_mut()
+            .find(|run| run.id == id)
             .ok_or(HostRefusal::UnknownRun(id))
     }
 
@@ -486,11 +543,10 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
     fn runs_to_authorize(
         &self,
         task_id: Id,
-        task_index: usize,
         new_agents: &[Id],
         retry_runs: &[Id],
     ) -> Result<Authorized, HostRefusal> {
-        match self.tasks[task_index].progress {
+        match self.task(task_id)?.progress {
             TaskProgress::Draft => {
                 if !retry_runs.is_empty() || new_agents.is_empty() {
                     return Err(HostRefusal::TaskDraftHasNoRuns(task_id));
@@ -507,7 +563,7 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                     return Err(HostRefusal::NothingToAuthorize(task_id));
                 }
                 for run_id in retry_runs {
-                    let run = &self.runs[self.run_index(*run_id)?];
+                    let run = self.run(*run_id)?;
                     if run.task_id != task_id || !matches!(run.progress, RunProgress::Queued) {
                         return Err(HostRefusal::RunNotQueued(*run_id));
                     }
@@ -535,14 +591,13 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
         if !all_terminal {
             return Ok(());
         }
-        let task_index = self.task_index(task_id)?;
-        if matches!(self.tasks[task_index].progress, TaskProgress::Open { .. }) {
-            self.tasks[task_index].progress = TaskProgress::Closed {
+        let (task, journal) = self.task_and_journal(task_id)?;
+        if matches!(task.progress, TaskProgress::Open { .. }) {
+            task.progress = TaskProgress::Closed {
                 reason: CloseReason::RunsTerminal,
                 closed_at: at,
             };
-            let task = &self.tasks[task_index];
-            self.journal
+            journal
                 .update_task(task)
                 .map_err(|error| HostRefusal::Journal(error.to_string()))?;
         }
@@ -588,9 +643,7 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                         actual: package.digest,
                     });
                 }
-                let task_index = self.task_index(task_id)?;
-                let authorized =
-                    self.runs_to_authorize(task_id, task_index, &new_agents, &retry_runs)?;
+                let authorized = self.runs_to_authorize(task_id, &new_agents, &retry_runs)?;
 
                 // Edges are checked before anything is written down. An
                 // authorization is immutable, so a cycle inside one could
@@ -676,7 +729,7 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                                 edge: bound.get(index).copied().flatten(),
                             });
                         }
-                        self.tasks[task_index].progress = TaskProgress::Open {
+                        self.task_mut(task_id)?.progress = TaskProgress::Open {
                             opened_at: authorized_at,
                         };
                         minted
@@ -684,11 +737,10 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                     Authorized::Retried(run_ids) => {
                         let mut revived = Vec::with_capacity(run_ids.len());
                         for run_id in run_ids {
-                            let run_index = self.run_index(*run_id)?;
-                            self.runs[run_index].progress = RunProgress::Authorized {
-                                request_digest: digest_for(*run_id)?,
-                            };
-                            revived.push(self.runs[run_index].clone());
+                            let request_digest = digest_for(*run_id)?;
+                            let run = self.run_mut(*run_id)?;
+                            run.progress = RunProgress::Authorized { request_digest };
+                            revived.push(run.clone());
                         }
                         revived
                     }
@@ -703,8 +755,9 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                     manifest_digest: package.digest,
                     authorized_at,
                 };
-                self.journal
-                    .record_authorization(&self.tasks[task_index], &runs, &authorization)
+                let (task, journal) = self.task_and_journal(task_id)?;
+                journal
+                    .record_authorization(task, &runs, &authorization)
                     .map_err(|error| HostRefusal::Journal(error.to_string()))?;
                 if matches!(authorized, Authorized::Minted(_)) {
                     self.runs.extend(runs);
@@ -712,7 +765,6 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                 self.authorizations.push(authorization);
             }
             HostCommand::LaunchRun { run_id, workspace } => {
-                let run_index = self.run_index(run_id)?;
                 // A Run that waits on another may not start before that other
                 // is terminal. `Follows` needs the upstream's artifact and
                 // `Verifies` needs something to verify; both are meaningless
@@ -720,7 +772,7 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                 // at authorization because the author authorizes the whole
                 // round in one click — the waiting is about execution order,
                 // not about what was permitted.
-                if let Some(edge) = self.runs[run_index].edge {
+                if let Some(edge) = self.run(run_id)?.edge {
                     let upstream = match edge {
                         ResolvedEdge::Follows { upstream } => Some(upstream),
                         ResolvedEdge::Verifies { subject } => Some(subject),
@@ -729,9 +781,9 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                         ResolvedEdge::Alternates { .. } => None,
                     };
                     if let Some(upstream) = upstream {
-                        let waited = self.run_index(upstream)?;
+                        let waited = self.run(upstream)?;
                         if !matches!(
-                            self.runs[waited].progress,
+                            waited.progress,
                             RunProgress::Completed { .. }
                                 | RunProgress::Failed { .. }
                                 | RunProgress::Cancelled
@@ -751,7 +803,7 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                         // producer had ever run.
                         let artifact = self
                             .context
-                            .read_result(&self.runs[waited].workspace, upstream)
+                            .read_result(&waited.workspace, upstream)
                             .map_err(|error| HostRefusal::Context(error.to_string()))?;
                         if artifact.is_none_or(|bytes| bytes.is_empty()) {
                             return Err(HostRefusal::UpstreamWithoutArtifact {
@@ -761,11 +813,12 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                         }
                     }
                 }
-                let request_digest = match &self.runs[run_index].progress {
+                let launching = self.run(run_id)?;
+                let request_digest = match &launching.progress {
                     RunProgress::Authorized { request_digest } => request_digest.clone(),
                     _ => return Err(HostRefusal::RunNotAuthorized(run_id)),
                 };
-                let snapshot_digest = self.runs[run_index].snapshot_digest.clone();
+                let snapshot_digest = launching.snapshot_digest.clone();
                 // §8.2-5: continuing an authorized Run re-verifies its staged
                 // request. Missing blocks; nothing is rebuilt from the now.
                 if !self
@@ -777,12 +830,11 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                 }
                 // §8.2-3: Authorized→Launching lands first, then the request
                 // becomes visible to the producer, then the adapter.
-                self.runs[run_index].progress = RunProgress::Launching {
-                    request_digest: request_digest.clone(),
-                };
-                self.runs[run_index].workspace.clone_from(&workspace);
-                self.journal
-                    .update_run(&self.runs[run_index])
+                let (run, journal) = self.run_and_journal(run_id)?;
+                run.progress = RunProgress::Launching { request_digest };
+                run.workspace.clone_from(&workspace);
+                journal
+                    .update_run(run)
                     .map_err(|error| HostRefusal::Journal(error.to_string()))?;
                 self.context
                     .promote_request(run_id, &workspace, &snapshot_digest)
@@ -790,13 +842,13 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                 self.awaiting_launch.retain(|id| *id != run_id);
             }
             HostCommand::CompleteDispatch { run_id, receipt } => {
-                let run_index = self.run_index(run_id)?;
-                if !matches!(self.runs[run_index].progress, RunProgress::Launching { .. }) {
+                let (run, journal) = self.run_and_journal(run_id)?;
+                if !matches!(run.progress, RunProgress::Launching { .. }) {
                     return Err(HostRefusal::RunNotLaunching(run_id));
                 }
-                self.runs[run_index].progress = RunProgress::Dispatched { receipt };
-                self.journal
-                    .update_run(&self.runs[run_index])
+                run.progress = RunProgress::Dispatched { receipt };
+                journal
+                    .update_run(run)
                     .map_err(|error| HostRefusal::Journal(error.to_string()))?;
                 self.recovery_required.retain(|id| *id != run_id);
             }
@@ -805,19 +857,16 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                 artifact_digest,
                 at,
             } => {
-                let run_index = self.run_index(run_id)?;
-                if !matches!(
-                    self.runs[run_index].progress,
-                    RunProgress::Dispatched { .. }
-                ) {
+                let (run, journal) = self.run_and_journal(run_id)?;
+                if !matches!(run.progress, RunProgress::Dispatched { .. }) {
                     return Err(HostRefusal::RunNotDispatched(run_id));
                 }
                 // §8.3: Completed only after the artifact validated and was
                 // atomically promoted — process exit is not completion.
-                let task_id = self.runs[run_index].task_id;
-                self.runs[run_index].progress = RunProgress::Completed { artifact_digest };
-                self.journal
-                    .update_run(&self.runs[run_index])
+                let task_id = run.task_id;
+                run.progress = RunProgress::Completed { artifact_digest };
+                journal
+                    .update_run(run)
                     .map_err(|error| HostRefusal::Journal(error.to_string()))?;
                 self.recovery_required.retain(|id| *id != run_id);
                 self.close_if_runs_terminal(task_id, at)?;
@@ -827,49 +876,50 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                 failure,
                 at: _,
             } => {
-                let run_index = self.run_index(run_id)?;
+                let (run, journal) = self.run_and_journal(run_id)?;
                 if matches!(
-                    self.runs[run_index].progress,
+                    run.progress,
                     RunProgress::Completed { .. } | RunProgress::Cancelled
                 ) {
                     return Err(HostRefusal::RunTerminal(run_id));
                 }
                 // §8.2-4: a failing Run is recorded, never rolled back. It
                 // also never closes its Task: retry-or-close is the author's.
-                self.runs[run_index].progress = RunProgress::Failed { failure };
-                self.journal
-                    .update_run(&self.runs[run_index])
+                run.progress = RunProgress::Failed { failure };
+                journal
+                    .update_run(run)
                     .map_err(|error| HostRefusal::Journal(error.to_string()))?;
                 self.recovery_required.retain(|id| *id != run_id);
             }
             HostCommand::CancelRun { run_id, at } => {
-                let run_index = self.run_index(run_id)?;
+                let (run, journal) = self.run_and_journal(run_id)?;
                 if matches!(
-                    self.runs[run_index].progress,
+                    run.progress,
                     RunProgress::Completed { .. } | RunProgress::Cancelled
                 ) {
                     return Err(HostRefusal::RunNotCancellable(run_id));
                 }
-                let task_id = self.runs[run_index].task_id;
-                self.runs[run_index].progress = RunProgress::Cancelled;
-                self.journal
-                    .update_run(&self.runs[run_index])
+                let task_id = run.task_id;
+                run.progress = RunProgress::Cancelled;
+                journal
+                    .update_run(run)
                     .map_err(|error| HostRefusal::Journal(error.to_string()))?;
                 self.recovery_required.retain(|id| *id != run_id);
                 self.awaiting_launch.retain(|id| *id != run_id);
                 self.close_if_runs_terminal(task_id, at)?;
             }
             HostCommand::RetryRun { run_id } => {
-                let run_index = self.run_index(run_id)?;
-                let run = &self.runs[run_index];
+                let run = self.run(run_id)?;
                 if !matches!(
                     run.progress,
                     RunProgress::Failed { .. } | RunProgress::Cancelled
                 ) {
                     return Err(HostRefusal::RunNotRetryable(run_id));
                 }
-                let task_index = self.task_index(run.task_id)?;
-                if matches!(self.tasks[task_index].progress, TaskProgress::Closed { .. }) {
+                if matches!(
+                    self.task(run.task_id)?.progress,
+                    TaskProgress::Closed { .. }
+                ) {
                     return Err(HostRefusal::TaskClosed(run.task_id));
                 }
                 // §8.4b: retry is a NEW Run, new workspace, new authorization —
@@ -894,16 +944,16 @@ impl<J: HostJournal, C: FrozenContext> AgentHost<J, C> {
                 self.runs.push(retry);
             }
             HostCommand::CloseTask { task_id, at } => {
-                let task_index = self.task_index(task_id)?;
-                if matches!(self.tasks[task_index].progress, TaskProgress::Closed { .. }) {
+                let (task, journal) = self.task_and_journal(task_id)?;
+                if matches!(task.progress, TaskProgress::Closed { .. }) {
                     return Err(HostRefusal::TaskClosed(task_id));
                 }
-                self.tasks[task_index].progress = TaskProgress::Closed {
+                task.progress = TaskProgress::Closed {
                     reason: CloseReason::Author,
                     closed_at: at,
                 };
-                self.journal
-                    .update_task(&self.tasks[task_index])
+                journal
+                    .update_task(task)
                     .map_err(|error| HostRefusal::Journal(error.to_string()))?;
             }
         }
@@ -1106,6 +1156,84 @@ mod tests {
 
     fn authorize(host: &mut AgentHost<VecJournal, MapContext>, task_id: Id, agents: &[Id]) {
         authorize_with_edges(host, task_id, agents, Vec::new());
+    }
+
+    /// Every command that names a Run refuses an unknown one by name.
+    ///
+    /// The reachable question behind this: the surface holds a Run id it read
+    /// from a reply, the author clicks it, and by then the Run may be gone
+    /// (another window, a journal rebuilt, a stale roster). Before the
+    /// accessors, each arm resolved the id to a position and then subscripted
+    /// with it; the resolution refused, but nothing said the subscript could
+    /// not be reached another way, and proving it took reading the file.
+    ///
+    /// The loop is written over the whole command set on purpose: adding a
+    /// command that names a Run and forgetting to look it up leaves this test
+    /// listing one case fewer than the enum, which is the review this asks for.
+    #[test]
+    fn every_command_naming_an_unknown_run_refuses_it_by_name() {
+        let (mut host, _package, task_id) = host_with_draft();
+        authorize(&mut host, task_id, &[Id::new()]);
+        let missing = Id::new();
+
+        let commands = [
+            HostCommand::LaunchRun {
+                run_id: missing,
+                workspace: "workspaces/gone".to_string(),
+            },
+            HostCommand::CompleteDispatch {
+                run_id: missing,
+                receipt: "r".to_string(),
+            },
+            HostCommand::CollectAttempt {
+                run_id: missing,
+                artifact_digest: "d".to_string(),
+                at: 1,
+            },
+            HostCommand::FailRun {
+                run_id: missing,
+                failure: "f".to_string(),
+                at: 1,
+            },
+            HostCommand::CancelRun {
+                run_id: missing,
+                at: 1,
+            },
+            HostCommand::RetryRun { run_id: missing },
+        ];
+        for command in commands {
+            assert_eq!(
+                host.execute(command),
+                Err(HostRefusal::UnknownRun(missing)),
+                "a command naming a Run that is not on record must refuse it"
+            );
+        }
+
+        // The Task half of the same rule, including the retry path that reads a
+        // Run's Task rather than one the caller named.
+        assert_eq!(
+            host.execute(HostCommand::CloseTask {
+                task_id: missing,
+                at: 1
+            }),
+            Err(HostRefusal::UnknownTask(missing))
+        );
+        assert_eq!(
+            host.execute(HostCommand::AuthorizeDispatch {
+                task_id: missing,
+                new_agents: vec![Id::new()],
+                retry_runs: Vec::new(),
+                edges: Vec::new(),
+                package: package(),
+                clicked_digest: package().digest,
+                authorized_at: 1,
+            }),
+            Err(HostRefusal::UnknownTask(missing))
+        );
+
+        // And the state the refusals protect is untouched: one Task, one Run.
+        assert_eq!(host.tasks().len(), 1);
+        assert_eq!(host.runs().len(), 1);
     }
 
     fn authorize_with_edges(
