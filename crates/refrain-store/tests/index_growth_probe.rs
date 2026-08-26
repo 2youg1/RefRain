@@ -40,6 +40,17 @@ fn chapter_text(index: usize) -> String {
     text
 }
 
+/// 判据是一个倍数，而倍数的分母是一次两毫秒的稳态检索——它在共享 runner 上
+/// 量的是那台机器的噪声。GitHub 的 windows-latest 在 debug 下读出 5.2 倍
+/// （后三轮 11.46ms，稳态 2.20ms，同一轮内新建后检索在 7.39ms 与 19.59ms
+/// 之间摆动），于是 `cargo test --workspace --all-targets` 从 2026-08-18 起
+/// 每次推送都红在这一条上。
+///
+/// 门槛 4.0 是在 release 下标定的（见下方那两组实测：26.1/11.6/12.0 对
+/// 2.7/1.3/1.2），debug 从来不在标定范围内；本文件开头写的跑法也是 release。
+/// 所以这里补的是这条探针一直缺的那个限定，与 `project_performance.rs`、
+/// `large_input_performance.rs`、`scope_scale.rs` 用的是同一条规则。
+#[cfg_attr(debug_assertions, ignore = "release-only performance gate")]
 #[test]
 fn search_after_a_new_file_does_not_scale_with_the_whole_corpus() {
     let base_documents = base_documents();
