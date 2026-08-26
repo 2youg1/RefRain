@@ -626,6 +626,40 @@ impl Database for ProjectDb {
                     )
                 },
             },
+            Migration {
+                version: SchemaVersion(16),
+                name: "verdict-kind-one-authority",
+                apply: |tx| {
+                    // 裁决种类的闭集只剩一个权威：`VerdictKindName`。
+                    //
+                    // `CHECK (kind IN (…))` 重写了那个枚举，而两份名单只在有人记得
+                    // 同时改时才一致：加第六个变体而忘了写迁移，那一类裁决就会在
+                    // 写入时被数据库拒掉。`STRICT` 已经保证列的类型，而「哪五个串
+                    // 合法」是领域规则，属于 Rust 那一边：`record()` 只收
+                    // `VerdictKindName`，一个说不出口的种类在编译期就被拦下。
+                    //
+                    // 读回来的一边也已经守着：`VerdictKindName::from_wire` 认不得的
+                    // 串是一次具名失败，不是一条静默读到的假裁决。
+                    //
+                    // SQLite 不能原地删 CHECK，所以表在同名下重建，与 v13 同一套
+                    // 做法：拷贝在本步的事务里，崩在 drop 与 rename 之间会整步重放。
+                    tx.execute_batch(
+                        "CREATE TABLE verdicts_next (
+                             id              TEXT PRIMARY KEY,
+                             proposal_id     TEXT NOT NULL,
+                             slice_id        TEXT NOT NULL,
+                             kind            TEXT NOT NULL,
+                             final_text      TEXT,
+                             reason          TEXT,
+                             decided_at      INTEGER NOT NULL,
+                             legacy_baseline TEXT
+                         ) STRICT;
+                         INSERT INTO verdicts_next SELECT * FROM verdicts;
+                         DROP TABLE verdicts;
+                         ALTER TABLE verdicts_next RENAME TO verdicts;",
+                    )
+                },
+            },
         ]
     }
 }

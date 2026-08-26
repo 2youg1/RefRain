@@ -233,7 +233,7 @@ other types. A gate makes the refusal.
 | Layer | Holds | Never holds | Enforced by | Scale (modules / lines) |
 |---|---|---|---|---|
 | **L0 `refrain-core`** — the domain | The product rules: manuscript, blocks, formats, line breaking, the agent protocol, ranking, KARA | A database, a file path, a process, a window | `verify:core-purity`, `#![forbid(unsafe_code)]` | 32 / 12,084 |
-| **L1 `refrain-store`** — persistence | The two databases, the mutable disk paths, the atomic writer, the Root guard, the indexes, the Config file, the trash | Domain rules, orchestration semantics | `verify:write-path`, `verify:trash-only` | 23 / 9,072 |
+| **L1 `refrain-store`** — persistence | The two databases, the mutable disk paths, the atomic writer, the Root guard, the indexes, the Config file, the trash | Domain rules, orchestration semantics | `verify:write-path`, `verify:trash-only` | 23 / 9,327 |
 | **L2 `refrain-host`** — orchestration | Task, Run, and Authorization state, staging, workspaces, process launch, harness adapters | The database. It writes through the `HostJournal` trait. Domain rules | INV-12 by review, and the journal seam | 6 / 4,873 |
 | **L3 `refrain-app`** — use cases | The flows that need more than one layer below, the one `Application`, and `DocumentSurface` | FFI, raw pointers, platform APIs | `#![forbid(unsafe_code)]` | 25 / 9,595 |
 | **L4 `apps/native/host`** — the bridge | The C ABI: one entry, the generated layout, the session table, bounded replies, the handshake | Product semantics. Those are Rust enums below | `verify:bridge`, the protocol generator `--check` | 6 / 2,525 |
@@ -331,7 +331,7 @@ module with no test file has test blocks in the module.
 | `project/search` | The FTS5 queries. Exact falls back to Loose. The index holds no text: `block_search` is `content='' contentless_delete=1`, so one rowid deletes one block and `block_search_state` keeps a position, never the words. A rowid is written once, ever — a reused one double-indexes and no delete clears the older posting (measured, `tests/contentless_delete_probe`) | `tests/search*`, `block_search`, `contentless_delete_probe` |
 | `config` | The Config authority: `config.toml`, the `ConfigChange` enum, and the refusal of a damaged or newer file | `tests/config` |
 | `history` | The persisted Text Action history, to a depth of 64 | `tests/history` |
-| `ledger` | The Verdict Ledger: append-only, idempotent, in decision order | app `tests/countermand` |
+| `ledger` | The Verdict Ledger: append-only, in decision order, and idempotent **by id and by nothing else**. `record` names that one exception (`ON CONFLICT(id) DO NOTHING`); every other refusal reaches the caller, because a judgment the database declined to keep must not read as a judgment that was recorded | in-module; app `tests/countermand` |
 | `mailbox` | The arrangement facts: rank, pin, discard. Soft delete only | `tests/mailbox` |
 | `orchestration` | Row access for Task, Run, and Authorization | app `tests/journal` |
 | `annotations` | Highlight and comment rows: block identity, offsets, and the quote | `tests/annotations` |
@@ -564,6 +564,7 @@ Each fact below has one authority. A second copy is a defect.
 | The persona of an agent | `refrain-core/src/persona.rs` | A Boolean "is cosplay" flag |
 | The content of the mailbox | `refrain-app/src/mailbox.rs` | A second merge of proposals and arrangement |
 | Error kinds | `refrain-core/src/error.rs` (`ErrorCode`) | An interface that reads an English message to decide (INV-15) |
+| The kinds of verdict | `refrain-store/src/ledger.rs` (`VerdictKindName`) | A `CHECK (kind IN (…))` repeating the same five spellings. `STRICT` owns the column's type; which five strings are legal is a domain rule, and a sixth variant added without the migration would have had that whole class of judgment refused at the write |
 | Artifact rejections | `refrain-core/src/agent_protocol.rs` (`ArtifactErrorCode`) | Documentation written from memory (INV-16) |
 | Theme colours | The `THEMES` table in `scripts/generate-themes.ts` | A copy kept by hand. Four anchors for each theme |
 | Corner geometry | `apps/native/src/corners.zig` | A radius number in another file. A bare `0` |

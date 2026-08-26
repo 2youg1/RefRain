@@ -66,7 +66,7 @@ fn a_reused_rowid_double_indexes_under_both_shapes() {
         assert_eq!(
             (hits(&db, "alpha"), hits(&db, "beta")),
             (1, 1),
-            "under `{options}` one rowid answers as two passages"
+            "under `{options}` one rowid answers as two blocks"
         );
     }
 }

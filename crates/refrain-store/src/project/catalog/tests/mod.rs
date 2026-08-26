@@ -422,3 +422,83 @@ fn a_project_without_a_chapter_has_no_landing() {
     drop(app);
     fs::remove_dir_all(root).unwrap();
 }
+
+/// 一次半途失败的建索引，不许在索引里留下任何人够不着的 posting。
+///
+/// `index_document` 每块写两条记录（`block_search` 一条 posting、
+/// `block_search_state` 一条位置），文档摘要最后写。第 N 块失败时前 N-1 块的
+/// posting 已经在表里，而状态表与摘要表都不知道它们：
+///
+/// - `forget_document` 按状态表持有的 rowid 删，够不着它们；
+/// - `next_rowid` 从同一张状态表数，下一次重试**发出同一批 rowid**；
+/// - 一个 rowid 写两次会答成两段，且没有任何一次删除能清掉旧的那条
+///   （实测：`tests/contentless_delete_probe.rs`）。
+///
+/// 于是一次中断的建索引让作者搜到一句手稿里已经没有的话——正是
+/// `project/search.rs` 开篇声明要防的那件事。
+///
+/// 失败用触发器注入：它是这台机器上真实的 SQLite 行为，不是一个假的
+/// `Connection`，所以「重试一次」走的也是真实的那条路。跑两轮，因为残留的
+/// 代价要到第二轮重发同一批 rowid 时才结清。
+#[test]
+fn a_document_that_fails_halfway_leaves_nothing_in_the_index() {
+    let root = std::env::temp_dir().join(format!("refrain-index-atomicity-{}", Id::new()));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("中断.md"),
+        "# 停留\n\n写作是把尚未成形的东西按住。\n\n\
+         陆沉舟站在窗前，想起白天那句关于蜃景的话。\n\n\
+         第四段在这里，好让中断发生在文档中间而不是末尾。\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("完好.md"),
+        "# 人物志\n\n陆沉舟，四十二岁。\n\n习惯在纸上写字。\n",
+    )
+    .unwrap();
+
+    let mut app = crate::schema::open_in_memory().unwrap();
+    AppDb::migrate(&mut app).unwrap();
+    let (mut store, _) = ProjectStore::adopt(
+        &mut app,
+        &RootLocator {
+            path: root.clone(),
+            kind: RootKind::Folder,
+        },
+    )
+    .unwrap();
+
+    // 第三块（ordinal 2）落状态表时中止，且只对那一份文档。到那一刻，前两块
+    // 的 posting 已经写进 block_search 了。
+    store
+        .db
+        .execute_batch(
+            "CREATE TRIGGER interrupt_third_block
+                 BEFORE INSERT ON block_search_state
+                 WHEN NEW.ordinal = 2 AND NEW.document LIKE '%中断%'
+             BEGIN SELECT RAISE(ABORT, 'injected mid-document failure'); END;",
+        )
+        .unwrap();
+
+    store.refresh_documents().unwrap();
+    store.refresh_documents().unwrap();
+
+    let leaked = store
+        .search_blocks_with("蜃景", Precision::Exact, 20)
+        .unwrap();
+    assert!(
+        leaked.is_empty(),
+        "索引答出了 {} 段状态表够不着的正文；一次中断的建索引留下了残留",
+        leaked.len()
+    );
+
+    // 而没被中断的那份仍然可搜：跳过一份文档不该让整份语料失去索引。
+    let intact = store
+        .search_blocks_with("人物志", Precision::Exact, 20)
+        .unwrap();
+    assert!(!intact.is_empty(), "未受影响的文档必须仍然可搜");
+
+    drop(store);
+    drop(app);
+    fs::remove_dir_all(root).unwrap();
+}

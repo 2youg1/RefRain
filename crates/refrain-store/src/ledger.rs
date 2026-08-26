@@ -90,11 +90,20 @@ impl<'a> VerdictLedger<'a> {
 
     /// Records a judgment. A repeated id keeps the original row: the audit
     /// trail is not writable by accident of retry.
+    ///
+    /// **Idempotent by id, and by nothing else.** This was `INSERT OR IGNORE`,
+    /// which ignores every constraint the table has — a `NOT NULL`, a `CHECK`, a
+    /// second unique index — and still answers `Ok(())`. The module's stated
+    /// intent is one exception, the repeated id, so the statement now names it:
+    /// `ON CONFLICT(id) DO NOTHING`. Every other refusal reaches the caller,
+    /// which is what SPEC 1.2 means by first-class data — a judgment the
+    /// database declined to keep must not read as a judgment that was recorded.
     pub fn record(&self, verdict: &VerdictRecord) -> Result<(), StoreError> {
         self.db.execute(
-            "INSERT OR IGNORE INTO verdicts
+            "INSERT INTO verdicts
                  (id, proposal_id, slice_id, kind, final_text, reason, decided_at, legacy_baseline)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(id) DO NOTHING",
             params![
                 verdict.id,
                 verdict.proposal_id,
@@ -214,4 +223,117 @@ fn read_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<VerdictRecord> {
         decided_at: row.get::<_, i64>(6)? as u64,
         legacy_baseline: row.get(7)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{VerdictKindName, VerdictLedger, VerdictRecord};
+    use crate::schema::{Database, ProjectDb, open_in_memory};
+    use rusqlite::Connection;
+
+    fn ledger_db() -> Connection {
+        let mut db = open_in_memory().unwrap();
+        ProjectDb::migrate(&mut db).unwrap();
+        db
+    }
+
+    fn verdict(id: &str, proposal: &str) -> VerdictRecord {
+        VerdictRecord {
+            id: id.to_owned(),
+            proposal_id: proposal.to_owned(),
+            slice_id: "slice-1".to_owned(),
+            kind: VerdictKindName::Accept,
+            final_text: None,
+            reason: Some("读过了".to_owned()),
+            decided_at: 1_700_000_000_000,
+            legacy_baseline: None,
+        }
+    }
+
+    /// 重复的 id 保留原记录，且**只有**重复的 id 被放过。
+    ///
+    /// 旧写法是 `INSERT OR IGNORE`，它放过这张表的每一条约束——`NOT NULL`、
+    /// `CHECK`、任何第二个唯一索引——然后照样返回 `Ok(())`。模块头声明的意图
+    /// 是「按 id 幂等」，一条；于是语句现在只写那一条。
+    ///
+    /// 第二个唯一索引是这里能造出的、**不是 id** 的那一类约束失败。它不假想
+    /// 一个不存在的场景：SPEC 1.2 说每一次人的判断都是一等数据，而一条被数据库
+    /// 拒收的判断不许读成一条已被记录的判断。
+    #[test]
+    fn a_repeated_id_is_kept_out_and_every_other_refusal_reaches_the_caller() {
+        let db = ledger_db();
+        let ledger = VerdictLedger::new(&db);
+
+        ledger.record(&verdict("v-1", "p-1")).unwrap();
+        let mut rewritten = verdict("v-1", "p-1");
+        rewritten.reason = Some("改写审计记录".to_owned());
+        ledger.record(&rewritten).unwrap();
+        assert_eq!(
+            ledger
+                .all()
+                .unwrap()
+                .first()
+                .and_then(|row| row.reason.clone()),
+            Some("读过了".to_owned()),
+            "重复的 id 不得改写原始审计记录"
+        );
+
+        db.execute_batch("CREATE UNIQUE INDEX one_verdict_per_proposal ON verdicts(proposal_id);")
+            .unwrap();
+        let refused = ledger.record(&verdict("v-2", "p-1"));
+        assert!(
+            refused.is_err(),
+            "一条被数据库拒收的判断返回了 Ok；它会读成一条已被记录的判断"
+        );
+        assert_eq!(ledger.all().unwrap().len(), 1);
+    }
+
+    /// 裁决种类的闭集只有一个权威：`VerdictKindName`。
+    ///
+    /// 表上原本还有一份 `CHECK (kind IN (…五个串…))`，与那个枚举逐字重复。
+    /// 两份名单只在有人记得同时改时才一致，而不一致的后果是：加第六个变体、
+    /// 忘了写迁移，那一类裁决在写入时被数据库拒掉。`STRICT` 保证列的类型，
+    /// 「哪五个串合法」是领域规则，归 Rust。
+    ///
+    /// 两个方向都钉住：写出去的五个串各不相同，读回来的每一个都还原成它自己，
+    /// 而认不得的串是一次具名失败，不是一条静默读到的假裁决。
+    #[test]
+    fn the_kind_closed_set_has_one_authority_and_survives_the_round_trip() {
+        let db = ledger_db();
+        let ledger = VerdictLedger::new(&db);
+        let kinds = [
+            VerdictKindName::Accept,
+            VerdictKindName::AcceptModified,
+            VerdictKindName::Reject,
+            VerdictKindName::CommentOnly,
+            VerdictKindName::Countermanded,
+        ];
+
+        for (index, kind) in kinds.iter().enumerate() {
+            let mut record = verdict(&format!("v-{index}"), &format!("p-{index}"));
+            record.kind = *kind;
+            record.decided_at = 1_700_000_000_000 + index as u64;
+            ledger.record(&record).unwrap();
+        }
+
+        let stored: Vec<VerdictKindName> = ledger
+            .all()
+            .unwrap()
+            .into_iter()
+            .map(|row| row.kind)
+            .collect();
+        assert_eq!(stored, kinds, "五个变体按决定顺序原样读回");
+
+        // 读回来的一边也守着：一个本构建不认得的串是一次具名失败。
+        db.execute(
+            "INSERT INTO verdicts(id, proposal_id, slice_id, kind, decided_at)
+             VALUES ('v-x', 'p-x', 'slice-1', 'invented', 1)",
+            [],
+        )
+        .unwrap();
+        assert!(
+            ledger.all().is_err(),
+            "认不得的种类必须是一次失败，不是一条读到的假裁决"
+        );
+    }
 }

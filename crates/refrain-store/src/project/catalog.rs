@@ -593,11 +593,30 @@ impl ProjectStore {
             return Ok(());
         }
 
-        let transaction = self.db.transaction()?;
+        let mut transaction = self.db.transaction()?;
         for (path, digest, text) in &pending {
-            // A single document that will not index is skipped, not fatal:
-            // the rest of the manuscript should still be searchable.
-            let _ = super::search::index_document(&transaction, path, digest, text);
+            // A single document that will not index is skipped, not fatal: the
+            // rest of the manuscript should still be searchable. The savepoint
+            // is what makes "skipped" mean "left nothing behind".
+            //
+            // `index_document` writes two rows per block, and it writes the
+            // document's digest last. A failure in the middle used to be
+            // swallowed here and then committed with everything else: the
+            // blocks it had already indexed stayed in `block_search`, while
+            // `block_search_state` and `document_index_state` had no record of
+            // them. Nothing could reach those postings again — `forget_document`
+            // deletes by the rowids the state table holds, and `next_rowid`
+            // counts from the same table, so the next attempt handed out the
+            // very same rowids. A rowid written twice answers as two blocks
+            // and no delete clears the older one (measured,
+            // `tests/contentless_delete_probe`), so one interrupted index left
+            // the author searching a sentence that is no longer in the
+            // manuscript — exactly what `search.rs` opens by promising not to do.
+            let mut document = transaction.savepoint()?;
+            match super::search::index_document(&document, path, digest, text) {
+                Ok(_) => document.commit()?,
+                Err(_) => document.rollback()?,
+            }
         }
         transaction.commit()?;
         Ok(())
