@@ -365,7 +365,7 @@ module with no test file has test blocks in the module.
 | `search` | The two catalogue searches, and the one-shot "the index became built" flag that leaves the project lock with the reply | `tests/project` |
 | `materials` | Import (the source is only ever read and cloned), the material listing, disclosure, and the drafts an agent proposed | `tests/project` |
 | `text_width` | Width conversion as one journaled Text Action: locate the scope, join the whole document with the manuscript's own separator, convert | `tests/project` |
-| `native_document` | `DocumentSurface`: bytes, selection, IME composition, undo, and bounded projections. Three operations: `open`, `apply`, `project` | `tests/editor_walkthrough`, `native_history`, `revert`; `verify:editor-kernel` |
+| `native_document` | `DocumentSurface`: bytes, selection, IME composition, undo, and bounded projections. Three operations: `open`, `apply`, `project`, plus `rescue_unsaved` for the one caller that has no next action — the C ABI barrier | `tests/editor_walkthrough`, `native_history`, `revert`; `verify:editor-kernel` |
 | `document` | The document lifecycle: open, create, continuity hydration, journal replay, and the reconciliation of a saved chain | `tests/editor_walkthrough` |
 | `dispatch` | The order of the dispatch: draft, authorize, launch. Not the rules. Two levels: from an open project, and the round-level seam the tests drive | `tests/dispatch` |
 | `runner` | The producer pump: one non-blocking pass for each `ReadHost` poll | `tests/runner` |
@@ -406,6 +406,18 @@ poisons the mutexes the panicking call held, and L3 and L4 already map
 `PoisonError` to a named refusal in more than ten places. That layer was
 unreachable while the abort happened first. The use case whose lock was poisoned
 now refuses; every other one keeps answering.
+
+Before it answers, the barrier calls `document::rescue_unsaved`, which asks every
+open session for `DocumentSurface::rescue_unsaved`. Each session that holds bytes
+differing from the ones on disk gets `<name>.refrain-rescue.<ext>` written beside
+its manuscript, atomically, leaving both the manuscript and the action chain
+untouched. That file is the whole answer to "what happens to what I had typed":
+the author is told only that the host failed, so the rescue has to be findable
+without being told about — beside the manuscript, under the manuscript's own
+name, in the manuscript's own format. Reading the session table through a
+poisoned lock is deliberate here and nowhere else: poisoning says the table may
+be mid-update, which is a reason to look once and write, not a reason to drop the
+bytes.
 
 ### L5 · `apps/native/src` — the surface
 

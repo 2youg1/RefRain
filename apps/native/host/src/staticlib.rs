@@ -40,13 +40,21 @@ pub extern "C" fn refrain_native_dispatch(request: RefrainNativeRequest) -> Refr
 /// process-wide state that a panic can leave mid-update. Poisoning is what
 /// makes observing it safe — the shared state is `Mutex`-owned, so the affected
 /// use case refuses service while every unaffected one keeps answering.
+///
+/// Before answering, every open document writes its unsaved bytes beside its
+/// manuscript. The author is about to be told only that the host failed, and
+/// the dispatch that failed may have been carrying an edited manuscript; the
+/// rescue file is what they can still open.
 fn stop_unwinding(
     action: u16,
     dispatch: impl FnOnce() -> RefrainNativeResponse,
 ) -> RefrainNativeResponse {
     match std::panic::catch_unwind(AssertUnwindSafe(dispatch)) {
         Ok(response) => response,
-        Err(_) => RefrainNativeResponse::empty(ERROR_HOST_FAILURE, action),
+        Err(_) => {
+            crate::document::rescue_unsaved();
+            RefrainNativeResponse::empty(ERROR_HOST_FAILURE, action)
+        }
     }
 }
 

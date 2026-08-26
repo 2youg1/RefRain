@@ -819,6 +819,37 @@ impl DocumentSurface {
         Ok(())
     }
 
+    /// Write what is in memory beside the manuscript, after the host caught a
+    /// panic at the C ABI.
+    ///
+    /// This is the last chance these bytes get. The panicking call may have
+    /// poisoned a lock the save path needs, and the only thing the author's
+    /// next action can be told is that the host failed. So the rescue does not
+    /// reuse `save`: it writes no state file, advances no revision, and leaves
+    /// both the manuscript on disk and the action chain exactly as they were.
+    /// It writes one sibling file, `<name>.refrain-rescue.<ext>`, and only when
+    /// what is in memory differs from what is on disk, so a document with
+    /// nothing unsaved leaves no litter. The write is atomic for the reason
+    /// every write in this tree is: a half-written rescue is worse than none.
+    ///
+    /// Returns the path when one was written, so the caller can name it.
+    pub fn rescue_unsaved(&self) -> Result<Option<PathBuf>, DocumentError> {
+        let Some(persistence) = &self.persistence else {
+            return Ok(None);
+        };
+        let bytes = self
+            .manuscript
+            .materialize()
+            .map_err(TextRefusal::SourceDrift)?;
+        if fs::read(&persistence.path).is_ok_and(|saved| saved == bytes) {
+            return Ok(None);
+        }
+        let path = rescue_path(&persistence.path);
+        replace_file_atomically(&path, &bytes, |_| Ok(()))
+            .map_err(|source| persistence_error("rescue", &path, source))?;
+        Ok(Some(path))
+    }
+
     fn validate_persisted_state(&self) -> Result<(), DocumentError> {
         let Some(persistence) = &self.persistence else {
             return Ok(());
@@ -998,6 +1029,18 @@ pub fn read_saved_chain(
             .collect(),
         head: state.head,
     }))
+}
+
+/// `notes.md` becomes `notes.refrain-rescue.md`.
+///
+/// Beside the manuscript, named after it, and still carrying the extension that
+/// decides how it opens — the same shape the state file already uses
+/// (`notes.refrain-state.json`), so one glance at a folder groups the three.
+fn rescue_path(path: &Path) -> PathBuf {
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some(extension) => path.with_extension(format!("refrain-rescue.{extension}")),
+        None => path.with_extension("refrain-rescue"),
+    }
 }
 
 fn persistence_error(

@@ -16,7 +16,7 @@ use refrain_app::native_document::{
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 const DOCUMENT_PATH_ENV: &str = "REFRAIN_NATIVE_DOCUMENT_PATH";
 const DOCUMENT_STATE_PATH_ENV: &str = "REFRAIN_NATIVE_DOCUMENT_STATE_PATH";
@@ -163,6 +163,30 @@ fn dispatch_with(
         }
     }
     projection_response(request.session, request.action, session, &request, 0)
+}
+
+/// Write every session's unsaved bytes beside its manuscript.
+///
+/// Called by the C ABI barrier once it has caught a panic, and by nothing else.
+/// There is no channel to report on here: the author receives `hostFailure`,
+/// and the dispatch that just failed may have been carrying an edited
+/// manuscript. So this path refuses nothing. It reads the session table through
+/// a poisoned lock deliberately — poisoning says the table may be mid-update,
+/// which is a reason to look at it once and write, not a reason to drop the
+/// bytes — and a session whose own rescue fails is skipped so the next one
+/// still gets its chance. What the author sees is the file: `<name>.refrain-
+/// rescue.<ext>`, beside the manuscript it came from.
+pub fn rescue_unsaved() {
+    let Some(sessions) = SESSIONS.get() else {
+        return;
+    };
+    let sessions = sessions.lock().unwrap_or_else(PoisonError::into_inner);
+    for session in sessions.documents.values() {
+        match session.document.rescue_unsaved() {
+            Ok(_) => {}
+            Err(_) => continue,
+        }
+    }
 }
 
 /// Open the document the author chose.
@@ -541,24 +565,55 @@ mod tests {
         request
     }
 
-    /// A panic raised inside dispatch is answered, not aborted on.
+    /// A panic raised inside dispatch is answered, not aborted on, and the
+    /// bytes the author had not saved are on disk when it is.
     ///
-    /// Three assertions, one per consequence of the barrier in
-    /// `staticlib::stop_unwinding`. (a) The process survives — the line after
-    /// the probe runs at all, which an abort would prevent and which no
-    /// `assert!` can express. (b) The caller reads `hostFailure`, the same
-    /// named refusal every other host-side failure carries. (c) A session that
-    /// the panicking call never touched still projects, because the probe
-    /// raises before the session table is locked, exactly like the reachable
-    /// panic source: third-party ingest under `ACTION_PROJECT`, which returns
-    /// before `dispatch_with` reaches `SESSIONS`.
+    /// Composed on purpose: the document is opened through the real session
+    /// table, edited through the real input path, and the panic is raised
+    /// through the real C entry, so what this asserts is the state of the
+    /// process and of the filesystem after `staticlib::stop_unwinding` ran.
+    /// Four consequences, in the order the barrier produces them.
+    ///
+    /// (a) The process survives — every line after the probe runs at all, which
+    /// an abort would prevent and which no `assert!` can express. (b) The
+    /// caller reads `hostFailure`, the same named refusal every other host-side
+    /// failure carries. (c) The unsaved bytes are beside the manuscript, and
+    /// the manuscript itself is untouched. (d) A session the panicking call
+    /// never touched still projects, because the probe raises before the
+    /// session table is locked — exactly like the reachable panic source,
+    /// third-party ingest under `ACTION_PROJECT`, which returns before
+    /// `dispatch_with` reaches `SESSIONS`.
+    ///
+    /// One test rather than four, because the rescue file is process-wide
+    /// evidence: a second test firing the same probe would write it under this
+    /// one's feet.
     ///
     /// Injection: delete the `catch_unwind` in `stop_unwinding` and this test
-    /// takes the whole test binary down with it.
+    /// takes the whole test binary down with it — `thread caused non-unwinding
+    /// panic. aborting.`
     #[test]
-    fn a_panic_inside_dispatch_is_refused_and_leaves_other_sessions_serving() {
-        let opened = send(request(ACTION_OPEN_MANUSCRIPT));
+    fn a_caught_panic_is_refused_leaves_the_unsaved_bytes_on_disk_and_keeps_serving() {
+        let directory = std::env::temp_dir().join("refrain-panic-barrier-probe");
+        if directory.exists() {
+            std::fs::remove_dir_all(&directory).expect("the probe directory is removable");
+        }
+        std::fs::create_dir_all(&directory).expect("the probe directory is writable");
+        let manuscript = directory.join("章.md");
+        std::fs::write(&manuscript, "第一段\n").expect("the manuscript is written");
+        let harness = HarnessOverrides {
+            document_path: Some(manuscript.clone()),
+            state_path: Some(directory.join("章.refrain-state.json")),
+            scale_fixture: false,
+        };
+
+        let opened = dispatch_with(request(ACTION_OPEN_MANUSCRIPT), &[], &harness);
         assert_eq!(opened.status, 0);
+        let typed = "未保存".as_bytes();
+        let mut insert = apply(opened.session, opened.revision, INPUT_INSERT_TEXT);
+        insert.text_len = typed.len() as u32;
+        insert.text = typed.as_ptr();
+        let edited = dispatch_with(insert, typed, &harness);
+        assert_eq!(edited.status, 0);
 
         let refused = crate::staticlib::refrain_native_dispatch(request(ACTION_PANIC_PROBE));
         assert_eq!(
@@ -567,6 +622,18 @@ mod tests {
         );
         assert_eq!(refused.action, ACTION_PANIC_PROBE);
 
+        let rescue = directory.join("章.refrain-rescue.md");
+        assert_eq!(
+            std::fs::read(&rescue).expect("the barrier wrote the rescue file"),
+            "未保存第一段\n".as_bytes(),
+            "the rescue carries what was in memory, not what was saved"
+        );
+        assert_eq!(
+            std::fs::read(&manuscript).expect("the manuscript is still there"),
+            "第一段\n".as_bytes(),
+            "the rescue writes beside the manuscript, never over it"
+        );
+
         let mut again = request(ACTION_OBTAIN_PROJECTION);
         again.session = opened.session;
         let served = crate::staticlib::refrain_native_dispatch(again);
@@ -574,7 +641,7 @@ mod tests {
             served.status, 0,
             "the session the panic never touched still projects"
         );
-        assert!(!response_text(&served).is_empty());
+        assert!(response_text(&served).starts_with("未保存第一段"));
     }
 
     #[test]
