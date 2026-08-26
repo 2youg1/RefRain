@@ -28,6 +28,16 @@ const view_harness = @import("harness.zig");
 /// 参数问同一个问题：`virtualWindow` 用它算出该建哪一段，`virtualList` 用它
 /// 把那一段交给运行时；两处写岔一个数，画出来的行与滚动条说的就不是一回事。
 fn tree_window(total: usize) Adapter.Ui.VirtualListOptions {
+    const stride = shell_view.rail_row_height_px + shell_view.rail_row_gap_px;
+    // 盒子的高度是「装得下的那些行」，与旧形一字不差：少于一屏时它恰好包住
+    // 自己的行，不在按钮上方留一片空白。
+    //
+    // **高度必须是确定值，不能只给 `grow`。** 虚拟列表是一个 `scroll_view`，
+    // 而滚动容器的主轴尺寸不由子节点决定；旧形的 `ui.list` 由子节点撑开。
+    // 真窗实测：只给 `grow = 1` 时这一屏量到 `bounds=(28,566 205.71x0)`，
+    // 树高为零、一行都不可见，而回放的指纹**照样全绿**——录制那一侧才看得见
+    // （`docs/AGENTS.md`「What green does not prove」第 1 条）。
+    const visible = @min(total, shell_view.max_visible_rows);
     return .{
         .id = "files.tree",
         .item_count = total,
@@ -35,12 +45,10 @@ fn tree_window(total: usize) Adapter.Ui.VirtualListOptions {
         // 这是虚拟列表 v1 契约（行高一致）在这一屏成立的全部依据。
         .item_extent = shell_view.rail_row_height_px,
         .gap = shell_view.rail_row_gap_px,
-        .grow = 1,
-        // 没有运行时滚动状态时（裸构建：测试、预览）假设的视口高。生产里
-        // `UiApp` 用真实画布高覆盖它，所以这个数只决定裸构建看见多少行——
-        // 取旧形那个栈上定长数组的行数，裸构建因此与从前一字不差。
-        .viewport_fallback = @as(f32, @floatFromInt(shell_view.max_visible_rows)) *
-            shell_view.rail_row_height_px,
+        .height = @as(f32, @floatFromInt(visible)) * stride,
+        // 没有运行时滚动状态时（裸构建：测试、预览）假设的视口高，与上面同一个
+        // 数：裸构建看见的行数因此与真窗第一帧一致。
+        .viewport_fallback = @as(f32, @floatFromInt(visible)) * stride,
         .semantics = .{ .role = .tree, .label = "项目里的文档" },
     };
 }

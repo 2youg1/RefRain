@@ -237,7 +237,7 @@ other types. A gate makes the refusal.
 | **L2 `refrain-host`** — orchestration | Task, Run, and Authorization state, staging, workspaces, process launch, harness adapters | The database. It writes through the `HostJournal` trait. Domain rules | INV-12 by review, and the journal seam | 6 / 4,873 |
 | **L3 `refrain-app`** — use cases | The flows that need more than one layer below, the one `Application`, and `DocumentSurface` | FFI, raw pointers, platform APIs | `#![forbid(unsafe_code)]` | 25 / 9,600 |
 | **L4 `apps/native/host`** — the bridge | The C ABI: one entry, the generated layout, the session table, bounded replies, the handshake | Product semantics. Those are Rust enums below | `verify:bridge`, the protocol generator `--check` | 6 / 2,525 |
-| **L5 `apps/native/src`** — the surface | Markup and declarations, interface state, platform events, drawing | Manuscript bytes, product rules | `native check . --strict`; the layer table is in [AGENTS.md](AGENTS.md) | 34 / 14,799 |
+| **L5 `apps/native/src`** — the surface | Markup and declarations, interface state, platform events, drawing | Manuscript bytes, product rules | `native check . --strict`; the layer table is in [AGENTS.md](AGENTS.md) | 34 / 14,807 |
 
 The Scale column counts every hand-written source file in the crate, the crate
 root included, and no generated file. Two layers hold generated code beside the
@@ -862,6 +862,11 @@ The two halves run in different worlds:
   journal is the world. Eight destinations replay in less than two seconds and
   need no display. CI runs this command. The report goes to
   `target/e2e-evidence/journals.json`.
+
+The checkpoint count is a property of the recordings, not a contract: it moved
+from 72 to 61 when the file tree became a virtual list, because the surface now
+settles in fewer frames. What is a contract is that all eight replay and that
+every checkpoint they do hold verifies.
 
 Use this lane to judge a surface migration. A rewritten core must consume the
 same host answers in the same order. For the journals that verify, it must also
