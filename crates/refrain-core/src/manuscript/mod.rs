@@ -4,6 +4,7 @@ mod block_offsets;
 mod block_sequence;
 mod block_text;
 mod byte_sequence;
+mod command;
 mod decision;
 mod materialize;
 mod persist;
@@ -11,6 +12,7 @@ mod review;
 
 pub use block_sequence::BlockSequence;
 pub use block_text::BlockText;
+pub use command::{EditorAction, EditorChange, Insertion, Replacement, TextCommand};
 pub use decision::{DecisionBatch, Verdict, VerdictKind, merged_text};
 pub use persist::{PersistedBlock, PersistedRegion};
 pub use review::{
@@ -261,98 +263,6 @@ impl TextHead {
     pub fn cause(&self) -> &str {
         &self.cause
     }
-}
-
-/// A non-empty run of existing blocks to replace or delete.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Replacement {
-    blocks: Box<[Id]>,
-    text: Option<String>,
-}
-
-impl Replacement {
-    pub fn new(blocks: Vec<Id>, text: Option<String>) -> Result<Self, TextRefusal> {
-        if blocks.is_empty() {
-            return Err(TextRefusal::EmptyRange);
-        }
-        let mut seen = HashSet::with_capacity(blocks.len());
-        if let Some(block) = blocks.iter().find(|block| !seen.insert(**block)) {
-            return Err(TextRefusal::DuplicateBlock { block: *block });
-        }
-        Ok(Self {
-            blocks: blocks.into_boxed_slice(),
-            text,
-        })
-    }
-}
-
-/// An ordered, non-empty group of new blocks at one existing right boundary.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Insertion {
-    before: Option<Id>,
-    texts: Box<[String]>,
-}
-
-impl Insertion {
-    pub fn new(
-        before: Option<Id>,
-        texts: Vec<String>,
-        scan: BlockScan,
-    ) -> Result<Self, TextRefusal> {
-        if texts.is_empty() {
-            return Err(TextRefusal::EmptyInsertion);
-        }
-        for (index, text) in texts.iter().enumerate() {
-            let layout = scan.layout(text.as_bytes());
-            let blocks = layout.blocks();
-            if blocks.len() != 1 {
-                return Err(TextRefusal::InvalidInsertionBlock {
-                    index,
-                    blocks: blocks.len(),
-                });
-            }
-            if blocks[0].start != 0 || blocks[0].end != text.len() {
-                return Err(TextRefusal::InsertionBlockHasGaps { index });
-            }
-        }
-        Ok(Self {
-            before,
-            texts: texts.into_boxed_slice(),
-        })
-    }
-}
-
-/// One independently locatable change reported by the editor.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EditorChange {
-    Replace(Replacement),
-    Insert(Insertion),
-}
-
-/// All settled editor input against one exact Text Head.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EditorAction {
-    base: Id,
-    changes: Box<[EditorChange]>,
-    cause: String,
-}
-
-impl EditorAction {
-    #[must_use]
-    pub fn new(base: Id, changes: Vec<EditorChange>, cause: impl Into<String>) -> Self {
-        Self {
-            base,
-            changes: changes.into_boxed_slice(),
-            cause: cause.into(),
-        }
-    }
-}
-
-/// The three authorised ways to ask the manuscript to move.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TextCommand {
-    Editor(EditorAction),
-    CommitDecisionBatch(DecisionBatch),
 }
 
 /// One minimal replacement over canonical source bytes.

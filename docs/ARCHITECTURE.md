@@ -232,7 +232,7 @@ other types. A gate makes the refusal.
 
 | Layer | Holds | Never holds | Enforced by | Scale (modules / lines) |
 |---|---|---|---|---|
-| **L0 `refrain-core`** — the domain | The product rules: manuscript, blocks, formats, line breaking, the agent protocol, ranking, KARA | A database, a file path, a process, a window | `verify:core-purity`, `#![forbid(unsafe_code)]` | 32 / 12,084 |
+| **L0 `refrain-core`** — the domain | The product rules: manuscript, blocks, formats, line breaking, the agent protocol, ranking, KARA | A database, a file path, a process, a window | `verify:core-purity`, `#![forbid(unsafe_code)]` | 33 / 12,109 |
 | **L1 `refrain-store`** — persistence | The two databases, the mutable disk paths, the atomic writer, the Root guard, the indexes, the Config file, the trash | Domain rules, orchestration semantics | `verify:write-path`, `verify:trash-only` | 23 / 9,327 |
 | **L2 `refrain-host`** — orchestration | Task, Run, and Authorization state, staging, workspaces, process launch, harness adapters | The database. It writes through the `HostJournal` trait. Domain rules | INV-12 by review, and the journal seam | 6 / 4,873 |
 | **L3 `refrain-app`** — use cases | The flows that need more than one layer below, the one `Application`, and `DocumentSurface` | FFI, raw pointers, platform APIs | `#![forbid(unsafe_code)]` | 25 / 9,600 |
@@ -309,7 +309,7 @@ module with no test file has test blocks in the module.
 
 | Module | Owns | Proven by |
 |---|---|---|
-| `manuscript/` | The manuscript state machine: `SourceSnapshot`, `TextHead`, `TextAction`, `TextTransition`, undo regions. Sub-modules: `action`, `align`, `decision`, `persist`, `review` | `tests/manuscript_*`, `action_edits`, `decision_batch`, `review`, `plain_manuscript`, `block_text_*` |
+| `manuscript/` | The manuscript state machine: `SourceSnapshot`, `TextHead`, `TextAction`, `TextTransition`, undo regions. Sub-modules: `action`, `align`, `command`, `decision`, `persist`, `review`. `command` holds the five types an author's request arrives as (`Replacement`, `Insertion`, `EditorChange`, `EditorAction`, `TextCommand`); each is legal by construction, so `execute` never re-checks a shape | `tests/manuscript_*`, `action_edits`, `decision_batch`, `review`, `plain_manuscript`, `block_text_*` |
 | `source_layout` | The start and the end of each block: the byte scanner (`Markdown` or `Plain`) and the digest-bound `SourceLayout` | `tests/source_layout`, `block_boundaries`, `block_scan_parity` |
 | `block_shape` | The type of a block and its approximate height: `BlockKind`, width units, hard lines | `tests/block_shape_scan` |
 | `searchable_block` | The ordinal of a block. The agent and the index share this handle | indexed-search tests in the store |
