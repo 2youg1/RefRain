@@ -30,30 +30,57 @@ pub const Request = struct {
     bytes: []const u8,
 };
 
-/// 编码用的定长缓冲池。
+/// 编码用的帧缓冲。
 ///
 /// 12 KiB 与协议的 `event_text_bytes` 同源：超过它 Rust 会具名拒绝，所以这里
 /// 装不下就交出 null，让调用方显示一条拒绝，而不是送一条会被截断的请求。
 ///
-/// **为什么是 64 槽的池而不是一块静态 buffer**：`Msg` 携带的 `bytes` 要活到
-/// SDK 在点击时把它派发给 core（`on_press` 存储的是渲染时的值）。一帧渲染
-/// 会构造许多个带请求的按钮（文件树、邮箱行、裁决行、设置面板），单块
-/// buffer 会被后渲染的按钮覆盖——e2e 仿真抓到过：55 字节的 adopt 请求被
-/// 后一个按钮的字节覆盖，宿主收到 `file` 请求加 `}}` 尾巴，具名拒绝。
-/// 池按渲染顺序轮换分配，同帧的借用互不覆盖；滚动后旧行的 Msg 随行一起
-/// 废弃（不可点击），所以跨帧覆盖无害。
-const REQUEST_SLOTS: usize = 64;
-var request_pool: [REQUEST_SLOTS][12000]u8 = undefined;
-var request_slot: usize = 0;
+/// **为什么不是一块静态 buffer**：`Msg` 携带的 `bytes` 要活到 SDK 在点击时
+/// 把它派发给 core（`on_press` 存储的是渲染时的值）。一帧渲染会构造许多个
+/// 带请求的按钮（文件树、邮箱行、裁决行、设置面板），单块 buffer 会被后
+/// 渲染的按钮覆盖——e2e 仿真抓到过：55 字节的 adopt 请求被后一个按钮的
+/// 字节覆盖，宿主收到 `file` 请求加 `}}` 尾巴，具名拒绝。
+///
+/// **为什么也不是 N 个轮换的槽**：轮换只把“第二次借用覆盖第一次”推迟到第
+/// N+1 次。一屏 64 行的文件树，每行的行菜单编四条请求（三档披露加删除），
+/// 一帧就是 256 次借用进 64 个槽——第 65 次起覆写的是还被 `on_press` 指着的
+/// 字节，于是菜单里的“删除”作用在别的文档上，而画面与无障碍指纹都是对的。
+/// 现在改成一帧一块、按渲染顺序向前切：切到头就交出 null（调用方显示具名
+/// 拒绝），**永不回头覆盖一段仍被引用的字节**。复位点只有一个，在 `documentView`
+/// 的开头，与 SDK 每道 build 前 reset 它自己的 arena 同一拍（`ui_app.zig`）。
+///
+/// **它还不是终局**：开着的上下文菜单能活过任意多次重建（SDK 为此钉住了
+/// arena 世代），而静态帧缓冲下一帧就从头切；那一半要把载荷搬到 SDK 的
+/// build arena 才算完（F-03）。
+///
+/// 尺寸：旧形是 64 × 12,000 = 768,000 B，每次借用无论长短都占满 12 KiB；
+/// 实际一条行菜单请求约 120 B。256 KiB 的一帧预算因此既少占 505 KB，又把
+/// 一帧能编的请求数提高约一个量级；带作者选区的转换请求才能接近 12 KiB，
+/// 而选区一帧只有一个。`undefined` 落 .bss，按页惰性提交，只有游标走到的
+/// 那一段真的占物理内存。
+const max_request_bytes: usize = 12000;
+const request_frame_bytes: usize = 256 * 1024;
+var request_frame: [request_frame_bytes]u8 = undefined;
+var request_used: usize = 0;
+
+/// 一帧的开头：请求字节从头切。上一帧的 Msg 随那棵树一起废弃。
+pub fn beginFrame() void {
+    request_used = 0;
+}
 
 pub const Writer = struct {
     buffer: []u8 = undefined,
     len: usize = 0,
+    /// 这一条请求在帧缓冲里的起点。`finish` 拿它确认没有第二个 writer
+    /// 在中途也 reset 过——两个 writer 交错编码会写进同一段字节，而两条
+    /// 单看都合法。
+    start: usize = 0,
 
-    /// 重新开始编一条请求：轮换到下一个槽。
+    /// 重新开始编一条请求：从帧缓冲当前的游标切一段，上限是 ABI 那个数。
     pub fn reset(self: *Writer) void {
-        request_slot = (request_slot + 1) % REQUEST_SLOTS;
-        self.buffer = request_pool[request_slot][0..];
+        const remaining = request_frame[request_used..];
+        self.start = request_used;
+        self.buffer = remaining[0..@min(remaining.len, max_request_bytes)];
         self.len = 0;
     }
 
@@ -96,6 +123,8 @@ pub const Writer = struct {
     }
 
     fn finish(self: *Writer) ?Request {
+        if (self.start != request_used) return null;
+        request_used += self.len;
         return .{ .bytes = self.buffer[0..self.len] };
     }
 
@@ -1139,6 +1168,42 @@ test "search names its precision rather than defaulting silently" {
         "{\"kind\":\"documentSearch\",\"value\":{\"rootId\":\"r1\",\"query\":\"克制\",\"precision\":\"loose\"}}",
         documentSearch(&writer, "r1", "克制", false).?.bytes,
     );
+}
+
+test "a request still says what it said after the frame borrowed sixty-four more" {
+    // F-01 的形状：一帧里的借用次数超过池的容量时，最早那一条被后来的
+    // 覆写，而指着它的 `on_press` 仍然活着——作者点第一行，删掉的是别的
+    // 文档。一屏 64 行的行菜单就借 256 次，所以这个数不是构造出来的极值。
+    var first_writer = Writer{};
+    const first = openDocument(&first_writer, "r1", "第一.md").?.bytes;
+    var index: usize = 0;
+    while (index < 64) : (index += 1) {
+        var later = Writer{};
+        _ = openDocument(&later, "r1", "后来.md");
+    }
+    try std.testing.expect(std.mem.indexOf(u8, first, "第一.md") != null);
+}
+
+test "a frame that runs out of request bytes refuses instead of lending live bytes" {
+    // 超出预算时必须是 null：还回一段别人正用着的字节，就是 F-01 本人。
+    // 下一帧重新可用，否则拒绝就从止血变成死锁。
+    beginFrame();
+    var first_writer = Writer{};
+    const first = openDocument(&first_writer, "r1", "第一.md").?.bytes;
+    var refused = false;
+    var index: usize = 0;
+    while (index < 100_000) : (index += 1) {
+        var writer = Writer{};
+        if (openDocument(&writer, "r1", "后来.md") == null) {
+            refused = true;
+            break;
+        }
+    }
+    try std.testing.expect(refused);
+    try std.testing.expect(std.mem.indexOf(u8, first, "第一.md") != null);
+    beginFrame();
+    var next_frame = Writer{};
+    try std.testing.expect(openDocument(&next_frame, "r1", "下一帧.md") != null);
 }
 
 test "reusing one writer does not leave the previous request behind" {

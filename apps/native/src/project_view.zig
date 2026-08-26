@@ -80,22 +80,38 @@ pub fn progressLabel(reply: wire.Reply, row: wire.RunRow) []const u8 {
     };
 }
 
-/// 「失败：{原因}」要拼一个字串，需要一块缓冲。轮换池与
-/// `documentReference` 同一条借用纪律：单线程 UI 帧内消费，写完立刻被
-/// SDK 读走。原因超长时截在 char 边界上——半个字不是预览，是坏字节。
-var progress_label_pool: [4][288]u8 = undefined;
-var progress_label_slot: usize = 0;
+/// 「失败：{原因}」要拼一个字串，需要一块缓冲。帧缓冲与
+/// `project_request` 同一条借用纪律：按渲染顺序向前切，永不回头覆盖。
+///
+/// 旧形是四个轮换的槽，而派遣台一屏 `shell.card_rows` = 24 行、每行一个
+/// 标签：第五行起写回第一个槽，而第一行那个 `ui.text` 还指着它——失败的
+/// Run 于是显示另一个 Run 的原因，这一条在屏幕上直接可见（F-02）。
+///
+/// 一帧的字节用完时退回无原因的「失败」：少说，不说错。单条上限沿用旧形的
+/// 288 B，一个超长原因因此吃不掉整帧的预算；截断落在 char 边界上——半个字
+/// 不是预览，是坏字节。
+const progress_label_max_bytes: usize = 288;
+const progress_label_frame_bytes: usize = 8 * 1024;
+var progress_label_frame: [progress_label_frame_bytes]u8 = undefined;
+var progress_label_used: usize = 0;
+
+/// 一帧的开头：标签字节从头切。与 `project_request.beginFrame` 同一拍。
+pub fn beginFrame() void {
+    progress_label_used = 0;
+}
 
 fn failedLabel(reason: []const u8) []const u8 {
     if (reason.len == 0) return "失败";
-    progress_label_slot = (progress_label_slot + 1) % progress_label_pool.len;
-    const buffer: []u8 = progress_label_pool[progress_label_slot][0..];
     const prefix = "失败：";
+    const room = @min(progress_label_frame.len - progress_label_used, progress_label_max_bytes);
+    if (room <= prefix.len) return "失败";
+    const buffer: []u8 = progress_label_frame[progress_label_used..][0..room];
     @memcpy(buffer[0..prefix.len], prefix);
-    var len: usize = @min(reason.len, buffer.len - prefix.len);
+    var len: usize = @min(reason.len, room - prefix.len);
     // 真的截了才退到 char 边界：continuation 字节（10xxxxxx）不是字符起点。
     while (len > 0 and len < reason.len and (reason[len] & 0xC0) == 0x80) len -= 1;
     @memcpy(buffer[prefix.len..][0..len], reason[0..len]);
+    progress_label_used += prefix.len + len;
     return buffer[0 .. prefix.len + len];
 }
 
@@ -921,6 +937,15 @@ pub fn sliderFraction(spec: TypographySliderSpec, current_units: i32) f32 {
     const span: f32 = @floatFromInt(spec.max_units - spec.min_units);
     const offset: f32 = @floatFromInt(current_units - spec.min_units);
     return std.math.clamp(offset / span, @as(f32, 0), @as(f32, 1));
+}
+
+test "a failed run keeps its own reason after the frame writes more labels" {
+    // F-02 的形状：派遣台一屏 24 行，每行一个标签。标签字节一旦回头覆盖，
+    // 屏上直接可见：失败的 Run 显示另一个 Run 的原因。
+    const first = failedLabel("第一个原因");
+    var index: usize = 0;
+    while (index < 4) : (index += 1) _ = failedLabel("后来的原因");
+    try std.testing.expect(std.mem.indexOf(u8, first, "第一个原因") != null);
 }
 
 test "typography slider specs mirror the Rust field bounds" {

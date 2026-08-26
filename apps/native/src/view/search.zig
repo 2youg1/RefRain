@@ -137,11 +137,10 @@ fn searchHitMsg(model: *const Model, reply: wire.Reply, hit: wire.HitRow) ?Msg {
         }
         // 跨文档命中：开文档与跳块是两次请求——挂起的块序号随引用一起送，
         // 打开答复落地后 core 补发跳块（v0.2.4 的 selectDocument→revealBlock
-        // 串联缝）。引用与文件树行同一个轮换池、同一条借用纪律。
+        // 串联缝）。引用与文件树行同一块帧缓冲、同一条借用纪律；记账归
+        // `files_view.borrowDocumentReference`，这里不再自己推游标。
         if (model.root_id.slice().len == 0) return null;
-        files_view.document_reference_slot = (files_view.document_reference_slot + 1) % files_view.DOCUMENT_REFERENCE_SLOTS;
-        const buffer: []u8 = files_view.document_reference_pool[files_view.document_reference_slot][0..];
-        const reference = project_view.documentReference(buffer, model.root_id.slice(), path) orelse return null;
+        const reference = files_view.borrowDocumentReference(model.root_id.slice(), path) orelse return null;
         return .{ .document_open_jump = .{
             .reference = reference,
             .block = @intCast(ordinal),

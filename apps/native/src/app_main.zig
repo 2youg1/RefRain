@@ -332,6 +332,16 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn documentView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
+    // 一道 build 一批借用：Msg 的载荷、打开引用、失败原因标签都是向 SDK 借出去
+    // 的字节，而 SDK 在点击时才读它们。三块帧缓冲因此在这里归零、按渲染顺序
+    // 向前切，切到头交出具名拒绝——而不是回头覆盖一段仍被 `on_press` 指着的
+    // 字节（旧形的轮换池：一屏 64 行的文件树借 192 次进 64 个槽）。
+    // 复位点只此一处，与 SDK 每道 build 前 reset 它自己的 build arena 同一拍；
+    // 那一道重试循环（`ui_app.zig` 的 `while (true)`）重建整棵树，所以“视图函数
+    // 的开头”与“一帧”在这里是同一件事。
+    project_request.beginFrame();
+    files_view.beginFrame();
+    project_view.beginFrame();
     const Scroll = @FieldType(Msg, "document_scroll");
     const document = host_bridge.documentView();
     const total_blocks: u64 = @intCast(@max(model.document.blocks, 0));

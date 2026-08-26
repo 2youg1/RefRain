@@ -2,6 +2,7 @@
 //!
 //! 单元 34 从 `app_main.zig` 搬来，逐字未改；路由仍在那一侧。
 
+const std = @import("std");
 const core = @import("../core.zig");
 const replies = @import("../core/replies.zig");
 const wire = @import("../generated/wire.zig");
@@ -59,19 +60,30 @@ pub fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     var index: usize = 0;
     while (index < window) : (index += 1) {
         const rendered = project_view.documentRow(opened, documents[index]);
-        rows[index] = if (rendered) |shown|
-            shell_view.railTreeRow(ui, model, .{
+        rows[index] = if (rendered) |shown| row: {
+            // 一行只借一次：点击、Enter、菜单首项是同一个动作，借三次只会把
+            // 同一帧里后面的行挤出预算。
+            const open = openDocumentMsg(model, shown.label);
+            // 这一帧的引用字节用完了：行画成不可按并说出原因。默默接下点击
+            // 却不动，作者读到的是「这份稿子坏了」。
+            if (open == null) break :row shell_view.railTreeRow(
+                ui,
+                model,
+                .{ .key = .{ .index = index }, .disabled = true, .semantics = .{ .role = .treeitem, .label = shown.label } },
+                1,
+                ui.fmt("{s} · 这一屏放不下这一行的动作", .{shown.label}),
+            );
+            break :row shell_view.railTreeRow(ui, model, .{
                 .key = .{ .index = index },
-                .on_press = openDocumentMsg(model, shown.label),
+                .on_press = open,
                 // Enter 打开：与点击同一条消息（list_item 键图的行主键）。
-                .on_submit = openDocumentMsg(model, shown.label),
+                .on_submit = open,
                 // 对这一行做的事属于这一行：打开、删除、改披露都在菜单里，
                 // 作者不必先选中再去屏幕底部瞄一排按钮。
-                .context_menu = documentRowMenu(ui, model, shown.label),
+                .context_menu = documentRowMenu(ui, model, shown.label, open),
                 .semantics = .{ .role = .treeitem, .label = shown.label },
-            }, 1, ui.fmt("{s} · {s}", .{ shown.label, shown.detail }))
-        else
-            shell_view.railTreeRow(ui, model, .{ .key = .{ .index = index }, .disabled = true }, 1, "这一行读不出来");
+            }, 1, ui.fmt("{s} · {s}", .{ shown.label, shown.detail }));
+        } else shell_view.railTreeRow(ui, model, .{ .key = .{ .index = index }, .disabled = true }, 1, "这一行读不出来");
     }
     return ui.column(.{ .gap = 8, .padding = 12 }, .{
         ui.row(.{ .gap = 8, .cross = .center }, .{
@@ -149,9 +161,11 @@ fn documentRowMenu(
     ui: *Adapter.Ui,
     model: *const Model,
     path: []const u8,
+    open: ?Msg,
 ) []const Adapter.Ui.ContextMenuItem {
     const items = ui.arena.alloc(Adapter.Ui.ContextMenuItem, 6) catch return &.{};
-    items[0] = .{ .label = "打开", .msg = openDocumentMsg(model, path) };
+    // 打开用行已经借好的那一条：菜单首项与行主键是同一个动作。
+    items[0] = .{ .label = "打开", .msg = open };
     items[1] = .{ .separator = true };
     // 披露三档：Agent 能看到这份材料的多少。默认是可检索。
     // 名字是 kebab-case（`Disclosure` 的 serde 口径，实测自 wire_shapes），
@@ -199,20 +213,67 @@ fn adoptRootMsg(comptime folder: bool) ?Msg {
 ///
 /// 送的是 `rootId\n相对路径`，绝对路径由 Rust 解析——这条边界是「界面无法
 /// 指定任意文件」的实现处，不是一条约定。
-/// 文件树行的打开引用池：`document_open` 的 reference 与 project_request
-/// 同一条借用纪律——SDK 在点击时才读它，栈 buffer 活不到那一刻。64 槽
-/// 按渲染顺序轮换，同帧的文件树行互不覆盖。
-pub const DOCUMENT_REFERENCE_SLOTS: usize = 64;
+/// 文件树行的打开引用帧缓冲：`document_open` 的 reference 与 project_request
+/// 同一条借用纪律——SDK 在点击时才读它，栈 buffer 活不到那一刻。
+///
+/// 旧形是 64 个轮换的槽，而一行借三次（`on_press`、Enter、菜单首项），
+/// 一屏 64 行就是 192 次——第 22 行起，前面那些行的引用已经改成了后面行的
+/// 路径，而行文字与无障碍指纹都来自答复、都是对的（F-01）。现在一帧一块、
+/// 按渲染顺序向前切，且一行只借一次；切到头交出 null，调用方把那一行画成
+/// 具名拒绝，**不回头覆盖一段仍被引用的字节**。复位点在 `documentView` 开头。
+const reference_max_bytes: usize = 1024;
+const reference_frame_bytes: usize = 64 * 1024;
+var reference_frame: [reference_frame_bytes]u8 = undefined;
+var reference_used: usize = 0;
 
-pub var document_reference_pool: [DOCUMENT_REFERENCE_SLOTS][1024]u8 = undefined;
+/// 一帧的开头：引用字节从头切。与 `project_request.beginFrame` 同一拍。
+pub fn beginFrame() void {
+    reference_used = 0;
+}
 
-pub var document_reference_slot: usize = 0;
+/// 借一段 `rootId\n相对路径`。文件树行与搜索命中共用它，所以借用的
+/// 记账只此一处：搜索那侧曾自己推轮换游标，两个写者共管一个游标。
+pub fn borrowDocumentReference(root_id: []const u8, path: []const u8) ?[]const u8 {
+    const remaining = reference_frame[reference_used..];
+    const room = remaining[0..@min(remaining.len, reference_max_bytes)];
+    const reference = project_view.documentReference(room, root_id, path) orelse return null;
+    reference_used += reference.len;
+    return reference;
+}
 
 pub fn openDocumentMsg(model: *const Model, path: []const u8) ?Msg {
-    document_reference_slot = (document_reference_slot + 1) % DOCUMENT_REFERENCE_SLOTS;
-    const buffer: []u8 = document_reference_pool[document_reference_slot][0..];
-    const reference = project_view.documentReference(buffer, model.root_id.slice(), path) orelse return null;
+    const reference = borrowDocumentReference(model.root_id.slice(), path) orelse return null;
     return .{ .document_open = reference };
+}
+
+test "sixty-five tree rows keep their own document reference" {
+    // F-01 的另一半：一行借三次（`on_press`、`on_submit`、菜单首项），
+    // 64 行就是 192 次进 64 个槽。画出来的行文字是对的（它来自答复），
+    // 锿上去的引用不是——无障碍指纹因此也看不见它。
+    var model: Model = .{};
+    try model.root_id.set("r1");
+    const first = openDocumentMsg(&model, "第一.md").?.document_open;
+    var index: usize = 0;
+    while (index < 64) : (index += 1) _ = openDocumentMsg(&model, "后来.md");
+    try std.testing.expect(std.mem.indexOf(u8, first, "第一.md") != null);
+}
+
+test "a frame that runs out of reference bytes refuses instead of lending live bytes" {
+    // 拒绝是可见的：`filesView` 拿到 null 就把那一行画成不可按并说出原因。
+    beginFrame();
+    const first = borrowDocumentReference("r1", "第一.md").?;
+    var refused = false;
+    var index: usize = 0;
+    while (index < 100_000) : (index += 1) {
+        if (borrowDocumentReference("r1", "后来.md") == null) {
+            refused = true;
+            break;
+        }
+    }
+    try std.testing.expect(refused);
+    try std.testing.expect(std.mem.indexOf(u8, first, "第一.md") != null);
+    beginFrame();
+    try std.testing.expect(borrowDocumentReference("r1", "下一帧.md") != null);
 }
 
 /// 文件树的下一页。游标由 Rust 给，界面原样送回。
