@@ -11,8 +11,8 @@ import { executableFor, TIER_A } from "./scriptc-tiers.ts";
  *
  * This is the same idea `EVIDENCE_LANES` below already applies to evidence,
  * carried to every stage: a lane names one requirement, and a runner that
- * cannot meet it does not run the lane. The three values are the three CI jobs,
- * so a workflow says which one it is with `--needs` instead of listing stages.
+ * cannot meet it does not run the lane. A workflow selects with `--needs`
+ * instead of listing stages, so a stage joins a job by naming what it needs.
  *
  * - `files` reads the repository, and compiles nothing but ScriptC.
  * - `cargo` needs a Rust toolchain.
@@ -20,10 +20,18 @@ import { executableFor, TIER_A } from "./scriptc-tiers.ts";
  *   `apps/native/build.zig` runs `cargo build -p refrain-native-host --release`
  *   and links the staticlib into the test module, so `native test` is not a
  *   Zig-only command however much its name suggests otherwise.
+ * - `artifact` needs the built product binary, which the `native` toolchain
+ *   produces but which none of the stages above ever waits for. It is separate
+ *   from `native` because the two differ in *when* and in *where*: these stages
+ *   run after `native build`, and they read a PE object, thus they run on the
+ *   platform RefRain ships. `verify:no-network-imports` holds the shipped
+ *   binary's import table to an exact register of 25 Windows symbols; on Linux
+ *   that register describes no object, so a Linux row could only report a
+ *   colour about the wrong file format.
  */
-type Requirement = "files" | "cargo" | "native";
+type Requirement = "files" | "cargo" | "native" | "artifact";
 
-const REQUIREMENTS = ["files", "cargo", "native"] as const;
+const REQUIREMENTS = ["files", "cargo", "native", "artifact"] as const;
 
 /**
  * The stages a data-layer assertion cannot make, grouped by what each one needs
@@ -95,7 +103,7 @@ const stages: readonly Stage[] = [
   {
     name: "verify:no-network-imports",
     argv: ["bun", "scripts/verify-no-network-imports.ts"],
-    needs: "native",
+    needs: "artifact",
   },
   { name: "verify:bridge", argv: ["bun", "scripts/verify-bridge.ts"], needs: "files" },
   {

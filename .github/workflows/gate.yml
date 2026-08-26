@@ -13,8 +13,13 @@ name: gate
 # live in `evidence.yml`.
 #
 # `source` installs no Rust and no Zig, so it starts returning verdicts while
-# the other two are still fetching toolchains: 31 stages, 17 seconds measured
+# the other two are still fetching toolchains: 32 stages, 17 seconds measured
 # on the author's machine.
+#
+# A fourth requirement, `artifact`, has no job of its own: it needs the built
+# product binary, so it runs as a second gate step inside `native`, after
+# `native build` and on the platform that ships. Splitting it out of `native`
+# is what lets the rest of that job keep starting before anything is linked.
 
 on:
   push:
@@ -96,6 +101,11 @@ jobs:
     name: rust (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    # One of this job's four stages, `verify:skill-doc-current`, is tier A, so
+    # this job compiles ScriptC and needs a C driver for it — the same one
+    # `source` uses, because artefacts built by two compilers are not comparable.
+    env:
+      SCRIPTC_CC: zigcc
     strategy:
       fail-fast: false
       matrix:
@@ -111,11 +121,12 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      # Rust's x86_64-pc-windows-gnu target needs a dlltool, and the pinned Zig
-      # ships one. The Native SDK is not built in this job; this is the only
-      # reason Zig is installed on the Windows row.
+      # Zig serves two unrelated purposes here, and no Zig code is built in this
+      # job. It is the C driver ScriptC compiles the tier A gates with, on both
+      # rows; and on Windows it also supplies the dlltool that Rust's
+      # x86_64-pc-windows-gnu target needs. The Windows row had it for the
+      # second reason alone, which is why the Linux row went without one.
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
-        if: runner.os == 'Windows'
         with:
           version: ${{ env.ZIG_VERSION }}
 
@@ -159,6 +170,13 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace --all-targets
+
+      # `verify:skill-doc-current` is tier A: `gate.ts` runs it as the compiled
+      # executable and fails closed when that file is absent, with no fallback
+      # to Bun (D15). This job never built one, so it reported
+      # "tier A executable missing" on every run since the split — a red about
+      # this workflow rather than about the commit under test.
+      - run: bun run scriptc:build
 
       # Four gates that read what cargo produces. They run after the workspace
       # is built, thus they reuse the artefacts above rather than paying for
@@ -300,6 +318,16 @@ jobs:
       - name: Build the Native platform binary
         working-directory: apps/native
         run: bun x native build . --yes -Dplatform=${{ matrix.platform }} ${{ matrix.build_flags }}
+
+      # The `artifact` requirement: one gate that reads the linked object rather
+      # than any source of it. It cannot sit in the gate step above, which runs
+      # before anything is linked, and it reads a PE import table, so it runs on
+      # the platform that ships and nowhere else.
+      - uses: ./.github/actions/run-gate
+        if: runner.os == 'Windows'
+        with:
+          needs: artifact
+          label: artifact-${{ matrix.platform }}
 
       # Eight journals, one per destination, recorded on a real window by
       # `bun run e2e:record` and replayed here headlessly (null platform: the

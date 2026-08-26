@@ -666,13 +666,22 @@ on, so a job installs what its stages need and nothing else:
 
 | Requirement | Needs | Command | Stages |
 |---|---|---|---|
-| `files` | the repository and ScriptC | `bun run gate --needs files` | 31 |
+| `files` | the repository and ScriptC | `bun run gate --needs files` | 32 |
 | `cargo` | a Rust toolchain | `bun run gate --needs cargo` | 4 |
 | `native` | the Native SDK toolchain: Zig, and cargo, because `build.zig` builds the Rust staticlib | `bun run gate --needs native` | 2 |
+| `artifact` | the built product binary, on the platform that ships | `bun run gate --needs artifact` | 1 |
 
-`bun run gate` with no selector runs all three. The `files` stages are
-read-only scans, thus they run concurrently; the other two take the same cargo
+`bun run gate` with no selector runs all four. The `files` stages are
+read-only scans, thus they run concurrently; the others take the same cargo
 target lock and run in sequence.
+
+`artifact` is separate from `native` because the two differ in when and in
+where. Its stages read the linked object, so they wait for `native build`,
+which every `native` stage starts before; and `verify:no-network-imports`
+holds a PE import table to an exact register of 25 Windows symbols, which
+describes no ELF object, so a Linux row could only report a colour about the
+wrong file format. The requirement carries both facts, so no workflow has to
+restate them as a list of stage names.
 
 Three evidence lanes are outside the blocking gate, because a data-layer
 assertion cannot make their claims. Each lane names the one thing that it needs
@@ -822,11 +831,20 @@ asks a machine for something the machine does not have, comes out.
 | `gate.yml` | Does this commit pass every blocking gate on Linux and Windows? | each push and each pull request |
 | `evidence.yml` | Does the data layer stay inside the budget that each platform states? | weekly, on request, and when a budget file changes |
 
-`gate.yml` asks its question in three jobs, one for each requirement above:
-`source` (one platform, no Rust and no Zig installed), `rust` (both platforms,
-debug profile only), and `native` (both platforms, the Zig build and the
-journals). They run at once, each caches what it alone builds, and each states
-a timeout it can meet. The single 45-minute job they replaced ran every step in
+`gate.yml` asks its question in three jobs: `source` (one platform, no Rust
+installed and no Zig code built), `rust` (both platforms, debug profile only),
+and `native` (both platforms, the Zig build and the journals). They run at
+once, each caches what it alone builds, and each states a timeout it can meet.
+The fourth requirement gets no fourth job: `artifact` runs as a second gate
+step inside `native`, after the binary exists and on the Windows row alone.
+
+Every job installs a Zig, and no two of them for the same reason. `source` and
+`rust` use it as the C driver that compiles the tier A gates; `rust` also takes
+its dlltool for the Windows GNU target; only `native` builds Zig code. A job
+that runs a tier A gate without a C driver cannot compile the executable that
+gate runs, and `gate.ts` fails closed rather than falling back to Bun — which
+is how `rust` reported a missing executable on both runs that followed the
+split into one job per requirement. The single 45-minute job they replaced ran every step in
 sequence on both platforms, so any failure cost a rerun of all of it, and the
 debug and release profiles evicted each other from one shared cache.
 | `ime-gate.yml` | Does a real Windows input method reach the manuscript? | weekly and on request, while the lane is under construction (P7) |
