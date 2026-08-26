@@ -120,6 +120,20 @@ empty_enum_variants_with_brackets = "deny"
 allow_attributes = "deny"
 allow_attributes_without_reason = "deny"
 
+# Dependency debug info is both the largest artifact this workspace writes and
+# the slowest step of every relink, because x86_64-pc-windows-msvc copies it
+# into a .pdb beside every binary it links, and this workspace links one per
+# test target — 63 of them today, counted by `cargo metadata`. Before this
+# switch, 11.6 GB of the 15.0 GB under target/debug/deps was .pdb, and single
+# files reached 182 MB. Switching it off for dependencies leaves workspace
+# members at `debug = 2`, so source-level debugging and file-and-line
+# backtraces of our own code are unchanged; only a backtrace frame inside a
+# dependency loses its line number. Measured on this machine over
+# `-p refrain-store --tests` on rustc 1.97.1, a one-line-edit relink fell from
+# 25-30 s to 12 s, and a clean build's artifacts from 3.86 GB to 1.70 GB.
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 strip = true
 lto = true
