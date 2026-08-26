@@ -288,8 +288,7 @@ fn an_anchor_that_appears_twice_refuses_instead_of_reversing_the_wrong_one() {
     let last_block = manuscript
         .head()
         .blocks()
-        .iter()
-        .next_back()
+        .last()
         .expect("a last block")
         .id();
     manuscript

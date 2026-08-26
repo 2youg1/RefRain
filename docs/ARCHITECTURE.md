@@ -232,7 +232,7 @@ other types. A gate makes the refusal.
 
 | Layer | Holds | Never holds | Enforced by | Scale (modules / lines) |
 |---|---|---|---|---|
-| **L0 `refrain-core`** — the domain | The product rules: manuscript, blocks, formats, line breaking, the agent protocol, ranking, KARA | A database, a file path, a process, a window | `verify:core-purity`, `#![forbid(unsafe_code)]` | 32 / 11,891 |
+| **L0 `refrain-core`** — the domain | The product rules: manuscript, blocks, formats, line breaking, the agent protocol, ranking, KARA | A database, a file path, a process, a window | `verify:core-purity`, `#![forbid(unsafe_code)]` | 32 / 12,084 |
 | **L1 `refrain-store`** — persistence | The two databases, the mutable disk paths, the atomic writer, the Root guard, the indexes, the Config file, the trash | Domain rules, orchestration semantics | `verify:write-path`, `verify:trash-only` | 23 / 9,054 |
 | **L2 `refrain-host`** — orchestration | Task, Run, and Authorization state, staging, workspaces, process launch, harness adapters | The database. It writes through the `HostJournal` trait. Domain rules | INV-12 by review, and the journal seam | 6 / 4,873 |
 | **L3 `refrain-app`** — use cases | The flows that need more than one layer below, the one `Application`, and `DocumentSurface` | FFI, raw pointers, platform APIs | `#![forbid(unsafe_code)]` | 25 / 9,595 |
@@ -753,26 +753,33 @@ cargo clippy --workspace --message-format=json -- \
 
 | Lint | Sites | The largest single file |
 |---|---|---|
-| `arithmetic_side_effects` | 277 | `manuscript/align.rs` 38, `native_document.rs` 32, `typeset.rs` 27 |
-| `indexing_slicing` | 113 | `manuscript/mod.rs` 15, `manuscript/align.rs` 14, `manuscript/review.rs` 12 |
+| `arithmetic_side_effects` | 274 | `manuscript/align.rs` 38, `native_document.rs` 32, `typeset.rs` 27 |
+| `indexing_slicing` | 106 | `manuscript/align.rs` 14, `manuscript/mod.rs` 14, `manuscript/review.rs` 12 |
 | `as_conversions` | 127 | `native/host/document.rs` 22, `native/host/wire.rs` 14 |
 | `string_slice` | 93 | `ingest/office.rs` 30, `agent_protocol.rs` 30 |
 | `expect_used` | 11 | `manuscript/mod.rs` 6 |
-| `unreachable` | 5 | `manuscript/block_sequence.rs` 4, `store/atomic.rs` 1 |
+| `unreachable` | 1 | `store/atomic.rs` 1 |
 
 This table published 282 / 154 / 131 / 93 / 12 / 7 until the command above was
 run against it. Four of the six were wrong, and no reader could have found that
 out: a count with no command beside it is a claim, and the number that nobody
 can reproduce is the one that drifts.
 
-The last two are design gaps, not oversights: the block tree's depth and its
-node shape are not related by a type, so four `unreachable!` stand where a type
-should; `Index<usize>` panics because the trait says so; `SourceSnapshot::read`
-is the documented panicking half of a pair whose other half returns `Result`.
-Each closes by a change to the module, not by a lint level, and a
-`#[expect(clippy::expect_used)]` would hide the gap rather than close it.
-`overflow-checks` is the runtime half of the first row until the compile-time
-half can be turned on.
+The last two are design gaps, not oversights: `Index<usize>` panics because the
+trait says so, and `SourceSnapshot::read` is the documented panicking half of a
+pair whose other half returns `Result`. Each closes by a change to the module,
+not by a lint level, and a `#[expect(clippy::expect_used)]` would hide the gap
+rather than close it. `overflow-checks` is the runtime half of the first row
+until the compile-time half can be turned on.
+
+The `unreachable` row was 5 and is 1. Four of them stood in
+`manuscript/block_sequence.rs`, where the tree's depth and its node shape are not
+related by a type; the descent and the replacement are structurally recursive
+now, and a node whose shape disagrees with the depth it was reached at returns
+`None`, which the caller reports as source drift. **The gap is not closed** — a
+malformed tree is still representable, and relating depth to shape needs a
+depth-indexed type whose cost is far above what it buys. What changed is the
+price of a malformed tree: one refusal instead of the process.
 
 **Injection-verify each gate.** Break the thing that the gate guards. See the
 gate fail. Restore the thing. See the gate pass. A gate that never failed proves

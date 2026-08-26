@@ -81,19 +81,28 @@ trash = "=5.2.6"
 # command that produces all six at once, and the per-file concentration, are in
 # `docs/ARCHITECTURE.md`; re-measure before quoting these:
 #
-#   arithmetic_side_effects  277    indexing_slicing  113
+#   arithmetic_side_effects  274    indexing_slicing  106
 #   as_conversions           127    string_slice       93
-#   expect_used               11    unreachable         5
+#   expect_used               11    unreachable         1
 #
-# Those are not oversights and they are not one flag away. The four
-# `unreachable!` in `manuscript/block_sequence.rs` stand where the tree's depth
-# and its node shape are not related by the type; `Index<usize>` panics because
-# the trait says so; `SourceSnapshot::read` is the documented panicking half of
-# a pair whose other half returns `Result`. Turning those into `#[expect]`
-# attributes buys attribute noise and hides the design gap, so the gap is
-# recorded in `docs/ARCHITECTURE.md` Open items instead, where this repository
-# keeps its gaps. `overflow-checks` below is the runtime half of the arithmetic
-# entry until the compile-time half can be turned on.
+# Those are not oversights and they are not one flag away. `Index<usize>` panics
+# because the trait says so; `SourceSnapshot::read` is the documented panicking
+# half of a pair whose other half returns `Result`. Turning those into
+# `#[expect]` attributes buys attribute noise and hides the design gap, so the
+# gap is recorded in `docs/ARCHITECTURE.md` Open items instead, where this
+# repository keeps its gaps. `overflow-checks` below is the runtime half of the
+# arithmetic entry until the compile-time half can be turned on.
+#
+# The four `unreachable!` this note used to name stood in
+# `manuscript/block_sequence.rs`, where the tree's depth and its node shape are
+# not related by a type. They are gone: the descent and the replacement are
+# structurally recursive now, and a node whose shape disagrees with the depth it
+# was reached at returns `None`, which the caller reports as source drift. **The
+# gap they marked is not closed.** A malformed tree is still representable;
+# relating depth to shape needs a depth-indexed type whose cost is far above what
+# it buys. What changed is that a malformed tree costs one refusal instead of the
+# process. The one `unreachable!` left is `store/atomic.rs`, on an unbounded
+# counter.
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 
@@ -139,7 +148,7 @@ strip = true
 lto = true
 codegen-units = 1
 # The root AGENTS.md dislike list opens with silently overflowing arithmetic,
-# and release is the one profile where the compiler permits it. 277 production
+# and release is the one profile where the compiler permits it. 274 production
 # expressions still do bare integer arithmetic (see the note above the lint
 # table), so this is where that half is caught: a wrong offset written into a
 # manuscript is worse than a crash that never writes one. Debug already checks;

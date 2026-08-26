@@ -257,7 +257,13 @@ fn apply_single_block(
     let Some(index) = at.get(block_id).copied() else {
         return Some(Err(TextRefusal::MissingBlock { block: *block_id }));
     };
-    let before = head.blocks[index].clone();
+    // The index map and the block tree are two records of the same thing, and
+    // this is the one place that trusts the first to address the second. A
+    // disagreement is a missing block, which is exactly what the caller above
+    // already knows how to report.
+    let Some(before) = head.blocks.get(index).cloned() else {
+        return Some(Err(TextRefusal::MissingBlock { block: *block_id }));
+    };
     let after = Block {
         id: *block_id,
         text: text.as_str().into(),
@@ -268,7 +274,10 @@ fn apply_single_block(
     let region = AppliedRegion {
         before: vec![before].into_boxed_slice(),
         after: vec![after.clone()].into_boxed_slice(),
-        left: index.checked_sub(1).map(|left| head.blocks[left].id),
+        left: index
+            .checked_sub(1)
+            .and_then(|left| head.blocks.get(left))
+            .map(|left| left.id),
         right: head.blocks.get(index + 1).map(|right| right.id),
     };
     let action = TextAction {
@@ -280,10 +289,13 @@ fn apply_single_block(
         regions: vec![region].into_boxed_slice(),
         verdicts: Box::default(),
     };
+    let Some(blocks) = head.blocks.replace(index, after) else {
+        return Some(Err(TextRefusal::MissingBlock { block: *block_id }));
+    };
     Some(Ok((
         TextHead {
             id: Id::new(),
-            blocks: head.blocks.replace(index, after),
+            blocks,
             cause: editor.cause.clone(),
         },
         action,

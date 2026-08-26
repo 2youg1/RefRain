@@ -901,7 +901,11 @@ impl Manuscript {
         Ok(Some(LocalUndoPlan {
             restored: TextHead {
                 id: action.base,
-                blocks: self.head.blocks.replace(index, before.clone()),
+                blocks: self
+                    .head
+                    .blocks
+                    .replace(index, before.clone())
+                    .ok_or(TextRefusal::SourceDrift(SourceDrift))?,
                 cause: format!("undo: {}", action.cause),
             },
             materialized,
@@ -1202,7 +1206,19 @@ impl Manuscript {
         text.extend_from_slice(replacement.as_bytes());
         text.extend_from_slice(&after);
         let text = String::from_utf8(text).map_err(|_| TextRefusal::SourceDrift(SourceDrift))?;
-        let blocks = self.head.block_ids()[first..=last].to_vec();
+        // The envelope names one or two blocks; reading them one by one costs a
+        // descent each. `block_ids()` would build the whole id vector first —
+        // 16 MB of `Id` for a million-block manuscript, allocated and dropped on
+        // every keystroke, which is the shape a release performance test caught.
+        let blocks = (first..=last)
+            .map(|index| {
+                self.head
+                    .blocks
+                    .get(index)
+                    .map(Block::id)
+                    .ok_or(TextRefusal::SourceDrift(SourceDrift))
+            })
+            .collect::<Result<Vec<Id>, TextRefusal>>()?;
         let exact = if first != last {
             Some(
                 self.materialized
