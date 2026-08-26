@@ -583,6 +583,7 @@ Each fact below has one authority. A second copy is a defect.
 | The wire name of a block kind | `refrain-core/src/block_shape.rs` (`BlockKind::wire_name` / `from_wire`) | A second spelling table. The index and the block listing had two byte-identical copies because the first was `pub(crate)`; visibility is not a reason to fork a vocabulary |
 | Protocol layout | `apps/native/protocol/host.json` | An offset edited by hand in a generated file |
 | The anchor of a projection | `projection_response` in `apps/native/host/src/document.rs` | An anchor chosen from a value instead of from the action. Each request carries the last scroll offset of the surface, thus an offset alone would have priority over each later caret and the caret could not bring the window back, and a zero offset could not be told from "I sent no offset". `applyInput` anchors on the caret; `scrollProjection` anchors on the offset at any value, zero included; every other view action keeps the block it was given. A range selection keeps the window, because the author selected text and did not ask to go somewhere |
+| The width of a line-start offset | `hard_breaks: []const u32` on the SDK's text widget | A narrower type on our side. The offsets are window-relative and the window is capped at 40,960 bytes, so `u16` looks like the honest width — and it was measured: narrowing ours only moves a conversion of up to 40,960 values onto the frame path, because the value's consumer is an SDK field typed `u32`. The 80 KB it would save is lazily-committed .bss. Measured, reverted, recorded here so nobody measures it twice |
 | The scale of the virtual scroll track | `virtualBlockHeight` and `defaultViewportBlocks` in `apps/native/protocol/host.json` | A second mapping between a pixel offset and a block. Rust reads `floor(offset / virtualBlockHeight)` and stops at the last window (`total − defaultViewportBlocks`); `documentLayout` in `view/document.zig` inverts the same two constants for the leading spacer. A spacer that is placed by a proportion of the projected height is a second mapping, and only the drawing side knows that height |
 | The interface font | `manuscript_font` in `apps/native/build.zig` | A second face for interface text. The SDK selects a face for each run, not for each codepoint, thus an uncovered character shows a block. `verify:font-coverage` compares the label tables against the cmap of this face |
 
@@ -802,6 +803,14 @@ nothing. See [CONTRIBUTING.md](CONTRIBUTING.md).
 be dead: it can read a path that only one platform has, it can set an
 environment variable that no code reads, or it can click a control that the
 surface removed. Run each evidence lane on the release platform.
+
+**`zig build test` does not analyse the app module on Windows.** The COFF
+backend limit recorded under Open items has a second consequence worth naming
+here: a type error inside `documentView` — the function `main` passes to the
+runtime, which no test references — compiles clean under `bun run test:null` and
+fails only in `bun run --cwd apps/native build`. Measured while narrowing the
+line-start offsets: 208 tests passed against code the app build refused. Build
+the app before believing a Zig-only change is complete.
 
 ### The four workflows
 
