@@ -7,12 +7,47 @@
 //! spot where a platform handle enters Rust, and `project.rs` consumes it as a
 //! safe `DialogOwner` value.
 
-use crate::protocol::{EVENT_TEXT_BYTES, RefrainNativeRequest, RefrainNativeResponse};
+use crate::protocol::{
+    ERROR_HOST_FAILURE, EVENT_TEXT_BYTES, RefrainNativeRequest, RefrainNativeResponse,
+};
+use std::panic::AssertUnwindSafe;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn refrain_native_dispatch(request: RefrainNativeRequest) -> RefrainNativeResponse {
     let text = borrow_request_text(&request);
-    crate::document::dispatch(request, text)
+    stop_unwinding(request.action, || crate::document::dispatch(request, text))
+}
+
+/// Stop a panic here, and answer the surface instead of ending the process.
+///
+/// Unwinding out of an `extern "C"` function aborts, and this process holds
+/// every unsaved manuscript byte in memory. The reachable panic source is
+/// third-party ingest under `ACTION_PROJECT` — `image`, `zip`, `lopdf` and
+/// `usvg` all run inside one dispatch call, and `map_err` catches what a parser
+/// *returns*, never what it panics on.
+///
+/// The caller reads `hostFailure`, the status every other host-side failure
+/// already carries: the surface distinguishes "the host could not do it", not
+/// how it failed, so a seventh error code would have one producer and no
+/// reader. What the barrier changes is what happens next. A panic poisons every
+/// mutex the panicking call held, and the modules behind those mutexes already
+/// map `PoisonError` to a named refusal in more than ten places with no
+/// `.unwrap()` among them. That whole recovery layer was unreachable while the
+/// panic aborted before any lock could be observed as poisoned; this is the
+/// call that reaches it.
+///
+/// `AssertUnwindSafe` states the deliberate part: the closure touches
+/// process-wide state that a panic can leave mid-update. Poisoning is what
+/// makes observing it safe — the shared state is `Mutex`-owned, so the affected
+/// use case refuses service while every unaffected one keeps answering.
+fn stop_unwinding(
+    action: u16,
+    dispatch: impl FnOnce() -> RefrainNativeResponse,
+) -> RefrainNativeResponse {
+    match std::panic::catch_unwind(AssertUnwindSafe(dispatch)) {
+        Ok(response) => response,
+        Err(_) => RefrainNativeResponse::empty(ERROR_HOST_FAILURE, action),
+    }
 }
 
 /// Resolve the borrowed request text into a slice.

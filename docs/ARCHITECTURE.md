@@ -385,13 +385,27 @@ module with no test file has test blocks in the module.
 
 | Module | Owns | Proven by |
 |---|---|---|
-| `staticlib` | The one C entry `refrain_native_dispatch`. The only place where a raw pointer enters Rust | in-module borrow tests; `verify:unsafe-surface` |
+| `staticlib` | The one C entry `refrain_native_dispatch`, and the unwinding barrier around it. The only place where a raw pointer enters Rust | in-module borrow tests; `verify:unsafe-surface`; `a_panic_inside_dispatch_is_refused_and_leaves_other_sessions_serving` |
 | `protocol` | The generated ABI layout from `protocol/host.json` | the generator `--check`; `protocol.test.ts` |
 | `document` | The document sessions, the action demux, and the protocol-version check | app tests and e2e |
 | `project` | `ACTION_PROJECT`: decode one `ProjectInput`, call the router, lend back a bounded reply. `NativeProjectPlatform` uses `REFRAIN_AUTOMATION_ROOT` for e2e. `truncate_output` degrades a reply that is too large | `verify:wire-shapes` |
 | `project_wire` | One `ProjectOutput` written as the rows the surface reads. Projection only, no judgement: the shape follows what a screen actually reads, not the Rust type tree | `verify:wire-shapes`; the e2e journals |
 | `wire` | **Generated.** The reply rows on the Rust side, from `protocol/host.json`. Each member pushes its own little-endian bytes, so no `unsafe` and no `repr(C)` | the generator `--check` |
 | `contract` | The health use case on the generated contract | in-module |
+
+**The unwinding barrier.** A panic that reaches an `extern "C"` function aborts,
+and this process holds every unsaved manuscript byte in memory. The reachable
+source is third-party ingest: one `ACTION_PROJECT` call runs `image`, `zip`,
+`lopdf` and `usvg`, and a `map_err` catches what a parser returns, never what it
+panics on. `staticlib::stop_unwinding` wraps the single dispatch call, so the
+event flow is `refrain_native_dispatch` → `catch_unwind` → `document::dispatch`,
+and a panic answers `hostFailure` — the status every other host-side failure
+already carries, because the surface distinguishes "the host could not do it",
+not how it failed. The barrier's second effect is the larger one: a panic
+poisons the mutexes the panicking call held, and L3 and L4 already map
+`PoisonError` to a named refusal in more than ten places. That layer was
+unreachable while the abort happened first. The use case whose lock was poisoned
+now refuses; every other one keeps answering.
 
 ### L5 · `apps/native/src` — the surface
 

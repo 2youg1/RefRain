@@ -24,6 +24,12 @@ const DOCUMENT_STATE_PATH_ENV: &str = "REFRAIN_NATIVE_DOCUMENT_STATE_PATH";
 /// sets it; production launches open a real file or refuse.
 const SCALE_FIXTURE_ENV: &str = "REFRAIN_NATIVE_SCALE_FIXTURE";
 
+/// 测试专用动作码：让一次真实的 panic 从分派内部升起，好让 C ABI 的展开
+/// 屏障有东西可拦。生产构建里这个常量不存在，那个码落到 `_` 臂上就是无效
+/// 请求——注入验证靠它：拿掉 `stop_unwinding`，这一码就会带走整个进程。
+#[cfg(test)]
+pub(crate) const ACTION_PANIC_PROBE: u16 = u16::MAX;
+
 /// One open document plus the projection bytes its last response lent out.
 ///
 /// Keeping the bytes here is what lets a response carry a pointer instead of a
@@ -83,7 +89,13 @@ fn dispatch_with(
         | ACTION_APPLY_INPUT
         | ACTION_OBTAIN_PROJECTION
         | ACTION_SCROLL_PROJECTION => {}
-        _ => return RefrainNativeResponse::empty(ERROR_INVALID_REQUEST, request.action),
+        _ => {
+            #[cfg(test)]
+            if request.action == ACTION_PANIC_PROBE {
+                panic!("panic probe: the C ABI unwinding barrier must stop this");
+            }
+            return RefrainNativeResponse::empty(ERROR_INVALID_REQUEST, request.action);
+        }
     }
 
     let sessions = SESSIONS.get_or_init(|| Mutex::new(Sessions::default()));
@@ -527,6 +539,42 @@ mod tests {
         request.revision = revision;
         request.input = input;
         request
+    }
+
+    /// A panic raised inside dispatch is answered, not aborted on.
+    ///
+    /// Three assertions, one per consequence of the barrier in
+    /// `staticlib::stop_unwinding`. (a) The process survives — the line after
+    /// the probe runs at all, which an abort would prevent and which no
+    /// `assert!` can express. (b) The caller reads `hostFailure`, the same
+    /// named refusal every other host-side failure carries. (c) A session that
+    /// the panicking call never touched still projects, because the probe
+    /// raises before the session table is locked, exactly like the reachable
+    /// panic source: third-party ingest under `ACTION_PROJECT`, which returns
+    /// before `dispatch_with` reaches `SESSIONS`.
+    ///
+    /// Injection: delete the `catch_unwind` in `stop_unwinding` and this test
+    /// takes the whole test binary down with it.
+    #[test]
+    fn a_panic_inside_dispatch_is_refused_and_leaves_other_sessions_serving() {
+        let opened = send(request(ACTION_OPEN_MANUSCRIPT));
+        assert_eq!(opened.status, 0);
+
+        let refused = crate::staticlib::refrain_native_dispatch(request(ACTION_PANIC_PROBE));
+        assert_eq!(
+            refused.status, ERROR_HOST_FAILURE,
+            "a caught panic answers with the named host failure"
+        );
+        assert_eq!(refused.action, ACTION_PANIC_PROBE);
+
+        let mut again = request(ACTION_OBTAIN_PROJECTION);
+        again.session = opened.session;
+        let served = crate::staticlib::refrain_native_dispatch(again);
+        assert_eq!(
+            served.status, 0,
+            "the session the panic never touched still projects"
+        );
+        assert!(!response_text(&served).is_empty());
     }
 
     #[test]
