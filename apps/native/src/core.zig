@@ -25,6 +25,7 @@ const replies = @import("core/replies.zig");
 const host_bridge = @import("host_bridge.zig");
 const replay_seam = @import("replay_seam.zig");
 const project_request = @import("project_request.zig");
+const material = @import("material.zig");
 const project_view = @import("project_view.zig");
 const wire = @import("generated/wire.zig");
 const protocol = @import("generated/protocol.zig");
@@ -247,16 +248,13 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         // 答复变成一条可见状态。不落盘的话重开又回到濤，而作者会把那当成没保存成功。
         .theme_next => selectTheme(model, fx, nextTheme(model.theme_index)),
         .theme_select => |index| selectTheme(model, fx, clampTheme(index)),
-        // 0 实心 / 1 亚克力 / 2 液态玻璃；越界回落实心。与主题同一条纪律：先记下标，后落盘。
-        .material_select => |index| {
-            model.panel_material = if (index <= 2) index else 0;
-            const slug = switch (model.panel_material) {
-                1 => "acrylic",
-                2 => "liquid",
-                else => "solid",
-            };
+        // 与主题同一条纪律：先记下选择，后落盘。没有越界回落——Msg 带的就是一种
+        // 材质，kebab 串归 `material.zig` 一处。
+        .material_select => |kind| {
+            model.panel_material = kind;
             var writer: project_request.Writer = .{};
-            const encoded = project_request.setPanelMaterial(&writer, slug) orelse return;
+            const encoded = project_request.setPanelMaterial(&writer, material.kebabOf(kind)) orelse
+                return;
             sendProject(fx, model, encoded.nowOrNever());
         },
 
@@ -1180,10 +1178,11 @@ fn landProject(model: *Model, response: protocol.RefrainNativeResponse, fx: *Eff
 /// 设置答复里的排版三值与面板材质。它们只在这一种答复里出现。
 fn landConfig(model: *Model, reply: wire.Reply) void {
     const head = reply.head(.config) orelse return;
+    // 线上枚举 → 渲染侧枚举，两边都穷尽：任一边加一个变体都是编译错误。
     model.panel_material = switch (head.panel_material) {
-        .solid => 0,
-        .acrylic => 1,
-        .liquid => 2,
+        .solid => .solid,
+        .acrylic => .acrylic,
+        .liquid => .liquid,
     };
     // 十分之一储存（`*_tenths_*`）：持久化的数字不带小数点，单位写在字段名里。
     // 0 是「没读到」而不是「作者把字号调成了 0」——后者读进去屏幕会空白。
@@ -2028,7 +2027,7 @@ test "设置答复：排版三值与面板材质按层次取，不在字节里�
     try testing.expectEqual(@as(f64, 18.5), h.model().typography.text_size);
     try testing.expectEqual(@as(u32, 170), h.model().typography.line_height_percent);
     try testing.expectEqual(@as(f64, 60), h.model().typography.measure_em);
-    try testing.expectEqual(@as(u8, 1), h.model().panel_material);
+    try testing.expectEqual(material.Kind.acrylic, h.model().panel_material);
     // 答复落进设置槽，而不是把公共槽冲掉。
     try testing.expectEqual(wire.Kind.config, replies.borrow(.config).kind());
     try testing.expectEqual(wire.Kind.none, replies.borrow(.project).kind());
@@ -2450,17 +2449,19 @@ test "换主题立刻换肤，同时把选择落盘" {
     try h.dispatch(.{ .theme_select = 200 });
     try testing.expectEqual(@as(u8, 0), h.model().theme_index);
 
-    // 材质同一条纪律：先记下标，后落盘；越界回落实心。
-    try h.dispatch(.{ .material_select = 1 });
-    try testing.expectEqual(@as(u8, 1), h.model().panel_material);
-    try testing.expectEqualStrings(
-        "{\"kind\":\"changeConfig\",\"value\":{\"setPanelMaterial\":\"acrylic\"}}",
-        h.parkedText(),
-    );
-    try h.dispatch(.{ .material_select = 9 });
-    try testing.expectEqual(@as(u8, 0), h.model().panel_material);
-    try testing.expectEqualStrings(
-        "{\"kind\":\"changeConfig\",\"value\":{\"setPanelMaterial\":\"solid\"}}",
-        h.parkedText(),
-    );
+    // 材质同一条纪律：先记选择，后落盘。**没有越界这一情形了**：Msg 带的
+    // 是 `material.Kind`，一个说不出口的材质在编译期就被拦下了。三个变体逐个
+    // 走一遍，同时盯住 kebab 串的那一对往返。
+    inline for (.{
+        .{ material.Kind.acrylic, "acrylic" },
+        .{ material.Kind.liquid, "liquid" },
+        .{ material.Kind.solid, "solid" },
+    }) |choice| {
+        try h.dispatch(.{ .material_select = choice[0] });
+        try testing.expectEqual(choice[0], h.model().panel_material);
+        try testing.expectEqualStrings(
+            "{\"kind\":\"changeConfig\",\"value\":{\"setPanelMaterial\":\"" ++ choice[1] ++ "\"}}",
+            h.parkedText(),
+        );
+    }
 }

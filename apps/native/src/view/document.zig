@@ -378,7 +378,7 @@ pub fn verdictBento(
         // 同一份配方——透光度/模糊一张表，不存在「饭盒另是一层皮」。
         material_paint.apply(
             &bento.widget,
-            shell_view.panelMaterialKind(model),
+            model.panel_material,
             &themes.themes[shell_view.currentThemeIndex(model)],
         );
         return bento;

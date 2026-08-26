@@ -7,7 +7,6 @@ const themes = @import("../generated/themes.zig");
 const core = @import("../core.zig");
 const corners = @import("../corners.zig");
 const rail = @import("../rail.zig");
-const material_recipe = @import("../material.zig");
 const workbench_view = @import("../workbench_view.zig");
 const core_workbench = @import("../core/workbench.zig");
 const Adapter = core.App;
@@ -34,17 +33,6 @@ pub fn currentThemeIndex(model: *const Model) usize {
         @intCast(model.theme_index)
     else
         themes.default_index;
-}
-
-/// Model 的材质下标 → material.zig 的 Kind。越界回落实心——与 core 的
-/// `material_select` 臂、material.zig 的 `kindFromKebab` 同一句（实心什么
-/// 都不依赖，永远画得出来）。
-pub fn panelMaterialKind(model: *const Model) material_recipe.Kind {
-    return switch (model.panel_material) {
-        1 => .acrylic,
-        2 => .liquid,
-        else => .solid,
-    };
 }
 
 /// 根栏的内边距（px）。版心列宽、层宽（`panel_stack.layerWidth`）与纱的

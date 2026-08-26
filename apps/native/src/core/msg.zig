@@ -22,6 +22,7 @@
 const std = @import("std");
 const native_sdk = @import("native_sdk");
 const workbench = @import("workbench.zig");
+const material = @import("../material.zig");
 
 const canvas = native_sdk.canvas;
 
@@ -81,7 +82,9 @@ pub const Msg = union(enum) {
     // ------------------------------------------------------------ 外观
     theme_select: u8,
     theme_next,
-    material_select: u8,
+    /// 作者选了哪一种密度。带类型而不带下标：一个下标要每一个接到它的
+    /// 地方各自想一遍「越界怎么办」，而这个问题只在下标存在时才存在。
+    material_select: material.Kind,
 
     // ------------------------------------------------------------ 名录
     /// 在当前去处的名录里上下移动。裁决、派发、信箱、连接共用这一条——

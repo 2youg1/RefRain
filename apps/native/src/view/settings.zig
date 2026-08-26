@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const material_paint = @import("../material_paint.zig");
+const material_recipe = @import("../material.zig");
 const themes = @import("../generated/themes.zig");
 const core = @import("../core.zig");
 const replies = @import("../core/replies.zig");
@@ -53,9 +54,9 @@ pub fn settingsView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
         // （material.zig 配方表的唯一权威）。按下即换肤，落盘随答复。
         ui.row(.{ .gap = 4, .cross = .center }, .{
             ui.text(.{ .grow = 1 }, "面板材质"),
-            materialButton(ui, model, 0, "实心"),
-            materialButton(ui, model, 1, "亚克力"),
-            materialButton(ui, model, 2, "液态玻璃"),
+            materialButton(ui, model, .solid, "实心"),
+            materialButton(ui, model, .acrylic, "亚克力"),
+            materialButton(ui, model, .liquid, "液态玻璃"),
             materialSwatch(ui, model),
         }),
         // KARA：写作状态机的手动开关。Ctrl+Enter（app.zon 的 kara.toggle）
@@ -113,7 +114,7 @@ fn themeButtons(ui: *Adapter.Ui, model: *const Model) [themes.themes.len]Adapter
 /// 一个右键菜单。
 fn materialSwatch(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     const theme = &themes.themes[shell_view.currentThemeIndex(model)];
-    const kind = shell_view.panelMaterialKind(model);
+    const kind = model.panel_material;
     var swatch = ui.el(.stack, .{
         .width = 64,
         .height = 28,
@@ -124,17 +125,17 @@ fn materialSwatch(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     return swatch;
 }
 
-/// 材质三选的一颗按钮：按下记 `material_select` 下标，当前材质高亮
+/// 材质三选的一颗按钮：按下记下那一种材质，当前材质高亮
 /// （复用 `.selected` 底色，与主题网格同一画法，零新几何）。
 fn materialButton(
     ui: *Adapter.Ui,
     model: *const Model,
-    comptime index: i64,
+    comptime kind: material_recipe.Kind,
     comptime label: []const u8,
 ) Adapter.Ui.Node {
     return ui.button(.{
-        .on_press = .{ .material_select = index },
-        .selected = model.panel_material == index,
+        .on_press = .{ .material_select = kind },
+        .selected = model.panel_material == kind,
         .semantics = .{ .label = "把面板换成" ++ label },
     }, label);
 }

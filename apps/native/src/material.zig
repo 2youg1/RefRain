@@ -51,6 +51,18 @@ pub fn kindFromKebab(name: []const u8) Kind {
     return .solid;
 }
 
+/// 往回写时的 kebab 串。`kindFromKebab` 的另一半。
+///
+/// 穷尽 switch：加第四种材质必须先回答「它在配置里叫什么」，而不是静默
+/// 写出 `solid`。三个串只在本文件出现一次，两个方向共用它们。
+pub fn kebabOf(kind: Kind) []const u8 {
+    return switch (kind) {
+        .solid => "solid",
+        .acrylic => "acrylic",
+        .liquid => "liquid",
+    };
+}
+
 /// 一种材质的全部数值。唯一的字面量出处是 `recipe` 的表与紧挨它的
 /// 停点表；`material_paint.zig` 只做换算，不持有第二个数。
 pub const Recipe = struct {

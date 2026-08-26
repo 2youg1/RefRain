@@ -29,6 +29,7 @@ const std = @import("std");
 const native_sdk = @import("native_sdk");
 const workbench = @import("workbench.zig");
 const text = @import("text.zig");
+const material = @import("../material.zig");
 
 /// 一段界面文字的三档容量。容量写在类型上，旁边写着为什么是这个数。
 /// 标识：UUID 是 36 字节，agent id 与提案 id 都比它短。
@@ -188,8 +189,13 @@ pub const Model = struct {
     window: native_sdk.geometry.SizeF = native_sdk.geometry.SizeF.init(0, 0),
     /// 指向生成的色表。Model 只记「选了第几套」，不持有任何颜色。
     theme_index: u8 = 0,
-    /// 0 实心 / 1 亚克力 / 2 液态玻璃。语义归 `material.zig` 的配方表。
-    panel_material: u8 = 0,
+    /// 面板的密度。数值与配方归 `material.zig`，Model 只记选了哪一种。
+    ///
+    /// 这是模块头第 3 条「约定换成类型」的第五条：它曾是一个 `u8`，含义
+    /// 写在注释里，于是五个地方各自记着 0/1/2 的意思，而 `view/shell.zig`
+    /// 还得为「万一是 3」写一条兜底臂。换成 `material.Kind` 之后，加第四
+    /// 种材质是编译错误，兜底臂无处可写。
+    panel_material: material.Kind = .solid,
     typography: Typography = .{},
 
     // ---- 去处与面板 ---------------------------------------------------- 7

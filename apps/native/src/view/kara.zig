@@ -33,7 +33,7 @@ pub fn karaReturnCard(ui: *Adapter.Ui, model: *const Model, column_width: f32, l
     // 回来卡同吃材质（2.10）：它是豁免浮层，但观感上与面板同一份配方。
     material_paint.apply(
         &card.widget,
-        shell_view.panelMaterialKind(model),
+        model.panel_material,
         &themes.themes[shell_view.currentThemeIndex(model)],
     );
     return card;

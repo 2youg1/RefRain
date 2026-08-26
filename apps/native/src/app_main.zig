@@ -163,7 +163,7 @@ fn manuscriptTokens(model: *const Model) native_sdk.canvas.DesignTokens {
     // 面只读 token、不吃 app 侧部件字段——把表面/描边两色按材质配方换掉，
     // 菜单与功能区的面一起换肤（模糊是部件级接线，menu_surface 的模糊要
     // SDK 补丁，另立项）。纸色与正文底色不动：正文区恒实心（红线）。
-    const kind = shell_view.panelMaterialKind(model);
+    const kind = model.panel_material;
     var colors = theme.colors;
     if (kind != .solid) {
         colors.surface = material_paint.surfacePaint(kind, theme);

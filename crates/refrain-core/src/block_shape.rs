@@ -36,6 +36,59 @@ pub enum BlockKind {
     Heading(HeadingLevel),
 }
 
+impl BlockKind {
+    /// 这一种块在线上与索引库里的名字。
+    ///
+    /// 名字与种类是同一件事，所以它们住在同一处；这里与 [`Self::from_wire`]
+    /// 是一对往返，改一边就要改另一边。先例是 `DocumentFormat::wire_code` 与
+    /// `Role::from_wire`：线上拼写的家在 L0。
+    ///
+    /// **没有兑底臂**：新增一个 `BlockKind` 必须逼出一个命名决定，而不是静默
+    /// 落进恰好写在那里的那一臂。
+    ///
+    /// **层级进名字，列数不进**。层级**就是**它是哪一级标题，而列数是关于
+    /// 这一块的另一个事实（这张表有几列）；把列数塞进去会让 `table:3` 与
+    /// `table:4` 读作两种块，而排序、大纲、索引没有一处需要区分它们。层级
+    /// 走后缀而不开新列，是因为新列要一次 schema 迁移加一个默认值，而后缀
+    /// 两样都不要：改动之前写下的行读作普通 `heading`，走 [`Self::from_wire`]
+    /// 的兑底。
+    #[must_use]
+    pub fn wire_name(self) -> String {
+        match self {
+            Self::Paragraph => "paragraph".to_owned(),
+            Self::Heading(level) => format!("heading:{}", level.get()),
+            Self::Fence => "fence".to_owned(),
+            Self::Table(_) => "table".to_owned(),
+        }
+    }
+
+    /// 从线名读回一种块。[`Self::wire_name`] 的另一半。
+    ///
+    /// 三条兑底，每一条都是故意的：
+    ///
+    /// - 损坏或越界的层级后缀读作一级。一个坏后缀该让大纲丢掉缩进，
+    ///   不该让作者丢掉搜索索引。
+    /// - 没带层级的 `"heading"` 读作一级：它是后缀之前写下的行。
+    /// - 本构建不认得的名字读作正文。那是诚实的地板：按它的词排名，
+    ///   而不声称一种本构建看不见的结构。
+    ///
+    /// 列数在写入时就没存，反解因此给一个最小的合法形状；索引只用 kind 做
+    /// 排序权重，真要排版时视图层拿块文本重新识别，那才是权威。
+    #[must_use]
+    pub fn from_wire(name: &str) -> Self {
+        if let Some(level) = name.strip_prefix("heading:") {
+            let parsed = level.parse::<u8>().ok().and_then(HeadingLevel::from_level);
+            return Self::Heading(parsed.unwrap_or(HeadingLevel::ONE));
+        }
+        match name {
+            "heading" => Self::Heading(HeadingLevel::ONE),
+            "fence" => Self::Fence,
+            "table" => Self::Table(TableShape::minimal()),
+            _ => Self::Paragraph,
+        }
+    }
+}
+
 /// 表格的形状：列数与对齐。
 ///
 /// 只记排版需要的那两件事。单元格内容不在这里——那是文本，视图层拿块文本
@@ -460,6 +513,39 @@ mod tests {
             accumulator.push_line(line.as_bytes(), false);
         }
         accumulator.finish()
+    }
+
+    /// 线名往返：写出去的名字读回来仍是同一种块。
+    ///
+    /// 两个索引库与一条线上通道共用这对函数，而它们之前是两份逐字节相同的
+    /// 镜像。往返只在它们同住一处时才能被一条断言盯住；列数不在名字里，所以
+    /// 表格的往返只到 kind 为止。
+    #[test]
+    fn a_block_kind_survives_the_round_trip_through_its_wire_name() {
+        for level in 1..=HeadingLevel::MAX {
+            let heading =
+                BlockKind::Heading(HeadingLevel::from_level(level).expect("1..=6 is a level"));
+            assert_eq!(BlockKind::from_wire(&heading.wire_name()), heading);
+        }
+        for kind in [BlockKind::Paragraph, BlockKind::Fence] {
+            assert_eq!(BlockKind::from_wire(&kind.wire_name()), kind);
+        }
+        let table = BlockKind::Table(TableShape::minimal());
+        assert_eq!(BlockKind::from_wire(&table.wire_name()), table);
+    }
+
+    /// 三条兑底各一条断言。
+    ///
+    /// 这些是从磁盘上真实读到的名字：`"heading"` 是后缀之前写下的行，
+    /// `"heading:9"` 与 `"heading:x"` 是损坏的行，`"diagram"` 是更新的构建
+    /// 写下的行。三种都不得让一次读取失败。
+    #[test]
+    fn a_wire_name_this_build_cannot_parse_costs_structure_not_the_read() {
+        let one = BlockKind::Heading(HeadingLevel::ONE);
+        assert_eq!(BlockKind::from_wire("heading"), one);
+        assert_eq!(BlockKind::from_wire("heading:9"), one);
+        assert_eq!(BlockKind::from_wire("heading:x"), one);
+        assert_eq!(BlockKind::from_wire("diagram"), BlockKind::Paragraph);
     }
 
     #[test]

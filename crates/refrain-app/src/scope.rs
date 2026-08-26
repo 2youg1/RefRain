@@ -25,7 +25,7 @@ pub struct DocumentBlockRow {
     /// 第几块，从 0 起。
     pub ordinal: u32,
     /// 块种类线名，与索引库存的是同一个（`heading:N`／`fence`／`table`／
-    /// `paragraph`——见 `block_kind_wire_name` 的镜像注释）。
+    /// `paragraph`），由 `BlockKind::wire_name` 唯一决定。
     pub kind: String,
     /// 前 60 个字符的行预览（char 边界安全），不是截断的正文。
     pub peek: String,
@@ -98,24 +98,17 @@ pub fn list_blocks(
     Ok(DocumentBlocks { blocks: rows, next })
 }
 
-/// 块种类的线名：与索引库存的是同一个词。
+/// 这一块的线名：Markdown 扫描按字节判形状，Plain 扫描下一切是段落。
 ///
-/// 词汇的唯一权威是 refrain-store 的 `search::kind_name`，但它是
-/// pub(crate)，够不着——这里镜像一份。那份没有兜底臂（新 `BlockKind`
-/// 必须逼出一个命名决定），镜像同样没有。kind 的判法与
-/// `searchable_block` 同一条规则：Markdown 扫描按块自己的字节判形状，
-/// Plain 扫描下 `#`、栅栏、表格行都是文字，一切是段落。
+/// 词汇的唯一权威是 `BlockKind::wire_name`——`#`、栅栏、表格行在 Plain
+/// 扫描下都是文字，所以判形状这一步归这里，命名那一步归 L0。判法与
+/// `searchable_block` 是同一条规则。
 fn block_kind_wire_name(scan: BlockScan, text: &str) -> String {
-    let kind = match scan {
+    match scan {
         BlockScan::Markdown => BlockShape::of(text).kind,
         BlockScan::Plain => BlockKind::Paragraph,
-    };
-    match kind {
-        BlockKind::Paragraph => "paragraph".to_string(),
-        BlockKind::Heading(level) => format!("heading:{}", level.get()),
-        BlockKind::Fence => "fence".to_string(),
-        BlockKind::Table(_) => "table".to_string(),
     }
+    .wire_name()
 }
 
 /// 冻结请求里 `# Before` 那一节列出的范围：范围 id 与它当初的原文。

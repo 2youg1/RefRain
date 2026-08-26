@@ -902,7 +902,7 @@ impl ProjectStore {
             found.push(BlockHit {
                 path: hit.path,
                 ordinal: hit.ordinal,
-                kind: super::search::kind_name(hit.kind),
+                kind: hit.kind.wire_name(),
                 start_byte: hit.start_byte,
                 text: text[start..end].to_string(),
                 relevance: hit.relevance,
