@@ -1,11 +1,15 @@
 /**
  * Every document this repository publishes, and why it exists.
  *
- * One authority. Two gates ask different questions of this list —
- * `verify:no-spec-upload` checks the git index, `verify:text-surface` also
- * scans the working tree and covers `.html` — and a repository cannot hold two
- * lists of what it publishes without them drifting apart, each gate passing
- * against its own stale copy.
+ * One authority. `verify:no-spec-upload` is its only reader: it holds every
+ * tracked `.md` and `.html` file to this list, in both directions.
+ *
+ * This comment used to name a second reader, `verify:text-surface`, which the
+ * Native rewrite deleted (46d9f9b) without touching the sentence. That left a
+ * published file advertising coverage no machine provided — and the coverage
+ * was real: `.html` went unguarded from that commit until the surviving gate
+ * was widened to cover it. A named gate that does not exist is worse than an
+ * unnamed gap, because it answers the question nobody then asks.
  *
  * This module holds data and nothing else: importing it must never run a gate.
  * An earlier version exported the list from one of the gate scripts, and

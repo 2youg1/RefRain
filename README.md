@@ -5,7 +5,7 @@
 **A local writing workbench for long manuscripts, where an agent may propose and only you may merge.**
 
 [![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/kaile9/RefRain?include_prereleases&label=Release&color=blue)](https://github.com/kaile9/RefRain/releases/latest)
+[![Release](https://img.shields.io/github/v/release/2youg1/RefRain?include_prereleases&label=Release&color=blue)](https://github.com/2youg1/RefRain/releases/latest)
 
 </div>
 
@@ -204,7 +204,7 @@ one beside it.
 test the packaging path end to end; they are not something to write in.**
 
 Releases are published on
-[GitHub](https://github.com/kaile9/RefRain/releases) and tagged
+[GitHub](https://github.com/2youg1/RefRain/releases) and tagged
 `v0.0.N-Pre-alpha-YYMMDD`, where `N` counts published releases and the date is
 the build's. In the tree the version is the numeric part alone: the Native SDK
 parses `app.zon`'s version as three decimal numbers and rejects a pre-release

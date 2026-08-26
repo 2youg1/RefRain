@@ -8,8 +8,15 @@
  * named in advance: a manuscript used while debugging, a plan, an audit note,
  * a memo pasted from a chat.
  *
- * So the rule is inverted. Every tracked Markdown file must appear in the list
- * below. A new one fails this gate until a human adds it here deliberately.
+ * So the rule is inverted. Every tracked `.md` and `.html` file must appear in
+ * the list below. A new one fails this gate until a human adds it here
+ * deliberately.
+ *
+ * `.html` is here because it was covered until the Native rewrite deleted the
+ * gate that covered it (`verify:text-surface`, 46d9f9b), while
+ * `published-documents.ts` went on naming that gate as a live reader. A rendered
+ * chapter, an exported draft and a saved web page are all `.html`, and all three
+ * are the kind of file this gate exists to keep out of a public history.
  *
  * This matters more for RefRain than for most projects: the files a
  * contributor has open while debugging are manuscripts and notes — the most
@@ -25,7 +32,7 @@ import { PUBLISHED } from "./published-documents";
 
 const failures: string[] = [];
 
-const tracked = spawnSync("git", ["ls-files", "--", "*.md"], { encoding: "utf8" });
+const tracked = spawnSync("git", ["ls-files", "--", "*.md", "*.html"], { encoding: "utf8" });
 if (tracked.status !== 0 || tracked.stdout === null) {
   const reason = tracked.error?.message ?? tracked.stderr?.trim() ?? "unknown";
   console.error(`FAIL  verify:no-spec-upload: git ls-files failed: ${reason}`);
@@ -38,9 +45,13 @@ const found = tracked.stdout
   .filter((line) => line !== "");
 
 // A scan that finds nothing is a broken scan, not a clean repository: this
-// file itself proves at least one Markdown document is tracked.
+// repository's own README proves at least one such document is tracked. The
+// floor stays on the combined set, because zero tracked `.html` is the correct
+// and expected reading here — only zero of both means the scan face moved.
 if (found.length === 0) {
-  console.error("FAIL  verify:no-spec-upload: found 0 tracked Markdown files — the scan is broken");
+  console.error(
+    "FAIL  verify:no-spec-upload: found 0 tracked .md or .html files — the scan is broken",
+  );
   process.exit(1);
 }
 
