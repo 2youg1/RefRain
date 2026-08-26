@@ -27,66 +27,88 @@ const std = @import("std");
 /// 具名拒绝）。单线程 UI 帧内消费，静态缓冲因此安全；一次只编一条请求，
 /// 没有嵌套。
 pub const Request = struct {
-    bytes: []const u8,
+    /// 字节借自编它的那个 `Writer`，**不比它活得久**。取字节的两个口各自说出
+    /// 调用方在主张哪一种寿命；旧字段名 `.bytes` 什么也不说。
+    lent: []const u8,
+
+    /// 视图侧：搬进这一道 build 的 arena，活到这棵树死。
+    ///
+    /// `on_press` 存的是渲染时的值，而里面的切片是借的（`ui.zig:791`）；arena
+    /// 与树同生共死，开着的菜单另有世代钉住（`ui_app.zig:6314-6322`），所以
+    /// 这是 SDK 认可的两个去处之一。null = 具名拒绝，调用方把那个控件画成
+    /// 不可按并说出原因。
+    pub fn keep(self: Request) ?[]const u8 {
+        return keepBytes(self.lent);
+    }
+
+    /// `update` 侧：字节在同一语句序列里被 `replay_seam.encode` 拷走
+    /// （`core.zig:536-547` → `replay_seam.zig:124`）。
+    ///
+    /// **叫它就是在声明“没有人会在本函数返回后读这段字节”。** 它出现在
+    /// `view/` 里就是一句可 grep 的谎：那边的调用方把值交给 SDK 后就返回了。
+    pub fn nowOrNever(self: Request) []const u8 {
+        return self.lent;
+    }
 };
 
-/// 编码用的帧缓冲。
+/// 编码用的缓冲：住在 writer 自己里，而 writer 住在调用方放它的地方。
 ///
 /// 12 KiB 与协议的 `event_text_bytes` 同源：超过它 Rust 会具名拒绝，所以这里
 /// 装不下就交出 null，让调用方显示一条拒绝，而不是送一条会被截断的请求。
 ///
-/// **为什么不是一块静态 buffer**：`Msg` 携带的 `bytes` 要活到 SDK 在点击时
-/// 把它派发给 core（`on_press` 存储的是渲染时的值）。一帧渲染会构造许多个
-/// 带请求的按钮（文件树、邮箱行、裁决行、设置面板），单块 buffer 会被后
-/// 渲染的按钮覆盖——e2e 仿真抓到过：55 字节的 adopt 请求被后一个按钮的
-/// 字节覆盖，宿主收到 `file` 请求加 `}}` 尾巴，具名拒绝。
-///
-/// **为什么也不是 N 个轮换的槽**：轮换只把“第二次借用覆盖第一次”推迟到第
-/// N+1 次。一屏 64 行的文件树，每行的行菜单编四条请求（三档披露加删除），
-/// 一帧就是 256 次借用进 64 个槽——第 65 次起覆写的是还被 `on_press` 指着的
-/// 字节，于是菜单里的“删除”作用在别的文档上，而画面与无障碍指纹都是对的。
-/// 现在改成一帧一块、按渲染顺序向前切：切到头就交出 null（调用方显示具名
-/// 拒绝），**永不回头覆盖一段仍被引用的字节**。复位点只有一个，在 `documentView`
-/// 的开头，与 SDK 每道 build 前 reset 它自己的 arena 同一拍（`ui_app.zig`）。
-///
-/// **它还不是终局**：开着的上下文菜单能活过任意多次重建（SDK 为此钉住了
-/// arena 世代），而静态帧缓冲下一帧就从头切；那一半要把载荷搬到 SDK 的
-/// build arena 才算完（F-03）。
-///
-/// 尺寸：旧形是 64 × 12,000 = 768,000 B，每次借用无论长短都占满 12 KiB；
-/// 实际一条行菜单请求约 120 B。256 KiB 的一帧预算因此既少占 505 KB，又把
-/// 一帧能编的请求数提高约一个量级；带作者选区的转换请求才能接近 12 KiB，
-/// 而选区一帧只有一个。`undefined` 落 .bss，按页惰性提交，只有游标走到的
-/// 那一段真的占物理内存。
-const max_request_bytes: usize = 12000;
-const request_frame_bytes: usize = 256 * 1024;
-var request_frame: [request_frame_bytes]u8 = undefined;
-var request_used: usize = 0;
+/// **模块里没有任何 `var` 存储，这是故意的。** 之前两代都把字节放在模块级：
+/// 先是一块静态 buffer（e2e 仿真抓到 55 字节的 adopt 请求被后一个按钮覆成 `}}`
+/// 尾巴），后是 64 个轮换的槽（一屏 64 行的行菜单借 256 次，第 65 次起覆写还
+/// 被 `on_press` 指着的字节，于是“删除”作用在别的文档上），再后是一帧一块的
+/// 帧缓冲（同帧不再相互覆盖，但开着的菜单活过下一帧时仍然被切掉）。
+/// 三代都在回答同一个错问题——“这块存储该多大”。真问题是“这段字节该活多久”，
+/// 而 SDK 已经回答过（`ui_app.zig:6317`）：**model storage or this same build
+/// arena**。所以字节现在编在栈上，然后由调用方用 `Request.keep` 搬进 arena（视图
+/// 侧）或 `Request.nowOrNever` 当场用掉（`update` 侧）。
+pub const max_request_bytes: usize = 12000;
 
-/// 一帧的开头：请求字节从头切。上一帧的 Msg 随那棵树一起废弃。
-pub fn beginFrame() void {
-    request_used = 0;
+/// 这一道 build 的字节从哪来。
+///
+/// 绑的是**分配器**，不是存储：字节仍然出自 SDK 的 build arena，只是不必
+/// 穿过四十个辅助函数的签名才到得了手。先例是 `app_main.zig` 的
+/// `host_bridge.bind(&app_state.effects)`——同一种“app 级资源绑进模块”。
+///
+/// 代价诚实写在这里：它是一个隐含上下文。在 build 之外调 `keep` 会拿到上
+/// 一道的 arena，而那段内存下一道就被 reset。拦它的是两条：`update` 侧全部
+/// 走 `nowOrNever`（`view/` 里出现它就是一句可 grep 的谎），且未绑时一律拒绝。
+var build_arena: ?std.mem.Allocator = null;
+
+/// 一道 build 的开头：告诉这一层它的字节这一道从哪里来。`null` 解绑（测试
+/// 用它把自己的 arena 交回去，不把一个已死的分配器留给下一条测试）。
+pub fn bindBuildArena(arena: ?std.mem.Allocator) void {
+    build_arena = arena;
+}
+
+/// 把一段借来的字节搬进本道 build 的 arena。打开引用与失败原因标签走同一条路，
+/// 所以“这一道 build 的字节归谁”只此一处记账。
+pub fn keepBytes(lent: []const u8) ?[]const u8 {
+    const arena = build_arena orelse return null;
+    return arena.dupe(u8, lent) catch null;
+}
+
+/// 一道 build 里拼一段字（失败原因的「失败：{s}」）。字节与请求同寿命。
+pub fn keepPrint(comptime fmt: []const u8, args: anytype) ?[]const u8 {
+    const arena = build_arena orelse return null;
+    return std.fmt.allocPrint(arena, fmt, args) catch null;
 }
 
 pub const Writer = struct {
-    buffer: []u8 = undefined,
+    bytes: [max_request_bytes]u8 = undefined,
     len: usize = 0,
-    /// 这一条请求在帧缓冲里的起点。`finish` 拿它确认没有第二个 writer
-    /// 在中途也 reset 过——两个 writer 交错编码会写进同一段字节，而两条
-    /// 单看都合法。
-    start: usize = 0,
 
-    /// 重新开始编一条请求：从帧缓冲当前的游标切一段，上限是 ABI 那个数。
+    /// 重新开始编一条请求。缓冲就在手上，reset 只丢掉上一条的长度。
     pub fn reset(self: *Writer) void {
-        const remaining = request_frame[request_used..];
-        self.start = request_used;
-        self.buffer = remaining[0..@min(remaining.len, max_request_bytes)];
         self.len = 0;
     }
 
     fn put(self: *Writer, bytes: []const u8) bool {
-        if (self.len + bytes.len > self.buffer.len) return false;
-        @memcpy(self.buffer[self.len..][0..bytes.len], bytes);
+        if (self.len + bytes.len > self.bytes.len) return false;
+        @memcpy(self.bytes[self.len..][0..bytes.len], bytes);
         self.len += bytes.len;
         return true;
     }
@@ -123,9 +145,7 @@ pub const Writer = struct {
     }
 
     fn finish(self: *Writer) ?Request {
-        if (self.start != request_used) return null;
-        request_used += self.len;
-        return .{ .bytes = self.buffer[0..self.len] };
+        return .{ .lent = self.bytes[0..self.len] };
     }
 
     /// `{"kind":<name>,"value":{` — 每条请求的开头。
@@ -410,7 +430,7 @@ test "a scope conversion names the direction and the scope" {
     try std.testing.expectEqualStrings(
         "{\"kind\":\"convertWidth\",\"value\":{\"rootId\":\"r1\",\"path\":\"章一.md\"," ++
             "\"selected\":\"abc\",\"wholeDocument\":false,\"direction\":\"to-full\"}}",
-        convertWidth(&writer, "r1", "章一.md", "abc", false, "to-full").?.bytes,
+        convertWidth(&writer, "r1", "章一.md", "abc", false, "to-full").?.nowOrNever(),
     );
 }
 
@@ -419,7 +439,7 @@ test "a whole-document conversion carries no selection text" {
     try std.testing.expectEqualStrings(
         "{\"kind\":\"convertWidth\",\"value\":{\"rootId\":\"r1\",\"path\":\"章一.md\"," ++
             "\"selected\":\"\",\"wholeDocument\":true,\"direction\":\"to-half\"}}",
-        convertWidth(&writer, "r1", "章一.md", "", true, "to-half").?.bytes,
+        convertWidth(&writer, "r1", "章一.md", "", true, "to-half").?.nowOrNever(),
     );
 }
 
@@ -549,7 +569,7 @@ test "an agent upsert carries the persona branch and the argv list" {
     try std.testing.expectEqualStrings(
         "{\"kind\":\"changeConfig\",\"value\":{\"upsertAgent\":{\"id\":\"a1\",\"name\":\"编辑\"," ++
             "\"connection_id\":\"c9\",\"persona\":{\"work\":{\"body\":\"改稿\"}},\"argv\":[\"--model\",\"max\"]}}}",
-        upsertAgent(&writer, "a1", "编辑", "c9", "work", "改稿", "--model max").?.bytes,
+        upsertAgent(&writer, "a1", "编辑", "c9", "work", "改稿", "--model max").?.nowOrNever(),
     );
 }
 
@@ -558,7 +578,7 @@ test "an agent without a persona writes a null branch" {
     try std.testing.expectEqualStrings(
         "{\"kind\":\"changeConfig\",\"value\":{\"upsertAgent\":{\"id\":\"a3\",\"name\":\"裸机\"," ++
             "\"connection_id\":null,\"persona\":null,\"argv\":[]}}}",
-        upsertAgent(&writer, "a3", "裸机", "", "", "", "").?.bytes,
+        upsertAgent(&writer, "a3", "裸机", "", "", "", "").?.nowOrNever(),
     );
 }
 
@@ -566,7 +586,7 @@ test "a panel material change names the kebab word serde expects" {
     var writer = Writer{};
     try std.testing.expectEqualStrings(
         "{\"kind\":\"changeConfig\",\"value\":{\"setPanelMaterial\":\"acrylic\"}}",
-        setPanelMaterial(&writer, "acrylic").?.bytes,
+        setPanelMaterial(&writer, "acrylic").?.nowOrNever(),
     );
 }
 
@@ -574,7 +594,7 @@ test "a run launch names the Root and the run, never a workspace" {
     var writer = Writer{};
     try std.testing.expectEqualStrings(
         "{\"kind\":\"launchRun\",\"value\":{\"rootId\":\"r1\",\"runId\":\"run-9\"}}",
-        launchRun(&writer, "r1", "run-9").?.bytes,
+        launchRun(&writer, "r1", "run-9").?.nowOrNever(),
     );
 }
 
@@ -1062,12 +1082,12 @@ test "a verdict distinguishes 'no rewrite' from 'rewrite to empty'" {
     var writer = Writer{};
     try std.testing.expectEqualStrings(
         "{\"kind\":\"stageVerdict\",\"value\":{\"rootId\":\"r1\",\"path\":\"章.md\",\"proposalId\":\"p1\",\"kind\":\"accept\",\"finalText\":null,\"reason\":null}}",
-        stageVerdict(&writer, "r1", "章.md", "p1", "accept", "", "").?.bytes,
+        stageVerdict(&writer, "r1", "章.md", "p1", "accept", "", "").?.nowOrNever(),
     );
     // 改写型带正文与理由，且 kind 是 kebab-case（与相邻字段的 camelCase 不同）。
     try std.testing.expectEqualStrings(
         "{\"kind\":\"stageVerdict\",\"value\":{\"rootId\":\"r1\",\"path\":\"章.md\",\"proposalId\":\"p1\",\"kind\":\"accept-modified\",\"finalText\":\"改后的一段。\",\"reason\":\"语气\"}}",
-        stageVerdict(&writer, "r1", "章.md", "p1", "accept-modified", "改后的一段。", "语气").?.bytes,
+        stageVerdict(&writer, "r1", "章.md", "p1", "accept-modified", "改后的一段。", "语气").?.nowOrNever(),
     );
 }
 
@@ -1077,15 +1097,15 @@ test "the review round trip writes three separable requests" {
     var writer = Writer{};
     try std.testing.expectEqualStrings(
         "{\"kind\":\"readProposals\",\"value\":{\"rootId\":\"r1\",\"path\":\"章.md\"}}",
-        readProposals(&writer, "r1", "章.md").?.bytes,
+        readProposals(&writer, "r1", "章.md").?.nowOrNever(),
     );
     try std.testing.expectEqualStrings(
         "{\"kind\":\"commitVerdicts\",\"value\":{\"rootId\":\"r1\",\"path\":\"章.md\"}}",
-        commitVerdicts(&writer, "r1", "章.md").?.bytes,
+        commitVerdicts(&writer, "r1", "章.md").?.nowOrNever(),
     );
     try std.testing.expectEqualStrings(
         "{\"kind\":\"collectRun\",\"value\":{\"rootId\":\"r1\",\"runId\":\"run-7\"}}",
-        collectRun(&writer, "r1", "run-7").?.bytes,
+        collectRun(&writer, "r1", "run-7").?.nowOrNever(),
     );
 }
 
@@ -1093,15 +1113,15 @@ test "each entry writes the tagged shape serde expects" {
     var writer = Writer{};
     try std.testing.expectEqualStrings(
         "{\"kind\":\"chooseAndAdoptRoot\",\"value\":{\"kind\":\"folder\"}}",
-        chooseAndAdoptRoot(&writer, true).?.bytes,
+        chooseAndAdoptRoot(&writer, true).?.nowOrNever(),
     );
     try std.testing.expectEqualStrings(
         "{\"kind\":\"openDocument\",\"value\":{\"rootId\":\"r1\",\"path\":\"章.md\"}}",
-        openDocument(&writer, "r1", "章.md").?.bytes,
+        openDocument(&writer, "r1", "章.md").?.nowOrNever(),
     );
     try std.testing.expectEqualStrings(
         "{\"kind\":\"readConfig\"}",
-        readConfig(&writer).?.bytes,
+        readConfig(&writer).?.nowOrNever(),
     );
 }
 
@@ -1111,11 +1131,11 @@ test "an empty page cursor asks for the first page instead of a page named empty
     var writer = Writer{};
     try std.testing.expectEqualStrings(
         "{\"kind\":\"documentPage\",\"value\":{\"rootId\":\"r1\",\"after\":null}}",
-        documentPage(&writer, "r1", "").?.bytes,
+        documentPage(&writer, "r1", "").?.nowOrNever(),
     );
     try std.testing.expectEqualStrings(
         "{\"kind\":\"documentPage\",\"value\":{\"rootId\":\"r1\",\"after\":\"十.md\"}}",
-        documentPage(&writer, "r1", "十.md").?.bytes,
+        documentPage(&writer, "r1", "十.md").?.nowOrNever(),
     );
 }
 
@@ -1123,13 +1143,13 @@ test "a quote in a title cannot rewrite the request around it" {
     // 不转义的话，一个带引号的标题会提前闭合 JSON 字符串，后面的字节就变成
     // 请求结构的一部分。这不是显示问题，是一条能改写请求含义的路径。
     var writer = Writer{};
-    const written = createDocument(&writer, "r1", "他说\"走\"\n然后", "chapter").?.bytes;
+    const written = createDocument(&writer, "r1", "他说\"走\"\n然后", "chapter").?.nowOrNever();
     try std.testing.expectEqualStrings(
         "{\"kind\":\"createDocument\",\"value\":{\"rootId\":\"r1\",\"title\":\"他说\\\"走\\\"\\n然后\",\"role\":\"chapter\"}}",
         written,
     );
     // 反斜杠自身也要转义，否则结尾的 `\` 会把闭合引号吃掉。
-    const slash = createDocument(&writer, "r1", "路径\\", "chapter").?.bytes;
+    const slash = createDocument(&writer, "r1", "路径\\", "chapter").?.nowOrNever();
     try std.testing.expectEqualStrings(
         "{\"kind\":\"createDocument\",\"value\":{\"rootId\":\"r1\",\"title\":\"路径\\\\\",\"role\":\"chapter\"}}",
         slash,
@@ -1149,12 +1169,12 @@ test "a run command carries its moment so the host stays replayable" {
     var writer = Writer{};
     try std.testing.expectEqualStrings(
         "{\"kind\":\"hostCommand\",\"value\":{\"rootId\":\"r1\",\"command\":{\"cancelRun\":{\"run_id\":\"run-7\",\"at\":1200}}}}",
-        hostRunCommand(&writer, "r1", "cancelRun", "run-7", 1200).?.bytes,
+        hostRunCommand(&writer, "r1", "cancelRun", "run-7", 1200).?.nowOrNever(),
     );
     // 重试不带时刻：它开的是一个新 Run，时刻由那次授权决定。
     try std.testing.expectEqualStrings(
         "{\"kind\":\"hostCommand\",\"value\":{\"rootId\":\"r1\",\"command\":{\"retryRun\":{\"run_id\":\"run-7\"}}}}",
-        hostRunCommand(&writer, "r1", "retryRun", "run-7", null).?.bytes,
+        hostRunCommand(&writer, "r1", "retryRun", "run-7", null).?.nowOrNever(),
     );
 }
 
@@ -1162,20 +1182,21 @@ test "search names its precision rather than defaulting silently" {
     var writer = Writer{};
     try std.testing.expectEqualStrings(
         "{\"kind\":\"blockSearch\",\"value\":{\"rootId\":\"r1\",\"query\":\"克制\",\"precision\":\"exact\"}}",
-        blockSearch(&writer, "r1", "克制", true).?.bytes,
+        blockSearch(&writer, "r1", "克制", true).?.nowOrNever(),
     );
     try std.testing.expectEqualStrings(
         "{\"kind\":\"documentSearch\",\"value\":{\"rootId\":\"r1\",\"query\":\"克制\",\"precision\":\"loose\"}}",
-        documentSearch(&writer, "r1", "克制", false).?.bytes,
+        documentSearch(&writer, "r1", "克制", false).?.nowOrNever(),
     );
 }
 
-test "a request still says what it said after the frame borrowed sixty-four more" {
-    // F-01 的形状：一帧里的借用次数超过池的容量时，最早那一条被后来的
-    // 覆写，而指着它的 `on_press` 仍然活着——作者点第一行，删掉的是别的
-    // 文档。一屏 64 行的行菜单就借 256 次，所以这个数不是构造出来的极值。
+test "a request still says what it said after sixty-four more were encoded" {
+    // F-01 的形状：字节住在模块级时，最早那一条被后来的覆写，而指着它的
+    // `on_press` 仍然活着——作者点第一行，删掉的是别的文档。一屏 64 行的
+    // 行菜单就编 256 条，所以这个数不是构造出来的极值。现在每个 writer 自带
+    // 字节，“谁的字节”因此是一个作用域问题，不再是一个容量问题。
     var first_writer = Writer{};
-    const first = openDocument(&first_writer, "r1", "第一.md").?.bytes;
+    const first = openDocument(&first_writer, "r1", "第一.md").?.nowOrNever();
     var index: usize = 0;
     while (index < 64) : (index += 1) {
         var later = Writer{};
@@ -1184,26 +1205,34 @@ test "a request still says what it said after the frame borrowed sixty-four more
     try std.testing.expect(std.mem.indexOf(u8, first, "第一.md") != null);
 }
 
-test "a frame that runs out of request bytes refuses instead of lending live bytes" {
-    // 超出预算时必须是 null：还回一段别人正用着的字节，就是 F-01 本人。
-    // 下一帧重新可用，否则拒绝就从止血变成死锁。
-    beginFrame();
-    var first_writer = Writer{};
-    const first = openDocument(&first_writer, "r1", "第一.md").?.bytes;
-    var refused = false;
-    var index: usize = 0;
-    while (index < 100_000) : (index += 1) {
-        var writer = Writer{};
-        if (openDocument(&writer, "r1", "后来.md") == null) {
-            refused = true;
-            break;
-        }
-    }
-    try std.testing.expect(refused);
-    try std.testing.expect(std.mem.indexOf(u8, first, "第一.md") != null);
-    beginFrame();
-    var next_frame = Writer{};
-    try std.testing.expect(openDocument(&next_frame, "r1", "下一帧.md") != null);
+test "what a view keeps outlives the writer that encoded it" {
+    // 视图侧的真正危险：`Writer` 在栈上，而 `on_press` 到点击时才读。
+    // `keep` 把字节搬进这一道 build 的 arena，所以栈帧死了它还在。
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    bindBuildArena(arena.allocator());
+    defer bindBuildArena(null);
+    const kept = keptElsewhere();
+    try std.testing.expectEqualStrings(
+        "{\"kind\":\"openDocument\",\"value\":{\"rootId\":\"r1\",\"path\":\"第一.md\"}}",
+        kept.?,
+    );
+}
+
+/// 编完就返回：字节如果还在 writer 里，这一段栈早已可以被下一个调用写掉。
+fn keptElsewhere() ?[]const u8 {
+    var writer = Writer{};
+    const request = openDocument(&writer, "r1", "第一.md") orelse return null;
+    return request.keep();
+}
+
+test "a build with nowhere to keep a request refuses instead of lending the stack" {
+    bindBuildArena(null);
+    var writer = Writer{};
+    try std.testing.expect(openDocument(&writer, "r1", "第一.md").?.keep() == null);
+    bindBuildArena(std.testing.failing_allocator);
+    defer bindBuildArena(null);
+    try std.testing.expect(openDocument(&writer, "r1", "第一.md").?.keep() == null);
 }
 
 test "reusing one writer does not leave the previous request behind" {
@@ -1212,7 +1241,7 @@ test "reusing one writer does not leave the previous request behind" {
     _ = openDocument(&writer, "r1", "一.md");
     try std.testing.expectEqualStrings(
         "{\"kind\":\"readHost\",\"value\":{\"rootId\":\"r2\"}}",
-        readHost(&writer, "r2").?.bytes,
+        readHost(&writer, "r2").?.nowOrNever(),
     );
 }
 
@@ -1244,7 +1273,7 @@ test "a dispatch matches the two-layer camelCase serde asks for" {
             "harness",
             null,
             "dispatch",
-        ).?.bytes,
+        ).?.nowOrNever(),
     );
 }
 
@@ -1272,7 +1301,7 @@ test "a manual dispatch carries no agent and the manual channel" {
             "manual",
             null,
             "previewDispatch",
-        ).?.bytes,
+        ).?.nowOrNever(),
     );
 }
 
@@ -1296,7 +1325,7 @@ test "a scope carrying a quotation mark is escaped, not truncated" {
         null,
         "dispatch",
     ).?;
-    try std.testing.expect(std.mem.indexOf(u8, request.bytes, "\\\"停\\\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request.nowOrNever(), "\\\"停\\\"") != null);
 }
 
 test "a typographic adjustment matches the three nested camelCase layers" {
@@ -1304,7 +1333,7 @@ test "a typographic adjustment matches the three nested camelCase layers" {
     var writer = Writer{};
     try std.testing.expectEqualStrings(
         "{\"kind\":\"changeConfig\",\"value\":{\"adjustTypography\":{\"field\":\"textSize\",\"delta\":10}}}",
-        adjustTypography(&writer, "textSize", 10).?.bytes,
+        adjustTypography(&writer, "textSize", 10).?.nowOrNever(),
     );
 }
 
@@ -1313,7 +1342,7 @@ test "a persona toggle names the agent by a bare id string" {
     var writer = Writer{};
     try std.testing.expectEqualStrings(
         "{\"kind\":\"changeConfig\",\"value\":{\"toggleAgentPersona\":\"00000000-0000-0000-0000-000000000001\"}}",
-        toggleAgentPersona(&writer, "00000000-0000-0000-0000-000000000001").?.bytes,
+        toggleAgentPersona(&writer, "00000000-0000-0000-0000-000000000001").?.nowOrNever(),
     );
 }
 
@@ -1323,7 +1352,7 @@ test "a negative adjustment keeps its sign" {
     var writer = Writer{};
     try std.testing.expectEqualStrings(
         "{\"kind\":\"changeConfig\",\"value\":{\"adjustTypography\":{\"field\":\"lineHeight\",\"delta\":-5}}}",
-        adjustTypography(&writer, "lineHeight", -5).?.bytes,
+        adjustTypography(&writer, "lineHeight", -5).?.nowOrNever(),
     );
 }
 
@@ -1333,7 +1362,7 @@ test "a highlight sends a null body rather than omitting the key" {
     try std.testing.expectEqualStrings(
         "{\"kind\":\"annotate\",\"value\":{\"rootId\":\"r1\",\"path\":\"章一.md\"," ++
             "\"selected\":\"剑\",\"body\":null}}",
-        annotate(&writer, "r1", "章一.md", "剑", "").?.bytes,
+        annotate(&writer, "r1", "章一.md", "剑", "").?.nowOrNever(),
     );
 }
 
@@ -1342,7 +1371,7 @@ test "a comment carries its body as a string" {
     try std.testing.expectEqualStrings(
         "{\"kind\":\"annotate\",\"value\":{\"rootId\":\"r1\",\"path\":\"章一.md\"," ++
             "\"selected\":\"剑\",\"body\":\"太满了\"}}",
-        annotate(&writer, "r1", "章一.md", "剑", "太满了").?.bytes,
+        annotate(&writer, "r1", "章一.md", "剑", "太满了").?.nowOrNever(),
     );
 }
 
@@ -1353,7 +1382,7 @@ test "a kara event names the camelCase variant serde expects" {
     var writer = Writer{};
     try std.testing.expectEqualStrings(
         "{\"kind\":\"karaStep\",\"value\":{\"kind\":\"manualToggle\"}}",
-        karaStep(&writer, "manualToggle").?.bytes,
+        karaStep(&writer, "manualToggle").?.nowOrNever(),
     );
 }
 
@@ -1363,11 +1392,11 @@ test "a mailbox read names the Root and the page" {
     var writer = Writer{};
     try std.testing.expectEqualStrings(
         "{\"kind\":\"readMailbox\",\"value\":{\"rootId\":\"r1\",\"discarded\":false}}",
-        readMailbox(&writer, "r1", false).?.bytes,
+        readMailbox(&writer, "r1", false).?.nowOrNever(),
     );
     try std.testing.expectEqualStrings(
         "{\"kind\":\"readMailbox\",\"value\":{\"rootId\":\"r1\",\"discarded\":true}}",
-        readMailbox(&writer, "r1", true).?.bytes,
+        readMailbox(&writer, "r1", true).?.nowOrNever(),
     );
 }
 
@@ -1377,7 +1406,7 @@ test "a mailbox pin carries the entry's own box in kebab-case" {
     var writer = Writer{};
     try std.testing.expectEqualStrings(
         "{\"kind\":\"mailboxPin\",\"value\":{\"rootId\":\"r1\",\"entryId\":\"p1\",\"boxName\":\"unread\",\"pinned\":true}}",
-        mailboxPin(&writer, "r1", "p1", "unread", true).?.bytes,
+        mailboxPin(&writer, "r1", "p1", "unread", true).?.nowOrNever(),
     );
 }
 
@@ -1385,7 +1414,7 @@ test "a mailbox discard names the entry and its box" {
     var writer = Writer{};
     try std.testing.expectEqualStrings(
         "{\"kind\":\"mailboxDiscard\",\"value\":{\"rootId\":\"r1\",\"entryId\":\"p1\",\"boxName\":\"done\"}}",
-        mailboxDiscard(&writer, "r1", "p1", "done").?.bytes,
+        mailboxDiscard(&writer, "r1", "p1", "done").?.nowOrNever(),
     );
 }
 
@@ -1394,6 +1423,6 @@ test "a countermand wraps the one pointed entry in an array" {
     var writer = Writer{};
     try std.testing.expectEqualStrings(
         "{\"kind\":\"countermand\",\"value\":{\"rootId\":\"r1\",\"path\":\"章.md\",\"proposalIds\":[\"p1\"]}}",
-        countermand(&writer, "r1", "章.md", "p1").?.bytes,
+        countermand(&writer, "r1", "章.md", "p1").?.nowOrNever(),
     );
 }

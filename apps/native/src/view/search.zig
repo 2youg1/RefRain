@@ -120,7 +120,7 @@ fn searchMsg(model: *const Model, comptime blocks: bool) ?Msg {
         project_request.blockSearch(&writer, model.root_id.slice(), model.search.query.slice(), model.search.exact)
     else
         project_request.documentSearch(&writer, model.root_id.slice(), model.search.query.slice(), model.search.exact);
-    return .{ .project_request = (request orelse return null).bytes };
+    return .{ .project_request = (request orelse return null).keep() orelse return null };
 }
 
 /// 点一条命中：同一份稿子的块命中直接跳过去，其余先打开那份文档。

@@ -395,13 +395,27 @@ module with no test file has test blocks in the module.
 
 ### L5 · `apps/native/src` — the surface
 
+**What the surface lends, and for how long.** Two lifetimes, one authority each. They are not
+interchangeable, and every earlier bug in this area came from answering "how big should this
+buffer be" instead of "how long must these bytes live".
+
+| Lent to | Read when | Lives in | Owner |
+|---|---|---|---|
+| A `Msg` payload or a widget's text — `ui.text` stores the slice, `on_press` stores the Msg by value | On click, on submit, on menu pick. An open menu outlives any number of rebuilds, because the SDK pins the build-arena generation it was presented from | The build arena bound in `documentView`, or the Model — the SDK names those two and no third | `project_request.keepBytes` / `keepPrint` |
+| A canvas command's slice, such as a gradient's `stops` | On the **next** frame, when the SDK diffs the new display list against the last one (`equality.zig` `fillsEqual`) | A two-generation buffer, alternating each frame | `veil.zig`, `material_paint.zig` |
+
+Putting either in the other's home breaks it: a canvas slice in the arena is read after the arena
+was reset, and a Msg payload in a two-slot buffer is overwritten by the third rebuild while the
+menu holding it is still open. What is gone from both columns is the third answer this repository
+tried twice — a module-level buffer sized by guess, which only moves the overwrite to borrow N+1.
+
 | Module | Owns | Proven by |
 |---|---|---|
 | `app.zon` | The shortcut and menu declaration. One command-id space for both | `verify:command-space` |
-| `app_main.zig` | The router: `main`, the fonts, the menus, `documentView` (the whole shell frame), `destinationView`, `layeredBody`, the palette, and the rail geometry. `documentView` is also the one reset point of the surface's three frame buffers, on the same beat as the SDK's own build arena. It was 4,038 lines and is 817 now; the destinations moved out under `view/` | in-file tests; the e2e journals |
+| `app_main.zig` | The router: `main`, the fonts, the menus, `documentView` (the whole shell frame), `destinationView`, `layeredBody`, the palette, and the rail geometry. `documentView` is also where the build arena is bound for the whole surface, on the beat the SDK resets it. It was 4,038 lines and is 817 now; the destinations moved out under `view/` | in-file tests; the e2e journals |
 | `view/shell.zig` | The vocabulary more than one destination draws with: `railTreeRow` (no corner, a semantic level, one indent step for each level), the row budgets, the current theme index and material kind, `paletteGoSection` | reached through `app_main.zig`; the e2e journals |
 | `view/document.zig` | The manuscript track: the column and viewport metrics, `documentLayout` (the inverse of Rust's scroll anchor), the anchor dots, the verdict bento, the status line, and the manuscript context menu | in-file test on the scroll anchor; the `manuscript` journal |
-| `view/files.zig` | The file tree, the row menu, and the open/delete/disclose/import Msgs. It owns the frame buffer a tree row lends to `document_open`, and `borrowDocumentReference` is the one account of it — the search hits borrow through the same call | the `files` journal; in-file tests on the borrow |
+| `view/files.zig` | The file tree, the row menu, and the open/delete/disclose/import Msgs. `borrowDocumentReference` is the one account of what a tree row lends to `document_open` — the search hits borrow through the same call | the `files` journal; in-file tests on the borrow |
 | `view/search.zig` | The query box, the hit rows, and the excerpt around a hit | the `files` journal |
 | `view/review.zig` | The verdict bench: proposal rows, the A/B faces, the reason, the annotations, and the stale-proposal panel | the `review` journal |
 | `view/desk.zig` | The dispatch desk: the block list, the materials, the preview, the Run roster, and the material drafts | the `dispatch` journal |
@@ -419,8 +433,8 @@ module with no test file has test blocks in the module.
 | `core/msg.zig` | Everything that can happen. Four TypeScript reply arms are one `host_result` here, because the channel rides in the result key; the pre-encoded verdict requests are gone, because a Zig core can call the request encoders | in-file tests |
 | `core/model.zig` | The whole interface state: 29 top-level fields against the budget of 40, with a test that fails if a field is added past it. The reply bytes are not among them — they live in `core/replies.zig`, because two copies of "the latest reply" only agree until one update forgets to write both | in-file tests |
 | `core/roster.zig` | The roster cursor invariant: the cursor points at a row that exists, or it is `null`. `null` replaces the `-1` convention that each reader had to remember | in-file tests, carrying the vectors the deleted `roster.test.ts` held |
-| `project_request.zig` | The write side: one function for each `ProjectInput` entry, encoded into a per-frame buffer that is cut forward in render order. A borrow past the frame's budget is refused, never wrapped onto bytes an `on_press` still points at | in-file tests; `verify:wire-shapes` |
-| `project_view.zig` | The read side: what a row means — the Chinese labels, the actions a Run allows, the excerpt around a hit. It no longer parses anything. The failure reason of a Run is lent from its own per-frame buffer, and a frame out of label bytes says "失败" rather than another Run's reason | in-file tests |
+| `project_request.zig` | The write side: one function for each `ProjectInput` entry, encoded into the caller's own `Writer`. It holds no storage of its own; it holds the one account of where a build's kept bytes come from (`bindBuildArena`, `keepBytes`, `keepPrint`) | in-file tests; `verify:wire-shapes` |
+| `project_view.zig` | The read side: what a row means — the Chinese labels, the actions a Run allows, the excerpt around a hit. It no longer parses anything. A Run's failure reason is printed into the build arena, and a build with nowhere to print says "失败" rather than another Run's reason | in-file tests |
 | `generated/wire.zig` | The reply shapes, generated from `protocol/host.json`. `Reply` bounds every offset against the header's own stated length, so a truncated reply reads as empty rather than as its neighbour | in-file tests; `protocol:native --check` |
 | `workbench_view.zig` | The destination names and hints, in the order of `core/workbench.zig`'s `Destination` | index agreement by review |
 | `document_language.zig` | Wire code to SDK syntax grammar. An unknown code falls back to plain | in-file tests |

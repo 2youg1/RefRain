@@ -257,7 +257,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             };
             var writer: project_request.Writer = .{};
             const encoded = project_request.setPanelMaterial(&writer, slug) orelse return;
-            sendProject(fx, model, encoded.bytes);
+            sendProject(fx, model, encoded.nowOrNever());
         },
 
         // ---------------------------------------------------------- 帧
@@ -307,7 +307,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
                 model.search.query.slice(),
                 model.search.exact,
             ) orelse return;
-            sendProject(fx, model, encoded.bytes);
+            sendProject(fx, model, encoded.nowOrNever());
         },
 
         // ---------------------------------------------------------- 草稿
@@ -442,7 +442,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             if (model.root_id.isEmpty()) return;
             var writer: project_request.Writer = .{};
             const encoded = project_request.readHost(&writer, model.root_id.slice()) orelse return;
-            sendProject(fx, model, encoded.bytes);
+            sendProject(fx, model, encoded.nowOrNever());
         },
 
         // ---------------------------------------------------------- 信箱
@@ -681,7 +681,7 @@ fn karaState(model: *const Model) KaraState {
 fn karaStep(model: *const Model, fx: *Effects, event: []const u8) void {
     var writer: project_request.Writer = .{};
     const encoded = project_request.karaStep(&writer, event) orelse return;
-    sendProject(fx, model, encoded.bytes);
+    sendProject(fx, model, encoded.nowOrNever());
 }
 
 // ------------------------------------------------------------------ 裁决
@@ -734,7 +734,7 @@ fn settleVerdict(model: *Model, fx: *Effects, verdict: Verdict) void {
             "",
         ) orelse return;
         model.review.proposal.clear();
-        sendProject(fx, model, encoded.bytes);
+        sendProject(fx, model, encoded.nowOrNever());
         return;
     }
     const subject = deskProposalId(model) orelse return;
@@ -748,7 +748,7 @@ fn settleVerdict(model: *Model, fx: *Effects, verdict: Verdict) void {
         recordedReason(model),
     ) orelse return;
     armAdvance(model, true);
-    sendProject(fx, model, encoded.bytes);
+    sendProject(fx, model, encoded.nowOrNever());
 }
 
 /// 裁决台游标行的提案 id。不在裁决台、没有行、名录不是提案名录时交出 null。
@@ -795,7 +795,7 @@ fn settleRevision(model: *Model, fx: *Effects) void {
         model.review.proposal.clear();
         // 饭盒的落定判完就走，不前进；台上的落定才立判后前进旗。
         armAdvance(model, !bento and model.destination == .review);
-        sendProject(fx, model, encoded.bytes);
+        sendProject(fx, model, encoded.nowOrNever());
         return;
     }
     // 裁决台上的落定 = 提交暂存的批次。空批次不发。
@@ -811,7 +811,7 @@ fn settleRevision(model: *Model, fx: *Effects) void {
     ) orelse return;
     model.review.stale_frozen.clear();
     model.review.stale_recovery.clear();
-    sendProject(fx, model, encoded.bytes);
+    sendProject(fx, model, encoded.nowOrNever());
 }
 
 // ------------------------------------------------------------------ 定分隔的段落
@@ -919,43 +919,43 @@ fn arriveAt(model: *Model, fx: *Effects, target: Destination) void {
         .files => {
             if (model.root_id.isEmpty()) return;
             const encoded = project_request.documentPage(&writer, model.root_id.slice(), "") orelse return;
-            sendProject(fx, model, encoded.bytes);
+            sendProject(fx, model, encoded.nowOrNever());
         },
         .mailbox => {
             if (model.root_id.isEmpty()) return;
             const encoded = project_request.readMailbox(&writer, model.root_id.slice(), model.mailbox_discarded) orelse return;
-            sendProject(fx, model, encoded.bytes);
+            sendProject(fx, model, encoded.nowOrNever());
             // Run 那半屏一起刷：派发回执与信件同屏，只刷一半会读成「另一半坏了」。
             var second: project_request.Writer = .{};
             const host_read = project_request.readHost(&second, model.root_id.slice()) orelse return;
-            sendProject(fx, model, host_read.bytes);
+            sendProject(fx, model, host_read.nowOrNever());
         },
         .connections => {
             // 不带 force：自动读吃 15 秒缓存，手按「重新探测」才绕过它。
             const encoded = project_request.readHarnesses(&writer, false) orelse return;
-            sendProject(fx, model, encoded.bytes);
+            sendProject(fx, model, encoded.nowOrNever());
         },
         .history => {
             if (model.root_id.isEmpty() or model.document.path.isEmpty()) return;
             const encoded = project_request.readHistory(&writer, model.root_id.slice(), model.document.path.slice()) orelse return;
-            sendProject(fx, model, encoded.bytes);
+            sendProject(fx, model, encoded.nowOrNever());
         },
         .settings => {
             const encoded = project_request.readConfig(&writer) orelse return;
-            sendProject(fx, model, encoded.bytes);
+            sendProject(fx, model, encoded.nowOrNever());
         },
         .review => {
             if (model.root_id.isEmpty() or model.document.path.isEmpty()) return;
             const encoded = project_request.readProposals(&writer, model.root_id.slice(), model.document.path.slice()) orelse return;
-            sendProject(fx, model, encoded.bytes);
+            sendProject(fx, model, encoded.nowOrNever());
         },
         .dispatch => {
             if (model.root_id.isEmpty()) return;
             const encoded = project_request.readMaterials(&writer, model.root_id.slice()) orelse return;
-            sendProject(fx, model, encoded.bytes);
+            sendProject(fx, model, encoded.nowOrNever());
             var second: project_request.Writer = .{};
             const host_read = project_request.readHost(&second, model.root_id.slice()) orelse return;
-            sendProject(fx, model, host_read.bytes);
+            sendProject(fx, model, host_read.nowOrNever());
         },
     }
 }
@@ -981,7 +981,7 @@ fn selectTheme(model: *Model, fx: *Effects, index: u8) void {
     if (index >= themes.themes.len) return;
     var writer: project_request.Writer = .{};
     const encoded = project_request.setTheme(&writer, themes.themes[index].slug) orelse return;
-    sendProject(fx, model, encoded.bytes);
+    sendProject(fx, model, encoded.nowOrNever());
 }
 
 /// 换下一套主题，到末尾回到第一套。
@@ -1125,7 +1125,7 @@ fn landProject(model: *Model, response: protocol.RefrainNativeResponse, fx: *Eff
             if (!model.root_id.isEmpty()) {
                 var page_writer: project_request.Writer = .{};
                 if (project_request.documentPage(&page_writer, model.root_id.slice(), "")) |page_read| {
-                    sendProject(fx, model, page_read.bytes);
+                    sendProject(fx, model, page_read.nowOrNever());
                 }
             }
         },
@@ -1147,14 +1147,14 @@ fn landProject(model: *Model, response: protocol.RefrainNativeResponse, fx: *Eff
             model.root_id.slice(),
             model.document.path.slice(),
         ) orelse return;
-        sendProject(fx, model, encoded.bytes);
+        sendProject(fx, model, encoded.nowOrNever());
         return;
     }
     // 收取与送出之后连锁读一次编排快照：Run 名录与等待队列都变了。
     if (kind == .collected or kind == .dispatched) {
         if (model.root_id.isEmpty()) return;
         const encoded = project_request.readHost(&writer, model.root_id.slice()) orelse return;
-        sendProject(fx, model, encoded.bytes);
+        sendProject(fx, model, encoded.nowOrNever());
         return;
     }
     // 编排快照落地：有在飞 Run 就挂下一跳（链式——没有新在飞就不挂，轮询自己停）。

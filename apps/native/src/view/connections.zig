@@ -86,14 +86,14 @@ pub fn connectionsView(ui: *Adapter.Ui) Adapter.Ui.Node {
 fn installSkillMsg(harness_id: []const u8) ?Msg {
     var writer = project_request.Writer{};
     const request = project_request.installSkill(&writer, harness_id) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 探测本机装了哪些 Harness。不带 Root——它问的是这台机器。
 fn readHarnessesMsg(force: bool) ?Msg {
     var writer = project_request.Writer{};
     const request = project_request.readHarnesses(&writer, force) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 三种排法：作者看见的名字，与跨界送的那个词。

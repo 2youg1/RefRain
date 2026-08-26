@@ -184,12 +184,14 @@ pub fn documentLayout(document: host_bridge.DocumentView, total_blocks: u64, vie
 /// SDK 自绘的一层——而那一层读的是 `manuscriptTokens`，所以昼间主题上它是
 /// 纸色的，不是一块黑板。
 pub fn manuscriptMenu(model: *const Model) []const Adapter.Ui.ContextMenuItem {
-    // 菜单在一帧内消费完，所以用一个静态缓冲而不是每帧分配。它只在
-    // 这个函数里写，写完立刻被 SDK 读走。label_pool 是「标签　键位」
-    // 拼接串的槽：与表同一条轮换纪律。
+    // 这两块静态存储**不是轮换池**，别按轮换池读它们（`project_request` 那一家
+    // 已经搬进 build arena 了）。`table` 每次重写而 SDK 把菜单**数组**拷进
+    // arena（`ui.zig:1624,1645`），所以下一帧重写它碰不到已呈现的那份；
+    // `hint_labels` 是「标签　键位」拼接串的定址槽，**一个命令一个下标、永不
+    // 推进**，内容每帧相同。两者都不会把一个行的字节写成另一个行的。
     const State = struct {
         var table: [16]Adapter.Ui.ContextMenuItem = undefined;
-        var label_pool: [6][64]u8 = undefined;
+        var hint_labels: [6][64]u8 = undefined;
     };
     const selected = selectedText(host_bridge.documentView());
     // 高亮要有选区才有意义。灰掉而不是移除：一个时有时无的菜单项会让
@@ -208,19 +210,19 @@ pub fn manuscriptMenu(model: *const Model) []const Adapter.Ui.ContextMenuItem {
         .{ .separator = true },
         // 键位印在菜单项上（「保存　Ctrl+S」，浏览器右键同款）——让人
         // 用着用着就学会了。键位从命令表拼。
-        .{ .label = commands.withHint(&State.label_pool[0], "document.save"), .msg = .{ .document_save = {} } },
-        .{ .label = commands.withHint(&State.label_pool[1], "document.undo"), .msg = .{ .document_undo = {} } },
+        .{ .label = commands.withHint(&State.hint_labels[0], "document.save"), .msg = .{ .document_save = {} } },
+        .{ .label = commands.withHint(&State.hint_labels[1], "document.undo"), .msg = .{ .document_undo = {} } },
         .{ .separator = true },
         // 三个最常用的去处直达。八个全列会让菜单变成一张目录，
         // 而目录已经是命令面板（⌘K）的活。只有文件有固定键位（Ctrl+2 =
         // go.2 → FILES）；裁决/派发走 workbench_go 直达到处下标——
         // workbench_key 的 ordinal  remap 后 3 是稿子、4 是动态的 Agent
         // 去处，印它们的键位会教作者一个按到别处的组合。
-        .{ .label = commands.withHint(&State.label_pool[2], "go.2"), .msg = .{ .workbench_key = 2 } },
+        .{ .label = commands.withHint(&State.hint_labels[2], "go.2"), .msg = .{ .workbench_key = 2 } },
         .{ .label = "裁决", .msg = .{ .workbench_go = .review } },
         .{ .label = "派发", .msg = .{ .workbench_go = .dispatch } },
         .{ .separator = true },
-        .{ .label = commands.withHint(&State.label_pool[5], "palette"), .msg = .{ .palette_toggle = {} } },
+        .{ .label = commands.withHint(&State.hint_labels[5], "palette"), .msg = .{ .palette_toggle = {} } },
     };
     return &State.table;
 }
@@ -241,7 +243,7 @@ fn annotateMsg(model: *const Model, selected: []const u8) ?Msg {
         // 空 body 即高亮。
         "",
     ) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 作者此刻选中的那段正文。
@@ -422,7 +424,7 @@ fn judgeRevisionMsg(model: *const Model) ?Msg {
         model.revising.body.slice(),
         "",
     ) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 状态行（2.6）：保存点、选中统计、活动句。

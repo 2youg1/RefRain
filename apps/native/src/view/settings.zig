@@ -294,7 +294,7 @@ fn upsertAgentMsg(model: *const Model, agent: project_view.Agent) ?Msg {
         agent.persona_body,
         model.editing_agent.body.slice(),
     ) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 这个 Agent 的身份模式：work／cosplay／空（无身份）。从快照的变体键
@@ -309,7 +309,7 @@ fn toggleAgentPersonaMsg(agent: project_view.Agent) ?Msg {
     if (!agent.has_persona) return null;
     var writer = project_request.Writer{};
     const request = project_request.toggleAgentPersona(&writer, agent.id) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 排版里一项的加减。
@@ -411,7 +411,10 @@ fn TypographySliderMsg(comptime field: []const u8) type {
             if (delta == 0) return .noop;
             var writer = project_request.Writer{};
             const request = project_request.adjustTypography(&writer, field, delta) orelse return .noop;
-            return .{ .project_request = request.bytes };
+            // 这一条的返回型是 `Msg` 而不是 `?Msg`（滑块回调的形），所以“无处可
+            // 放”在这里的具名拒绝就是 `.noop`：滑块不动，而不是送一条指向已死
+            // 栈帧的请求。
+            return .{ .project_request = request.keep() orelse return .noop };
         }
     };
 }
@@ -419,7 +422,7 @@ fn TypographySliderMsg(comptime field: []const u8) type {
 fn adjustTypographyMsg(comptime field: []const u8, comptime delta: i64) ?Msg {
     var writer = project_request.Writer{};
     const request = project_request.adjustTypography(&writer, field, delta) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 手动切换 KARA。
@@ -430,12 +433,12 @@ fn adjustTypographyMsg(comptime field: []const u8, comptime delta: i64) ?Msg {
 fn karaToggleMsg() ?Msg {
     var writer = project_request.Writer{};
     const request = project_request.karaStep(&writer, "manualToggle") orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 读当前设置。没有 value：`ReadConfig` 是无字段变体。
 fn readConfigMsg() ?Msg {
     var writer = project_request.Writer{};
     const request = project_request.readConfig(&writer) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }

@@ -273,7 +273,7 @@ pub fn convertWidthMsg(
         whole_document,
         direction,
     ) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 在选中的一段正文上发一条评论：正文是选区原文，评论是草稿字节。
@@ -290,7 +290,7 @@ fn commentMsg(model: *const Model) ?Msg {
         selected,
         model.annotation_draft.slice(),
     ) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 读这份文档的批注。没打开稿子就没有可读的——按钮因此返回 null。
@@ -302,7 +302,7 @@ fn readAnnotationsMsg(model: *const Model) ?Msg {
         model.root_id.slice(),
         model.document.path.slice(),
     ) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 一条提案：范围、原文、改后，以及四个裁决动作与理由框。
@@ -501,7 +501,7 @@ fn verdictMsg(model: *const Model, proposal_id: []const u8, kind: []const u8) ?M
         "",
         if (model.review.reason_recorded) model.review.reason.slice() else "",
     ) orelse return null;
-    return .{ .desk_verdict = request.bytes };
+    return .{ .desk_verdict = request.keep() orelse return null };
 }
 
 /// 开始改写一条提案：以 Agent 建议的改后文字为起点。
@@ -540,7 +540,7 @@ fn commitRevisionMsg(model: *const Model) ?Msg {
         model.revising.body.slice(),
         if (model.review.reason_recorded) model.review.reason.slice() else "",
     ) orelse return null;
-    return .{ .desk_verdict = request.bytes };
+    return .{ .desk_verdict = request.keep() orelse return null };
 }
 
 /// 提交暂存的裁决批次。裁决即落盘（D1／F-01）。
@@ -552,7 +552,7 @@ fn commitVerdictsMsg(model: *const Model) ?Msg {
         model.root_id.slice(),
         model.document.path.slice(),
     ) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 读这份文档上待裁决的提案。
@@ -564,7 +564,7 @@ fn readProposalsMsg(model: *const Model) ?Msg {
         model.root_id.slice(),
         model.document.path.slice(),
     ) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 读这份稿子的块清单（派发台的行）。`after` 是翻页游标：null 读第一页。
@@ -578,7 +578,7 @@ pub fn readBlocksMsg(model: *const Model, after: ?u64) ?Msg {
         after,
         100,
     ) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 读这个项目的资料名录（派发台的资料分区）。
@@ -586,7 +586,7 @@ pub fn readMaterialsMsg(model: *const Model) ?Msg {
     if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.readMaterials(&writer, model.root_id.slice()) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 收取选中那一条 Run 的结果。
@@ -594,7 +594,7 @@ pub fn collectRunMsg(model: *const Model, run_id: []const u8) ?Msg {
     if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.collectRun(&writer, model.root_id.slice(), run_id) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 发射一条已授权的 Run（2.11）：工作区由 Rust 组成，界面只点名 run。
@@ -604,5 +604,5 @@ pub fn launchRunMsg(model: *const Model, run_id: []const u8) ?Msg {
     if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.launchRun(&writer, model.root_id.slice(), run_id) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }

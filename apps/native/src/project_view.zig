@@ -80,39 +80,23 @@ pub fn progressLabel(reply: wire.Reply, row: wire.RunRow) []const u8 {
     };
 }
 
-/// 「失败：{原因}」要拼一个字串，需要一块缓冲。帧缓冲与
-/// `project_request` 同一条借用纪律：按渲染顺序向前切，永不回头覆盖。
+/// 「失败：{原因}」要拼一个字串，而 `ui.text` 存切片不拷贝：字节必须活到
+/// 这棵树死。它因此与请求字节同一个去处——这一道 build 的 arena。
 ///
 /// 旧形是四个轮换的槽，而派遣台一屏 `shell.card_rows` = 24 行、每行一个
 /// 标签：第五行起写回第一个槽，而第一行那个 `ui.text` 还指着它——失败的
 /// Run 于是显示另一个 Run 的原因，这一条在屏幕上直接可见（F-02）。
 ///
-/// 一帧的字节用完时退回无原因的「失败」：少说，不说错。单条上限沿用旧形的
-/// 288 B，一个超长原因因此吃不掉整帧的预算；截断落在 char 边界上——半个字
-/// 不是预览，是坏字节。
+/// 分配不到就退回无原因的「失败」（静态字面，永远活着）：少说，不说错。
+/// 单条上限沿用旧形的 288 B，截断落在 char 边界上——半个字不是预览，是坏字节。
 const progress_label_max_bytes: usize = 288;
-const progress_label_frame_bytes: usize = 8 * 1024;
-var progress_label_frame: [progress_label_frame_bytes]u8 = undefined;
-var progress_label_used: usize = 0;
-
-/// 一帧的开头：标签字节从头切。与 `project_request.beginFrame` 同一拍。
-pub fn beginFrame() void {
-    progress_label_used = 0;
-}
 
 fn failedLabel(reason: []const u8) []const u8 {
     if (reason.len == 0) return "失败";
-    const prefix = "失败：";
-    const room = @min(progress_label_frame.len - progress_label_used, progress_label_max_bytes);
-    if (room <= prefix.len) return "失败";
-    const buffer: []u8 = progress_label_frame[progress_label_used..][0..room];
-    @memcpy(buffer[0..prefix.len], prefix);
-    var len: usize = @min(reason.len, room - prefix.len);
+    var len: usize = @min(reason.len, progress_label_max_bytes);
     // 真的截了才退到 char 边界：continuation 字节（10xxxxxx）不是字符起点。
     while (len > 0 and len < reason.len and (reason[len] & 0xC0) == 0x80) len -= 1;
-    @memcpy(buffer[prefix.len..][0..len], reason[0..len]);
-    progress_label_used += prefix.len + len;
-    return buffer[0 .. prefix.len + len];
+    return project_request.keepPrint("失败：{s}", .{reason[0..len]}) orelse "失败";
 }
 
 /// 选中的这一行上，现在允许哪些动作。
@@ -939,13 +923,22 @@ pub fn sliderFraction(spec: TypographySliderSpec, current_units: i32) f32 {
     return std.math.clamp(offset / span, @as(f32, 0), @as(f32, 1));
 }
 
-test "a failed run keeps its own reason after the frame writes more labels" {
+test "a failed run keeps its own reason after the build writes more labels" {
     // F-02 的形状：派遣台一屏 24 行，每行一个标签。标签字节一旦回头覆盖，
     // 屏上直接可见：失败的 Run 显示另一个 Run 的原因。
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    project_request.bindBuildArena(arena.allocator());
+    defer project_request.bindBuildArena(null);
     const first = failedLabel("第一个原因");
     var index: usize = 0;
-    while (index < 4) : (index += 1) _ = failedLabel("后来的原因");
+    while (index < 24) : (index += 1) _ = failedLabel("后来的原因");
     try std.testing.expect(std.mem.indexOf(u8, first, "第一个原因") != null);
+}
+
+test "a build with nowhere to keep a label says less rather than wrong" {
+    project_request.bindBuildArena(null);
+    try std.testing.expectEqualStrings("失败", failedLabel("磁盘满了"));
 }
 
 test "typography slider specs mirror the Rust field bounds" {
@@ -1458,6 +1451,11 @@ test "选中的这一行允许什么由状态自己说，不由「是不是终�
 }
 
 test "这份文档的 Run 只列这份文档的，连接由 Rust 做过一次" {
+    // 失败原因要拼一段字，而拼出来的字节住在这一道 build 的 arena 里。
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    project_request.bindBuildArena(arena.allocator());
+    defer project_request.bindBuildArena(null);
     var builder = TestReply{};
     builder.init(.host);
     const mine = wire.RunRow{

@@ -701,7 +701,7 @@ fn readMaterialDraftsMsg(model: *const Model) ?Msg {
     if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.readMaterialDrafts(&writer, model.root_id.slice()) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 成稿或退回一条草稿。`edited_body` 是行内编辑后的正文（2.2 接上）；
@@ -723,7 +723,7 @@ fn commitMaterialDraftMsg(
         dismiss,
         as_chapter,
     ) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 最新预览答复里的 digest。预览住专槽 `deskPreview`（审计 #8）：无关答复
@@ -802,5 +802,5 @@ fn dispatchDeskMsg(model: *const Model, selected: []const u8, comptime kind: []c
         expected,
         kind,
     ) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }

@@ -71,5 +71,5 @@ fn readHistoryMsg(model: *const Model) ?Msg {
         model.root_id.slice(),
         model.document.path.slice(),
     ) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }

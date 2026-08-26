@@ -146,7 +146,7 @@ fn createDocumentMsg(model: *const Model) ?Msg {
         model.search.query.slice(),
         "chapter",
     ) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 文件树一行上的右键菜单：打开、删除、改披露权限。
@@ -187,7 +187,7 @@ fn disclosureMsg(model: *const Model, path: []const u8, disclosure: []const u8) 
         path,
         disclosure,
     ) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 删除一份文档。进系统回收站，不是抹掉——语义归 Rust。
@@ -199,46 +199,36 @@ fn deleteDocumentMsg(model: *const Model, path: []const u8) ?Msg {
         model.root_id.slice(),
         path,
     ) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 打开项目或单份稿子。路径由 Rust 的系统选择器给出，界面不碰它。
 fn adoptRootMsg(comptime folder: bool) ?Msg {
     var writer = project_request.Writer{};
     const request = project_request.chooseAndAdoptRoot(&writer, folder) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 打开文件树里的一份文档。
 ///
 /// 送的是 `rootId\n相对路径`，绝对路径由 Rust 解析——这条边界是「界面无法
 /// 指定任意文件」的实现处，不是一条约定。
-/// 文件树行的打开引用帧缓冲：`document_open` 的 reference 与 project_request
-/// 同一条借用纪律——SDK 在点击时才读它，栈 buffer 活不到那一刻。
+/// 一行文件树向 `document_open` 借的那段 `rootId\n相对路径`。
 ///
-/// 旧形是 64 个轮换的槽，而一行借三次（`on_press`、Enter、菜单首项），
-/// 一屏 64 行就是 192 次——第 22 行起，前面那些行的引用已经改成了后面行的
-/// 路径，而行文字与无障碍指纹都来自答复、都是对的（F-01）。现在一帧一块、
-/// 按渲染顺序向前切，且一行只借一次；切到头交出 null，调用方把那一行画成
-/// 具名拒绝，**不回头覆盖一段仍被引用的字节**。复位点在 `documentView` 开头。
+/// 字节先编在栈上，再搬进这一道 build 的 arena（`project_request.keepBytes`）：
+/// SDK 在点击时才读它，栈活不到那一刻，而 arena 与树同生共死、开着的菜单
+/// 另有世代钉住。之前两代都把字节放在模块级：64 个轮换的槽（一行借三次，
+/// 一屏 64 行就是 192 次，第 22 行起前面那些行的引用已改成后面行的路径），
+/// 后来是一帧一块的帧缓冲（同帧不再互覆，但菜单活过下一帧时仍被切掉）。
+///
+/// 文件树行与搜索命中共用它，所以借用的记账只此一处：搜索那侧曾自己推
+/// 池的游标，两个写者共管一个游标。
 const reference_max_bytes: usize = 1024;
-const reference_frame_bytes: usize = 64 * 1024;
-var reference_frame: [reference_frame_bytes]u8 = undefined;
-var reference_used: usize = 0;
 
-/// 一帧的开头：引用字节从头切。与 `project_request.beginFrame` 同一拍。
-pub fn beginFrame() void {
-    reference_used = 0;
-}
-
-/// 借一段 `rootId\n相对路径`。文件树行与搜索命中共用它，所以借用的
-/// 记账只此一处：搜索那侧曾自己推轮换游标，两个写者共管一个游标。
 pub fn borrowDocumentReference(root_id: []const u8, path: []const u8) ?[]const u8 {
-    const remaining = reference_frame[reference_used..];
-    const room = remaining[0..@min(remaining.len, reference_max_bytes)];
-    const reference = project_view.documentReference(room, root_id, path) orelse return null;
-    reference_used += reference.len;
-    return reference;
+    var scratch: [reference_max_bytes]u8 = undefined;
+    const reference = project_view.documentReference(&scratch, root_id, path) orelse return null;
+    return project_request.keepBytes(reference);
 }
 
 pub fn openDocumentMsg(model: *const Model, path: []const u8) ?Msg {
@@ -250,6 +240,10 @@ test "sixty-five tree rows keep their own document reference" {
     // F-01 的另一半：一行借三次（`on_press`、`on_submit`、菜单首项），
     // 64 行就是 192 次进 64 个槽。画出来的行文字是对的（它来自答复），
     // 锿上去的引用不是——无障碍指纹因此也看不见它。
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    project_request.bindBuildArena(arena.allocator());
+    defer project_request.bindBuildArena(null);
     var model: Model = .{};
     try model.root_id.set("r1");
     const first = openDocumentMsg(&model, "第一.md").?.document_open;
@@ -258,22 +252,14 @@ test "sixty-five tree rows keep their own document reference" {
     try std.testing.expect(std.mem.indexOf(u8, first, "第一.md") != null);
 }
 
-test "a frame that runs out of reference bytes refuses instead of lending live bytes" {
+test "a build with nowhere to keep a reference refuses instead of lending the stack" {
     // 拒绝是可见的：`filesView` 拿到 null 就把那一行画成不可按并说出原因。
-    beginFrame();
-    const first = borrowDocumentReference("r1", "第一.md").?;
-    var refused = false;
-    var index: usize = 0;
-    while (index < 100_000) : (index += 1) {
-        if (borrowDocumentReference("r1", "后来.md") == null) {
-            refused = true;
-            break;
-        }
-    }
-    try std.testing.expect(refused);
-    try std.testing.expect(std.mem.indexOf(u8, first, "第一.md") != null);
-    beginFrame();
-    try std.testing.expect(borrowDocumentReference("r1", "下一帧.md") != null);
+    // 未绑定与分配失败走同一条拒绝路；两者都不得把栈上那段交给 SDK。
+    project_request.bindBuildArena(null);
+    try std.testing.expect(borrowDocumentReference("r1", "第一.md") == null);
+    project_request.bindBuildArena(std.testing.failing_allocator);
+    defer project_request.bindBuildArena(null);
+    try std.testing.expect(borrowDocumentReference("r1", "第一.md") == null);
 }
 
 /// 文件树的下一页。游标由 Rust 给，界面原样送回。
@@ -285,7 +271,7 @@ fn documentPageMsg(model: *const Model) ?Msg {
         model.root_id.slice(),
         model.document.cursor.slice(),
     ) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 导入正文或资料。文件由 Rust 的选择器给出，来源永不写回。
@@ -297,5 +283,5 @@ fn importMsg(model: *const Model, comptime manuscript: bool) ?Msg {
         model.root_id.slice(),
         manuscript,
     ) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }

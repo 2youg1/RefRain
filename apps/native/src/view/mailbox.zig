@@ -225,7 +225,7 @@ fn readMailboxMsg(model: *const Model) ?Msg {
     if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.readMailbox(&writer, model.root_id.slice(), model.mailbox_discarded) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 取回一弃置的单。页签上下文就是它的出处——行本身不带弃置标记。
@@ -233,7 +233,7 @@ fn mailboxRestoreMsg(model: *const Model, entry: project_view.MailboxEntry) ?Msg
     if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.mailboxRestore(&writer, model.root_id.slice(), entry.id) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 与相邻一单交换位次。交换是 Rust 侧的一次事务（`mailboxSwap`）——
@@ -248,7 +248,7 @@ fn mailboxSwapMsg(
     _ = neighbor.rank orelse return null;
     var writer = project_request.Writer{};
     const request = project_request.mailboxSwap(&writer, model.root_id.slice(), entry.id, neighbor.id) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 读编排名录：Run 那一半的数据从这条来。
@@ -256,7 +256,7 @@ pub fn readHostMsg(model: *const Model) ?Msg {
     if (model.root_id.slice().len == 0) return null;
     var writer = project_request.Writer{};
     const request = project_request.readHost(&writer, model.root_id.slice()) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 置顶或取消置顶一单。格名取自行本身——它是安排表点名的依据，不是显示文本。
@@ -270,7 +270,7 @@ fn mailboxPinMsg(model: *const Model, entry: project_view.MailboxEntry) ?Msg {
         project_view.boxWireName(entry.box),
         !entry.pinned,
     ) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 弃置一单：软删除，它从默认列表消失，提案行与账本原封不动（INV-4）。
@@ -283,7 +283,7 @@ fn mailboxDiscardMsg(model: *const Model, entry: project_view.MailboxEntry) ?Msg
         entry.id,
         project_view.boxWireName(entry.box),
     ) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 冲销一单已裁决的提案。`document` 是 Root 相对路径——`Countermand` 按
@@ -297,7 +297,7 @@ fn countermandMsg(model: *const Model, entry: project_view.MailboxEntry) ?Msg {
         entry.document,
         entry.id,
     ) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
 
 /// 一条只带 Run id 的编排命令，编成 `project_request` 消息。
@@ -319,5 +319,5 @@ pub fn runCommandMsg(
         // 宿主自己没有钟：时刻随命令过河，它的事实才可重放。
         if (std.mem.eql(u8, command, "retryRun")) null else 0,
     ) orelse return null;
-    return .{ .project_request = request.bytes };
+    return .{ .project_request = request.keep() orelse return null };
 }
