@@ -237,7 +237,7 @@ other types. A gate makes the refusal.
 | **L2 `refrain-host`** — orchestration | Task, Run, and Authorization state, staging, workspaces, process launch, harness adapters | The database. It writes through the `HostJournal` trait. Domain rules | INV-12 by review, and the journal seam | 6 / 4,873 |
 | **L3 `refrain-app`** — use cases | The flows that need more than one layer below, the one `Application`, and `DocumentSurface` | FFI, raw pointers, platform APIs | `#![forbid(unsafe_code)]` | 25 / 9,595 |
 | **L4 `apps/native/host`** — the bridge | The C ABI: one entry, the generated layout, the session table, bounded replies, the handshake | Product semantics. Those are Rust enums below | `verify:bridge`, the protocol generator `--check` | 6 / 2,525 |
-| **L5 `apps/native/src`** — the surface | Markup and declarations, interface state, platform events, drawing | Manuscript bytes, product rules | `native check . --strict`; the layer table is in [AGENTS.md](AGENTS.md) | 33 / 14,120 |
+| **L5 `apps/native/src`** — the surface | Markup and declarations, interface state, platform events, drawing | Manuscript bytes, product rules | `native check . --strict`; the layer table is in [AGENTS.md](AGENTS.md) | 33 / 14,183 |
 
 The Scale column counts every hand-written source file in the crate, the crate
 root included, and no generated file. Two layers hold generated code beside the
@@ -878,11 +878,26 @@ closes it. A ◐ or ○ in the function matrix points here.
 |---|---|---|---|
 | **M6** | **The PDF screen and the diagram screen do not exist.** The facts exist: `block_shape::Table` knows the shape of a table, and `ingest/pdf` extracts the text | the domain facts | One screen for PDF and one for diagrams. A table stays aligned text: a caret offset is a byte offset, and a table adds a second coordinate system. An imported PDF is read-only, because `.refrain-source/` is never written |
 | **M7** | **Icons have no consumer.** `icons.rs` normalises and content-addresses an image. No module above the store reads it | `icons.rs`, `tests/icons.rs` | The surface that offers and shows the icon |
-| **M8** | **The projection is not in the Model.** It lives in the module buffer of `host_bridge`, so a host callback can change what a view reads without a change to the model root. **The journals are no longer blocked by this**: the core adopts the projection in its `host_result` arm, which replay walks, and all eight verify. What remains is the second consumer — the SDK patch keeps an `update_fx_changed` column solely because a reader of the surface state does not live in the Model | `patches/@native-sdk%2Fcli@0.10.0.patch`, and `Model`'s field budget | Move the projection into the Model. Measure the cost first: approximately 11.5 KiB for each frame through the core. Then drop the patch column |
 
 Wired, but with no signature from a real machine: IME composition on Windows and
 macOS. `SetComposition`, `CommitComposition`, and `CancelComposition` exist, and
 `verify:native-ime` exists.
+
+M8 closed by measurement rather than by the move it asked for. The question was
+whether the projection should live in the `Model` instead of in `host_bridge`'s
+module buffer, and the cost of the move was published as "approximately 11.5 KiB
+for each frame through the core". Measured on the production path
+(`host_bridge.zig`, the full-window adoption test): one frame copies `text_len`
+bytes out of the wire into storage that outlives the call, plus its line starts
+and its anchored ranges — and those byte counts do not change with where that
+storage lives. The move buys nothing per frame, and it would contradict what
+`core/model.zig` records: borrowed reply bytes live in module storage, not in the
+`Model`, so that "the latest reply" has one authority and the field budget stays
+readable. What the gap actually cost was a patch column nobody called. It is
+deleted, and the assertion M8 always lacked now exists: a core test feeds one
+answer through the `host_result` arm — the path replay walks — and requires
+`documentView().text` to be non-empty. Removing `adoptWire` from that arm turns
+it red while every fingerprint stays green.
 
 Closed in this version: KARA events and the veil, typography in the projection,
 material drafts, the cross-document jump, anchored ranges (M1 to M5); the
@@ -1160,7 +1175,6 @@ three at the next upgrade.
 | **The typeset breaks** — `hard_breaks` on the text layout | `refrain_core::typeset` is the line-breaking authority. The SDK breaks at space and tab only, and a Chinese paragraph has neither | Offer upstream as a layout input |
 | **Per-widget text size and line height** | The measure of the manuscript comes from the typography settings of the author. The token ladder cannot state this for each widget | The same pull request as the breaks |
 | **The caret rectangle** — `text_caret_bounds` and `TextInputGeometrySnapshot` | An IME candidate window must sit at the caret. Without this the platform host estimates the position, and shaped CJK text moves the caret in the frame | Offer upstream. The runtime already has this geometry |
-| **Change-aware dispatch** — `update_fx_changed`, `view_state_revision` | The projection is in the buffer of the bridge, not in the Model. A host callback can change what a view reads without a change to the model root | M8 stood on this and is now closed from the app side: the core adopts the projection in its `host_result` arm, which replay walks. The increment becomes unnecessary when the projection moves into the Model |
 | **The disabled ink of the row register** — `rowForegroundColor` | The rail is a second surface register beside the paper. `ControlVisualTokens.disabled_foreground` documents this ink, and the button ladder uses it, but the row ladder used the global `text_muted`. On four of seven themes that ink reads at \|Lc\| 8 to 20 against the rail | Offer upstream as a defect correction. Delete it on the day it lands |
 | **Windows semantic-analysis object** — `build/app.zig` | The Zig COFF backend cannot merge several archives into one object, and this application links a Rust staticlib. Cost: on Windows, `zig build test` does not force semantic analysis of the app module | A Zig backend limit. Test again at each Zig release |
 

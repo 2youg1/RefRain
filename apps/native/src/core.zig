@@ -2465,3 +2465,27 @@ test "换主题立刻换肤，同时把选择落盘" {
         );
     }
 }
+
+test "回放喂回来的答复重建正稿：M8 的原始症状有一条会红的断言" {
+    // **M8 的症状，而不是它的档位。** 八条 journal 全 `verify` 只说指纹对得上；
+    // 若正稿在回放里从来就是空的，录制与回放会一起是空的，指纹照样对上。
+    // 这条断言问的是那件事本身：把一条答复从**回放走的那条路**喂回去之后，
+    // 视图读到的正文非空。
+    //
+    // 走的路必须是那一条：`h.answer` 经 `feedHostResult` 进 `host_result` 臂，
+    // 与 SDK 的 session replay 同一条。注入验证：删掉那条臂里的
+    // `host_bridge.adoptWire(result.bytes)`，这条测试变红，而 e2e 指纹不会。
+    var h = try CoreHarness.create();
+    defer h.destroy();
+
+    const source = "剑一直握在他手里。";
+    var response = protocol.emptyResponse(@intFromEnum(protocol.Action.obtain_projection));
+    response.text_len = source.len;
+    response.text = source.ptr;
+    const encoded = protocol.encodeDispatchResponse(response);
+    try h.answer(.dispatch, encoded[0..protocol.encodedResponseLen(response)]);
+
+    const view = host_bridge.documentView();
+    try testing.expect(view.text.len > 0);
+    try testing.expectEqualStrings(source, view.text);
+}

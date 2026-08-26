@@ -1,5 +1,8 @@
+diff --git a/node_modules/@native-sdk/cli/.bun-tag-3ca9a4006157537b b/.bun-tag-3ca9a4006157537b
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 diff --git a/build/app.zig b/build/app.zig
-index 0ec7a26..f70855a 100644
+index 0ec7a26301620f571fdf140aa6d5e7912bb804c6..f70855a4d14b603c47e0efae15a3ee31620a06ce 100644
 --- a/build/app.zig
 +++ b/build/app.zig
 @@ -1886,7 +1886,12 @@ pub fn addAppArtifacts(b: *std.Build, dep: *std.Build.Dependency, app_options: A
@@ -17,7 +20,7 @@ index 0ec7a26..f70855a 100644
      // `zig build model-contract`: reflect the app's Model/Msg into
      // zig-out/model-contract.zon so `native check` can verify markup
 diff --git a/src/automation/snapshot.zig b/src/automation/snapshot.zig
-index 2ac61b4..49d6abd 100644
+index 2ac61b4a370f7f8d7dc7d8645e1cb1f41adcd390..49d6abd37d3a1c4add569c16a94b5d17d707f669 100644
 --- a/src/automation/snapshot.zig
 +++ b/src/automation/snapshot.zig
 @@ -207,6 +207,10 @@ pub const Widget = struct {
@@ -81,7 +84,7 @@ index 2ac61b4..49d6abd 100644
      var a11y_buffer: [2048]u8 = undefined;
      var a11y_writer = std.Io.Writer.fixed(&a11y_buffer);
 diff --git a/src/platform/linux/gtk_host.c b/src/platform/linux/gtk_host.c
-index 98b68f9..b344dd6 100644
+index 98b68f9adf7ba7f647da6f5fd891c6cc8a04ccc1..b344dd684db1c8f0197de68e6e51593a859c2e7f 100644
 --- a/src/platform/linux/gtk_host.c
 +++ b/src/platform/linux/gtk_host.c
 @@ -211,18 +211,17 @@ typedef struct native_sdk_gtk_native_view {
@@ -186,7 +189,7 @@ index 98b68f9..b344dd6 100644
      (void)scale;
      (void)has_dirty_rect;
 diff --git a/src/platform/linux/gtk_host.h b/src/platform/linux/gtk_host.h
-index 2b821d5..963ed88 100644
+index 2b821d5aceb5868f9aecaa09560a2605415de507..963ed8860e382244edf5324408fa89eb3f461008 100644
 --- a/src/platform/linux/gtk_host.h
 +++ b/src/platform/linux/gtk_host.h
 @@ -232,6 +232,7 @@ int native_sdk_gtk_set_view_visible(native_sdk_gtk_host_t *host, uint64_t window
@@ -198,7 +201,7 @@ index 2b821d5..963ed88 100644
   * view-local LOGICAL x/y — the same coordinate space the gpu-surface
   * input path reports pointer events in, which is the pointing-rect space
 diff --git a/src/platform/linux/root.zig b/src/platform/linux/root.zig
-index a9e23fe..446585a 100644
+index a9e23fedfdd83763346b7ea27a2ebdc75d8a275c..446585a570bb8131ca030946da609b18012955a8 100644
 --- a/src/platform/linux/root.zig
 +++ b/src/platform/linux/root.zig
 @@ -148,6 +148,7 @@ extern fn native_sdk_gtk_set_view_visible(host: *GtkHost, window_id: u64, label:
@@ -231,7 +234,7 @@ index a9e23fe..446585a 100644
      const self: *LinuxPlatform = @ptrCast(@alignCast(context.?));
      if (self.web_engine != .system) return error.UnsupportedViewKind;
 diff --git a/src/platform/macos/appkit_host.h b/src/platform/macos/appkit_host.h
-index e5986d3..32de9e5 100644
+index e5986d387551edd957f73c5b7eb81b81dbad0c1a..32de9e5b933d5583978f8b44a2a851597bf4ec0a 100644
 --- a/src/platform/macos/appkit_host.h
 +++ b/src/platform/macos/appkit_host.h
 @@ -626,6 +626,7 @@ void native_sdk_appkit_wake(native_sdk_appkit_host_t *host);
@@ -243,7 +246,7 @@ index e5986d3..32de9e5 100644
  double native_sdk_appkit_measure_text(uint64_t font_id, double size, const char *text, size_t text_len);
  
 diff --git a/src/platform/macos/appkit_host.m b/src/platform/macos/appkit_host.m
-index 3225c78..8eab0a0 100644
+index 3225c78dcb28e286a8d4e59778ab2d0dab7e0fa6..8eab0a0c3c6116a5546661bbd7031fcf71c9a7d7 100644
 --- a/src/platform/macos/appkit_host.m
 +++ b/src/platform/macos/appkit_host.m
 @@ -22,6 +22,7 @@
@@ -381,7 +384,7 @@ index 3225c78..8eab0a0 100644
      NativeSdkAppKitHost *object = (__bridge NativeSdkAppKitHost *)host;
      NSString *labelString = label ? [[NSString alloc] initWithBytes:label length:label_len encoding:NSUTF8StringEncoding] : @"";
 diff --git a/src/platform/macos/root.zig b/src/platform/macos/root.zig
-index 0e186e7..3b909d5 100644
+index 0e186e7bfbffad2ea5b3fbc0759e2574427e2f39..3b909d57364625d520f8de588c052d6bfa0f6480 100644
 --- a/src/platform/macos/root.zig
 +++ b/src/platform/macos/root.zig
 @@ -251,6 +251,7 @@ extern fn native_sdk_appkit_present_gpu_surface_packet_binary(host: *AppKitHost,
@@ -443,7 +446,7 @@ index 0e186e7..3b909d5 100644
      try std.testing.expectEqual(platform_mod.ColorScheme.light, appKitColorScheme(0));
      try std.testing.expectEqual(platform_mod.ColorScheme.dark, appKitColorScheme(1));
 diff --git a/src/platform/root.zig b/src/platform/root.zig
-index 7a2987c..dcc67a5 100644
+index 7a2987c026056b44e248314355f07a6d39c5dca2..dcc67a580915b125948ac477c752858af8669cc2 100644
 --- a/src/platform/root.zig
 +++ b/src/platform/root.zig
 @@ -209,6 +209,7 @@ pub const WidgetAccessibilityActions = types.WidgetAccessibilityActions;
@@ -455,7 +458,7 @@ index 7a2987c..dcc67a5 100644
  pub const WidgetAccessibilityActionEvent = types.WidgetAccessibilityActionEvent;
  pub const ClipboardData = types.ClipboardData;
 diff --git a/src/platform/types.zig b/src/platform/types.zig
-index 5c8a270..bfe8546 100644
+index 5c8a2707f713cf1222d42666e8f73d3f9cf2cf3e..bfe8546f27e21eee082a022719052c9aa632e824 100644
 --- a/src/platform/types.zig
 +++ b/src/platform/types.zig
 @@ -2485,6 +2485,12 @@ pub const WidgetAccessibilityNode = struct {
@@ -517,7 +520,7 @@ index 5c8a270..bfe8546 100644
      /// straight-alpha RGBA8 (see `decode_image_fn`). Loop-thread only.
      pub fn decodeImage(self: PlatformServices, bytes: []const u8, buffer: []u8, max_pixels: usize) anyerror!DecodedImage {
 diff --git a/src/platform/windows/root.zig b/src/platform/windows/root.zig
-index 9a559a8..6ff37ff 100644
+index 9a559a81ddd029e954c8c3a87a85966985e6fea1..6ff37ff0e1077495af7fff72b24413fb948ebadf 100644
 --- a/src/platform/windows/root.zig
 +++ b/src/platform/windows/root.zig
 @@ -178,6 +178,7 @@ extern fn native_sdk_windows_upload_gpu_surface_image(host: *WindowsHost, id: u6
@@ -582,7 +585,7 @@ index 9a559a8..6ff37ff 100644
      _ = WindowsPlatform;
  }
 diff --git a/src/platform/windows/webview2_host.cpp b/src/platform/windows/webview2_host.cpp
-index d811823..98699eb 100644
+index d8118237743f1424f500866cfe5955d77933567b..98699eb62d2b1b454040cd788df56cb6067da71d 100644
 --- a/src/platform/windows/webview2_host.cpp
 +++ b/src/platform/windows/webview2_host.cpp
 @@ -521,6 +521,15 @@ struct NativeView {
@@ -730,7 +733,7 @@ index d811823..98699eb 100644
      if (!host || label_len == 0) return 0;
      auto found = host->native_views.find(nativeViewKey(window_id, slice(label, label_len)));
 diff --git a/src/primitives/canvas/text_layout.zig b/src/primitives/canvas/text_layout.zig
-index 20d9091..7f8cdc2 100644
+index 20d90919f2c5811441da47a16b8ebb0b8780ae80..7f8cdc26706410f80331e7b929edc3794937ea7d 100644
 --- a/src/primitives/canvas/text_layout.zig
 +++ b/src/primitives/canvas/text_layout.zig
 @@ -370,6 +370,23 @@ pub const TextLineIterator = struct {
@@ -758,7 +761,7 @@ index 20d9091..7f8cdc2 100644
          if (end >= bytes.len) {
              self.finished = true;
 diff --git a/src/primitives/canvas/text_layout_hash.zig b/src/primitives/canvas/text_layout_hash.zig
-index 0fc887b..197d075 100644
+index 0fc887b45c518c12c1b26f16aa2d5b7591764417..197d07500b44ec578abcb6f69910d4b770695314 100644
 --- a/src/primitives/canvas/text_layout_hash.zig
 +++ b/src/primitives/canvas/text_layout_hash.zig
 @@ -1,3 +1,4 @@
@@ -779,7 +782,7 @@ index 0fc887b..197d075 100644
      }
      return resourceHashU8(hash, 0);
 diff --git a/src/primitives/canvas/text_layout_types.zig b/src/primitives/canvas/text_layout_types.zig
-index cf25712..449dc5a 100644
+index cf2571295211e977c6693c35cf602577661eb0fd..449dc5ac31c2fc707a02a3d35d37b3baedb6df93 100644
 --- a/src/primitives/canvas/text_layout_types.zig
 +++ b/src/primitives/canvas/text_layout_types.zig
 @@ -63,6 +63,12 @@ pub const TextLayoutOptions = struct {
@@ -796,7 +799,7 @@ index cf25712..449dc5a 100644
  
  pub const TextLine = struct {
 diff --git a/src/primitives/canvas/widget_metrics.zig b/src/primitives/canvas/widget_metrics.zig
-index 5f841d6..eca8f8b 100644
+index 5f841d6b0cb58b0a341cf9925df688804e2fe8f0..eca8f8b78a3fe3b2547dfbf147d352afe14380d1 100644
 --- a/src/primitives/canvas/widget_metrics.zig
 +++ b/src/primitives/canvas/widget_metrics.zig
 @@ -28,6 +28,8 @@ pub fn widgetButtonTextSize(widget: Widget, tokens: DesignTokens) f32 {
@@ -818,7 +821,7 @@ index 5f841d6..eca8f8b 100644
          .alignment = widget.text_alignment,
          .typography = tokens.typography,
 diff --git a/src/primitives/canvas/widget_render_controls.zig b/src/primitives/canvas/widget_render_controls.zig
-index 169efe9..c419059 100644
+index 169efe921cc80e8f7fcca36ea629ccbae91df985..c41905912f06c991c07060981b83cc730553f4e3 100644
 --- a/src/primitives/canvas/widget_render_controls.zig
 +++ b/src/primitives/canvas/widget_render_controls.zig
 @@ -74,6 +74,8 @@ const widgetBackgroundColor = widget_render_style.widgetBackgroundColor;
@@ -858,7 +861,7 @@ index 169efe9..c419059 100644
              .text_layout = boundedTextLayout(widget.frame, text_size, text_inset, widget.text_alignment, .none, widget.text_overflow, tokens),
          });
 diff --git a/src/primitives/canvas/widget_render_style.zig b/src/primitives/canvas/widget_render_style.zig
-index ff01f76..e30cd10 100644
+index ff01f765e7ab831bff04080f8b496b800802f581..e30cd10e5fa9d943db493259e8787566bcd1caf9 100644
 --- a/src/primitives/canvas/widget_render_style.zig
 +++ b/src/primitives/canvas/widget_render_style.zig
 @@ -173,6 +173,20 @@ pub fn widgetForegroundColor(widget: Widget, tokens: DesignTokens, fallback: Col
@@ -883,7 +886,7 @@ index ff01f76..e30cd10 100644
      const color = widget.style.accent_foreground orelse fallback;
      return disabledWash(color, widget.state.disabled, tokens.states.disabled_alpha);
 diff --git a/src/primitives/canvas/widget_text_input.zig b/src/primitives/canvas/widget_text_input.zig
-index 176d399..0f3477e 100644
+index 176d3996fa4f55dab21ddad19e7de7c796887724..0f3477e5b77964fe6e1390deb78fa32478ac1464 100644
 --- a/src/primitives/canvas/widget_text_input.zig
 +++ b/src/primitives/canvas/widget_text_input.zig
 @@ -171,12 +171,16 @@ pub fn widgetTextInputSize(widget: Widget, tokens: DesignTokens) f32 {
@@ -905,7 +908,7 @@ index 176d399..0f3477e 100644
          // reachable (caret, selection, and scroll address every byte),
          // so the honest treatment is the frame clip, not an ellipsis
 diff --git a/src/primitives/canvas/widgets.zig b/src/primitives/canvas/widgets.zig
-index 0da67d2..6906334 100644
+index 0da67d26a1d8996a6ccf52070f403822c82840ec..690633408e6dfb16efe591cf925b067a3fbc616f 100644
 --- a/src/primitives/canvas/widgets.zig
 +++ b/src/primitives/canvas/widgets.zig
 @@ -942,6 +942,19 @@ pub const Widget = struct {
@@ -929,7 +932,7 @@ index 0da67d2..6906334 100644
      /// Zero keeps an ordinary paragraph; a positive value is the decimal
      /// digit width of the largest marker. The gutter is decoration, not
 diff --git a/src/runtime/automation_snapshot.zig b/src/runtime/automation_snapshot.zig
-index 67eaa55..2acd2a9 100644
+index 67eaa556c425938c11543fdfd420ff580215a49d..2acd2a98e624b4b437c721bd63e82ce173b720f7 100644
 --- a/src/runtime/automation_snapshot.zig
 +++ b/src/runtime/automation_snapshot.zig
 @@ -213,6 +213,12 @@ pub fn RuntimeAutomationSnapshot(comptime Runtime: type) type {
@@ -969,7 +972,7 @@ index 67eaa55..2acd2a9 100644
                      };
                      widget_count.* += 1;
 diff --git a/src/runtime/canvas_widget_accessibility_tests.zig b/src/runtime/canvas_widget_accessibility_tests.zig
-index ba10f8e..24418f8 100644
+index ba10f8e681f361f1cbb13330ebb2a94a7034389a..24418f8605c7cbeb57d8aa56739bdf2723ecc27e 100644
 --- a/src/runtime/canvas_widget_accessibility_tests.zig
 +++ b/src/runtime/canvas_widget_accessibility_tests.zig
 @@ -1031,6 +1031,9 @@ test "runtime publishes canvas widget accessibility snapshots to platform" {
@@ -1017,7 +1020,7 @@ index ba10f8e..24418f8 100644
      const editor_target = runtime.views[0].widgetLayoutTree().focusTargetById(6).?;
      const undo = runtime.views[0].canvasWidgetTextHistoryShortcut(editor_target, .{
 diff --git a/src/runtime/canvas_widget_display.zig b/src/runtime/canvas_widget_display.zig
-index fdaccb8..0669336 100644
+index fdaccb8c381df113afc51fbfb2dd91e164f93d5f..0669336650c4310949907c4aba9442b627abbb7f 100644
 --- a/src/runtime/canvas_widget_display.zig
 +++ b/src/runtime/canvas_widget_display.zig
 @@ -223,6 +223,10 @@ pub fn RuntimeCanvasWidgetDisplay(comptime Runtime: type) type {
@@ -1084,248 +1087,3 @@ index fdaccb8..0669336 100644
  fn hashAccessibilityValue(hasher: *std.hash.Wyhash, value: anytype) void {
      switch (@typeInfo(@TypeOf(value))) {
          .bool => hasher.update(&.{@intFromBool(value)}),
-diff --git a/src/runtime/effects.zig b/src/runtime/effects.zig
-index ce420b0..0d515fd 100644
---- a/src/runtime/effects.zig
-+++ b/src/runtime/effects.zig
-@@ -4878,6 +4878,12 @@ pub fn Effects(comptime Msg: type) type {
-         /// embedding API's legacy unrestricted behavior; shipping app
-         /// runners always bind an explicit policy.
-         file_access_binding: ?file_access.Binding = null,
-+        /// Revision of synchronous external state that an app view reads
-+        /// outside its model. A host request that mutates such state calls
-+        /// `noteViewStateChanged`; UiApp then rebuilds from the real state
-+        /// in the same dispatch without pulling the routed result across
-+        /// its deliberate next-drain boundary. Loop-thread only.
-+        view_state_revision: u64 = 0,
-         /// Window-action mirror: counts and the last requested label,
-         /// observable in tests (`windowActionState`).
-         window_action_state: WindowActionState = .{},
-@@ -6316,6 +6322,20 @@ pub fn Effects(comptime Msg: type) type {
-             };
-         }
- 
-+        /// Report that a synchronous host call changed external state the
-+        /// app's view reads outside its model. This does not deliver a Msg
-+        /// or change the routed result boundary; it only makes the current
-+        /// UiApp dispatch derive once from the state the host already
-+        /// committed. Loop-thread only.
-+        pub fn noteViewStateChanged(self: *Self) void {
-+            self.view_state_revision +%= 1;
-+        }
-+
-+        /// Identity of the external view state last reported by the host.
-+        pub fn viewStateRevision(self: *const Self) u64 {
-+            return self.view_state_revision;
-+        }
-+
-         fn takeTestFileFailure(self: *Self) ?EffectFileOutcome {
-             const err = self.test_next_file_error orelse return null;
-             self.test_next_file_error = null;
-diff --git a/src/runtime/ui_app.zig b/src/runtime/ui_app.zig
-index 02589cb..4b182ef 100644
---- a/src/runtime/ui_app.zig
-+++ b/src/runtime/ui_app.zig
-@@ -566,17 +566,26 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
-             /// appearances snap instead of animating. Returns the
-             /// number of tweens written to `out`.
-             layout_tweens: ?*const fn (model: *const ModelT, tree: *const Ui.Tree, out: []canvas.CanvasWidgetLayoutTween) usize = null,
--            /// Elm-style update. Set exactly one of `update` and
--            /// `update_fx`: the plain form for pure apps, the `_fx` form
--            /// when update needs the effects channel. Both drive the
--            /// same loop; existing two-argument apps keep compiling
--            /// unchanged.
-+            /// Elm-style update. Set exactly one update form: `update`
-+            /// for pure apps, `update_fx` when update needs the effects
-+            /// channel, or `update_fx_changed` when the update can also
-+            /// prove whether view derivation is necessary. Existing
-+            /// update forms keep their unconditional-rebuild contract.
-             update: ?*const fn (model: *ModelT, msg: MsgT) void = null,
-             /// Effects-capable update: the third parameter spawns and
-             /// cancels subprocess effects (`fx.spawn(.{ ... })`,
-             /// `fx.cancel(key)`). Effects are update-side only — views
-             /// never spawn.
-             update_fx: ?*const fn (model: *ModelT, msg: MsgT, fx: *Effects) void = null,
-+            /// Change-aware effects update. It performs the same work as
-+            /// `update_fx` and returns true when it changed model state
-+            /// that a view derives. Returning false skips that dispatch's
-+            /// rebuild unless an effects-owned visual mirror changed.
-+            /// Commands still execute and routed results still dispatch
-+            /// on their ordinary later drain. Use this only when the
-+            /// update implementation can prove the result; otherwise use
-+            /// `update_fx` and keep the conservative rebuild.
-+            update_fx_changed: ?*const fn (model: *ModelT, msg: MsgT, fx: *Effects) bool = null,
-             /// TEA's init command: runs exactly once, on the installing
-             /// frame, after the effects channel is bound and before the
-             /// first view build — so a boot-time `fx.spawn`/`fx.fetch`
-@@ -1278,6 +1287,11 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
-         /// staged terminal — still re-renders the house chrome instead
-         /// of leaving controls painted for a playback that is gone.
-         video_rendered_snapshot: Effects.VideoSnapshot = .{},
-+        /// Synchronous external view-state revision consumed by the last
-+        /// successful main-canvas build. Host callbacks can move state a
-+        /// view reads outside its model; this stamp lets dispatch rebuild
-+        /// once from that real state without changing result delivery.
-+        external_view_rendered_revision: u64 = 0,
-         /// Applied declarative-video state: whether a declared src owns
-         /// the playback right now, the src it loaded (so an unchanged
-         /// declaration never reloads — loadVideo replaces the playback
-@@ -1430,7 +1444,10 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
- 
-         fn assertOptions(options: Options) void {
-             std.debug.assert(options.view != null or options.markup != null);
--            std.debug.assert((options.update != null) != (options.update_fx != null));
-+            const update_forms = @intFromBool(options.update != null) +
-+                @intFromBool(options.update_fx != null) +
-+                @intFromBool(options.update_fx_changed != null);
-+            std.debug.assert(update_forms == 1);
-             // Declared windows need the per-window view to build them.
-             std.debug.assert(options.windows_fn == null or options.window_view != null);
-             std.debug.assert(options.theme_fn == null or options.theme_state_fn == null);
-@@ -1748,7 +1765,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
-         pub fn dispatch(self: *Self, runtime: *Runtime, window_id: platform.WindowId, msg: MsgT) anyerror!void {
-             self.bindEffectsChannel(runtime);
-             self.syncModel(runtime, self.canvas_window_id);
--            self.applyMsg(msg);
-+            const model_changed = self.applyMsg(msg);
-             self.publishAudioState(runtime);
-             // Before the installing frame there is nothing to render
-             // against: canvas size and scale arrive with the first frame
-@@ -1768,12 +1785,22 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
-             // event the event's own tail drains instead, and the
-             // drain's own dispatches re-enter here guarded.
-             var rebuild_error: ?anyerror = null;
--            self.rebuild(runtime, self.canvas_window_id) catch |err| {
--                rebuild_error = err;
--            };
--            if (rebuild_error == null) self.rebuildWindowSlots(runtime) catch |err| {
--                rebuild_error = err;
--            };
-+            // The explicit change-aware update may prove that its model
-+            // root stayed unchanged. Effects-owned video and synchronous
-+            // host view state are independent view inputs, so either one
-+            // keeps the rebuild; otherwise this dispatch has nothing new
-+            // to derive. The hover tail below stays OUTSIDE this guard —
-+            // `drainEffects` gates the same pair of rebuilds and keeps the
-+            // same tail unconditional, and a no-rebuild cycle can still owe
-+            // the edges an earlier capped drain left behind.
-+            if (model_changed or self.effectsViewStateChanged()) {
-+                self.rebuild(runtime, self.canvas_window_id) catch |err| {
-+                    rebuild_error = err;
-+                };
-+                if (rebuild_error == null) self.rebuildWindowSlots(runtime) catch |err| {
-+                    rebuild_error = err;
-+                };
-+            }
-             if (self.hover_msg_event_depth == 0 and !self.hover_msg_draining) {
-                 self.drainHoverMsgs(runtime) catch |err| {
-                     if (rebuild_error == null) rebuild_error = err;
-@@ -1787,10 +1814,16 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
-             _ = window_id;
-         }
- 
--        /// Run `update` through whichever form the app declared; the
--        /// effects channel rides along for the `update_fx` form.
--        fn applyMsg(self: *Self, msg: MsgT) void {
--            if (self.options.update_fx) |update_fx| {
-+        /// Run `update` through whichever form the app declared and
-+        /// report whether this dispatch needs a view derivation. The two
-+        /// legacy forms stay conservative; only the explicit
-+        /// change-aware form can prove that a command-only cycle left the
-+        /// model unchanged.
-+        fn applyMsg(self: *Self, msg: MsgT) bool {
-+            var changed = true;
-+            if (self.options.update_fx_changed) |update_fx_changed| {
-+                changed = update_fx_changed(&self.model, msg, &self.effects);
-+            } else if (self.options.update_fx) |update_fx| {
-                 update_fx(&self.model, msg, &self.effects);
-             } else {
-                 self.options.update.?(&self.model, msg);
-@@ -1798,7 +1831,15 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
-             // One update call is one complete command batch. Re-run live
-             // relational reads only after the batch has walked so several
-             // writes touching the same table still coalesce into one result.
-+            // The change-aware form answers false for a command-only cycle,
-+            // but the batch still closed here, so the flush is unconditional.
-             self.effects.flushDbSubscriptions();
-+            return changed;
-+        }
-+
-+        fn effectsViewStateChanged(self: *const Self) bool {
-+            return !std.meta.eql(self.video_rendered_snapshot, self.effects.videoSnapshot()) or
-+                self.external_view_rendered_revision != self.effects.viewStateRevision();
-         }
- 
-         /// Drain the effect completion queue on the loop thread: every
-@@ -1812,7 +1853,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
-             if (!self.effects.hasPending()) return;
-             self.bindEffectsChannel(runtime);
-             self.syncModel(runtime, self.canvas_window_id);
--            var dispatched = false;
-+            var rebuild_needed = false;
-             // One pass consumes only completions that existed when it
-             // began: a load started by an update handler in THIS pass
-             // that finishes while the pass still runs waits for the wake
-@@ -1823,26 +1864,21 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
-             // finds the parked request (see Effects.DrainBoundary).
-             var boundary = self.effects.drainBoundary();
-             while (self.effects.takeMsgWithin(&boundary)) |msg| {
--                self.applyMsg(msg);
--                dispatched = true;
-+                rebuild_needed = self.applyMsg(msg) or rebuild_needed;
-             }
-             self.publishAudioState(runtime);
-             var rebuild_error: ?anyerror = null;
--            if (dispatched) {
-+            if (rebuild_needed) {
-                 self.rebuild(runtime, self.canvas_window_id) catch |err| {
-                     rebuild_error = err;
-                 };
-                 if (rebuild_error == null) self.rebuildWindowSlots(runtime) catch |err| {
-                     rebuild_error = err;
-                 };
--            } else if (self.installed and
--                !std.meta.eql(self.video_rendered_snapshot, self.effects.videoSnapshot()))
--            {
--                // A drained Msg-less video terminal (a handler-less
--                // declarative playback's synchronous failure) moved
--                // the mirrors after the last build rendered them:
--                // re-render the chrome so its controls never keep
--                // advertising a playback that is gone.
-+            } else if (self.installed and self.effectsViewStateChanged()) {
-+                // A drained Msg-less visual terminal or a synchronous
-+                // host projection move can leave the last published view
-+                // stale even though no update reported a model change.
-                 self.rebuild(runtime, self.canvas_window_id) catch |err| {
-                     rebuild_error = err;
-                 };
-@@ -2070,8 +2106,11 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
-             // the post-build reconcile (`applyVideoDeclaration`) can
-             // move them, and `drainEffects` uses the stamp to know the
-             // published chrome no longer matches (see
--            // `video_rendered_snapshot`).
-+            // `video_rendered_snapshot`). External host view state uses
-+            // the same rule: the revision captured here names exactly
-+            // what this build could read.
-             self.video_rendered_snapshot = self.effects.videoSnapshot();
-+            const external_view_revision = self.effects.viewStateRevision();
-             const next_index = self.contextMenuRebuildIndex(null, self.arena_index);
-             // Widget layout is inset by the runtime's viewport chrome
-             // (safe areas + keyboard on mobile, zero on desktop); the
-@@ -2141,6 +2180,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
-             live_tree_reset = false;
-             self.main_tree_current = true;
-             self.build_generation +%= 1;
-+            self.external_view_rendered_revision = external_view_revision;
-             // Captures track EVERY tree transition (see
-             // refreshHoverLeaveCaptures) — a transient failure is
-             // retried at the next commit or drain and lands in the
-@@ -4569,7 +4609,7 @@ pub fn UiAppWithFeatures(comptime ModelT: type, comptime MsgT: type, comptime fe
-                 // hidden-titlebar header is padded in the very first
-                 // paint.
-                 if (self.chromeInsetsMsg(runtime, frame_event.window_id)) |msg| {
--                    self.applyMsg(msg);
-+                    _ = self.applyMsg(msg);
-                 }
-                 try self.rebuild(runtime, frame_event.window_id);
-                 if (self.options.chrome == null) {

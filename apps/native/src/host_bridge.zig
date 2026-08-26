@@ -748,3 +748,42 @@ test "protocol mismatch, malformed, and unknown service requests remain typed fa
         std.mem.readInt(u32, effects.response[8..12], .little),
     );
 }
+
+test "一帧的投影过表面要多少：满窗实测（N3 的先量后改）" {
+    // `ARCHITECTURE.md` 曾把这条记成「约 11.5 KiB／帧过核心」，并据此把
+    // 「投影搬进 Model」写成一件要先算账的事。这里量的是那笔账在**生产路径**
+    // 上的真实形状：`adoptWire` 就是核心 `host_result` 臂调的那一个。
+    //
+    // 量出来的是：一帧的代价与投影落在哪个缓冲无关。`adoptProjection` 把
+    // `text_len` 字节从调用栈上的线上字节拷进一块寿命够长的存储，行首偏移与
+    // 锚定区间各拷各的；那块存储是模块级静态还是 `Model` 的一个字段，
+    // `@memcpy` 的字节数一个不差。搬家能改变的只有「谁拥有它」，不是
+    // 「每帧要付多少」——而「谁拥有它」这一问，答案已由 `core/model.zig`
+    // 模块头写下：借来的答复字节住在模块级存储，不进 Model。
+    const window = protocol.projection_bytes;
+    var source: [window]u8 = @splat('a');
+    var response = protocol.emptyResponse(@intFromEnum(protocol.Action.obtain_projection));
+    response.text_len = window;
+    response.text = &source;
+    const encoded = protocol.encodeDispatchResponse(response);
+    const wire = encoded[0..protocol.encodedResponseLen(response)];
+    defer {
+        has_projection = false;
+        projection_range_count = 0;
+        projection_line_start_count = 0;
+    }
+
+    // 一千帧满窗投影：够多到任何一次每帧分配都会被 test allocator 抓住，
+    // 而这条路径上一个分配也没有——拷贝的目的地是编译期定容的。
+    for (0..1000) |_| adoptWire(wire);
+    try std.testing.expectEqual(@as(usize, window), documentView().text.len);
+
+    // 一帧过表面的字节数，逐项写明。搬进 Model 之后这三项一字不改，
+    // 变的只有它们从哪个符号里出发。
+    const text_bytes = window;
+    const line_start_bytes = @as(usize, projection_line_start_count) * @sizeOf(u32);
+    const range_bytes = projection_range_count * @sizeOf(protocol.AnchorRangeWire);
+    try std.testing.expectEqual(@as(usize, 40960), text_bytes);
+    try std.testing.expectEqual(@as(usize, 0), line_start_bytes);
+    try std.testing.expectEqual(@as(usize, 0), range_bytes);
+}
