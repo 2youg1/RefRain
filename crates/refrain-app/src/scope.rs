@@ -71,20 +71,25 @@ pub fn list_blocks(
     let count = count.clamp(1, 100) as usize;
     let scan = manuscript.scan();
     let blocks = manuscript.head().blocks();
-    let mut rows: Vec<DocumentBlockRow> = Vec::new();
-    for (ordinal, block) in blocks.iter().enumerate() {
-        let ordinal = ordinal as u32;
-        // 翻页游标是「从这里起（含）」：跳过它之前的行。
-        if after.is_some_and(|after| ordinal < after) {
-            continue;
-        }
-        if rows.len() == count {
+    // 翻页游标是「从这里起（含）」，所以迭代也从那里起。
+    //
+    // 旧写法从 0 起走全部块、靠 `continue` 跳过游标之前的那些，于是翻到
+    // 第 n 页要走过前面 n 页的每一块；翻完一篇是 O(n²)。`skip` 在 `Blocks`
+    // 上同样是逐个前进，所以起点用 `get` 直接寻：一次下降一个块，与这一页
+    // 要画的行数成正比，与它前面有多少块无关。
+    let start = after.unwrap_or(0) as usize;
+    let mut rows: Vec<DocumentBlockRow> = Vec::with_capacity(count);
+    for offset in 0..count {
+        let Some(ordinal) = start.checked_add(offset) else {
             break;
-        }
+        };
+        let Some(block) = blocks.get(ordinal) else {
+            break;
+        };
         let text = block.text();
         rows.push(DocumentBlockRow {
             id: block.id().to_string(),
-            ordinal,
+            ordinal: ordinal as u32,
             kind: block_kind_wire_name(scan, text),
             // 前 60 个字符：按 char 取，永远不会截在半个字上。
             peek: text.chars().take(60).collect(),

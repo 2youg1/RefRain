@@ -24,6 +24,27 @@ const view_harness = @import("harness.zig");
 /// **在全局逻辑中负责什么**：只画与只派 Msg。行文字与角色归
 /// `project_view.documentRow`，请求的写法归 `project_request`，路径解析在
 /// Rust 里——跨界的是 Root id 加相对路径，界面无法指定任意文件。
+/// 文件树那一张虚拟列表的声明。**一处**，因为窗口的解算与建树必须按同一组
+/// 参数问同一个问题：`virtualWindow` 用它算出该建哪一段，`virtualList` 用它
+/// 把那一段交给运行时；两处写岔一个数，画出来的行与滚动条说的就不是一回事。
+fn tree_window(total: usize) Adapter.Ui.VirtualListOptions {
+    return .{
+        .id = "files.tree",
+        .item_count = total,
+        // 行高由 `railTreeRow` 写死，不随文本长度变——那一行本就不换行。
+        // 这是虚拟列表 v1 契约（行高一致）在这一屏成立的全部依据。
+        .item_extent = shell_view.rail_row_height_px,
+        .gap = shell_view.rail_row_gap_px,
+        .grow = 1,
+        // 没有运行时滚动状态时（裸构建：测试、预览）假设的视口高。生产里
+        // `UiApp` 用真实画布高覆盖它，所以这个数只决定裸构建看见多少行——
+        // 取旧形那个栈上定长数组的行数，裸构建因此与从前一字不差。
+        .viewport_fallback = @as(f32, @floatFromInt(shell_view.max_visible_rows)) *
+            shell_view.rail_row_height_px,
+        .semantics = .{ .role = .tree, .label = "项目里的文档" },
+    };
+}
+
 pub fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     if (model.root_id.slice().len == 0) {
         // 还没有项目：这一屏是作者第一次打开软件看到的东西，所以它必须
@@ -56,11 +77,23 @@ pub fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
     // 行数当场数——答复里那个数组就是权威。Model 里曾经另存一个
     // `documentCount`，它去找一个 Rust 从未发过的字段名，恒为 0，于是
     // 这一屏恒画零行——作者打开项目以后什么都看不见。
-    const window = @min(documents.len, shell_view.max_visible_rows);
+    // 树改走 SDK 的虚拟列表。
+    //
+    // **前提已量**：虚拟列表的 v1 契约要求行高一致，而树行的高度是
+    // `shell_view.railTreeRow` 写死的 `rail_row_height_px`——不随文本长度变，
+    // 因为那一行本就不换行。前提因此是构造上成立的，不是挑一屏量出来的。
+    //
+    // **它换掉了什么**：旧形把行建在一个长 64 的栈上数组里，于是一页 256 份
+    // 文档里只有 64 份能被画出来——剩下的 192 份作者看不见，而那不是一个
+    // 滚动问题，是他的项目里有三分之二的稿子不存在。现在建的只是可见窗口
+    // 加 overscan，而总数由 `item_count` 告诉运行时，滚动条与键盘导航都按总数算。
+    const window_range = ui.virtualWindow(tree_window(documents.len));
+    const window = window_range.itemCount();
     var rows: [shell_view.max_visible_rows]Adapter.Ui.Node = undefined;
     var index: usize = 0;
-    while (index < window) : (index += 1) {
-        const rendered = project_view.documentRow(opened, documents[index]);
+    while (index < window and index < rows.len) : (index += 1) {
+        const absolute = window_range.start_index + index;
+        const rendered = project_view.documentRow(opened, documents[absolute]);
         rows[index] = if (rendered) |shown| row: {
             // 一行只借一次：点击、Enter、菜单首项是同一个动作，借三次只会把
             // 同一帧里后面的行挤出预算。
@@ -70,12 +103,12 @@ pub fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
             if (open == null) break :row shell_view.railTreeRow(
                 ui,
                 model,
-                .{ .key = .{ .index = index }, .disabled = true, .semantics = .{ .role = .treeitem, .label = shown.label } },
+                .{ .key = .{ .index = absolute }, .disabled = true, .semantics = .{ .role = .treeitem, .label = shown.label } },
                 1,
                 ui.fmt("{s} · 这一屏放不下这一行的动作", .{shown.label}),
             );
             break :row shell_view.railTreeRow(ui, model, .{
-                .key = .{ .index = index },
+                .key = .{ .index = absolute },
                 .on_press = open,
                 // Enter 打开：与点击同一条消息（list_item 键图的行主键）。
                 .on_submit = open,
@@ -84,20 +117,18 @@ pub fn filesView(ui: *Adapter.Ui, model: *const Model) Adapter.Ui.Node {
                 .context_menu = documentRowMenu(ui, model, shown.label, open),
                 .semantics = .{ .role = .treeitem, .label = shown.label },
             }, 1, ui.fmt("{s} · {s}", .{ shown.label, shown.detail }));
-        } else shell_view.railTreeRow(ui, model, .{ .key = .{ .index = index }, .disabled = true }, 1, "这一行读不出来");
+        } else shell_view.railTreeRow(ui, model, .{ .key = .{ .index = absolute }, .disabled = true }, 1, "这一行读不出来");
     }
     return ui.column(.{ .gap = 8, .padding = 12 }, .{
         ui.row(.{ .gap = 8, .cross = .center }, .{
             ui.text(.{ .grow = 1 }, "文档"),
-            // 画出来的与一共有多少分开说：作者据此知道还有没读到的。
-            ui.text(.{}, ui.fmt("{d} / {d}", .{ window, model.document.total })),
+            // 读进来的与一共有多少分开说：作者据此知道还有没读到的。画出来的
+            // 不再是那个数——虚拟列表只建窗口，而本页每一行都滚得到。
+            ui.text(.{}, ui.fmt("{d} / {d}", .{ documents.len, model.document.total })),
         }),
         // 搜索与文件树在同一屏：作者找一份稿子时不必先想「该去哪个去处」。
         search_view.searchView(ui, model),
-        ui.list(
-            .{ .gap = shell_view.rail_row_gap_px, .semantics = .{ .role = .tree, .label = "项目里的文档" } },
-            @as([]const Adapter.Ui.Node, rows[0..window]),
-        ),
+        ui.virtualList(tree_window(documents.len), window_range, @as([]const Adapter.Ui.Node, rows[0..index])),
         // 四个动作两行两列，不是一行四个：栏是这一屏最窄的一层（文件去处
         // 的 layoutFraction 最小），一行四个在默认窗宽下把后两个挤出右缘——
         // 实测 1250px 窗上「导入正文」被切、「导入资料」整个看不见。SDK 的

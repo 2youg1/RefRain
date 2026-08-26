@@ -53,7 +53,7 @@ const rail_indent_px: f32 = 14;
 /// 在真窗上读作「挤」——一叠贴在一起的行不像一棵树，像一块文本。
 /// 36 是正文行高的量级：导轨与正文因此同一个呼吸，眼睛从稿子移到名录
 /// 不用重新对焦。
-const rail_row_height_px: f32 = 30;
+pub const rail_row_height_px: f32 = 30;
 
 pub const rail_row_gap_px: f32 = 6;
 

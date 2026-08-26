@@ -66,6 +66,19 @@ const slot_count = @typeInfo(Slot).@"enum".fields.len;
 /// 所以这里装不下等同于收到一段坏答复——按空槽处理，不留半条记录。
 ///
 /// `align(4)`：行是 `extern struct`，`Reply.rows` 按对齐取切片。
+///
+/// **为什么十四个槽一样大，而不是各按各的最大行数定容**（审计项 O-03，量过之后
+/// 撤回）：一个槽的最大值不是它的行数，是它的行数**加上那些行指向的文本**，而
+/// 每一种答复的文本都是变长的——目录的路径、失败原因、Agent 名录、预览的清单，
+/// 没有一处有比 ABI 上界更小的具名上界。把某个槽收窄到那个上界以下，代价是一条
+/// 合法答复被 `store` 按坏答复丢掉，而作者看到的是那一屏空白。
+///
+/// 省下的那 500 KB 也不是省在工作集上：这块存储是 `undefined`，落 .bss，按页
+/// 惰性提交，没收到过大答复的槽从来不触碰它的页。
+///
+/// 真要缩，缩的不是每个槽的尺寸，是「十四个槽各留一份满额缓冲」这个形状——
+/// 一块共享存储加每槽一个世代。那是另一个设计，不是给这一个改尺寸。下面那条
+/// 测试把这段判断钉住：任何一个槽被收窄，它就红。
 var storage: [slot_count][protocol.projection_bytes]u8 align(4) = undefined;
 var lengths: [slot_count]usize = @splat(0);
 
@@ -217,4 +230,27 @@ test "写坏的字节读成空，而不是某一种答复的空形态" {
     @memcpy(bytes[0..@sizeOf(wire.Header)], std.mem.asBytes(&header));
     _ = store(.project, &bytes);
     try testing.expectEqual(wire.Kind.none, borrow(.project).kind());
+}
+
+test "十四个槽各自装得下一条满额答复" {
+    // O-03 的裁断以可执行的形式留在这里：每一个槽都必须能收下 ABI 上界那么大
+    // 的一条答复，因为每一种答复的文本都只受那一个上界约束。谁把某个槽收窄，
+    // 这条测试就红，而不是等某位作者在某一屏上看见空白。
+    defer clearAll();
+    const full = protocol.projection_bytes;
+    var payload: [full]u8 = @splat(0);
+    // 一段能被 `Reply` 认出来的头，其余填满：断言比的是容量，不是解析。
+    const header = wire.Header{ .magic = wire.magic, .kind = @intFromEnum(wire.Kind.opened), .bytes = full };
+    @memcpy(payload[0..@sizeOf(wire.Header)], std.mem.asBytes(&header));
+
+    inline for (@typeInfo(Slot).@"enum".fields) |field| {
+        const slot: Slot = @enumFromInt(field.value);
+        const stored = store(slot, payload[0..full]);
+        try std.testing.expectEqual(@as(usize, full), stored.bytes.len);
+    }
+
+    // 而超过上界的一条按坏答复处理：不留半条记录，也不越界写。
+    var oversize: [full + 1]u8 = @splat(0);
+    const refused = store(.project, oversize[0..]);
+    try std.testing.expectEqual(@as(usize, 0), refused.bytes.len);
 }
