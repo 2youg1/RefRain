@@ -41,6 +41,23 @@ use specta::Type;
 use crate::journal::{StoreJournal, into_domain_host};
 use crate::root::ProjectEntry;
 
+/// 一次快照最多带几条 Run。
+///
+/// **为什么源头要有上界**：另外四种答复都有一个具名上界（目录 256、搜索 64、
+/// 块清单 `clamp(1, 100)`、锚点 512），只有编排快照没有。跨界那一层因此只剩
+/// 一条兜底：把整份答复编码一遍、超了丢一条 Run、再把整份编码一遍。一个跑过
+/// 几千条 Run 的项目于是在同步的 UI 分派线程上做数千轮 O(n²) 编码，而这条路
+/// 的每一次答复都要走它。上界回到源头，兜底就退回它本来的位置。
+///
+/// **为什么是 128**：一条 `RunRow` 是 36 字节定长加四段文本（36 字节的 id、
+/// 文档名、workspace、失败原因），实测约 170 字节；128 条约 21.8 KB，稳在
+/// ABI 的 40,960 字节以内，所以正常答复一次编码就装得下。翻倍到 256 就要靠
+/// 丢行才装得下——那正是要避免的那条路。派发台一屏 24 行，128 条是它的五屏。
+///
+/// **留最新的那些**：跨界层的 `truncate_output` 丢最旧的一条，界面读的是
+/// 「现在有哪些在跑」，两处因此说同一件事。真实条数由 `run_total` 带过界。
+pub const MAX_SNAPSHOT_RUNS: usize = 128;
+
 /// 一个 Root 的编排状态，按值取出。
 ///
 /// **接上哪个功能**：步骤 7 的审阅、信箱、派发与 Run。
@@ -56,12 +73,13 @@ pub struct HostSnapshot {
     pub authorizations: Vec<DispatchAuthorization>,
     pub runs_requiring_recovery: Vec<Id>,
     pub runs_awaiting_launch: Vec<Id>,
-    /// 这个 Root 上一共有几个 Run，包括为了装进 ABI 而被丢掉的那些。
+    /// 这个 Root 上一共有几个 Run，包括没装进 `runs` 的那些。
     ///
-    /// **为什么不让界面数 `runs.len()`**：越界时 `truncate_output` 会丢最旧的
-    /// Run，于是 `runs` 短于事实。界面数它得到的是「装得下的那些」，而作者
-    /// 读成的是「一共这么多」——一个 Run 就此从他的世界里消失且无人报错。
-    /// 由快照自己带上真实条数，截断因此变成可见事实而不是静默损失。
+    /// **为什么不让界面数 `runs.len()`**：`runs` 到 [`MAX_SNAPSHOT_RUNS`] 为止，
+    /// 越界时跨界层还会再丢最旧的几条，于是 `runs` 短于事实。界面数它得到的是
+    /// 「装得下的那些」，而作者读成的是「一共这么多」——一个 Run 就此从他的
+    /// 世界里消失且无人报错。由快照自己带上真实条数，截断因此变成可见事实而
+    /// 不是静默损失。
     pub run_total: usize,
 }
 
@@ -228,15 +246,71 @@ fn agent_of(host: &AgentHost<StoreJournal<'_>, DirectoryContext>, run_id: Id) ->
 
 /// 快照的形状只有一个权威：读与执行两条路径共用它，加字段时只改到一处。
 fn snapshot_of(host: &AgentHost<StoreJournal<'_>, DirectoryContext>) -> HostSnapshot {
-    let runs = host.runs().to_vec();
+    let all = host.runs();
+    let (runs, run_total) = recent_runs(all);
     HostSnapshot {
         tasks: host.tasks().to_vec(),
-        // 截断发生在跨界那一层，所以真实条数要在这里记下——那之后
-        // 就没人还知道原本有几个了。
-        run_total: runs.len(),
+        run_total,
         runs,
         authorizations: host.authorizations().to_vec(),
         runs_requiring_recovery: host.runs_requiring_recovery().to_vec(),
         runs_awaiting_launch: host.runs_awaiting_launch().to_vec(),
+    }
+}
+
+/// 最新的 [`MAX_SNAPSHOT_RUNS`] 条，以及这个 Root 上真实的 Run 条数。
+///
+/// 上界在这一处执行，真实条数也在这一处读到——过了这里就没人还知道原本
+/// 有几个了。
+fn recent_runs(runs: &[Run]) -> (Vec<Run>, usize) {
+    let run_total = runs.len();
+    let newest = runs
+        .get(run_total.saturating_sub(MAX_SNAPSHOT_RUNS)..)
+        .unwrap_or(runs);
+    (newest.to_vec(), run_total)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use refrain_host::host::RunProgress;
+
+    fn run(index: usize) -> Run {
+        Run {
+            id: Id::new(),
+            task_id: Id::new(),
+            agent_id: Id::new(),
+            snapshot_digest: format!("digest-{index}"),
+            workspace: format!("runs/{index}"),
+            progress: RunProgress::Queued,
+            retry_of: None,
+            edge: None,
+        }
+    }
+
+    /// 上界在源头，而跨界的那一层只剩兜底。
+    ///
+    /// 五千条 Run 是这条路径上真实会长到的量级（每次派发都记一条，账本不删）。
+    /// 断言两件事：交出去的条数封顶，且封顶不吃掉真实总数——界面说「一共几条」
+    /// 靠的是后者。留下的必须是最新的那些，因为跨界层丢的是最旧的那些。
+    #[test]
+    fn a_snapshot_carries_the_newest_runs_up_to_its_ceiling_and_the_true_total() {
+        let runs: Vec<Run> = (0..5_000).map(run).collect();
+        let (bounded, total) = recent_runs(&runs);
+
+        assert_eq!(bounded.len(), MAX_SNAPSHOT_RUNS);
+        assert_eq!(total, 5_000);
+        assert_eq!(
+            bounded.first().map(|run| run.workspace.as_str()),
+            Some("runs/4872")
+        );
+        assert_eq!(
+            bounded.last().map(|run| run.workspace.as_str()),
+            Some("runs/4999")
+        );
+
+        let (few, total) = recent_runs(&runs[..3]);
+        assert_eq!(few.len(), 3, "a project under the ceiling loses nothing");
+        assert_eq!(total, 3);
     }
 }

@@ -186,27 +186,44 @@ fn lend_reply(response: &mut RefrainNativeResponse, bytes: &[u8]) {
 }
 
 /// 一条成功的答复：按 `protocol/host.json` 的答复表填成行，装不下就先丢尾。
-///
-/// 丢尾的规矩没变（`truncate_output` 决定丢哪一头、丢完怎么把游标收回去），
-/// 变的只是量什么——以前量 JSON 的长度，现在量线上字节的长度。
 fn success(output: &ProjectOutput) -> RefrainNativeResponse {
+    match bounded_bytes(output) {
+        Ok((bytes, _)) => {
+            let mut response = RefrainNativeResponse::empty(0, ACTION_PROJECT);
+            lend_reply(&mut response, &bytes);
+            response
+        }
+        Err(oversize) => failure(
+            ERROR_HOST_FAILURE,
+            &format!("project output is {oversize} bytes; the ABI bound is {PROJECTION_BYTES}"),
+        ),
+    }
+}
+
+/// 把一条答复压进 ABI 上界，交回线上字节与为此丢了几行。
+///
+/// **丢行是兜底，不是尺寸策略。** 每一种答复在源头都有一个具名上界（目录
+/// 256、搜索 64、块清单 `clamp(1, 100)`、锚点 512、编排快照 `MAX_SNAPSHOT_RUNS`），
+/// 所以这个循环正常只跑一圈。它存在是为了不可预知的字节量——一段很长的失败
+/// 原因、一条很长的路径——而不是为了替源头定量：每一轮都重新编码整份答复，
+/// 没有源头上界时它就是同步 UI 分派线程上的 O(n²)。丢掉的行数因此是一个可断言
+/// 的量：它一旦成百上千，意思是某个源头上界不见了。
+///
+/// # Errors
+///
+/// 丢无可丢仍然超界时，交回那一次编码的字节数，由调用方写进具名失败。
+fn bounded_bytes(output: &ProjectOutput) -> Result<(Vec<u8>, usize), usize> {
     let mut bounded = output.clone();
+    let mut dropped = 0usize;
     loop {
         let bytes = crate::project_wire::encode(&bounded);
         if bytes.len() <= PROJECTION_BYTES {
-            let mut response = RefrainNativeResponse::empty(0, ACTION_PROJECT);
-            lend_reply(&mut response, &bytes);
-            return response;
+            return Ok((bytes, dropped));
         }
         if !truncate_output(&mut bounded) {
-            return failure(
-                ERROR_HOST_FAILURE,
-                &format!(
-                    "project output is {} bytes; the ABI bound is {PROJECTION_BYTES}",
-                    bytes.len()
-                ),
-            );
+            return Err(bytes.len());
         }
+        dropped = dropped.saturating_add(1);
     }
 }
 
@@ -378,6 +395,10 @@ mod tests {
     use super::*;
     use crate::staticlib::borrow_response_bytes as reply_bytes;
     use crate::wire::{self, Reply};
+    use refrain_app::HostSnapshot;
+    use refrain_app::host_session::MAX_SNAPSHOT_RUNS;
+    use refrain_core::Id;
+    use refrain_host::host::{Run, RunProgress};
     use std::fs;
 
     /// 一条答复的线上字节。
@@ -628,6 +649,53 @@ mod tests {
         drop(application);
         fs::remove_dir_all(data).unwrap();
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// 编排快照靠自己的上界装进 ABI，不靠一行行丢。
+    ///
+    /// 装置是五千条 Run 的项目经 `MAX_SNAPSHOT_RUNS` 封顶之后的那份快照——
+    /// `run_total` 仍说 5,000，因为作者读的「一共几条」是真实总数。断言丢行次数
+    /// 而不是只断言“装得下”：没有源头上界时它也能装得下，代价是在同步的 UI
+    /// 分派线程上重新编码整份答复数千次。丢行次数是那一差别唯一可观察的形式。
+    #[test]
+    fn the_orchestration_snapshot_fits_from_its_own_ceiling_not_by_dropping_rows() {
+        let snapshot = HostSnapshot {
+            tasks: Vec::new(),
+            runs: (0..MAX_SNAPSHOT_RUNS)
+                .map(|index| Run {
+                    id: Id::new(),
+                    task_id: Id::new(),
+                    agent_id: Id::new(),
+                    snapshot_digest: format!("digest-{index}"),
+                    workspace: format!("workspaces/agent-0/run-{index:04}"),
+                    progress: RunProgress::Failed {
+                        failure: format!("harness {index} exited with status 1"),
+                    },
+                    retry_of: None,
+                    edge: None,
+                })
+                .collect(),
+            authorizations: Vec::new(),
+            runs_requiring_recovery: Vec::new(),
+            runs_awaiting_launch: Vec::new(),
+            run_total: 5_000,
+        };
+
+        let (bytes, dropped) = bounded_bytes(&ProjectOutput::Host(Box::new(snapshot)))
+            .expect("a snapshot at its own ceiling fits the ABI bound");
+        assert!(bytes.len() <= PROJECTION_BYTES);
+        assert!(
+            dropped < 10,
+            "the truncation fallback ran {dropped} times; a source bound went missing"
+        );
+
+        let view = Reply::new(&bytes);
+        let head: wire::HostHead = view.head().unwrap();
+        assert_eq!(head.run_total, 5_000, "the true total crosses the boundary");
+        assert_eq!(
+            view.rows::<wire::RunRow>(head.runs).len(),
+            MAX_SNAPSHOT_RUNS
+        );
     }
 
     #[test]
