@@ -575,6 +575,57 @@ impl Database for ProjectDb {
                     )
                 },
             },
+            Migration {
+                version: SchemaVersion(15),
+                name: "contentless-delete-search",
+                apply: |tx| {
+                    // 索引不再为了能删而把整份语料再存一遍。
+                    //
+                    // 外部内容表（`content=''`）删一行要把当初插进去的那段文本
+                    // 一字不差地喂回去，FTS5 重新分词才找得到要摘掉的 posting。
+                    // 喂错不报错：它摘掉本来不存在的 posting、留下真正的那些，
+                    // 下一次读索引报「database disk image is malformed」。为了
+                    // 不喂错，`block_search_state` 存了 `indexed_path` 与
+                    // `indexed_body`——**每块 bigram 之后的全文**，也就是这个
+                    // 设计明说不要的那份拷贝。
+                    //
+                    // `contentless_delete=1`（SQLite 3.43 起）让
+                    // `DELETE ... WHERE rowid = ?` 直接成立，两列因此没有存在的
+                    // 理由。实测在本机链接的 SQLite 上（
+                    // `tests/contentless_delete_probe.rs`）：删只要 rowid、排序
+                    // 不变、**重复 rowid 仍会双重索引且删不干净**——所以
+                    // `next_rowid` 的「一个 rowid 只写一次」这条规矩照旧。
+                    //
+                    // 索引是派生物，所以整张丢掉重建，与 v8 同一条判断：
+                    // `ensure_indexed` 下一次搜索时懒重建。清空
+                    // `document_index_state` 是那句「重建」的实际写法——摘要还在
+                    // 就没有人会去重建。
+                    tx.execute_batch(
+                        "DROP TABLE IF EXISTS block_search;
+                         DROP TABLE IF EXISTS block_search_state;
+                         DELETE FROM document_index_state;
+                         CREATE VIRTUAL TABLE block_search USING fts5(
+                             path,
+                             body,
+                             content='',
+                             contentless_delete=1,
+                             tokenize='unicode61 remove_diacritics 2',
+                             detail=full
+                         );
+                         CREATE TABLE block_search_state (
+                             rowid_of      INTEGER PRIMARY KEY,
+                             document      TEXT NOT NULL,
+                             ordinal       INTEGER NOT NULL,
+                             kind          TEXT NOT NULL,
+                             start_byte    INTEGER NOT NULL,
+                             bytes         INTEGER NOT NULL,
+                             UNIQUE(document, ordinal)
+                         ) STRICT;
+                         CREATE INDEX block_search_document
+                             ON block_search_state(document);",
+                    )
+                },
+            },
         ]
     }
 }

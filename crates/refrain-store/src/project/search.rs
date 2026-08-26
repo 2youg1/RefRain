@@ -46,28 +46,19 @@ use refrain_core::source_layout::BlockScan;
 use refrain_core::{ErrorCode, RefrainError};
 use rusqlite::{Connection, OptionalExtension, params};
 
-/// One block's place in the index.
-///
-/// The rowid is FTS5's own, kept in `block_search_state` because an
-/// external-content table cannot be asked what it holds — deleting from it
-/// requires replaying the exact text that was inserted, at the exact rowid.
-struct Entry {
-    rowid: i64,
-    /// The exact text handed to FTS5, path and body.
-    ///
-    /// An external-content table stores nothing itself, so deleting a row
-    /// means replaying precisely what was inserted — FTS5 re-tokenises the
-    /// text to find the postings to remove. Feeding it anything else does not
-    /// fail: it removes postings that were never there and leaves the real
-    /// ones behind, and SQLite reports the result as "database disk image is
-    /// malformed" the next time the index is read. That is how this was found,
-    /// and a block-level index owns N of these per document rather than one.
-    indexed: (String, String),
-}
-
 fn store_failure(action: &'static str, cause: rusqlite::Error) -> RefrainError {
     RefrainError::new(ErrorCode::StateUnavailable, action, "refrain.db")
         .with_detail(cause.to_string())
+}
+
+/// The digest the index built this document's blocks from, if it has seen it.
+fn indexed_rowids(db: &Connection, path: &str) -> Result<i64, RefrainError> {
+    db.query_row(
+        "SELECT count(*) FROM block_search_state WHERE document = ?1",
+        params![path],
+        |row| row.get(0),
+    )
+    .map_err(|cause| store_failure("count index entries", cause))
 }
 
 /// The digest the index built this document's blocks from, if it has seen it.
@@ -79,26 +70,6 @@ fn indexed_digest(db: &Connection, path: &str) -> Result<Option<String>, Refrain
     )
     .optional()
     .map_err(|cause| store_failure("read index state", cause))
-}
-
-/// Every block entry the index holds for one document.
-fn entries_of(db: &Connection, path: &str) -> Result<Vec<Entry>, RefrainError> {
-    let mut statement = db
-        .prepare(
-            "SELECT rowid_of, indexed_path, indexed_body
-             FROM block_search_state WHERE document = ?1 ORDER BY ordinal",
-        )
-        .map_err(|cause| store_failure("prepare index state read", cause))?;
-    let rows = statement
-        .query_map(params![path], |row| {
-            Ok(Entry {
-                rowid: row.get(0)?,
-                indexed: (row.get(1)?, row.get(2)?),
-            })
-        })
-        .map_err(|cause| store_failure("read index state", cause))?;
-    rows.collect::<rusqlite::Result<Vec<Entry>>>()
-        .map_err(|cause| store_failure("read index state", cause))
 }
 
 /// Put a document's blocks into the index, or leave them alone if already
@@ -146,18 +117,15 @@ pub fn index_document(
         .map_err(|cause| store_failure("index block", cause))?;
         db.execute(
             "INSERT INTO block_search_state
-                 (rowid_of, document, ordinal, kind, start_byte, bytes,
-                  indexed_path, indexed_body)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                 (rowid_of, document, ordinal, kind, start_byte, bytes)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 rowid,
                 path,
                 block.ordinal,
                 block.kind.wire_name(),
                 block.start as i64,
-                block.text.len() as i64,
-                indexed_path,
-                indexed_body
+                block.text.len() as i64
             ],
         )
         .map_err(|cause| store_failure("record block state", cause))?;
@@ -178,6 +146,12 @@ pub fn index_document(
 /// FTS5 rowids are the join key between the index and the state table, so they
 /// are allocated here rather than left to SQLite: an external-content table
 /// has no rows of its own to autoincrement from.
+///
+/// **A rowid is written once, ever.** Measured on the linked SQLite
+/// (`tests/contentless_delete_probe.rs`): inserting at a rowid that already
+/// holds a posting is accepted, both postings answer queries afterwards, and no
+/// number of deletes clears the older one. `contentless_delete=1` bought the
+/// delete, not this.
 fn next_rowid(db: &Connection) -> Result<i64, RefrainError> {
     db.query_row(
         "SELECT COALESCE(MAX(rowid_of), 0) + 1 FROM block_search_state",
@@ -185,21 +159,6 @@ fn next_rowid(db: &Connection) -> Result<i64, RefrainError> {
         |row| row.get(0),
     )
     .map_err(|cause| store_failure("allocate search rowid", cause))
-}
-
-/// Remove one block from the inverted index.
-///
-/// The text has to be exactly what was inserted. FTS5 re-tokenises it to find
-/// the postings to remove. Any other text corrupts the index and later reports
-/// "database disk image is malformed".
-fn remove_entry(db: &Connection, entry: &Entry) -> Result<(), RefrainError> {
-    db.execute(
-        "INSERT INTO block_search(block_search, rowid, path, body)
-         VALUES ('delete', ?1, ?2, ?3)",
-        params![entry.rowid, entry.indexed.0, entry.indexed.1],
-    )
-    .map_err(|cause| store_failure("clear search entry", cause))?;
-    Ok(())
 }
 
 /// Is the index already built from these exact bytes?
@@ -212,15 +171,23 @@ pub fn index_is_current(db: &Connection, path: &str, digest: &str) -> bool {
 }
 
 /// Drop a document from the index entirely, every block of it.
+///
+/// One statement, addressed by rowid. The index used to be told, block by
+/// block, the exact text it had tokenised — which is why the state table kept a
+/// copy of the corpus. `contentless_delete=1` made the rowid the whole handle,
+/// so what leaves here is a copy of the manuscript, not a line of care.
 pub fn forget_document(db: &Connection, path: &str) -> Result<bool, RefrainError> {
-    let entries = entries_of(db, path)?;
+    let indexed = indexed_rowids(db, path)?;
     let known = indexed_digest(db, path)?.is_some();
-    if entries.is_empty() && !known {
+    if indexed == 0 && !known {
         return Ok(false);
     }
-    for entry in &entries {
-        remove_entry(db, entry)?;
-    }
+    db.execute(
+        "DELETE FROM block_search
+         WHERE rowid IN (SELECT rowid_of FROM block_search_state WHERE document = ?1)",
+        params![path],
+    )
+    .map_err(|cause| store_failure("clear search entries", cause))?;
     db.execute(
         "DELETE FROM block_search_state WHERE document = ?1",
         params![path],

@@ -233,7 +233,7 @@ other types. A gate makes the refusal.
 | Layer | Holds | Never holds | Enforced by | Scale (modules / lines) |
 |---|---|---|---|---|
 | **L0 `refrain-core`** — the domain | The product rules: manuscript, blocks, formats, line breaking, the agent protocol, ranking, KARA | A database, a file path, a process, a window | `verify:core-purity`, `#![forbid(unsafe_code)]` | 32 / 12,084 |
-| **L1 `refrain-store`** — persistence | The two databases, the mutable disk paths, the atomic writer, the Root guard, the indexes, the Config file, the trash | Domain rules, orchestration semantics | `verify:write-path`, `verify:trash-only` | 23 / 9,054 |
+| **L1 `refrain-store`** — persistence | The two databases, the mutable disk paths, the atomic writer, the Root guard, the indexes, the Config file, the trash | Domain rules, orchestration semantics | `verify:write-path`, `verify:trash-only` | 23 / 9,072 |
 | **L2 `refrain-host`** — orchestration | Task, Run, and Authorization state, staging, workspaces, process launch, harness adapters | The database. It writes through the `HostJournal` trait. Domain rules | INV-12 by review, and the journal seam | 6 / 4,873 |
 | **L3 `refrain-app`** — use cases | The flows that need more than one layer below, the one `Application`, and `DocumentSurface` | FFI, raw pointers, platform APIs | `#![forbid(unsafe_code)]` | 25 / 9,595 |
 | **L4 `apps/native/host`** — the bridge | The C ABI: one entry, the generated layout, the session table, bounded replies, the handshake | Product semantics. Those are Rust enums below | `verify:bridge`, the protocol generator `--check` | 6 / 2,525 |
@@ -328,7 +328,7 @@ module with no test file has test blocks in the module.
 | `root` | The Root layout, the one Source Backup, and the path guards for each write | `tests/project` |
 | `project` | `ProjectStore`: adopt, open, create, commit. Commit uses compare-and-swap against the `FileStamp` | `tests/project`, `plain_formats` |
 | `project/catalog` | The document catalogue and its paging | `project/catalog/tests` |
-| `project/search` | The FTS5 queries. Exact falls back to Loose | `tests/search*`, `block_search` |
+| `project/search` | The FTS5 queries. Exact falls back to Loose. The index holds no text: `block_search` is `content='' contentless_delete=1`, so one rowid deletes one block and `block_search_state` keeps a position, never the words. A rowid is written once, ever — a reused one double-indexes and no delete clears the older posting (measured, `tests/contentless_delete_probe`) | `tests/search*`, `block_search`, `contentless_delete_probe` |
 | `config` | The Config authority: `config.toml`, the `ConfigChange` enum, and the refusal of a damaged or newer file | `tests/config` |
 | `history` | The persisted Text Action history, to a depth of 64 | `tests/history` |
 | `ledger` | The Verdict Ledger: append-only, idempotent, in decision order | app `tests/countermand` |
@@ -551,6 +551,7 @@ Each fact below has one authority. A second copy is a defect.
 |---|---|---|
 | Manuscript bytes, selection, composition, undo | `DocumentSurface` in `refrain-app/src/native_document.rs` | A second document state machine |
 | Block boundaries | `refrain-core/src/source_layout.rs` | A second scan in the index, the estimation, or the listing |
+| The words of the manuscript | The `.md` files on disk | A copy in the index. `block_search_state` held `indexed_path` and `indexed_body` — the whole corpus, bigrammed, a second time — only because an external-content table needed the exact inserted text handed back to delete a row. `contentless_delete=1` made the rowid the whole handle, so the copy went |
 | Block ordinals | `refrain-core/src/searchable_block.rs` | An `Id` where a human-readable position is necessary |
 | Chinese tokenisation | `refrain-core/src/chinese_index.rs` | A bigram on the index side only. This gives zero results |
 | Line breaking | `refrain-core/src/typeset.rs` | A second set of rules |
