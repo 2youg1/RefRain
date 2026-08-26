@@ -10,6 +10,7 @@ const commands = @import("../commands.zig");
 const wire = @import("../generated/wire.zig");
 const project_request = @import("../project_request.zig");
 const project_view = @import("../project_view.zig");
+const view_harness = @import("harness.zig");
 const document_language = @import("../document_language.zig");
 const Adapter = core.App;
 const Model = core.Model;
@@ -605,4 +606,14 @@ pub fn launchRunMsg(model: *const Model, run_id: []const u8) ?Msg {
     var writer = project_request.Writer{};
     const request = project_request.launchRun(&writer, model.root_id.slice(), run_id) orelse return null;
     return .{ .project_request = request.keep() orelse return null };
+}
+
+test "裁决台没有提案时不绑任何裁决动作" {
+    // 裁决是不可逆的写入（账本只追加），所以「没有可判的东西」必须表现为
+    // 一个动作也绑不出来，而不是一颗按下去会被 Rust 拒绝的按钮。
+    var surface = view_harness.Surface.init(std.testing.allocator);
+    defer surface.deinit();
+    var model: Model = .{};
+    const built = surface.build(&model, reviewView);
+    try std.testing.expect(!view_harness.anyRequestContains(built, "\"decide\""));
 }

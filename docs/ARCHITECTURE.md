@@ -237,7 +237,7 @@ other types. A gate makes the refusal.
 | **L2 `refrain-host`** — orchestration | Task, Run, and Authorization state, staging, workspaces, process launch, harness adapters | The database. It writes through the `HostJournal` trait. Domain rules | INV-12 by review, and the journal seam | 6 / 4,873 |
 | **L3 `refrain-app`** — use cases | The flows that need more than one layer below, the one `Application`, and `DocumentSurface` | FFI, raw pointers, platform APIs | `#![forbid(unsafe_code)]` | 25 / 9,595 |
 | **L4 `apps/native/host`** — the bridge | The C ABI: one entry, the generated layout, the session table, bounded replies, the handshake | Product semantics. Those are Rust enums below | `verify:bridge`, the protocol generator `--check` | 6 / 2,525 |
-| **L5 `apps/native/src`** — the surface | Markup and declarations, interface state, platform events, drawing | Manuscript bytes, product rules | `native check . --strict`; the layer table is in [AGENTS.md](AGENTS.md) | 33 / 14,183 |
+| **L5 `apps/native/src`** — the surface | Markup and declarations, interface state, platform events, drawing | Manuscript bytes, product rules | `native check . --strict`; the layer table is in [AGENTS.md](AGENTS.md) | 34 / 14,732 |
 
 The Scale column counts every hand-written source file in the crate, the crate
 root included, and no generated file. Two layers hold generated code beside the
@@ -249,6 +249,16 @@ and not a way to reproduce it.
 
 L5 has no separate test files: every test block sits in the module it proves,
 and `app_main.zig`'s `refAllDecls` block is what reaches them.
+
+`view/harness.zig` is the seam that made those blocks possible in `view/`. It
+builds a real `Ui` on an arena (`Ui.init`, the SDK's own entry), hands the view
+function the same two arguments a production frame does, and then walks the tree
+it got back: by semantic role for rows, by semantic label for one widget, by
+drawn text for what the author actually reads. Three assertions in this layer are
+of the kind the layer exists to protect — the file tree's thirtieth row opens the
+thirtieth document, an open row menu keeps its payload across a rebuild, and a
+full screen of Run rows each states its own failure. Each of the three goes red
+when one row binding is shifted by one.
 
 L5 has three strata. `native check --strict` and rule NS9001 enforce them.
 
@@ -441,7 +451,8 @@ tried twice — a module-level buffer sized by guess, which only moves the overw
 | `app_main.zig` | The router: `main`, the fonts, the menus, `documentView` (the whole shell frame), `destinationView`, `layeredBody`, the palette, and the rail geometry. `documentView` is also where the build arena is bound for the whole surface, on the beat the SDK resets it. It was 4,038 lines and is 817 now; the destinations moved out under `view/` | in-file tests; the e2e journals |
 | `view/shell.zig` | The vocabulary more than one destination draws with: `railTreeRow` (no corner, a semantic level, one indent step for each level), the row budgets, the current theme index and material kind, `paletteGoSection` | reached through `app_main.zig`; the e2e journals |
 | `view/document.zig` | The manuscript track: the column and viewport metrics, `documentLayout` (the inverse of Rust's scroll anchor), the anchor dots, the verdict bento, the status line, and the manuscript context menu | in-file test on the scroll anchor; the `manuscript` journal |
-| `view/files.zig` | The file tree, the row menu, and the open/delete/disclose/import Msgs. `borrowDocumentReference` is the one account of what a tree row lends to `document_open` — the search hits borrow through the same call | the `files` journal; in-file tests on the borrow |
+| `view/files.zig` | The file tree, the row menu, and the open/delete/disclose/import Msgs. `borrowDocumentReference` is the one account of what a tree row lends to `document_open` — the search hits borrow through the same call | the `files` journal; in-file tests on the borrow and on the built tree (A1, A2) |
+| `view/harness.zig` | The test seam for this layer: one arena, one `Ui`, and the walks that find a row by role, a widget by label, and a string by what it draws. No production caller — `refAllDecls` is what reaches it | it is the thing the other view tests are written against |
 | `view/search.zig` | The query box, the hit rows, and the excerpt around a hit | the `files` journal |
 | `view/review.zig` | The verdict bench: proposal rows, the A/B faces, the reason, the annotations, and the stale-proposal panel | the `review` journal |
 | `view/desk.zig` | The dispatch desk: the block list, the materials, the preview, the Run roster, and the material drafts | the `dispatch` journal |

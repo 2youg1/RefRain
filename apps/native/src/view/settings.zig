@@ -16,6 +16,7 @@ const Adapter = core.App;
 const Model = core.Model;
 const Msg = core.Msg;
 const shell_view = @import("shell.zig");
+const view_harness = @import("harness.zig");
 
 /// 设置：读当前值，改一项，立刻落盘。
 ///
@@ -442,4 +443,23 @@ fn readConfigMsg() ?Msg {
     var writer = project_request.Writer{};
     const request = project_request.readConfig(&writer) orelse return null;
     return .{ .project_request = request.keep() orelse return null };
+}
+
+test "三颗材质按钮里，高亮的恰是 Model 记着的那一种" {
+    // `.selected` 是作者判断「我现在用的是哪一种」的唯一线索。三颗按钮共用
+    // 一条画法，所以它们只可能一起对或一起错——逐个换过去问一遍。
+    var model: Model = .{};
+    for ([_]material_recipe.Kind{ .solid, .acrylic, .liquid }) |kind| {
+        model.panel_material = kind;
+        var surface = view_harness.Surface.init(std.testing.allocator);
+        defer surface.deinit();
+        const built = surface.build(&model, settingsView);
+        const label = switch (kind) {
+            .solid => "把面板换成实心",
+            .acrylic => "把面板换成亚克力",
+            .liquid => "把面板换成液态玻璃",
+        };
+        const chosen = view_harness.find(built, label) orelse return error.TestUnexpectedResult;
+        try std.testing.expect(chosen.widget.state.selected);
+    }
 }

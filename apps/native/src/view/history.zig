@@ -2,10 +2,12 @@
 //!
 //! 单元 34 从 `app_main.zig` 搬来，逐字未改；路由仍在那一侧。
 
+const std = @import("std");
 const core = @import("../core.zig");
 const replies = @import("../core/replies.zig");
 const project_request = @import("../project_request.zig");
 const project_view = @import("../project_view.zig");
+const view_harness = @import("harness.zig");
 const Adapter = core.App;
 const Model = core.Model;
 const Msg = core.Msg;
@@ -72,4 +74,14 @@ fn readHistoryMsg(model: *const Model) ?Msg {
         model.document.path.slice(),
     ) orelse return null;
     return .{ .project_request = request.keep() orelse return null };
+}
+
+test "改动记录为空时说的是「还没有改动」，不是一屏空白" {
+    // 空名录与「还没问过」在这一层同形，两者都不该画成什么都没有：作者读到
+    // 空白会以为这一屏坏了。
+    var surface = view_harness.Surface.init(std.testing.allocator);
+    defer surface.deinit();
+    var model: Model = .{};
+    const built = surface.build(&model, historyView);
+    try std.testing.expect(view_harness.textCount(built) > 0);
 }

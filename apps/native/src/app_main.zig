@@ -48,6 +48,9 @@ const review_view = @import("view/review.zig");
 const search_view = @import("view/search.zig");
 const settings_view = @import("view/settings.zig");
 const shell_view = @import("view/shell.zig");
+// 视图层的测试接缝：`Ui` 建在 arena 上，节点树按语义角色可遍历。它自己没有
+// 生产调用方，所以只有下面那条 `refAllDecls` 让它的声明被检查到。
+const view_harness = @import("view/harness.zig");
 
 pub const panic = std.debug.FullPanic(native_sdk.debug.capturePanic);
 pub const Model = core.Model;
@@ -91,6 +94,7 @@ test {
     std.testing.refAllDecls(core);
     std.testing.refAllDecls(replies);
     // 单元 34 的十一个去处模块。少一行，那个文件里的测试不跑而门禁照样绿。
+    std.testing.refAllDecls(view_harness);
     std.testing.refAllDecls(shell_view);
     std.testing.refAllDecls(document_view);
     std.testing.refAllDecls(kara_view);

@@ -17,6 +17,7 @@ const document_view = @import("document.zig");
 const review_view = @import("review.zig");
 const mailbox_view = @import("mailbox.zig");
 const connections_view = @import("connections.zig");
+const view_harness = @import("harness.zig");
 
 /// 块清单一页的行数上限：Rust 把 count 夹在 100 以内，这里留一页的余量。
 const desk_block_rows = 128;
@@ -803,4 +804,32 @@ fn dispatchDeskMsg(model: *const Model, selected: []const u8, comptime kind: []c
         kind,
     ) orelse return null;
     return .{ .project_request = request.keep() orelse return null };
+}
+
+test "F-02：Run 名录满屏时，每一行说的是它自己那一条 Run 的失败原因" {
+    // 「行绑定到正确的行」的第三条，也是 F-02 在**视图层**的断言。进度标签曾
+    // 出自四个轮换的槽，而派遣台一屏 `shell_view.card_rows` = 24 行、每行一个
+    // 标签：第五行起写回第一个槽，而第一行那个 `ui.text` 还指着它——失败的 Run
+    // 于是显示另一条 Run 的原因。这一条在屏幕上直接可见，而无障碍指纹比对的是
+    // 画出来的文字，所以只有把这一屏真的建出来、逐行读回文字，才问得出它。
+    var reply_bytes: [16384]u8 = undefined;
+    var reasons: [shell_view.card_rows][40]u8 = undefined;
+    var written: [shell_view.card_rows][]const u8 = undefined;
+    for (0..shell_view.card_rows) |index| {
+        written[index] = std.fmt.bufPrint(&reasons[index], "harness-{d:0>2} 退出", .{index}) catch unreachable;
+    }
+    view_harness.storeFailedRuns(&reply_bytes, "章.md", &written);
+    defer replies.clearAll();
+
+    var surface = view_harness.Surface.init(std.testing.allocator);
+    defer surface.deinit();
+    var model: Model = .{};
+    try model.document.path.set("章.md");
+    const screen = surface.build(&model, dispatchView);
+
+    var label: [64]u8 = undefined;
+    for (0..shell_view.card_rows) |index| {
+        const wanted = std.fmt.bufPrint(&label, "失败：{s}", .{written[index]}) catch unreachable;
+        try std.testing.expect(view_harness.findText(screen, wanted));
+    }
 }

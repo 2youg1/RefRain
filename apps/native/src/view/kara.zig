@@ -9,6 +9,7 @@ const core = @import("../core.zig");
 const veil = @import("../veil.zig");
 const material_paint = @import("../material_paint.zig");
 const Adapter = core.App;
+const view_harness = @import("harness.zig");
 const Model = core.Model;
 const shell_view = @import("shell.zig");
 
@@ -87,4 +88,15 @@ fn karaSummaryText(ui: *Adapter.Ui, model: *const Model) []const u8 {
         count += 1;
     }
     return std.mem.join(ui.arena, " · ", parts[0..count]) catch "这一段很安静。";
+}
+
+test "KARA 静默时不画回来卡" {
+    // 回来卡是打断之后的那一句话。没有打断过还画它，作者读到的是一次
+    // 从未发生的中断。
+    var surface = view_harness.Surface.init(std.testing.allocator);
+    defer surface.deinit();
+    var model: Model = .{};
+    surface.ui = Adapter.Ui.init(surface.arena.allocator());
+    const quiet = karaSummaryStrip(&surface.ui, &model);
+    try std.testing.expectEqual(@as(usize, 0), view_harness.textCount(quiet));
 }

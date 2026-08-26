@@ -9,6 +9,7 @@ const wire = @import("../generated/wire.zig");
 const project_request = @import("../project_request.zig");
 const project_view = @import("../project_view.zig");
 const Adapter = core.App;
+const view_harness = @import("harness.zig");
 const Msg = core.Msg;
 
 /// 连接：这台机器上能派活给谁。
@@ -114,4 +115,14 @@ const orchestrations = [_]struct {
 pub fn orchestrationAt(index: i64) @TypeOf(orchestrations[0]) {
     if (index < 0 or index >= orchestrations.len) return orchestrations[0];
     return orchestrations[@intCast(index)];
+}
+
+test "连接目录不读任何全局状态，因此永远画得出来" {
+    // 这一屏是编排的入口；它若依赖某一条答复才画得出来，作者在还没有答复时
+    // 就到不了编排。签名里没有 `Model` 正是这条约定的形状，测试把它钉住。
+    var surface = view_harness.Surface.init(std.testing.allocator);
+    defer surface.deinit();
+    surface.ui = Adapter.Ui.init(surface.arena.allocator());
+    const built = connectionsView(&surface.ui);
+    try std.testing.expect(view_harness.textCount(built) > 0);
 }

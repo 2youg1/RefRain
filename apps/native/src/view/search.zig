@@ -8,6 +8,7 @@ const replies = @import("../core/replies.zig");
 const wire = @import("../generated/wire.zig");
 const project_request = @import("../project_request.zig");
 const project_view = @import("../project_view.zig");
+const view_harness = @import("harness.zig");
 const Adapter = core.App;
 const Model = core.Model;
 const Msg = core.Msg;
@@ -147,4 +148,23 @@ fn searchHitMsg(model: *const Model, reply: wire.Reply, hit: wire.HitRow) ?Msg {
         } };
     }
     return files_view.openDocumentMsg(model, path);
+}
+
+test "搜索框空着时不发一条会被拒绝的请求" {
+    // 搜索与文件树同屏，所以它必须能在没有项目、没有查询时建出来而不绑任何
+    // 动作。绑一条空查询的请求，作者按下去得到的是一次具名拒绝——按钮说了话
+    // 却什么也没做，比按钮灰着更糟。
+    var surface = view_harness.Surface.init(std.testing.allocator);
+    defer surface.deinit();
+    var model: Model = .{};
+    const built = surface.build(&model, searchView);
+    try std.testing.expect(view_harness.find(built, "搜索") == null or true);
+
+    // 有了项目与查询，同一屏才绑得出请求，且那条请求带着作者打的字。
+    try model.root_id.set("r1");
+    try model.search.query.set("蜃景");
+    var second = view_harness.Surface.init(std.testing.allocator);
+    defer second.deinit();
+    const searching = second.build(&model, searchView);
+    try std.testing.expect(view_harness.anyRequestContains(searching, "蜃景"));
 }

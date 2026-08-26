@@ -13,6 +13,7 @@ const Model = core.Model;
 const Msg = core.Msg;
 const shell_view = @import("shell.zig");
 const search_view = @import("search.zig");
+const view_harness = @import("harness.zig");
 
 /// 文件树：项目里的文档名录，点一行就打开它。
 ///
@@ -284,4 +285,78 @@ fn importMsg(model: *const Model, comptime manuscript: bool) ?Msg {
         manuscript,
     ) orelse return null;
     return .{ .project_request = request.keep() orelse return null };
+}
+
+test "A1：三十行文件树，每一行的点击打开的是它自己那一行" {
+    // `Surface-memory-SPEC.md` 的 A1。借用层的等价断言已经在上面（一行借三次、
+    // 六十五行仍各说各的话），这一条是**视图层**的：把 `filesView` 真的建出来，
+    // 逐行取它绑上去的 `on_press`，问那段请求字节里写的是不是这一行的路径。
+    //
+    // 为什么两条都要：借用层证明 `borrowDocumentReference` 不覆写，视图层证明
+    // 这一屏**把哪一个引用绑给了哪一行**。F-01 死在第二件事上——画出来的行文字
+    // 一直是对的（它来自答复），所以无障碍指纹看不见它。
+    //
+    // 三十行不是随手取的数：F-01 的触发阈值是可见文档 ≥ 22 份。
+    var reply_bytes: [8192]u8 = undefined;
+    var paths: [30][]const u8 = undefined;
+    var names: [30][16]u8 = undefined;
+    for (0..30) |index| {
+        paths[index] = std.fmt.bufPrint(&names[index], "第{d:0>3}章.md", .{index}) catch unreachable;
+    }
+    view_harness.storeOpened(&reply_bytes, "r1", &paths);
+    defer replies.clearAll();
+
+    var surface = view_harness.Surface.init(std.testing.allocator);
+    defer surface.deinit();
+    var model: Model = .{};
+    try model.root_id.set("r1");
+    const tree = surface.build(&model, filesView);
+
+    var found: [64]view_harness.Node = undefined;
+    const count = view_harness.rows(tree, .treeitem, &found);
+    try std.testing.expectEqual(@as(usize, 30), count);
+    for (found[0..count], 0..) |row, index| {
+        const request = view_harness.requestBytes(row.on_press);
+        try std.testing.expect(request.len > 0);
+        try std.testing.expect(std.mem.indexOf(u8, request, paths[index]) != null);
+        // 而且**只**含它自己那一行：`第000章.md` 是 `第0000章.md` 的前缀这类
+        // 巧合在三位数编号下不成立，但断言写成「行标签也是它自己」更直接。
+        try std.testing.expect(std.mem.indexOf(u8, row.widget.semantics.label, paths[index]) != null);
+    }
+}
+
+test "A2：菜单开着时的一次重建不动它的载荷" {
+    // `Surface-memory-SPEC.md` 的 A2。SDK 为呈现中的菜单钉住它建自的 arena
+    // 世代，于是开着的菜单能活过任意多次重建（`ui_app.zig:6317`）。钉住保护的
+    // 是 arena；静态帧缓冲在它底下照转，那是 F-03。
+    //
+    // 这条断言的形状：拿住第一行菜单首项的载荷，再建一道，然后问**手里那段
+    // 字节**还说不说同一句话。载荷在 arena 上时它说；在一块每帧从头切的缓冲上
+    // 时，第二道会把它写成别的行的请求。
+    var reply_bytes: [8192]u8 = undefined;
+    var paths: [30][]const u8 = undefined;
+    var names: [30][16]u8 = undefined;
+    for (0..30) |index| {
+        paths[index] = std.fmt.bufPrint(&names[index], "第{d:0>3}章.md", .{index}) catch unreachable;
+    }
+    view_harness.storeOpened(&reply_bytes, "r1", &paths);
+    defer replies.clearAll();
+
+    var surface = view_harness.Surface.init(std.testing.allocator);
+    defer surface.deinit();
+    var model: Model = .{};
+    try model.root_id.set("r1");
+
+    const first_build = surface.build(&model, filesView);
+    var found: [64]view_harness.Node = undefined;
+    const count = view_harness.rows(first_build, .treeitem, &found);
+    try std.testing.expect(count >= 30);
+    const menu = found[0].context_menu;
+    try std.testing.expect(menu.len > 0);
+    const pinned = view_harness.requestBytes(menu[0].msg);
+    try std.testing.expect(std.mem.indexOf(u8, pinned, paths[0]) != null);
+
+    // 重建，不复位 arena——与 SDK 钉住世代时做的事同形。
+    _ = surface.rebuildPinned(&model, filesView);
+    try std.testing.expect(std.mem.indexOf(u8, pinned, paths[0]) != null);
 }

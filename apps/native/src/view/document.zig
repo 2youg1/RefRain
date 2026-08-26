@@ -18,6 +18,7 @@ const Adapter = core.App;
 const Model = core.Model;
 const Msg = core.Msg;
 const shell_view = @import("shell.zig");
+const view_harness = @import("harness.zig");
 const review_view = @import("review.zig");
 
 test "the document track inverts the projection's scroll anchor" {
@@ -546,4 +547,57 @@ fn saveSegment(ui: *Adapter.Ui, model: *const Model) []const u8 {
             break :blk ui.fmt("已保存 · {s}", .{project_view.relativeSaveText(&buf, elapsed)});
         },
     };
+}
+
+test "状态行报的是这一份投影说的选区，不是一串零" {
+    // 状态行是作者判断「我选中了多少」的唯一读数，而它的输入是一次投影的
+    // 窗口坐标。这一条不碰任何模块级存储：`DocumentView` 是按值传进来的，
+    // 所以它问的正是「同一份投影进去，出来的话对不对」。
+    //
+    // 没开稿子时它必须说人话，不是画一串零——那是同一个函数最容易退化的方向。
+    var surface = view_harness.Surface.init(std.testing.allocator);
+    defer surface.deinit();
+    surface.ui = Adapter.Ui.init(surface.arena.allocator());
+    var model: Model = .{};
+
+    const empty: host_bridge.DocumentView = .{
+        .text = "",
+        .window_start = 0,
+        .window_end = 0,
+        .first_block = 0,
+        .block_count = 0,
+        .document_selection_start = 0,
+        .document_selection_end = 0,
+        .selection = null,
+        .composition = null,
+        .line_count = 1,
+        .format = 0,
+        .ranges = &.{},
+        .line_starts = &.{},
+    };
+    try std.testing.expectEqualStrings(
+        "还没有打开稿子",
+        statuslineText(&surface.ui, &model, empty),
+    );
+
+    // 开了稿子、选中两个字：读数必须是那两个字，而不是窗口里的全部。
+    model.document.session = 1;
+    const text = "剑一直握在他手里。";
+    const opened: host_bridge.DocumentView = .{
+        .text = text,
+        .window_start = 0,
+        .window_end = text.len,
+        .first_block = 0,
+        .block_count = 1,
+        .document_selection_start = 0,
+        .document_selection_end = 6,
+        .selection = .{ .anchor = 0, .focus = 6 },
+        .composition = null,
+        .line_count = 1,
+        .format = 0,
+        .ranges = &.{},
+        .line_starts = &.{},
+    };
+    const line = statuslineText(&surface.ui, &model, opened);
+    try std.testing.expect(std.mem.indexOf(u8, line, "选中 2 字") != null);
 }

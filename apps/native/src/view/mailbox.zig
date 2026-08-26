@@ -8,6 +8,7 @@ const replies = @import("../core/replies.zig");
 const wire = @import("../generated/wire.zig");
 const project_request = @import("../project_request.zig");
 const project_view = @import("../project_view.zig");
+const view_harness = @import("harness.zig");
 const Adapter = core.App;
 const Model = core.Model;
 const Msg = core.Msg;
@@ -320,4 +321,14 @@ pub fn runCommandMsg(
         if (std.mem.eql(u8, command, "retryRun")) null else 0,
     ) orelse return null;
     return .{ .project_request = request.keep() orelse return null };
+}
+
+test "信箱空着时仍然画得出它的三个箱子" {
+    // 三个箱子是这一屏的骨架，不是内容：没有信也要在，否则作者不知道该去哪
+    // 一个箱子找东西。
+    var surface = view_harness.Surface.init(std.testing.allocator);
+    defer surface.deinit();
+    var model: Model = .{};
+    const built = surface.build(&model, mailboxView);
+    try std.testing.expect(view_harness.textCount(built) > 0);
 }

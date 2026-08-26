@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const themes = @import("../generated/themes.zig");
+const view_harness = @import("harness.zig");
 const core = @import("../core.zig");
 const corners = @import("../corners.zig");
 const rail = @import("../rail.zig");
@@ -123,4 +124,37 @@ pub fn paletteGoSection(ui: *Adapter.Ui, model: *const Model, query: []const u8)
         ui.text(.{}, "前往"),
         ui.column(.{ .gap = rail_row_gap_px }, @as([]const Adapter.Ui.Node, rows[0..count])),
     });
+}
+
+test "导轨树的一行：层级是几何，键是它自己的下标" {
+    // 这一层是「共享词汇」，所以它的两条约定必须由机器守着：一级一格缩进
+    // （`rail_indent_px`），以及一行的键就是它在名录里的位置。第二条是文件树
+    // 那三条行断言的地基——`view_harness.rows` 按建树顺序收行，而顺序与键一致
+    // 才使「第 i 个 treeitem」等于「答复的第 i 行」。
+    var surface = view_harness.Surface.init(std.testing.allocator);
+    defer surface.deinit();
+    var model: Model = .{};
+
+    const built = surface.build(&model, struct {
+        fn view(ui: *Adapter.Ui, m: *const Model) Adapter.Ui.Node {
+            return ui.column(.{}, .{
+                railTreeRow(ui, m, .{ .key = .{ .index = 7 }, .semantics = .{ .role = .treeitem, .label = "甲" } }, 1, "甲"),
+                railTreeRow(ui, m, .{ .key = .{ .index = 8 }, .semantics = .{ .role = .treeitem, .label = "乙" } }, 3, "乙"),
+            });
+        }
+    }.view);
+
+    var rows: [4]view_harness.Node = undefined;
+    const count = view_harness.rows(built, .treeitem, &rows);
+    try std.testing.expectEqual(@as(usize, 2), count);
+    try std.testing.expectEqual(@as(?usize, 7), if (rows[0].key) |key| key.index else null);
+    try std.testing.expectEqual(@as(?usize, 8), if (rows[1].key) |key| key.index else null);
+    // 层级也在行身上：SDK 的 `tree_level` 是语义层级，键是身份，两者不可互换。
+    try std.testing.expectEqual(@as(u16, 1), rows[0].widget.tree_level);
+    try std.testing.expectEqual(@as(u16, 3), rows[1].widget.tree_level);
+
+    // 几何归我们：一级一格，两级之差正好两格。缩进是行左边那一块占位的宽。
+    const first_indent = built.nodes[0].nodes[0].widget.layout.min_size.width;
+    const second_indent = built.nodes[1].nodes[0].widget.layout.min_size.width;
+    try std.testing.expectEqual(rail_indent_px * 2, second_indent - first_indent);
 }
