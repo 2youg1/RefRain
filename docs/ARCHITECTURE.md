@@ -26,7 +26,7 @@ the invariant breaks.
 
 | Invariant | Effect in the code |
 |---|---|
-| **No network** | The application process opens no sockets. `verify:no-network` finds network APIs. |
+| **No network** | The application process opens no sockets. `verify:no-network` reads both halves: a regular-expression scan of the code we wrote, and the resolved dependency graph in `Cargo.lock`, where a named network capability (an async reactor, an HTTP client, a TLS stack, a DNS resolver) is a failure. The graph half exists because a repository that never wrote `fetch` can still reach the network through a dependency, and that request appears in none of our source. |
 | **Only a human merges** | An agent makes proposals. A change reaches the manuscript only after a recorded decision in the Verdict Ledger. |
 | **The Source Backup is read-only** | `.refrain-source/` holds the files from the time of adoption. Do not write to it. `verify:write-path` finds a path that goes there. |
 | **Delete means the recycle bin** | Do not remove a file from the disk directly. `verify:trash-only` finds a direct removal. |
