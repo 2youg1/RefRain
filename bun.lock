@@ -13,7 +13,7 @@
     },
     "apps/native": {
       "name": "@refrain/native",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "devDependencies": {
         "@native-sdk/cli": "0.10.0",
       },
