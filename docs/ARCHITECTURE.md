@@ -232,12 +232,12 @@ other types. A gate makes the refusal.
 
 | Layer | Holds | Never holds | Enforced by | Scale (modules / lines) |
 |---|---|---|---|---|
-| **L0 `refrain-core`** — the domain | The product rules: manuscript, blocks, formats, line breaking, the agent protocol, ranking, KARA | A database, a file path, a process, a window | `verify:core-purity`, `#![forbid(unsafe_code)]` | 32 / 11,805 |
-| **L1 `refrain-store`** — persistence | The two databases, the mutable disk paths, the atomic writer, the Root guard, the indexes, the Config file, the trash | Domain rules, orchestration semantics | `verify:write-path`, `verify:trash-only` | 23 / 9,098 |
+| **L0 `refrain-core`** — the domain | The product rules: manuscript, blocks, formats, line breaking, the agent protocol, ranking, KARA | A database, a file path, a process, a window | `verify:core-purity`, `#![forbid(unsafe_code)]` | 32 / 11,891 |
+| **L1 `refrain-store`** — persistence | The two databases, the mutable disk paths, the atomic writer, the Root guard, the indexes, the Config file, the trash | Domain rules, orchestration semantics | `verify:write-path`, `verify:trash-only` | 23 / 9,054 |
 | **L2 `refrain-host`** — orchestration | Task, Run, and Authorization state, staging, workspaces, process launch, harness adapters | The database. It writes through the `HostJournal` trait. Domain rules | INV-12 by review, and the journal seam | 6 / 4,745 |
-| **L3 `refrain-app`** — use cases | The flows that need more than one layer below, the one `Application`, and `DocumentSurface` | FFI, raw pointers, platform APIs | `#![forbid(unsafe_code)]` | 25 / 9,485 |
-| **L4 `apps/native/host`** — the bridge | The C ABI: one entry, the generated layout, the session table, bounded replies, the handshake | Product semantics. Those are Rust enums below | `verify:bridge`, the protocol generator `--check` | 6 / 2,299 |
-| **L5 `apps/native/src`** — the surface | Markup and declarations, interface state, platform events, drawing | Manuscript bytes, product rules | `native check . --strict`; the layer table is in [AGENTS.md](AGENTS.md) | 33 / 13,928 |
+| **L3 `refrain-app`** — use cases | The flows that need more than one layer below, the one `Application`, and `DocumentSurface` | FFI, raw pointers, platform APIs | `#![forbid(unsafe_code)]` | 25 / 9,595 |
+| **L4 `apps/native/host`** — the bridge | The C ABI: one entry, the generated layout, the session table, bounded replies, the handshake | Product semantics. Those are Rust enums below | `verify:bridge`, the protocol generator `--check` | 6 / 2,525 |
+| **L5 `apps/native/src`** — the surface | Markup and declarations, interface state, platform events, drawing | Manuscript bytes, product rules | `native check . --strict`; the layer table is in [AGENTS.md](AGENTS.md) | 33 / 14,120 |
 
 The Scale column counts every hand-written source file in the crate, the crate
 root included, and no generated file. Two layers hold generated code beside the
@@ -454,7 +454,7 @@ tried twice — a module-level buffer sized by guess, which only moves the overw
 | `replay_seam.zig` | The one exit the core uses to ask Rust: the two channel keys, the host-record encoding, and the result routing | in-file tests, with one round trip against `host_bridge`'s decoder |
 | `core/workbench.zig` | The destinations, the navigation result, the panel stack, and the split fraction. The stack is a bounded array, not a packed integer: the packing was a restriction of the TypeScript subset, and it made "the stack holds the manuscript" and "the stack is empty" the same number | in-file tests, carrying the vectors the deleted `workbench.test.ts` held |
 | `core.zig` | The Zig core: `initFx` and `update`. All 74 arms have a named landing; `pending_arms` is empty and a test holds it there, so a new arm without a landing fails the exhaustiveness check rather than falling into an `else` | in-file tests, and a `TestHarness` that reads the parked request's action code and text |
-| `core/replies.zig` | Where a project reply lands so it outlives the call that delivered it — seven slots, chosen by the reply's own `kind`, so reading the settings does not wipe the block listing. Same discipline as `host_bridge.zig`'s projection buffer, and the same reason | in-file tests |
+| `core/replies.zig` | Where a project reply lands so it outlives the call that delivered it — 14 slots, chosen by the reply's own `kind`, so reading the settings does not wipe the block listing. Same discipline as `host_bridge.zig`'s projection buffer, and the same reason | in-file tests |
 | `core/text.zig` | A bounded piece of text for the Model: fixed capacity, no allocation, and no silent truncation. `setTruncated` is the one that truncates, and it says so and cuts on a codepoint boundary | in-file tests |
 | `core/msg.zig` | Everything that can happen. Four TypeScript reply arms are one `host_result` here, because the channel rides in the result key; the pre-encoded verdict requests are gone, because a Zig core can call the request encoders | in-file tests |
 | `core/model.zig` | The whole interface state: 29 top-level fields against the budget of 40, with a test that fails if a field is added past it. The reply bytes are not among them — they live in `core/replies.zig`, because two copies of "the latest reply" only agree until one update forgets to write both | in-file tests |
@@ -845,8 +845,9 @@ The two halves run in different worlds:
 
 Use this lane to judge a surface migration. A rewritten core must consume the
 same host answers in the same order. For the journals that verify, it must also
-draw a tree with the same fingerprint. Three journals verify today. The other
-five give M8 as the reason.
+draw a tree with the same fingerprint. Today 8 of the 8 journals verify, and the
+tier table in `scripts/native-journals.ts` is where a block would be declared —
+`verify:doc-state` reads that table rather than this sentence.
 
 A journal also states which protocol it was recorded under. Replay feeds the
 recorded answers to the core, and the core compares each answer against the
@@ -868,7 +869,7 @@ closes it. A ◐ or ○ in the function matrix points here.
 |---|---|---|---|
 | **M6** | **The PDF screen and the diagram screen do not exist.** The facts exist: `block_shape::Table` knows the shape of a table, and `ingest/pdf` extracts the text | the domain facts | One screen for PDF and one for diagrams. A table stays aligned text: a caret offset is a byte offset, and a table adds a second coordinate system. An imported PDF is read-only, because `.refrain-source/` is never written |
 | **M7** | **Icons have no consumer.** `icons.rs` normalises and content-addresses an image. No module above the store reads it | `icons.rs`, `tests/icons.rs` | The surface that offers and shows the icon |
-| **M8** | **Replay cannot verify a frame that holds the manuscript.** The projection is in the module buffer of `host_bridge`, not in the Model. The replayer feeds the host answers to the core, and the view has no path to the text. Measured: the three journals that open no document verify all 28 fingerprint checkpoints. Each journal that opens a document differs from the frame after the click on the document row | the eight journals and the tier table in `scripts/native-journals.ts` | Move the projection into the Model. Measure the cost first: approximately 11.5 KiB for each frame through the core. Then change `tier` in the one table |
+| **M8** | **The projection is not in the Model.** It lives in the module buffer of `host_bridge`, so a host callback can change what a view reads without a change to the model root. **The journals are no longer blocked by this**: the core adopts the projection in its `host_result` arm, which replay walks, and all eight verify. What remains is the second consumer — the SDK patch keeps an `update_fx_changed` column solely because a reader of the surface state does not live in the Model | `patches/@native-sdk%2Fcli@0.10.0.patch`, and `Model`'s field budget | Move the projection into the Model. Measure the cost first: approximately 11.5 KiB for each frame through the core. Then drop the patch column |
 
 Wired, but with no signature from a real machine: IME composition on Windows and
 macOS. `SetComposition`, `CommitComposition`, and `CancelComposition` exist, and

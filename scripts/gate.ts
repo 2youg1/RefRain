@@ -91,6 +91,7 @@ const stages: readonly Stage[] = [
     needs: "files",
   },
   { name: "verify:no-network", argv: ["bun", "scripts/verify-no-network.ts"], needs: "files" },
+  { name: "verify:doc-state", argv: ["bun", "scripts/verify-doc-state.ts"], needs: "files" },
   { name: "verify:bridge", argv: ["bun", "scripts/verify-bridge.ts"], needs: "files" },
   {
     name: "verify:corner-authority",

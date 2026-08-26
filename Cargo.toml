@@ -139,7 +139,7 @@ strip = true
 lto = true
 codegen-units = 1
 # The root AGENTS.md dislike list opens with silently overflowing arithmetic,
-# and release is the one profile where the compiler permits it. 282 production
+# and release is the one profile where the compiler permits it. 277 production
 # expressions still do bare integer arithmetic (see the note above the lint
 # table), so this is where that half is caught: a wrong offset written into a
 # manuscript is worse than a crash that never writes one. Debug already checks;
