@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 收取一次派发的产出。
 //!
 //! 这条流程要读回派发时冻结的请求、按契约校验回来的结果、把每个范围对回当前

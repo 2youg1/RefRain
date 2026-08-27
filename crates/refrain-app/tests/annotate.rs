@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 批注：在选中的一段正文上留高亮或评论。
 //!
 //! 定位与派发同源（`locate_scope`），所以这里问的是那条路在批注上的

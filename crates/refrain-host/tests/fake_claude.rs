@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Claude 适配器的真进程冒烟：假 `claude`（examples/fake_claude.rs）走完整条
 //! 版本探测 → dispatch → observe 链。frame 形状若与真 CLI 漂移，这里红。
 

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 文件去处：文件树、行菜单、打开／删除／披露／导入。
 //!
 //! 单元 34 从 `app_main.zig` 搬来，逐字未改；路由仍在那一侧。

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 大稿子上，找一个范围要多久。
 //!
 //! 被替换掉的实现对每个起点都把后续块重新拼接一遍，是平方级的分配；新实现只做

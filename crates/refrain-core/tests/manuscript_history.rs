@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! The persisted undo history: revert to a chosen action, and hydration of
 //! the undo stack at open. The failure each test names: a revert that stops
 //! halfway across a ledger fact, or an author told their work is gone because

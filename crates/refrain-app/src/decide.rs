@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 把暂存的裁决落成一次 Text Action（SPEC 7.4）。
 //!
 //! 这条流程的重量在「从存储行重建裁决」：账本里存的是行——proposal id、

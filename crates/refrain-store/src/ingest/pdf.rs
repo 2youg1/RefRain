@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! PDF projection using a focused, engine-free component: lopdf parses the document,
 //! and we walk each
 //! page's content stream ourselves, collecting positioned text fragments and

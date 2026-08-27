@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 判据 2-1：三种边各有一条端到端用例，用真实进程，不用 mock。
 //!
 //! 「端到端」在这里的含义是具体的：一条测试要走过冻结请求 → 授权 → 提升 →

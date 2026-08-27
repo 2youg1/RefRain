@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Zig 核心：`Model`、`Msg`、`update`。
 //!
 //! 界面状态层的唯一权威。它曾经是 TypeScript（`core.ts` 与四个同伙，共 7,149 行），

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 名录：一列东西，和作者此刻停在第几行。
 //!
 //! **接上哪个功能**：裁决、派发、信箱、连接。四个去处看起来是四张不同的界面，

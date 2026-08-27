@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Zig 核心问 Rust 的唯一出口——P2 的回放缝。
 //!
 //! **接上哪个功能**：`Effects.hostRequest`，SDK 里那条「具名 host 调用」。

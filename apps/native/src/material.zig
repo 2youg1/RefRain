@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 面板材质：solid / acrylic / liquid——同一表面的三种「密度」，不是三套皮肤。
 //! 本文件是这个功能的门面与唯一数值权威：Kind 与配方表，纯数据，零依赖。
 //!

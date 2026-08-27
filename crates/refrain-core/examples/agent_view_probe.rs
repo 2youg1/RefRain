@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Agent 视角的信息充分性与 token 经济（判据：黑盒检验第二项）。
 //!
 //! 问的是两件事，都从**真实的 `compile` 输出**上量，不从公式估算：

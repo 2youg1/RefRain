@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 裁决台的跨界往返：读提案 → 判 → 提交落盘。
 //!
 //! 判据来自步骤 10.6 的接线：三条 `ProjectInput` 是作者在裁决台上的三个动作，

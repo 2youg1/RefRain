@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 零编程基础的编辑者，走完一整轮工作——逻辑模拟。
 //!
 //! 判据来自 `Memo.md`：最终黑盒要由「零编程基础、容易被混乱打断的编辑者」视角

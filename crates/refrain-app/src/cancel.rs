@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 取消一次 Run。
 //!
 //! 这条流程的重量在一个判断：**这个 Run 现在能不能被取消**。答案取决于它当下

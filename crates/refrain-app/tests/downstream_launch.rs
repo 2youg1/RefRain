@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 收取成功后自动发射等待中的下游 Run（2.2 回迁）。
 //!
 //! 接力（Follows）与校验（Verifies）的下游在 collect 成功后离开发射队列——

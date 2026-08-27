@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! M4 ConfigStore vectors: one authority, atomic writes, and the three
 //! refusals — damaged, newer, and quietly-repaired. The failure each test
 //! names: the author's choices flattened to defaults, or a newer build's

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 把一条 `ProjectOutput` 写成界面读得动的行。
 //!
 //! **接上哪个功能**：`project::dispatch` 的成功出口。它以前把 `ProjectOutput`

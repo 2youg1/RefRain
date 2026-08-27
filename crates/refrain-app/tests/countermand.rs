@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 逆向裁决：对已合并的提案下冲销。
 //!
 //! 判据（设计 D）：文本逐字节回到冻结前；账本只 append 不删；一批冲销是一次

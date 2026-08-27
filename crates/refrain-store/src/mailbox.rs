@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 信箱的安排（SPEC 9.6 的次序面）：作者对收件面的显式意图。
 //!
 //! 三种事实，全部由作者做出，因而全部持久：

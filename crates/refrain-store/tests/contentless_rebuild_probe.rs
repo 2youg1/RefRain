@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 换成 `contentless_delete=1` 之后，重建一遍索引要多久，索引小了多少。
 //!
 //! 迁移把整张索引丢掉重建（v8 的同一条判断：索引是派生物），所以「作者升级

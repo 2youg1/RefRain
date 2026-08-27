@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! `BlockShape::of` 的代价，以及它与逐字节推进的对拍。
 //!
 //! 形状是按需从块文本读的，不是随边界扫描产出并存成第二份数组——那样会在每次

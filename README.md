@@ -281,7 +281,14 @@ TMPDIR="$PWD/.tmp" cargo test --workspace --all-targets
 
 ## Licence
 
-[MPL 2.0](LICENSE).
+[MPL 2.0](LICENSE), Copyright (c) 2026 2youg1. Every source file opens with
+that copyright line and the notice from Exhibit A of the licence, and it is the
+Exhibit A notice that places the file under the licence at all. The files that have
+nowhere to put a comment — JSON, the recorded `.journal` fixtures, the binary
+assets — are covered by this statement together with `LICENSE` at the root,
+the location Exhibit A directs a recipient to look. The bundled typefaces are
+not covered by it: they are third-party works under the SIL Open Font License
+1.1, listed in [LICENSE-THIRD-PARTY](LICENSE-THIRD-PARTY).
 
 ## Acknowledgements
 

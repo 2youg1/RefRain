@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 1TB 语料、每章一次命中：7330 万条命中怎么排。
 //!
 //! 命中密度从每 100 万字一次调到每章一次后，尺度扩大 73 倍，

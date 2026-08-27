@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 面板的像素几何：去处占比到层宽的换算。
 //!
 //! **接上哪个功能**：功能栏的地与分栏线（`app_main.railEdgeX`）。栏的语义

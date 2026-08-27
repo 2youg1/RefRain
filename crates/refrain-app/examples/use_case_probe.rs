@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Probe: wall-clock cost of each project use case on this machine.
 //! The v0.3.0 budget is ≤1 ms per case. Run in release.
 //! Run: cargo run --release -p refrain-app --example use_case_probe

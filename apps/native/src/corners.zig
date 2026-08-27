@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 曲率连续的弧边（超椭圆）：RefRain 所有非网格表面的形状权威。
 //!
 //! **接上哪个功能**：面板、卡片、按钮、饭盒、胶囊——凡是要圆角的表面。

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 设置去处：主题、材质、排版三滑杆、字体、Agent、连接配置。
 //!
 //! 单元 34 从 `app_main.zig` 搬来，逐字未改；路由仍在那一侧。

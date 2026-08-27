@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! host 实体经过 store 走一个来回之后，还是不是原来那个。
 //!
 //! 这一层的错法很特别：`entity` 列存的是完整实体，而 `progress_kind`、`task_id`

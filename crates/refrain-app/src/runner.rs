@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 生产者 runner（M9）：把已授权的 Run 一路推进到收取完成。
 //!
 //! # 为什么是泵（pump）而不是后台线程

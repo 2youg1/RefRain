@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! FTS5 的可用性与 CJK 分词行为。
 //!
 //! 这两件事都不能靠读文档定案：`rusqlite` 的 `bundled` 是否编入 FTS5、

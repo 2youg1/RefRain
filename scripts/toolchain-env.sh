@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 2youg1
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 # Toolchain for a development machine that has no C compiler.
 #
 # Cargo needs a linker, libc headers, and CRT objects. A machine with no `cc`

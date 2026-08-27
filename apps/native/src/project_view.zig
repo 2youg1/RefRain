@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 项目界面：文件树、名录行，和它们上面的动作。
 //!
 //! **接上哪个功能**：`ProjectInput` 的十六个产品入口。规则、测试与跨界通道

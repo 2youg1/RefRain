@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 在测试里把一个视图真的建出来，然后问它绑给了谁。
 //!
 //! **接上哪个功能**：`view/` 这一层的全部断言。这一层有 3,500 多行、含全部

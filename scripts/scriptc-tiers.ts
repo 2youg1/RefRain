@@ -1,4 +1,9 @@
 #!/usr/bin/env bun
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * ScriptC tier A: the gates that compile to native executables.
  *
@@ -39,6 +44,7 @@ export const TIER_A: Readonly<Record<string, string>> = {
   "verify:corner-authority": "scripts/verify-corner-authority.ts",
   "verify:editor-kernel": "scripts/verify-editor-kernel.ts",
   "verify:effect-territory": "scripts/verify-effect-territory.ts",
+  "verify:licence-headers": "scripts/verify-licence-headers.ts",
   "verify:native-document-performance": "scripts/verify-native-document-performance.ts",
   "verify:native-ime": "scripts/verify-native-ime.ts",
   "verify:no-html-sink": "scripts/verify-no-html-sink.ts",

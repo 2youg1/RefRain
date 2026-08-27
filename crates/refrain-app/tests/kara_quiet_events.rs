@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 安静事件的生产者：事实发生处（保存、收取、索引建成）必须把事件产进
 //! KARA 机器的队列——2.3 的离场小结带读的是这条队列，不是界面的记忆。
 

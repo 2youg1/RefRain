@@ -1,4 +1,9 @@
 #!/usr/bin/env bun
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /** Run each selected gate without a pipe and preserve its exit status. */
 
 import { spawnSync } from "node:child_process";
@@ -96,6 +101,11 @@ const stages: readonly Stage[] = [
   {
     name: "verify:no-spec-upload",
     argv: ["bun", "scripts/verify-no-spec-upload.ts"],
+    needs: "files",
+  },
+  {
+    name: "verify:licence-headers",
+    argv: ["bun", "scripts/verify-licence-headers.ts"],
     needs: "files",
   },
   { name: "verify:no-network", argv: ["bun", "scripts/verify-no-network.ts"], needs: "files" },

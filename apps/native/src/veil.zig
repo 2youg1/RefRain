@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! KARA 的纱（veil）：专注写作时正文轨顶那一条渐隐的纸色。
 //!
 //! **接上哪个功能**：2.3a 的 KARA 进出——进场（Entering）淡入，写作/在读/

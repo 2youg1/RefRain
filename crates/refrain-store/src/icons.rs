@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! The Universal Button icon pipeline (SPEC 9.8).
 //!
 //! The author picks an image; the pipeline decides. Two acceptable shapes,

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! `contentless_delete=1` 在**这台机器实际链接的那个 SQLite** 上到底做什么。
 //!
 //! 这三条决定索引怎么删：外部内容表（`content=''`）删一行要把当初插进去的

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! D1：裁决即落盘。
 //!
 //! 判据来自审计的 F-01——账本已经记下「已接受」，磁盘上的正文却还是旧的。

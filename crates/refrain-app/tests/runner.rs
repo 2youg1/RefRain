@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! The producer runner (M9) against the real state machine.
 //!
 //! 适配器是脚本化的假货（起一个真子进程、回一份罐装产出），其余全部走真

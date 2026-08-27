@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 对拍：作者一边写一边搜时，检索的代价随语料长到哪里去。
 //!
 //! 现有探针都量固定规模的一次开销（`refresh_cost_probe` 量刷新与建索引的

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 动效的唯一权威（2.7）：时长、easing、循环形状。
 //!
 //! **接上哪个功能**：界面任何一处动画——veil 的纱、面板层进场、饭盒、

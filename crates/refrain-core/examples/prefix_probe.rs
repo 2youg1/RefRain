@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 实测：一轮之间有多少字节的公共前缀存活。
 //!
 //! D14 要求请求按「稳定在前、每轮变的在后」编译，因为 provider 的 prompt cache

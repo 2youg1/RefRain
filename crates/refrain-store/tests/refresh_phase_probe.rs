@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 对拍：一次热刷新的那一秒，花在哪一段上。
 //!
 //! `project_performance.rs` 只给一个总数（Windows 上 warm p95 1074.6 ms）。

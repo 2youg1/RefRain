@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 正稿轨：版面度量、锚点、裁决便当、状态行、右键菜单。
 //!
 //! 单元 34 从 `app_main.zig` 搬来，逐字未改；路由仍在那一侧。

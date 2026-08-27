@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * 原生文档交互性能证据：起一个真窗，走作者真正走的那条路打开十万块的稿子，
  * 逐个动作量「输入到呈现」的延迟。

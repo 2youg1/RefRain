@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 把上游的产出喂进下游刚提升的请求（Follows/Verifies 的另一半）。
 //!
 //! host 守住次序——下游不许在上游终态之前启动；这个模块守住内容——下游

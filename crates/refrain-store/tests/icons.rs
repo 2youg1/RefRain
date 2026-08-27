@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Icon pipeline vectors (SPEC 9.8). The failure each test names: an icon
 //! that reaches out of its file, a preference pointing at content it did
 //! not mean, or a raster that is not the 256² the button draws.

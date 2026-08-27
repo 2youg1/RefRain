@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! M5 ProjectStore and Verdict Ledger vectors, ported from legacy
 //! `store.test.ts`, `external-edit.test.ts`, and `source-backup.test.ts`.
 //! The failure each test names: an author's edit overwritten without

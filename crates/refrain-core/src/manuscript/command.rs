@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 作者能对手稿下的那几种命令，以及它们在被接受之前要过的形状检查。
 //!
 //! **接上哪个功能**：编辑器的每一次改动（F1）与裁决台的每一次合并（F6）都从

@@ -1,4 +1,9 @@
 #!/usr/bin/env bun
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 /**
  * INV-16: protocol documentation is generated from the schema and can never
  * drift from the parser. The Rust target asserts the generated document

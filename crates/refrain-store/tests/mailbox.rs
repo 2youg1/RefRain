@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 信箱安排（SPEC 9.6）的向量。
 //!
 //! 每条钉住的失败：作者 Pin 过的单重启后掉回原位、弃置一批提案连带毁掉了

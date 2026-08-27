@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 派发一次改写请求：从作者选中的一段正文，到若干个就绪的 Run。
 //!
 //! 这条链此前没有生产调用者——`AuthorizeDispatch` 只在测试里被构造过。

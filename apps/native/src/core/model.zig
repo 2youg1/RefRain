@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 界面此刻的全部状态。
 //!
 //! **预算**（PLAN §3 P4）：顶层字段 ≤ 40，禁止 bit-pack。`core.ts` 的 83 个字段

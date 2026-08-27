@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 use crate::protocol::{
     ACTION_APPLY_INPUT, ACTION_HEALTH, ACTION_OBTAIN_PROJECTION, ACTION_OPEN_MANUSCRIPT,
     ACTION_PROJECT, ACTION_SCROLL_PROJECTION, ANCHOR_RANGE_CAPACITY, API_VERSION, AnchorRangeWire,

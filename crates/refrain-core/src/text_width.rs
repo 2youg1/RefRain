@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 全半角互转：ASCII 集合与全角对映之间的一次性映射。
 //!
 //! **接上哪个功能**：正文选区的「转全角／转半角」菜单与命令面板的全文级

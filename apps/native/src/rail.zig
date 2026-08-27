@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 功能栏的表面：地与墨同出一门（M12 的链）。
 //!
 //! **接上哪个功能**：七套主题各自推导的四色 `rail`／`rail-ink`／`rail-faint`／

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 检索的生命周期：作者写下的字，什么时候变成能搜到的。
 //!
 //! 检索层本身的正确性在 `search.rs` 的测试里。这一份问的是另一件事——

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 2youg1
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! 命令的唯一权威：每个 command id 的中文标签与键位显示串。
 //!
 //! **接上哪个功能**：`app.zon` 的 shortcuts/menus（SDK 的 on_command 通道）、
