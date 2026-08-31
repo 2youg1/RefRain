@@ -15,12 +15,9 @@
       "name": "@refrain/native",
       "version": "0.0.2",
       "devDependencies": {
-        "@native-sdk/cli": "0.10.0",
+        "@native-sdk/cli": "0.10.1",
       },
     },
-  },
-  "patchedDependencies": {
-    "@native-sdk/cli@0.10.0": "patches/@native-sdk%2Fcli@0.10.0.patch",
   },
   "packages": {
     "@biomejs/biome": ["@biomejs/biome@2.5.5", "", { "optionalDependencies": { "@biomejs/cli-darwin-arm64": "2.5.5", "@biomejs/cli-darwin-x64": "2.5.5", "@biomejs/cli-linux-arm64": "2.5.5", "@biomejs/cli-linux-arm64-musl": "2.5.5", "@biomejs/cli-linux-x64": "2.5.5", "@biomejs/cli-linux-x64-musl": "2.5.5", "@biomejs/cli-win32-arm64": "2.5.5", "@biomejs/cli-win32-x64": "2.5.5" }, "bin": { "biome": "bin/biome" } }, "sha512-r1S8nFsAG1MY+vJFZALzIvwXAJv6ejDQ0mxP21Tgr9YK3ZFtjrvbBwDdNhx1rUqvccEIeNg20cYCNzl6Cr69pQ=="],
@@ -41,23 +38,23 @@
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.5.5", "", { "os": "win32", "cpu": "x64" }, "sha512-bIBFo+n6MIxdNcVFy5CrurbKiZQiUciK3bt8+O9I4wjFZNTfXLpi+giq47522eXqW5NBc9ulx7dR1SlZKi2J5g=="],
 
-    "@native-sdk/cli": ["@native-sdk/cli@0.10.0", "", { "dependencies": { "@typescript/old": "npm:typescript@6.0.3", "scriptc": "0.0.35" }, "optionalDependencies": { "@native-sdk/cli-darwin-arm64": "0.10.0", "@native-sdk/cli-darwin-x64": "0.10.0", "@native-sdk/cli-linux-arm64-gnu": "0.10.0", "@native-sdk/cli-linux-arm64-musl": "0.10.0", "@native-sdk/cli-linux-x64-gnu": "0.10.0", "@native-sdk/cli-linux-x64-musl": "0.10.0", "@native-sdk/cli-win32-arm64": "0.10.0", "@native-sdk/cli-win32-x64": "0.10.0" }, "bin": { "native": "bin/native.js" } }, "sha512-aAd3YEG7xl3nCRMDySa4531LtH3aAPdSnP612UsXmZQWj4uNl/TpyRU8SQWceLaXmdWIeLCxAksw7CJnlYjnpQ=="],
+    "@native-sdk/cli": ["@native-sdk/cli@0.10.1", "", { "dependencies": { "@typescript/old": "npm:typescript@6.0.3", "scriptc": "0.0.35" }, "optionalDependencies": { "@native-sdk/cli-darwin-arm64": "0.10.1", "@native-sdk/cli-darwin-x64": "0.10.1", "@native-sdk/cli-linux-arm64-gnu": "0.10.1", "@native-sdk/cli-linux-arm64-musl": "0.10.1", "@native-sdk/cli-linux-x64-gnu": "0.10.1", "@native-sdk/cli-linux-x64-musl": "0.10.1", "@native-sdk/cli-win32-arm64": "0.10.1", "@native-sdk/cli-win32-x64": "0.10.1" }, "bin": { "native": "bin/native.js" } }, "sha512-1s1Fvn217UzHUjzK0YBziHTLX8D6yDGyIIQhr7r0WGX0Cxxjl06rH6LIdSrg3dDrRGBNaUIjE/QrzAot1dkwyg=="],
 
-    "@native-sdk/cli-darwin-arm64": ["@native-sdk/cli-darwin-arm64@0.10.0", "", { "os": "darwin", "cpu": "arm64" }, "sha512-5eTXP0cZf2As5uDtSGlPrhgurTxEQoWBkvhtewW4/Db1YBzMiJtPSz8+ASRDDd5PYdYOth5Ejp333Hb/ExvIQw=="],
+    "@native-sdk/cli-darwin-arm64": ["@native-sdk/cli-darwin-arm64@0.10.1", "", { "os": "darwin", "cpu": "arm64" }, "sha512-LtOccjbJndvQHvRKUiWswFPb2HxRtKidCl+GHJXyKdCq+pn4qMOFbiJvpd1uACk1H1+jWHM6F/iTPYacpVfO5Q=="],
 
-    "@native-sdk/cli-darwin-x64": ["@native-sdk/cli-darwin-x64@0.10.0", "", { "os": "darwin", "cpu": "x64" }, "sha512-n83sMEhZ+/wB+ThGbAvvbd1KPOInJSPRC6YK4H0R27JLgnaAg37OeoaceoUrXijwIqdlUW0ooO1WgRemcFRl0A=="],
+    "@native-sdk/cli-darwin-x64": ["@native-sdk/cli-darwin-x64@0.10.1", "", { "os": "darwin", "cpu": "x64" }, "sha512-dw5EeEY3ybOP8hB94UA2JxhAjLQ5+XTcwUhpIW9ccBWdQsDoutdUBNdxIUk8uNuCwN2+EY4s7rQCxgtiXCoNGA=="],
 
-    "@native-sdk/cli-linux-arm64-gnu": ["@native-sdk/cli-linux-arm64-gnu@0.10.0", "", { "os": "linux", "cpu": "arm64" }, "sha512-oR/pWjMY0qlWnUKksYRsG708uTs4/lQbjg6hDIhL4s/K7C+wTBQifObdDJZp1lOyEBols2Srj8xYUNtO0I0UlQ=="],
+    "@native-sdk/cli-linux-arm64-gnu": ["@native-sdk/cli-linux-arm64-gnu@0.10.1", "", { "os": "linux", "cpu": "arm64" }, "sha512-4ggEI/ggiNNEHIPbfnCO8FKmnbXfgR7ahG43FTebmn6DjwYZJ2sm7FRgwGcRRqznKdCXlR4ukEiRWP886GkH1w=="],
 
-    "@native-sdk/cli-linux-arm64-musl": ["@native-sdk/cli-linux-arm64-musl@0.10.0", "", { "os": "linux", "cpu": "arm64" }, "sha512-t6f/4SSz3DpF1YuHCZjFw/iBIhLJ2Azwqltgy7TCE91hdJVvMjKRFOhx7qovN5h/ryGgU4rtWw4kRm+zNorslA=="],
+    "@native-sdk/cli-linux-arm64-musl": ["@native-sdk/cli-linux-arm64-musl@0.10.1", "", { "os": "linux", "cpu": "arm64" }, "sha512-WyY22GBrFNq1UmwWZ6+E+wGDcX5VG6woHpg1u3brTrFaQrAkfKtu/JBP1MnChmdOEp3WpwsSvFpnp+Liv3RPHQ=="],
 
-    "@native-sdk/cli-linux-x64-gnu": ["@native-sdk/cli-linux-x64-gnu@0.10.0", "", { "os": "linux", "cpu": "x64" }, "sha512-G069tLkbUW/ENi3ITdwLq7Pqk6/pSGa6Bl0XeY0hdIuAknDrfwmrR/rk80JxxOw7hjKt78dSNoS5ZJLfTYJnHw=="],
+    "@native-sdk/cli-linux-x64-gnu": ["@native-sdk/cli-linux-x64-gnu@0.10.1", "", { "os": "linux", "cpu": "x64" }, "sha512-53jrCj9J54vNl5Sb11In4fCMvBVLzGi3/9GnioqJrxjGvXtEHY6duYcZmwFJbSac8QdTymyoxz51hxWtutfKkA=="],
 
-    "@native-sdk/cli-linux-x64-musl": ["@native-sdk/cli-linux-x64-musl@0.10.0", "", { "os": "linux", "cpu": "x64" }, "sha512-L9L61JQXSSQYgYP3a22rQMaESXNjyI/otMYyHjFHwP7ckuPzdhwC8/ULEfpwAIe8fZTqwqJDVDp7vKvu/k+s3Q=="],
+    "@native-sdk/cli-linux-x64-musl": ["@native-sdk/cli-linux-x64-musl@0.10.1", "", { "os": "linux", "cpu": "x64" }, "sha512-0uy6wIj1+2eP61g+HZn5y5sbf2Gz/s4EMAb9gS9/TdxC2nvBZFwnIzqR4cFyFfnUfN0YA08jowI3o2AdhYJWdQ=="],
 
-    "@native-sdk/cli-win32-arm64": ["@native-sdk/cli-win32-arm64@0.10.0", "", { "os": "win32", "cpu": "arm64" }, "sha512-knZrUKuE6Yp6nJMDc38FYopM8sC2A1u0tsj+w9dftNj5VicnKObSISCuso30XG681OJfsYDHzREgAq4Vm7AnjA=="],
+    "@native-sdk/cli-win32-arm64": ["@native-sdk/cli-win32-arm64@0.10.1", "", { "os": "win32", "cpu": "arm64" }, "sha512-3TzSETRBLrR1//5XGY4VxUqxeL9vjZ8qt7sBGTPPfBZiyTKLA/KWW1gW/4Ms3zZvGkKFBREixgUZ4jjXOOCQFA=="],
 
-    "@native-sdk/cli-win32-x64": ["@native-sdk/cli-win32-x64@0.10.0", "", { "os": "win32", "cpu": "x64" }, "sha512-Ytuzq24QaYA0XXQZAarwSIQpkLTJejGrC2vq61dD7HLmYuxExlT7uSC/sepe800OZodNORVvTt+iF//pb+oV4Q=="],
+    "@native-sdk/cli-win32-x64": ["@native-sdk/cli-win32-x64@0.10.1", "", { "os": "win32", "cpu": "x64" }, "sha512-+K9f+J+Daxo52LyTsCn7Gp0uw+kgcjbnJ0hCD01SkkU3bSZV65WfRVODFTcEm+6A0XQTvOWky/L9esC6BtfJFw=="],
 
     "@refrain/native": ["@refrain/native@workspace:apps/native"],
 
