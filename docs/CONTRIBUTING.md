@@ -184,8 +184,8 @@ careful description is worth a great deal.
 By contributing you agree that your contribution is licensed under
 [MPL 2.0](../LICENSE), the same terms as the project.
 
-A new file opens with the copyright line and the Exhibit A notice, in its own
-comment syntax. Run `bun run licence:headers` and both are attached for you;
+A new file opens with the Exhibit A notice and the copyright line under it, in
+its own comment syntax. Run `bun run licence:headers` and both are attached for you;
 `verify:licence-headers` fails the gate if you forget. The Exhibit A lines are
 what MPL 2.0 Sec. 1.4 reads to decide whether a file is covered, so a file
 without them is a file whose licence nobody can state.

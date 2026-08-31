@@ -1,7 +1,7 @@
-// Copyright (c) 2026 2youg1
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// Copyright (c) 2026 2youg1 and the RefRain contributors
 
 //! 信箱服务：把「Agent 提了什么」与「作者怎么安排」合成一屏（SPEC 9.6）。
 //!

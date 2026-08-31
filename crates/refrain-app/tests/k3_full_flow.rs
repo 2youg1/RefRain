@@ -1,7 +1,7 @@
-// Copyright (c) 2026 2youg1
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// Copyright (c) 2026 2youg1 and the RefRain contributors
 
 //! k3 全流程（P4.2）：协议装载 → 连接配置 → 派发 → 真进程产出 → 收取 →
 //! 提案 → 裁决 → 提交 → 正文落盘，一条链上全部真实。

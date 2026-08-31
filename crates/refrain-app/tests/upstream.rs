@@ -1,7 +1,7 @@
-// Copyright (c) 2026 2youg1
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// Copyright (c) 2026 2youg1 and the RefRain contributors
 
 //! 上游产物的另一半：下游启动时，它的请求里真的有上游写下的全部字节。
 

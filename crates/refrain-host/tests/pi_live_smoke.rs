@@ -1,7 +1,7 @@
-// Copyright (c) 2026 2youg1
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// Copyright (c) 2026 2youg1 and the RefRain contributors
 
 //! Pi 真机冒烟：注册表里的 pi-print 通道走完整 dispatch → observe 链。
 //! 需要 PATH 上有 `pi` 且有可用的模型额度；跳过不红（开发机没有 Pi

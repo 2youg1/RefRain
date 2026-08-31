@@ -281,8 +281,9 @@ TMPDIR="$PWD/.tmp" cargo test --workspace --all-targets
 
 ## Licence
 
-[MPL 2.0](LICENSE), Copyright (c) 2026 2youg1. Every source file opens with
-that copyright line and the notice from Exhibit A of the licence, and it is the
+[MPL 2.0](LICENSE), Copyright (c) 2026 2youg1 and the RefRain contributors.
+Every source file opens with the notice from Exhibit A of the licence and that
+copyright line under it, and it is the
 Exhibit A notice that places the file under the licence at all. The files that have
 nowhere to put a comment — JSON, the recorded `.journal` fixtures, the binary
 assets — are covered by this statement together with `LICENSE` at the root,

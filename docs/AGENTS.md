@@ -100,11 +100,15 @@ correction that the code cannot state itself — `corners.zig` keeps
 
 ## Licence notice
 
-Every distributed file opens with the copyright line and the MPL 2.0 Exhibit A
-notice, in that file's comment syntax, ahead of everything except a byte-order
-mark or a shebang. Exhibit A permits the added copyright line and names no
-owner itself, so without it a recipient reads the terms without the party
-offering them. The
+Every distributed file opens with the MPL 2.0 Exhibit A notice and the
+copyright line under it, in that file's comment syntax, ahead of everything
+except a byte-order mark or a shebang. The notice leads because Sec. 3.4
+forbids altering the substance of a licence notice, so those three rows are the
+part that must stay verbatim and unsplit. Exhibit A permits the added copyright
+line and names no owner itself, so without it a recipient reads the terms
+without the party offering them; it reads "and the RefRain contributors"
+because contributors hold copyright in what they write, and a standing class
+spares every header a rewrite when the first outside contribution lands. The
 licence attaches through the notice and only through it: MPL 2.0 Sec. 1.4
 defines Covered Software as Source Code Form "to which the initial Contributor
 has attached the notice in Exhibit A". A file without the notice is not a

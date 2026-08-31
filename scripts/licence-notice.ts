@@ -1,7 +1,7 @@
-// Copyright (c) 2026 2youg1
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// Copyright (c) 2026 2youg1 and the RefRain contributors
 
 /**
  * The one authority for the MPL 2.0 notice this repository attaches to files.
@@ -40,15 +40,29 @@ export const NOTICE_LINES = [
  * Exhibit A closes with "You may add additional accurate notices of copyright
  * ownership", and this is that notice. Exhibit A alone names no owner, so
  * without this line a recipient learns the terms and not the party offering
- * them. It sits above the notice because the owner is what a reader checks
- * first and the terms are what they read next.
+ * them. It sits below the notice, not above it: Sec. 3.4 forbids altering the
+ * substance of a licence notice, so the three Exhibit A rows are the part that
+ * must stay verbatim and unsplit, and they lead. No blank comment row divides
+ * them from this line — the four rows are one head.
  *
  * The year is first publication, not today: the first commit landed
  * 2026-08-16. Widen it to a range when a later year's work is substantial
  * enough to claim, and never let it track the calendar, which would rewrite
  * every file each January for nothing.
+ *
+ * "and the RefRain contributors" names people who do not exist yet on purpose.
+ * Contributors hold copyright in what they write and grant it downstream
+ * themselves under Sec. 2.1, so the clause transfers nothing; what it buys is
+ * that the first outside contribution does not oblige anyone to rewrite every
+ * header in the tree. Exhibit A allows "additional accurate notices", and a
+ * standing class is accurate in a way an enumerated list is not — Mozilla
+ * dropped the per-file contributor list in the 1.1 to 2.0 upgrade because it
+ * was "neither a complete nor accurate list" and a source of merge conflicts.
+ *
+ * sprawling and kusanagi carry the same four rows with their own project name.
+ * Anyone changing the shape here changes it in all three.
  */
-export const COPYRIGHT_LINE = "Copyright (c) 2026 2youg1";
+export const COPYRIGHT_LINE = "Copyright (c) 2026 2youg1 and the RefRain contributors";
 
 /** How a file family spells a comment. */
 export type NoticeSyntax = "slash" | "hash" | "block";
@@ -147,15 +161,19 @@ const EXEMPT: Readonly<Record<string, ExemptReason>> = {
 /**
  * The notice as it appears at the top of a file, without a trailing newline.
  *
- * The copyright line always opens the block and the last Exhibit A line always
- * closes it, so the shape needs no index arithmetic. It also needs no spread:
- * ScriptC rejects spreading a tuple into an array literal (SC1090), and this
- * module compiles into `verify:licence-headers` as a tier A executable.
+ * The first Exhibit A line always opens the block and the copyright line always
+ * closes it. `NOTICE_LINES` is a tuple, so index 0 is in bounds by its type and
+ * survives `noUncheckedIndexedAccess`. The tail is joined with `concat` rather
+ * than a spread because ScriptC rejects spreading into an array literal
+ * (SC1090), and this module compiles into `verify:licence-headers` as a tier A
+ * executable.
  */
 export function noticeBlock(syntax: NoticeSyntax): string {
   const shape = SHAPES[syntax];
-  const terms = NOTICE_LINES.map((line) => `${shape.rest}${line}`).join("\n");
-  return `${shape.first}${COPYRIGHT_LINE}\n${terms}${shape.suffix}`;
+  const below = NOTICE_LINES.slice(1)
+    .map((line) => `${shape.rest}${line}`)
+    .concat(`${shape.rest}${COPYRIGHT_LINE}${shape.suffix}`);
+  return `${shape.first}${NOTICE_LINES[0]}\n${below.join("\n")}`;
 }
 
 /**

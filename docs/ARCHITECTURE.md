@@ -247,8 +247,8 @@ with `find <dir> -name '*.rs' -exec cat {} + | wc -l`; the numbers in this colum
 were each wrong by the time somebody checked, because the column stated a result
 and not a way to reproduce it.
 
-Five of the lines in every hand-written file are the copyright line, the MPL
-notice, and the blank line under them, so a count taken before that sweep
+Five of the lines in every hand-written file are the MPL notice, the copyright
+line, and the blank line under them, so a count taken before that sweep
 reads five lines lighter per file than this column does.
 
 L5 has no separate test files: every test block sits in the module it proves,
