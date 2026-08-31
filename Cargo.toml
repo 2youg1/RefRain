@@ -34,7 +34,7 @@ thiserror = "=2.0.18"
 # and a hand-rolled one would re-create exactly the escaping/typing edge cases
 # this crate exists to refuse. Pinned exactly like every direct dependency.
 toml = "=1.1.4"
-uuid = { version = "=1.24.0", features = ["v7", "serde"] }
+uuid = { version = "=1.26.0", features = ["v7", "serde"] }
 
 # specta derives the cross-boundary type descriptions. The `uuid` feature is
 # what lets an Id cross as a string rather than as an opaque struct.
