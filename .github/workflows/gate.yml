@@ -159,7 +159,7 @@ jobs:
       # A key of its own. Sharing one cache with the release artefacts of the
       # `native` job is what made both jobs slow: each run evicted the other's
       # profile and recompiled the dependency tree from source.
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           prefix-key: rust-debug
 
@@ -263,7 +263,7 @@ jobs:
         run: rustup target add x86_64-pc-windows-gnu
 
       # The release profile, kept apart from the debug cache in `rust`.
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           prefix-key: rust-release
 
