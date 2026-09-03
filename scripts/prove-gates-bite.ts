@@ -27,6 +27,8 @@ import { dirname } from "node:path";
 
 interface Injection {
   readonly gate: string;
+  /** How to run it, when it is not `bun scripts/<gate>.ts` — a Haskell gate. */
+  readonly command?: readonly string[];
   readonly file: string;
   /** Absent for a created file; present for an edit to an existing one. */
   readonly anchor?: string;
@@ -118,10 +120,10 @@ const INJECTIONS: readonly Injection[] = [
   },
   {
     gate: "verify:native-ime",
-    file: "patches/@native-sdk%2Fcli@0.10.0.patch",
+    file: "patches/native-sdk-cli.patch",
     anchor: "const bool queried = ImmGetCandidateWindow(imc, 0, &observed) != FALSE;",
     replacement: "const bool queried = syntheticCandidate(imc, &observed) != FALSE;",
-    expect: "@native-sdk%2Fcli@0.10.0.patch",
+    expect: "native-sdk-cli.patch",
   },
   {
     gate: "verify:gates-run",
@@ -129,9 +131,28 @@ const INJECTIONS: readonly Injection[] = [
     content: "// A gate nothing invokes.\nconsole.log('PASS');\n",
     expect: "verify-injected-orphan.ts",
   },
+  {
+    // 401 行：刚好越过预算一行。它未入索引，因而同时证明两件事——
+    // 预算对新文件生效，且它在提交之前就生效。
+    gate: "verify:line-budget",
+    command: ["runghc", "-igates", "gates/LineBudget.hs"],
+    file: "crates/refrain-core/src/injected_line_budget_probe.rs",
+    content: `${"// one line of a module nobody can hold in their head\n".repeat(401)}`,
+    expect: "injected_line_budget_probe.rs",
+  },
+  {
+    // 一个无人声明的补丁文件。它看上去是一项生效的修改，实际上 bun
+    // 从未读到它——这正是 #38 合入后那个补丁所处的状态。
+    gate: "verify:patched-dependency",
+    command: ["runghc", "-igates", "gates/PatchedDependency.hs"],
+    file: "patches/injected-orphan.patch",
+    content: "diff --git a/nothing b/nothing\n",
+    expect: "injected-orphan.patch",
+  },
 ];
 
-const script = (gate: string) => `scripts/${gate.replace("verify:", "verify-")}.ts`;
+const commandFor = (injection: Injection): readonly string[] =>
+  injection.command ?? ["bun", `scripts/${injection.gate.replace("verify:", "verify-")}.ts`];
 const injectionPaths = [...new Set(INJECTIONS.map((injection) => injection.file))];
 const statusBefore = spawnSync("git", ["status", "--porcelain", "--", ...injectionPaths], {
   encoding: "utf8",
@@ -164,7 +185,9 @@ for (const injection of INJECTIONS) {
       writeFileSync(injection.file, original.replace(injection.anchor, injection.replacement));
     }
 
-    const result = spawnSync("bun", [script(injection.gate)], { encoding: "utf8" });
+    const [command, ...args] = commandFor(injection);
+    if (command === undefined) throw new Error(`${injection.gate}: no command`);
+    const result = spawnSync(command, args, { encoding: "utf8" });
     const output = `${result.stdout}${result.stderr}`;
 
     if (result.status === 0) {

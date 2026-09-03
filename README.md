@@ -203,6 +203,28 @@ one beside it.
 **This project is unfinished and not usable. Releases exist so the author can
 test the packaging path end to end; they are not something to write in.**
 
+PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/2youg1/RefRain/main/install.ps1 | iex
+```
+
+Git Bash, MSYS2 or Cygwin:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/2youg1/RefRain/main/install.sh | sh
+```
+
+Both resolve the newest tag, download `refrain-windows-x64.zip`, check every
+file in it against the `SHA256SUMS` the archive carries, and unpack it into
+`%LOCALAPPDATA%\Programs\RefRain`. Neither installs an archive that fails that
+check: the sums, the release manifest and the SBOM are inside the archive so
+that a recipient can verify the download without trusting the workflow that
+built it, and an installer that skipped them would give that up. Set
+`REFRAIN_VERSION` to pin a tag and `REFRAIN_HOME` to choose the destination.
+Both refuse to run anywhere but Windows x86-64, because that is the only
+artifact this project builds.
+
 Releases are published on
 [GitHub](https://github.com/2youg1/RefRain/releases) and tagged
 `v0.0.N-Pre-alpha-YYMMDD`, where `N` counts published releases and the date is

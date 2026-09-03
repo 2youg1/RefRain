@@ -14,7 +14,9 @@ interface Contract {
 
 const contracts: readonly Contract[] = [
   {
-    path: "patches/@native-sdk%2Fcli@0.10.0.patch",
+    // Version-free by rule: `verify:patched-dependency` refuses a patch file
+    // whose name states a version, so this path survives every SDK bump.
+    path: "patches/native-sdk-cli.patch",
     required: [
       "diff --git a/src/automation/snapshot.zig b/src/automation/snapshot.zig",
       "text_caret_bounds",

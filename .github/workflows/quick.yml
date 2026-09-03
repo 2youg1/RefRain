@@ -1,0 +1,63 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# Copyright (c) 2026 2youg1 and the RefRain contributors
+
+name: quick
+
+# The first verdict on a pull request, and the only one that arrives before a
+# toolchain finishes installing.
+#
+# `gate.yml` answers whether the product is correct, and pays for that answer
+# with Rust, Zig, Bun, ScriptC and GTK — its fastest job returns in minutes
+# because most of that time is spent fetching compilers. This workflow answers
+# a smaller question that needs none of them: does the repository still obey
+# the rules that hold independently of what the code does.
+#
+# Those are the black-box gates. They read what `git` publishes and link no
+# part of the product, so their whole toolchain is GHC, which the runner image
+# already carries — checkout, then a verdict. Nothing here duplicates a check
+# `gate.yml` makes; the two workflows partition the gates by requirement, the
+# same way `scripts/gate.ts` does with `--needs`.
+#
+# If a runner image ever drops Haskell, this job goes red on the version probe
+# below rather than skipping the gates, and the repair is one `ghcup-setup`
+# step. A missing compiler must never read as a clean repository.
+
+on:
+  push:
+    branches: [main, v0.2-rebuild]
+  pull_request:
+
+concurrency:
+  group: quick-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  blackbox:
+    name: black box
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # The gates run `git ls-files`, so they need the index and not the
+      # history: a shallow checkout carries everything they read.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+
+      - name: Report the compiler that produces these verdicts
+        run: |
+          ghc --version
+          runghc --version
+
+      # Run each gate directly rather than through `scripts/gate.ts`, which
+      # would drag in Bun and a dependency install for a lane that needs
+      # neither. `bun run gate --needs haskell` runs the same programs locally.
+      - name: No hand-maintained file exceeds its line budget
+        run: runghc -igates gates/LineBudget.hs
+
+      - name: Every patched dependency is actually patched
+        run: runghc -igates gates/PatchedDependency.hs

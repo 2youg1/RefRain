@@ -1,0 +1,88 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+# Copyright (c) 2026 2youg1 and the RefRain contributors
+
+# Files that already exceeded the 400-line budget on the day it landed, with
+# the count each one had. `gates/LineBudget.hs` reads this and refuses three
+# things: a new file over budget, a file here growing past its recorded count,
+# and a row that has fallen within budget and was not deleted.
+#
+# So this is the backlog, and it is one that cannot rot: every split shows up
+# as a row that must be removed, and when the last row goes the gate stops
+# needing this file at all. Splitting these is the next version's work, one
+# module at a time, each with the invariant it owns named — not a sweep.
+#
+# There is no command that writes this file. A new row is a human edit a
+# reviewer sees, because the only honest reason to add one is that nobody has
+# split the file yet.
+#
+# <path>	<lines>
+apps/native/host/src/document.rs	902
+apps/native/host/src/project.rs	828
+apps/native/host/src/project_wire.rs	615
+apps/native/src/app_main.zig	798
+apps/native/src/core.zig	2496
+apps/native/src/host_bridge.zig	794
+apps/native/src/project_request.zig	1433
+apps/native/src/project_view.zig	1614
+apps/native/src/view/desk.zig	840
+apps/native/src/view/document.zig	608
+apps/native/src/view/files.zig	406
+apps/native/src/view/review.zig	624
+apps/native/src/view/settings.zig	470
+crates/refrain-app/examples/wire_shapes.rs	688
+crates/refrain-app/src/application.rs	661
+crates/refrain-app/src/collect.rs	531
+crates/refrain-app/src/decide.rs	729
+crates/refrain-app/src/dispatch.rs	856
+crates/refrain-app/src/document.rs	574
+crates/refrain-app/src/native_document.rs	1738
+crates/refrain-app/src/project_channel.rs	474
+crates/refrain-app/src/runner.rs	642
+crates/refrain-app/tests/collect.rs	783
+crates/refrain-app/tests/countermand.rs	496
+crates/refrain-app/tests/dispatch.rs	913
+crates/refrain-app/tests/mailbox_service.rs	574
+crates/refrain-app/tests/project.rs	1081
+crates/refrain-app/tests/runner.rs	462
+crates/refrain-app/tests/upstream.rs	446
+crates/refrain-core/src/agent_protocol.rs	1134
+crates/refrain-core/src/block_shape.rs	623
+crates/refrain-core/src/context_compiler.rs	1158
+crates/refrain-core/src/inline_span.rs	419
+crates/refrain-core/src/kara.rs	574
+crates/refrain-core/src/manuscript/mod.rs	1287
+crates/refrain-core/src/manuscript/review.rs	514
+crates/refrain-core/src/material_listing.rs	597
+crates/refrain-core/src/search_rank.rs	652
+crates/refrain-core/src/typeset.rs	975
+crates/refrain-core/tests/manuscript_actions.rs	570
+crates/refrain-host/src/adapters.rs	1315
+crates/refrain-host/src/host.rs	1943
+crates/refrain-host/src/process.rs	535
+crates/refrain-host/src/run_edge.rs	450
+crates/refrain-host/src/staging.rs	610
+crates/refrain-store/src/config.rs	1161
+crates/refrain-store/src/files/index.rs	429
+crates/refrain-store/src/ingest/office.rs	483
+crates/refrain-store/src/ingest/pdf.rs	439
+crates/refrain-store/src/materials.rs	420
+crates/refrain-store/src/project.rs	1066
+crates/refrain-store/src/project/catalog.rs	1040
+crates/refrain-store/src/project/catalog/tests/mod.rs	509
+crates/refrain-store/src/schema.rs	813
+crates/refrain-store/tests/config.rs	936
+crates/refrain-store/tests/plain_formats.rs	419
+crates/refrain-store/tests/project.rs	894
+crates/refrain-store/tests/project_performance.rs	466
+docs/ARCHITECTURE.md	1240
+e2e/ime/driver/drive-native-windows.ps1	404
+e2e/ime/native-evidence-policy.ts	412
+scripts/gate.ts	457
+scripts/generate-native-protocol.ts	1545
+scripts/generate-themes.ts	716
+scripts/release-assets.test.ts	471
+scripts/release-assets.ts	660
+scripts/verify-native-document-performance.ts	777
+tests/legacy-parity.json	689

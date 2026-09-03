@@ -65,7 +65,7 @@ export const NOTICE_LINES = [
 export const COPYRIGHT_LINE = "Copyright (c) 2026 2youg1 and the RefRain contributors";
 
 /** How a file family spells a comment. */
-export type NoticeSyntax = "slash" | "hash" | "block";
+export type NoticeSyntax = "slash" | "hash" | "block" | "dash";
 
 interface CommentShape {
   /** Opens the first line. */
@@ -81,6 +81,7 @@ const SHAPES: Readonly<Record<NoticeSyntax, CommentShape>> = {
   slash: { first: "// ", rest: "// ", suffix: "" },
   hash: { first: "# ", rest: "# ", suffix: "" },
   block: { first: "/* ", rest: " * ", suffix: " */" },
+  dash: { first: "-- ", rest: "-- ", suffix: "" },
 };
 
 /** Why a tracked file carries no notice of its own. */
@@ -122,8 +123,20 @@ export type Classification =
  * `.zon` is here because the Native SDK's parser already accepts `//`
  * comments — `apps/native/app.zon` has carried them since before this table
  * existed.
+ *
+ * `.hs` is the black-box gate language (`gates/`). Haskell has no line comment
+ * other than `--`, and a `{- -}` block would put the three Exhibit A rows
+ * inside a construct a reader can nest and comment out; `dash` keeps them as
+ * three top-level rows, which is what Sec. 3.4 asks to stay unsplit.
+ *
+ * `.tsv` carries the notice rather than claiming an exemption because a gate's
+ * recorded data is Source Code Form in the sense that matters here: a human
+ * edits it, and `gates/line-budget-debt.tsv` states why in the rows above its
+ * data. Its reader skips `#` rows, which is the same convention `.toml` uses.
  */
 const CARRIES: Readonly<Record<string, NoticeSyntax>> = {
+  ".hs": "dash",
+  ".tsv": "hash",
   ".rs": "slash",
   ".ts": "slash",
   ".zig": "slash",

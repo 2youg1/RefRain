@@ -59,6 +59,8 @@
     "verify:release-version": "bun scripts/verify-release-version.ts",
     "verify:release-workflow": "bun scripts/verify-release-workflow.ts",
     "verify:gates-run": "bun scripts/verify-gates-run.ts",
+    "verify:line-budget": "runghc -igates gates/LineBudget.hs",
+    "verify:patched-dependency": "runghc -igates gates/PatchedDependency.hs",
     "e2e:journals": "bun scripts/replay-native-journals.ts",
     "e2e:record": "bun scripts/record-native-journals.ts",
     "e2e:ime": "bun e2e/ime/run-native.ts -Shell native -Binary apps/native/zig-out/bin/refrain.exe",
@@ -74,6 +76,6 @@
     "typescript": "7.0.2"
   },
   "patchedDependencies": {
-    "@native-sdk/cli@0.10.0": "patches/@native-sdk%2Fcli@0.10.0.patch"
+    "@native-sdk/cli@0.10.1": "patches/native-sdk-cli.patch"
   }
 }

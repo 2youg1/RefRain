@@ -3,22 +3,68 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 # Copyright (c) 2026 2youg1 and the RefRain contributors
 
+# Upstream arrives here on its own, and one gate decides whether it may land.
+#
+# The risk this file has already realised: PR #38 raised @native-sdk/cli from
+# 0.10.0 to 0.10.1 and merged, while the `patchedDependencies` key in
+# package.json stayed at 0.10.0. Bun applies a patch only on an exact version
+# match, so from that merge the SDK increment in `patches/` was applied to
+# nothing — silently, with every gate green, because no gate read the vendor's
+# installed bytes. `verify:patched-dependency` now reads the two committed
+# facts and refuses the disagreement, so the same bump lands red with the
+# repair in the message instead of landing quiet.
+#
+# That is why nothing here is pinned back or ignored. An ignore list stops the
+# repository learning about upstream; a gate lets upstream arrive and states
+# what it broke. The rule this file follows is: let every ecosystem update,
+# and make the consequence loud.
+
 version: 2
+
 updates:
+  # The root workspace: gate scripts, Biome, the TypeScript compiler.
   - package-ecosystem: bun
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      # One pull request per week rather than five. Each opens a full CI run,
+      # and five runs of the same three jobs to move three patch versions is
+      # the cost of the noise, not of the updates.
+      bun-development:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  # `apps/native` is a workspace member with its own manifest, and it is where
+  # @native-sdk/cli — the one upstream this product is built on — is declared.
+  # A bump here needs the `patchedDependencies` key in the root package.json
+  # moved with it; the gate names that repair when it is missed.
+  - package-ecosystem: bun
+    directory: /apps/native
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
 
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      cargo-minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
 
+  # Every action in this repository is pinned by commit SHA, which is what
+  # keeps a compromised tag out of the build and what makes these updates
+  # necessary: a SHA never moves, so without this ecosystem the actions freeze
+  # at the day they were written.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns: ["*"]

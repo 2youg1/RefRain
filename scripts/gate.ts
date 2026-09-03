@@ -20,6 +20,10 @@ import { executableFor, TIER_A } from "./scriptc-tiers.ts";
  * instead of listing stages, so a stage joins a job by naming what it needs.
  *
  * - `files` reads the repository, and compiles nothing but ScriptC.
+ * - `haskell` needs GHC. These are the black-box gates: they read what `git`
+ *   publishes and link no part of the product, so they need no product
+ *   toolchain and return a verdict in seconds. `quick.yml` runs this lane
+ *   alone, which is why it is the fastest signal on a pull request.
  * - `cargo` needs a Rust toolchain.
  * - `native` needs the Native SDK toolchain. That is Zig **and** cargo:
  *   `apps/native/build.zig` runs `cargo build -p refrain-native-host --release`
@@ -34,9 +38,9 @@ import { executableFor, TIER_A } from "./scriptc-tiers.ts";
  *   that register describes no object, so a Linux row could only report a
  *   colour about the wrong file format.
  */
-type Requirement = "files" | "cargo" | "native" | "artifact";
+type Requirement = "files" | "haskell" | "cargo" | "native" | "artifact";
 
-const REQUIREMENTS = ["files", "cargo", "native", "artifact"] as const;
+const REQUIREMENTS = ["files", "haskell", "cargo", "native", "artifact"] as const;
 
 /**
  * The stages a data-layer assertion cannot make, grouped by what each one needs
@@ -272,6 +276,18 @@ const stages: readonly Stage[] = [
     needs: "files",
   },
   { name: "verify:gates-run", argv: ["bun", "scripts/verify-gates-run.ts"], needs: "files" },
+
+  // Black box, in Haskell, reading only what git publishes.
+  {
+    name: "verify:line-budget",
+    argv: ["runghc", "-igates", "gates/LineBudget.hs"],
+    needs: "haskell",
+  },
+  {
+    name: "verify:patched-dependency",
+    argv: ["runghc", "-igates", "gates/PatchedDependency.hs"],
+    needs: "haskell",
+  },
 ];
 
 /** `--evidence <lane>[,<lane>…]`; without it the blocking gate runs. */

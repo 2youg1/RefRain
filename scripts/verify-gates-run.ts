@@ -19,8 +19,15 @@ import { readFileSync } from "node:fs";
  * invokes. Both directions matter. A gate not invoked is dead. A gate invoked
  * but absent is a stage that silently does nothing.
  *
+ * Both gate languages are scanned. `scripts/verify-*.ts` is the TypeScript
+ * layer this repository started with; `gates/*.hs` is the black-box layer it
+ * writes new checks in. A gate that nothing runs is dead in either language,
+ * and a scan that knew only one of them would go quiet exactly as the tree
+ * moved to the other.
+ *
  * Injection proof that this gate bites: add `scripts/verify-nothing.ts` without
- * wiring it into gate.ts or package.json and this exits 1 naming it.
+ * wiring it into gate.ts or package.json and this exits 1 naming it. The same
+ * holds for an unwired `gates/Nothing.hs`.
  */
 
 import { Glob } from "bun";
@@ -33,6 +40,16 @@ for await (const file of new Glob("verify-*.ts").scan({ cwd: "scripts" })) {
   // permanent orphan that no wiring can clear — the fix would be to register a
   // test file as a gate stage, which then runs twice and reports twice.
   if (name.endsWith(".test.ts")) continue;
+  onDisk.push(name);
+}
+
+// A gate is a program. `gates/Gate.hs` holds what every gate shares — UTF-8
+// reading and the report shape — and declares no `main`, so nothing runs it
+// directly and nothing should. Asking for the module header is the difference
+// between a library and a check, which a naming convention could only imply.
+for await (const file of new Glob("*.hs").scan({ cwd: "gates" })) {
+  const name = file.split(/[/\\]/).pop() ?? file;
+  if (!readFileSync(`gates/${file}`, "utf8").includes("module Main")) continue;
   onDisk.push(name);
 }
 
@@ -55,7 +72,10 @@ const orphans = onDisk.filter(
 );
 
 // The other direction: a stage the runner names but no file backs.
-const staged = [...runner.matchAll(/scripts\/(verify-[\w-]+\.ts)/g)].map((m) => m[1]);
+const staged = [
+  ...runner.matchAll(/scripts\/(verify-[\w-]+\.ts)/g),
+  ...runner.matchAll(/gates\/([\w-]+\.hs)/g),
+].map((m) => m[1]);
 const missing = staged.filter((name) => name !== undefined && !onDisk.includes(name));
 
 if (orphans.length > 0 || missing.length > 0) {
@@ -63,7 +83,7 @@ if (orphans.length > 0 || missing.length > 0) {
   for (const name of orphans)
     console.error(`      orphan: scripts/${name} exists but nothing runs it`);
   for (const name of missing)
-    console.error(`      missing: gate.ts runs scripts/${name}, which is absent`);
+    console.error(`      missing: gate.ts runs a gate named ${name}, which is absent`);
   process.exit(1);
 }
 

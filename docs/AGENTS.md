@@ -57,6 +57,36 @@ producing.
 - Do not create `utils`, `helpers`, or `common` modules.
 - Complete a migration in one semantic change. Remove the old authority and temporary adapters.
 
+## The line budget
+
+No hand-maintained file exceeds **400 lines**. A file nobody can hold in their
+head has no reviewer, and this repository can name the cost: a change lands in
+the wrong module because the right module is not visible from inside
+`core.zig` at 2496 lines or `host.rs` at 1943.
+
+`gates/LineBudget.hs` holds three lines, and holds them over what a commit
+would carry, not only over what is already committed:
+
+1. a file with no debt row stays within budget — new mass is refused;
+2. a file listed in `gates/line-budget-debt.tsv` may not pass its recorded
+   count — existing mass may only fall;
+3. a debt row that has fallen within budget must be deleted — the list is
+   self-cleaning, so it shrinks to nothing and then the mechanism goes with it.
+
+The debt file is the backlog. Seventy files are on it, and splitting them is
+the work of the next version, taken one module at a time with its invariant
+named. There is no `--write` mode: a new debt row is a human edit a reviewer
+sees, because the only honest reason to add one is that nobody has split the
+file yet.
+
+**ARCHITECTURE.md answers the budget by shrinking, not by claiming an
+exemption.** Its job is to show the shape — the layer table, the wiring graph,
+the module inventory, the event flow — and to say in one sentence what each
+component owns. It is not the manual. When a component needs a paragraph, the
+paragraph belongs in the specification in `../RefRain-work/`, and the document
+carries the sentence and the pointer. A diagram that a reader can hold beats a
+prose section that restates what the code and the spec already say twice.
+
 ## Reuse before writing
 
 Find the existing authority before you add one. Checked by review, not by a gate.
@@ -128,6 +158,25 @@ and no reviewer reads three hundred file heads.
 
 ## Verification
 
+Each check belongs to a language by what it can see, and that division is
+binding for every new check:
+
+| | Language | Sees | Lives in |
+|---|---|---|---|
+| **Black box** | Haskell | What the repository publishes and what an artifact contains. Links no part of the product | `gates/*.hs` |
+| **White box** | Rust | Internals — private state, invariants, error paths | `#[cfg(test)]`, `tests/` |
+
+Write every new black-box check in Haskell. `scripts/verify-*.ts` is the layer
+this repository started with and is not the layer it grows: move a gate to
+`gates/` when you have reason to touch it, and do not add a new one there. A
+Haskell gate needs GHC and nothing else, which is why `quick.yml` returns the
+first verdict on a pull request while the toolchains are still installing.
+
+Tests never enter a build artifact. Rust test code is `#[cfg(test)]` or under
+`tests/`; Zig tests are reached by `refAllDecls` and by no other path; the
+release packager publishes exactly one asset, and nothing named for a test,
+a fixture, or a journal is in it.
+
 Run these in order. The order is load-bearing; see below.
 
 ```sh
@@ -139,6 +188,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 mkdir -p .tmp
 TMPDIR="$PWD/.tmp" cargo test --workspace --all-targets
 ```
+
+`bun run gate` needs GHC on PATH: without it the black-box lane fails rather
+than skipping, because a missing compiler must never read as a clean
+repository.
 
 `bun run scriptc:build` must run before `gate`: the tier A gates execute the
 compiled artifact, so a source change that is not rebuilt leaves the gate
@@ -167,7 +220,7 @@ cargo fmt --all --check
 bun scripts/generate-native-protocol.ts --check && git diff --exit-code -- apps/native/src/generated
 ```
 
-A new gate must be injection-verified: break the mechanism it depends on, require a specific red result, restore it, then require green. A missing symbol, fixture, or path must fail closed. A new gate also enters `scripts/gate.ts` stages, and — if ScriptC compiles it — `scriptc-tiers.ts` `TIER_A`, or `verify:scriptc-coverage` goes red.
+A new gate must be injection-verified: break the mechanism it depends on, require a specific red result, restore it, then require green. A missing symbol, fixture, or path must fail closed. A new gate also enters `scripts/gate.ts` stages — naming the one requirement it needs from the machine — and `scripts/prove-gates-bite.ts`; a TypeScript gate that ScriptC compiles also enters `scriptc-tiers.ts` `TIER_A`, or `verify:scriptc-coverage` goes red.
 
 Use fixtures that differ on the field under test. For a two-way mechanism, test both directions. Represent exhaustive sets with a shape that fails to compile when a member is missing.
 

@@ -10,7 +10,9 @@ description: >-
 
 inputs:
   needs:
-    description: The requirement whose stages this job runs — files, cargo, or native.
+    description: >-
+      The requirement whose stages this job runs — files, haskell, cargo,
+      native, or artifact. The list lives in `scripts/gate.ts`.
     required: true
   label:
     description: A name for the log artifact, unique within the workflow run.
