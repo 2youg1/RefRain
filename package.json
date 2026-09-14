@@ -70,9 +70,9 @@
     "e2e:input:chords": "bun e2e/native-input/chords.ts"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.11",
-    "@types/bun": "1.4.0",
-    "playwright": "1.62.1",
+    "@biomejs/biome": "2.5.13",
+    "@types/bun": "1.4.2",
+    "playwright": "1.63.0",
     "typescript": "7.0.2"
   },
   "patchedDependencies": {
