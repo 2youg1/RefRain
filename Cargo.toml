@@ -26,15 +26,15 @@ refrain-host = { path = "crates/refrain-host" }
 refrain-app = { path = "crates/refrain-app" }
 
 serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.151"
+serde_json = "=1.0.154"
 blake3 = "=1.8.7"
-thiserror = "=2.0.20"
+thiserror = "=2.0.21"
 
 # Config is ruled TOML (SPEC 10.1, D-N8): a real format needs a real parser,
 # and a hand-rolled one would re-create exactly the escaping/typing edge cases
 # this crate exists to refuse. Pinned exactly like every direct dependency.
-toml = "=1.1.4"
-uuid = { version = "=1.26.0", features = ["v7", "serde"] }
+toml = "=1.1.8"
+uuid = { version = "=1.28.0", features = ["v7", "serde"] }
 
 # specta derives the cross-boundary type descriptions. The `uuid` feature is
 # what lets an Id cross as a string rather than as an opaque struct.
@@ -72,7 +72,7 @@ image = "=0.25.10"
 ignore = "=0.4.33"
 rayon = "=1.12.0"
 memchr = "=2.8.3"
-trash = "=5.2.6"
+trash = "=5.2.9"
 
 # The rules `docs/AGENTS.md` states for Rust, in the place the compiler reads.
 #
